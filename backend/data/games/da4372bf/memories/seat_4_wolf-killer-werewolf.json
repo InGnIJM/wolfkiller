@@ -1,0 +1,80 @@
+{
+  "game_id": "da4372bf",
+  "seat_number": 4,
+  "role": "wolf-killer-werewolf",
+  "camp": "werewolf",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [
+      2,
+      7
+    ],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "4号玩家发言。平安夜，女巫大概率救人，好人优势。前面1、2、3发言都比较稳，3号提到给我和5号压力，有点意思。我底牌好人，目前没有太多信息，但建议先听5号发言，看他是好人还是狼人装好人。另外，我注意到1号和2号发言过于一致，都在强调女巫藏好，有点像提前对过口径，值得留意。我暂时不站边，先听后面发言再判断。过。"
+    },
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "4号玩家遗言。我是好人，被抗推出局了。首先，我确实怀疑1号和2号发言过于一致，都在强调女巫藏好，这个点在当时的情况下是合理的怀疑，但没想到被5号预言家带队拿来当抗推理由。3号被5号发金水，我暂时认3号好人，但5号这个预言家我存疑——第一轮就跳预言家，信息量太小，而且他直接带队出我，逻辑上有点急于推人。6、7、8、9号发言都比较保守，没有明显爆点，但7号踩我踩得最狠，我怀疑7号可能是狼人在带节奏。建议好人们后续重点关注5号和7号，如果5号是假预言家，那3号金水也得重新审视。另外，1号和2号发言一致这点，我坚持认为值得留意，不是铁狼但需要观察。狼人阵营现在少了一个人，好人优势，希望女巫和猎人藏好，别让狼人刀到关键神职。我走了，祝好人胜利。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "poison",
+        "round_number": 3
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:24:08.723361+00:00"
+}

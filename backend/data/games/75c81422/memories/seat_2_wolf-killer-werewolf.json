@@ -1,0 +1,123 @@
+{
+  "game_id": "75c81422",
+  "seat_number": 2,
+  "role": "wolf-killer-werewolf",
+  "camp": "werewolf",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [
+      4,
+      7
+    ],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。平安夜，女巫没开药，可能是女巫没救，也可能是守人守住了。我底牌是好人，目前没什么信息。1号玩家第一个发言，聊得比较中规中矩，没什么爆点。我建议先听后面3、4、5、6号玩家的发言，看看有没有人视角不对或者逻辑矛盾。目前没有明确目标，暂时不投票，等听完一圈再决定。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。昨晚8号预言家被刀，女巫没开药，狼人刀法精准。1号跳猎人，这个身份我暂时认下。目前场上剩1、2、3、4、6、7、9号。3号是金水，9号站边8号预言家，发言偏好人。我比较怀疑6号和7号——6号昨天点5号急，但自己发言模糊；7号跟风点3号，视角有点刻意。建议今天从6、7里出人，先听6号发言。过。"
+    },
+    {
+      "round": 3,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。昨晚1号猎人被刀，6号被猎人带走，场上剩2、3、4、9号。现在神职只剩女巫和守卫，平民剩3号金水和9号。我底牌是好人，目前听下来4号发言一直很稳，没明显爆点；9号站边8号预言家，逻辑清晰。我建议今天从4号和9号里盘，先听9号发言，看看有没有视角矛盾。女巫藏好，守卫别跳，我暂时没明确目标，等听完一圈再定投票。过。"
+    },
+    {
+      "round": 4,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 2,
+        "target_seat": 2,
+        "reasoning": "3号金水点出我发言保守且模糊焦点，4号和9号也顺势踩我，这明显是好人视角的合理怀疑。我作为狼人，需要抗推一个好人来争取轮次。3号是金水，4号是我狼队友，9号发言偏好人，我抗推9号风险太大，不如自票弃权或投自己来避免暴露逻辑矛盾。但为了伪装成好人，我选择投2号自己，显得我在认真参与投票，同时让好人觉得我是在自证清白。实际上，我目标是保留狼队友4号，并引导好人明天继续盘9号。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "hunter_shot",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "hunter_shot",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 9,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:48:42.954147+00:00"
+}

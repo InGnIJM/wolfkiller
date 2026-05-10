@@ -1,0 +1,82 @@
+{
+  "game_id": "16dbef39",
+  "seat_number": 7,
+  "role": "wolf-killer-seer",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [
+      {
+        "target_seat": 3,
+        "result": "werewolf",
+        "round": 1
+      },
+      {
+        "target_seat": 4,
+        "result": "good",
+        "round": 2
+      }
+    ],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "7号玩家发言。昨夜我查验了3号，3号是查杀。我是预言家，3号是狼人。3号发言明显有问题——直接点4号是银水，带节奏太快，而且急于把焦点引向5和7，这是狼人常见的转移视线手法。4号反驳3号逻辑没问题，但4号反应过激，不排除3、4双狼互踩做身份的可能。5号发言四平八稳，但刻意点3、4互动，也有嫌疑。我建议今天全票出3号，明天我再报下一轮查验结果。1、2发言偏正，暂时认好。过。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "poison",
+        "round_number": 3
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:29:48.753370+00:00"
+}

@@ -1,0 +1,95 @@
+{
+  "game_id": "e41f1a68",
+  "seat_number": 2,
+  "role": "wolf-killer-hunter",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": true,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。平安夜，女巫大概率救人了，或者狼人空刀。1号点了几个人，但没给出实质逻辑，我暂时保留态度。我建议今天先听3号和6号的发言，3号被1号点过，看他怎么解释；6号话少确实可疑，可能狼人想划水。另外，5号和9号目前没信息，也值得关注。这轮我不急着定票，先看后面发言再决定。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。1号自爆狼人，遗言还在带节奏，想保2号？可笑。8号是真预言家，昨晚被刀证实了。我昨天跟风1号是失误，但我是好人，现在明确站边8号。3号是金水，暂信。5号昨天带头投1号，行为偏好。6号、7号跟票投1号，暂时干净。4号分析客观，偏好。9号昨天质疑8号，今天要重点听解释。这轮我建议从9号入手，他昨天不跟票投1号，反而怀疑真预言家，狼面较大。另外，4号和7号也值得留意，但今天先出9号。过。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 9,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "poison",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:44:46.278518+00:00"
+}

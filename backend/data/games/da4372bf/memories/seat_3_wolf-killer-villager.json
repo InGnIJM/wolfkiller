@@ -1,0 +1,87 @@
+{
+  "game_id": "da4372bf",
+  "seat_number": 3,
+  "role": "wolf-killer-villager",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "3号玩家发言。平安夜，女巫救人概率大，女巫藏好没问题。目前1号和2号发言都比较中规中矩，没有明显爆点。我建议重点听后面几个人的发言，特别是那些划水或者逻辑跳跃的。我暂时没有明确怀疑对象，但提醒大家注意跟风发言的人，狼人最喜欢混在节奏里。另外，我觉得可以适当给4号和5号一点压力，看看他们的反应。底牌好人，过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "3号玩家发言。5号昨晚被刀，证实他是真预言家，我金水身份坐实。昨天4号被放逐是狼人，现在场上剩两狼。1号和2号踩7号，我部分同意——7号昨天踩4号确实最狠，有煽动嫌疑。但6号昨天分析全面却始终不站边，今天也没明确表态，有点划水嫌疑。9号跟风明显，发言没信息量。建议今天先听7号解释，再对比6号和9号的发言，女巫毒药留着防意外。我底牌好人，过。"
+    },
+    {
+      "round": 3,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 3,
+        "target_seat": 7,
+        "reasoning": "我3号是5号预言家发的金水，身份坐实。昨天4号狼人被抗推，场上剩两狼。今天1、2、6、8、9都踩7号煽动，7号反踩6号，但6号昨天分析全面不站边，今天突然带节奏踩7号，确实反常。不过7号昨天踩4号最狠，被多人点后狼面更大。9号跟风明显，发言没信息量，但7号是当前焦点，先出7号验证，明天再盘6号和9号。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "poison",
+        "round_number": 3
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:24:08.721406+00:00"
+}

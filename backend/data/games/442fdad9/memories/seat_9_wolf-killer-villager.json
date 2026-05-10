@@ -1,0 +1,117 @@
+{
+  "game_id": "442fdad9",
+  "seat_number": 9,
+  "role": "wolf-killer-villager",
+  "camp": "good",
+  "is_alive": true,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "9号发言：我是平民，昨晚平安夜。3号跳预言家查杀7号，力度很大。我暂时不站边，因为7号还没发完言，但3号敢直接查杀，要么是真预言家，要么是狼人悍跳。4号急着站边3号，有点可疑，可能是在打配合。5号和6号分析比较中立，暂时认好。建议7号好好解释，如果聊爆了就出7；如果7号聊得好，再盘3号的问题。1号和2号发言偏保守，后续多关注。大家别划水，多给信息。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "9号发言：昨晚3号真预言家被刀，7号铁狼已出。1号跳女巫报5号银水，这个信息我暂时认。4号昨天急着站边3号，今天又急着盘1号，有点转移焦点，嫌疑较大。2号盘4号没问题，但狼人可能倒钩。我建议今天先盘4号，看他能不能聊清楚为什么昨天那么急着站边。如果4号聊爆，就出4；如果4号聊得好，再盘2号和6、8。我底牌是好人，暂时不站边，大家别划水。过。"
+    },
+    {
+      "round": 3,
+      "phase": "speech",
+      "type": "speech",
+      "text": "9号发言：昨晚1号女巫被刀，4号平民出局，剩下2、5、6、8和我。5号银水暂时认好，狼就在2、6、8里。2号今天急着出6号，有点带节奏；6号反打2号，但两人互咬可能都是好人，狼人躲在后面。8号盘我，明显想转移焦点。我建议今天先出8号，他昨天跟风盘4号太顺，今天又急着甩锅给我，嫌疑最大。如果8号聊爆就铁狼，否则再盘2和6。过。"
+    },
+    {
+      "round": 4,
+      "phase": "speech",
+      "type": "speech",
+      "text": "9号发言：昨晚5号银水被刀，狼刀精准。现在剩2、6、8和我，两狼就在其中。2号全程带队冲票4号平民，今天又急着出我，节奏带得飞起，狼面最大。6号和8号互踩，但可能一狼一好人或两狼演戏。我建议今天先出2号，他发言太主动，像在抗推好人。如果2号是狼，明天再盘6和8。我底牌好人，今天出2号，别让狼人冲票成功。过。"
+    },
+    {
+      "round": 5,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 9,
+        "target_seat": 2,
+        "reasoning": "场上存活玩家2、6、8、9我。2号从昨天开始一直积极带队，先是盘4号，今天又急着出6号、9号，节奏带得很明显。4号平民被抗推时，2号冲票积极，狼面最大。6号和8号互踩，但可能一狼一好人，先出最像狼的2号。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 4
+      }
+    },
+    {
+      "round": 5,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "wolf_kill",
+        "round_number": 5
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:15:03.438718+00:00"
+}

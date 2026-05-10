@@ -1,0 +1,101 @@
+{
+  "game_id": "87298cf1",
+  "seat_number": 1,
+  "role": "wolf-killer-villager",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "1号玩家发言。昨晚平安夜，要么是女巫用了解药，要么狼人空刀了。不管怎样，第一轮信息不多，大家尽量多发言，别划水。我会认真听每个人的发言和逻辑，有爆点的我会记下来。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "1号玩家发言。昨晚6号死了，这信息很关键。6号昨天跳女巫说首夜自救，如果她真是女巫，那昨晚狼人再次刀她，她没解药就死了，这说得通。但另一种可能是6号是狼人悍跳女巫，被真女巫毒了。我倾向后者——因为如果6号是真女巫，她昨天已经暴露了，狼人确实会刀她，但真女巫通常不会第一天就跳出来。另外我注意到上一轮7号好像没怎么发言？7号能不能聊聊你的看法？目前我比较想听7号、5号、2号的分析。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "1号遗言。我是平民，被冤枉出局了，很无奈。\n\n首先，我认7号是真预言家，查杀4号狼人和金水6号女巫，信息全部正确，没毛病。\n\n其次，解释一下我昨天的发言。我说6号可能是狼人悍跳被毒，只是分析一种可能性，毕竟首轮跳女巫确实少见。现在7号证实6号是好人，我的分析错了，我认。但我是好人视角在分析，不是狼人。\n\n狼坑：4号已走，剩两狼在2、3、5、8、9中。我建议：\n1. 听7号预言家归票，别分票\n2. 2号和3号互打，我觉得可能出一狼，也可能都是好人被狼带节奏\n3. 5号发言偏中立，8号和9号认7号比较快，但也不能完全排除嫌疑\n4. 建议预言家今晚查一个，女巫（如果还在）毒药别乱用\n\n好人加油，别让狼人赢了！"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "hunter_shot",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T12:35:47.765748+00:00"
+}

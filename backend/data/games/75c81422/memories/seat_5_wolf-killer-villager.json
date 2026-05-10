@@ -1,0 +1,98 @@
+{
+  "game_id": "75c81422",
+  "seat_number": 5,
+  "role": "wolf-killer-villager",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。平安夜，信息确实不多。1、2、3、4号发言都比较平稳，没明显爆点。3号点我位置敏感，我认——但我底牌是好人，不怕被盘。目前场上没人聊爆，大家发言都比较保守，这本身可能有问题。我建议女巫和守卫藏好身份，别急着跳。预言家可以再观望一轮，或者跳出来带队。我暂时没有明确怀疑对象，但会重点关注那些发言模糊、逻辑前后不一致的人。先过，听完后面再说。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "hunter_shot",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "hunter_shot",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 9,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:48:42.957163+00:00"
+}

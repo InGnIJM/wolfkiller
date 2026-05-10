@@ -1,0 +1,96 @@
+{
+  "game_id": "16dbef39",
+  "seat_number": 8,
+  "role": "wolf-killer-werewolf",
+  "camp": "werewolf",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [
+      3,
+      9
+    ],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "8号玩家发言。7号跳预言家查杀3号，这个起跳时机和验人逻辑我有点怀疑。3号确实点了4号是银水，但4号反应过激，反而让我觉得3、4可能不是同一阵营。7号查杀3号，如果3号是狼，那4号大概率是好人；但如果7号是悍跳，那3号可能是被冤枉的好人。我建议先听3号怎么辩解，再决定出谁。另外，5号和6号发言偏中立，但6号点3、4、5互动有挑事嫌疑，我比较关注6号。暂时不站边，等3号发言再定。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "8号玩家发言。昨晚7号死了，确认他是真预言家，3号是狼。1号跳女巫报4号银水，我暂时认1号女巫身份，但银水不一定绝对干净，4号仍需观察。2号发言正，认好。昨天我质疑7号起跳时机，是因为当时信息少，现在看确实判断失误，但我是好人视角。5号和6号发言中立，但6号一直点3、4、5互动有挑事嫌疑，我建议今天出6号，他划水带节奏的嫌疑最大。5号位置敏感，再听一轮。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "8号玩家遗言。我出局了，但我要把话说完。首先，7号是真预言家，3号是狼人，这已经确认了。我昨天质疑7号起跳时机，是因为当时平安夜没信息，我作为好人谨慎一点很正常——狼人杀里谁一开始就能100%站对边？现在看7号是真预言家，我承认判断失误，但这不是狼人的逻辑。\n\n重点来了：1号跳女巫报4号银水，但1号为什么在7号死后才跳女巫？如果1号真是女巫，首夜救4号，昨天白天就应该跳出来报银水带队，而不是等预言家死了才跳。1号这个女巫身份很可疑，4号银水也不一定干净——狼人自刀骗药是常见套路。\n\n另外，6号一直点3、4、5互动有挑事嫌疑，昨天白天他划水带节奏，今天又跟风踩我，明显是狼人在找扛推位。5号位置中间，发言一直中立，但刻意点3、4互动，也有嫌疑。我建议好人今天出6号，他划水带节奏的嫌疑最大；如果不出6号，就盘1号和4号的双狼自刀骗药套路。9号无脑站7号，但7号是真预言家，9号可能是倒钩狼，别被他骗了。我出局了，但狼队还在，好人别被带偏。过。"
+    },
+    {
+      "round": 3,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 8,
+        "target_seat": 8,
+        "reasoning": "8号昨天质疑7号起跳时机，今天又甩锅给6号，明显在转移焦点，是狼人找扛推位的常见手法。出8号可以进一步坐实好人身份，同时保护9号队友不被怀疑。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "poison",
+        "round_number": 3
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:29:48.754351+00:00"
+}

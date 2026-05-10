@@ -1,0 +1,4 @@
+{"timestamp": "2026-05-10T09:26:02.539186+00:00", "round": 0, "phase": "night", "operation": "phase_change", "seat": null, "data": {"new_phase": "night"}}
+{"timestamp": "2026-05-10T09:26:10.962754+00:00", "round": 1, "phase": "night", "operation": "werewolf_kill", "seat": null, "data": {"wolf_seats": [3, 4, 7], "target": 2, "votes": [{"player_seat": 3, "action_type": "kill", "target_seat": 2, "reasoning": "2号可能是预言家，先刀他减少威胁。"}]}}
+{"timestamp": "2026-05-10T09:26:11.565616+00:00", "round": 1, "phase": "night", "operation": "witch_save", "seat": 1, "data": {"wolf_target": 2, "used_antidote": false}}
+{"timestamp": "2026-05-10T09:26:13.352800+00:00", "round": 1, "phase": "night", "operation": "hunter_death", "seat": 2, "data": {"message": "猎人死亡，可以开枪"}}

@@ -1,0 +1,104 @@
+{
+  "game_id": "75c81422",
+  "seat_number": 6,
+  "role": "wolf-killer-villager",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "6号玩家发言。平安夜信息太少，前面几位发言都中规中矩，没明显爆点。不过5号玩家主动让预言家跳出来带队，这点让我有点在意——在信息这么少的情况下，预言家跳出来容易被狼人刀，5号这个建议有点急。我暂时没有明确怀疑对象，但会重点关注5号后续的发言和投票。建议女巫和守卫继续藏好，预言家可以再观望一轮。先过，听完后面再说。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "6号玩家发言。昨晚8号预言家被刀，5号平民出局，狼人刀法精准。1号跳猎人，我暂时认下。3号是金水，站边8号预言家，逻辑清晰。我昨天点5号建议预言家跳出来急，是因为在信息少的情况下跳出来容易被刀，这个视角没问题。目前我怀疑7号——他昨天跟风点3号，刻意带节奏，发言比较模糊。建议今天从7号出人，先听7号辩解。我底牌是好人，会跟好人的逻辑走。过。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "hunter_shot",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "hunter_shot",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 9,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:48:42.958207+00:00"
+}

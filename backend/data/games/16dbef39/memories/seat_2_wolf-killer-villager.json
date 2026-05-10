@@ -1,0 +1,87 @@
+{
+  "game_id": "16dbef39",
+  "seat_number": 2,
+  "role": "wolf-killer-villager",
+  "camp": "good",
+  "is_alive": true,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。1号说得有道理，平安夜大概率女巫救人了。我是好人，目前没太多信息，但我觉得1号发言比较正，暂时认好。后面发言的玩家，尤其是位置偏中间的，多聊聊心路历程，别划水。我比较关注5号和7号，这两个位置容易出狼，等他们发言再判断。警上如果有对跳，我会重点听验人逻辑。暂时不站边，过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。昨晚7号死了，确认7号是真预言家，3号是狼人。1号跳女巫报4号银水，这个信息很关键。目前我认1号女巫、4号银水暂时偏好。8号昨天质疑7号起跳时机，动机不做好；9号无脑站7号，但7号是真预言家，9号反而可能站对边——但9号发言太顺滑，不排除是狼人顺势倒钩。建议今天在8、9里出，我倾向先出8号，他打7号起跳可疑的节奏太像狼人转移视线。过。"
+    },
+    {
+      "round": 3,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 2,
+        "target_seat": 8,
+        "reasoning": "8号昨天在7号跳预言家查杀3号时，质疑7号起跳时机，动机明显不做好。今天7号被刀确认是真预言家后，8号又试图甩锅给6号，转移焦点，狼面最大。我作为平民，跟着女巫和银水的判断走，先出8号。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "poison",
+        "round_number": 3
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:29:48.745059+00:00"
+}

@@ -1,0 +1,80 @@
+{
+  "game_id": "c00b7085",
+  "seat_number": 4,
+  "role": "wolf-killer-witch",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": true,
+    "has_gun": false,
+    "last_wolf_kill_target": 8
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "4号玩家发言。平安夜，我救了人，银水是谁暂时不报，免得被狼人抿身份。1号踩2和5，但自己也没爆出核心信息，有点带节奏的嫌疑。2号反打1号，但逻辑不够硬。3号逻辑清晰，暂时认好。建议预言家这轮起跳，别藏着，不然好人容易乱票。我会先听预言家报验人，再决定站边。这轮别急着归票，多听几轮发言再定。过。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:34:24.424395+00:00"
+}

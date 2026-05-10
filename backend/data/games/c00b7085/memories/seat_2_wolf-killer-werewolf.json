@@ -1,0 +1,105 @@
+{
+  "game_id": "c00b7085",
+  "seat_number": 2,
+  "role": "wolf-killer-werewolf",
+  "camp": "werewolf",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [
+      3,
+      7
+    ],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。平安夜，女巫没开药的话狼人可能空刀，但更可能是女巫救了人。1号踩我和5号，我反而觉得1号有点带节奏，急着给压力。我是好人，暂时没太多信息，但建议预言家早点跳出来带队，别藏着。这轮我会先观察1号和5号，看他们后续怎么聊。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。6号遗言说3号是查杀，但7、8、9集体站边3号，这抱团行为确实可疑。我倾向6号是真预言家，3号是狼。1号踩我，但1号这轮逻辑偏好人，暂放。4号女巫被刀，狼人灭口意图明显。这轮我建议出3号，他踩1号找抗推位，逻辑看似清晰实则带节奏。7、8、9里至少两狼，但先解决3号这个铁狼。好人别分票，归票3号。过。"
+    },
+    {
+      "round": 3,
+      "phase": "speech",
+      "type": "speech",
+      "text": "2号玩家发言。昨晚5号被刀，我倾向6号是真预言家，3号是铁狼。1号平民出局后，场上剩2、3、7、8、9，3号狼面最大，7、8、9集体站边3号冲票6号，行为像狼队抱团。我建议这轮出3号，他踩1号找抗推位，逻辑看似清晰实则带节奏。好人别分票，归票3号。过。"
+    },
+    {
+      "round": 4,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 2,
+        "target_seat": 3,
+        "reasoning": "我是狼人，3号是狼队友。但为了伪装好人，我必须假装站6号预言家，死咬3号是铁狼。目前场上2、3、7、8、9五人，7、8、9都站3号，我孤军奋战咬3号能显得逻辑自洽，且3号被出局后可以顺势踩7、8、9是狼队友，继续带节奏。投票3号既能做实我的好人身份，又不影响狼队整体优势（3号出局后我们还有两狼）。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:34:24.422442+00:00"
+}

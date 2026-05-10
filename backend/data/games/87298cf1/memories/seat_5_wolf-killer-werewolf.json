@@ -1,0 +1,124 @@
+{
+  "game_id": "87298cf1",
+  "seat_number": 5,
+  "role": "wolf-killer-werewolf",
+  "camp": "werewolf",
+  "is_alive": true,
+  "private_knowledge": {
+    "teammates": [
+      3,
+      4
+    ],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 4,
+      "phase": "night",
+      "action": {
+        "player_seat": 5,
+        "action_type": "kill",
+        "target_seat": 8,
+        "reasoning": "场上剩4人（3、5、8、9），两狼两好人。8号发言理性认7号预言家最快，像神职带队，很可能是猎人。刀中8号若他是猎人，开枪可能带走9号，直接屠神胜利；若刀错是平民，明天白天可盘9号是狼将其投出。队友3号已同意此方案，统一行动。"
+      }
+    },
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。昨晚平安夜，我觉得女巫救人的可能性很大，首夜狼人空刀概率确实不高。前面1到4号发言都比较正常，没什么明显的爆点。第一轮信息少，大家多聊聊自己的分析，别划水。我会认真听后面6号、7号、8号、9号的发言，看看有没有逻辑矛盾的地方。目前没有特别怀疑的对象，先观察吧。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。昨晚6号死了，我来分析一下。我比较倾向于6号是真女巫，理由很简单——如果6号是狼人悍跳，真女巫毒了她，那今天真女巫应该跳出来带队，但现在没人跳，说明6号大概率是真女巫，昨晚被狼刀了。1号说6号可能是狼人悍跳被毒，这个观点我暂时不太认同，因为真女巫没理由不跳。另外，2号说4号保3号所以3号可疑，我觉得这个逻辑有点草率——狼人保人可能是想脏人，2号拿狼人的话当证据打人，这个行为本身值得观察。7号、8号、9号还没怎么发言，我想听听你们的分析和站边。过。"
+    },
+    {
+      "round": 3,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。昨晚7号预言家被刀，意料之中。\n\n现在场上5个人，两狼三好，这轮非常关键。我来分析一下狼坑：\n\n首先，4号狼人临死前踩1号、保2号和3号。1号已经被放逐是平民，说明4号踩1号是脏好人。那4号保2号和3号是什么意思？可能保的是狼队友，也可能故意保好人来脏他们。\n\n我比较怀疑2号——4号保了你，而且你昨天拿4号的话打3号，这个逻辑确实有点牵强。但3号也不能完全排除嫌疑，毕竟4号也保了他。\n\n8号和9号昨天认7号很快，也不能完全排除。我建议今天先听大家再聊聊，别急着投票。过。"
+    },
+    {
+      "round": 4,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 5,
+        "target_seat": 2,
+        "reasoning": "场上5人，两狼三好。2号昨天拿4号狼人保我的话打我是狼，这个逻辑明显有问题——狼人保人很可能是想脏人，2号作为好人不应该拿狼人的话当铁证来打人。而且4号狼人临死前保了2号和3号，如果2号是狼队友，4号保他很合理。今天先投2号，既能推掉一个疑似狼人，又能让好人内部互打，对我们狼人有利。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "hunter_shot",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T12:35:47.777017+00:00"
+}

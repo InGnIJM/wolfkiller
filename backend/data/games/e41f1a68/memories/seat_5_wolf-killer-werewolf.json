@@ -1,0 +1,124 @@
+{
+  "game_id": "e41f1a68",
+  "seat_number": 5,
+  "role": "wolf-killer-werewolf",
+  "camp": "werewolf",
+  "is_alive": true,
+  "private_knowledge": {
+    "teammates": [
+      1,
+      9
+    ],
+    "check_results": [],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 4,
+      "phase": "night",
+      "action": {
+        "player_seat": 5,
+        "action_type": "kill",
+        "target_seat": 4,
+        "reasoning": "4号逻辑清晰、带头投1号和9号，身份偏好人，是场上最可能带节奏的好人。刀他能让7号成为焦点，明天白天我伪装好人带节奏投7号，女巫已用毒，今晚刀人成功率很高。"
+      }
+    },
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。平安夜，女巫大概率救了人，好人轮次没落后。1号点3号和6号，但3号反驳说这是第一轮白天，1号那说法确实有问题，要么是记错，要么是故意踩人，我倾向后者。2号跟风1号，逻辑偏软，像在打配合。4号分析得比较客观，我暂时觉得4号偏好。6号话少确实可疑，但今天我更想先听1号和2号怎么圆场。如果1号改口，那狼面就大了。我建议今天先投1号，或者至少让他解释清楚。过。"
+    },
+    {
+      "round": 2,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。8号是真预言家被刀，1号狼人已出局，局势对好人有利。9号昨天质疑8号、不跟票投1号，行为最可疑，今天必须解释清楚。2号跟风1号虽然可疑，但1号遗言想保你，反而可能是在脏你，我倾向先放一放。4号分析客观，6号、7号跟票干净，暂时偏好。这轮我建议先出9号，他踩真预言家逻辑站不住脚。如果9号解释不清，那就是铁狼。好人集中投票，别分票。过。"
+    },
+    {
+      "round": 3,
+      "phase": "speech",
+      "type": "speech",
+      "text": "5号玩家发言。现在存活4、6、7三人，狼人只剩一个。1号遗言想脏4号，但4号从头到尾逻辑清晰，带头投1号和9号，行为干净。我怀疑6号，他前期划水，后期跟风太快，狼人最擅长这种隐藏方式。7号发言偏稳，但也不能完全排除。这轮我建议先出6号，他可疑点最多。好人集中投票，别分票。过。"
+    },
+    {
+      "round": 4,
+      "phase": "vote_casting",
+      "type": "vote",
+      "vote": {
+        "voter_seat": 5,
+        "target_seat": 6,
+        "reasoning": "现在只剩4、6、7三人，狼人只有一个。1号遗言想脏4号，但4号逻辑清晰、带头投1号和9号，行为干净，我暂时信他。7号发言偏稳，但跟票为主，可疑点中等。6号前期划水，后期跟风太快，刚才还急着归票7号转移焦点，狼人最擅长这种隐藏方式。我怀疑6号是最后一狼，这轮先出他。我作为狼人，必须带节奏投6号，保住自己并争取最后胜利。"
+      }
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 8,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 9,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "poison",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "exile",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T09:44:46.282180+00:00"
+}

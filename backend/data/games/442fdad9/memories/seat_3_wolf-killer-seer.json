@@ -1,0 +1,100 @@
+{
+  "game_id": "442fdad9",
+  "seat_number": 3,
+  "role": "wolf-killer-seer",
+  "camp": "good",
+  "is_alive": false,
+  "private_knowledge": {
+    "teammates": [],
+    "check_results": [
+      {
+        "target_seat": 7,
+        "result": "werewolf",
+        "round": 1
+      },
+      {
+        "target_seat": 4,
+        "result": "werewolf",
+        "round": 2
+      }
+    ],
+    "has_antidote": false,
+    "has_poison": false,
+    "has_gun": false,
+    "last_wolf_kill_target": null
+  },
+  "action_history": [
+    {
+      "round": 1,
+      "phase": "speech",
+      "type": "speech",
+      "text": "3号发言：我是预言家，昨夜查验7号，7号是查杀，铁狼一个。平安夜说明女巫救了人，银水大概率是好身份。1号和2号发言比较正常，暂时认好。7号，你准备怎么解释？建议今天全票出7，如果7号是狼，后面顺藤摸瓜还能盘出他的狼同伴。过。"
+    }
+  ],
+  "witnessed_events": [
+    {
+      "round": 1,
+      "event": "death",
+      "details": {
+        "player_seat": 7,
+        "cause": "exile",
+        "round_number": 1
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 3,
+        "cause": "wolf_kill",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 2,
+      "event": "death",
+      "details": {
+        "player_seat": 4,
+        "cause": "exile",
+        "round_number": 2
+      }
+    },
+    {
+      "round": 3,
+      "event": "death",
+      "details": {
+        "player_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 3
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 5,
+        "cause": "wolf_kill",
+        "round_number": 4
+      }
+    },
+    {
+      "round": 4,
+      "event": "death",
+      "details": {
+        "player_seat": 2,
+        "cause": "exile",
+        "round_number": 4
+      }
+    },
+    {
+      "round": 5,
+      "event": "death",
+      "details": {
+        "player_seat": 6,
+        "cause": "wolf_kill",
+        "round_number": 5
+      }
+    }
+  ],
+  "last_updated": "2026-05-10T11:15:03.430894+00:00"
+}
