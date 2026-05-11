@@ -50,6 +50,11 @@ export function useWebSocket() {
               roundNumber: msg.round_number || 0,
             });
             break;
+          case 'player_died':
+            if (msg.death) {
+              useGameStore.getState().addDeath(msg.death);
+            }
+            break;
           case 'paused_state':
             setPaused(msg.paused ?? false);
             break;

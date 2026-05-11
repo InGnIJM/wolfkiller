@@ -36,7 +36,17 @@ export async function fetchGameDetail(gameId: string): Promise<{
   game_id: string;
   phase: string;
   round_number: number;
-  players: Record<number, { seat_number: number; is_alive: boolean; revealed_role: string | null; is_sheriff: boolean }>;
+  players: Record<number, {
+    seat_number: number;
+    role: string;
+    camp: string;
+    is_alive: boolean;
+    has_antidote: boolean;
+    has_poison: boolean;
+    has_gun: boolean;
+    revealed_role: string | null;
+    is_sheriff: boolean;
+  }>;
   win_result: { winning_camp: string; reason: string } | null;
 }> {
   const res = await fetch(`${API_BASE}/api/games/${gameId}`);

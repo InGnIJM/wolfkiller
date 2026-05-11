@@ -70,7 +70,6 @@ class GameEngine:
         self.sm.transition(SM_Event.ROLES_ASSIGNED)
         await self._broadcast_phase_change()
 
-        self.game_logger.log_phase_change(self.game_id, "night", 0)
         await self._game_loop()
 
     async def stop(self) -> None:
@@ -91,6 +90,7 @@ class GameEngine:
 
     def _assign_roles(self) -> None:
         """Assign roles to player state based on the pre-built roles dict (already shuffled)."""
+        players_dict: dict = {}
         for seat, role_instance in self.roles.items():
             role_name = role_instance.role_name
             camp = self._camp_from_role(role_name)
@@ -101,6 +101,16 @@ class GameEngine:
             if "hunter" in role_name:
                 player.has_gun = True
             self.state.players[seat] = player
+            players_dict[str(seat)] = {
+                "role": role_name,
+                "camp": camp,
+                "is_alive": True,
+                "has_antidote": player.has_antidote,
+                "has_poison": player.has_poison,
+                "has_gun": player.has_gun,
+                "revealed_role": None,
+            }
+        self.game_logger.log_role_init(self.game_id, players_dict)
 
     # =================================================================
     # Main Loop
@@ -725,6 +735,9 @@ class GameEngine:
 
     async def _broadcast_phase_change(self) -> None:
         self.state.phase = self.sm.get_state()
+        self.game_logger.log_phase_change(
+            self.game_id, self.state.phase.value, self.state.round_number,
+        )
         await self.event_bus.publish(
             BusEvent.PHASE_CHANGED, phase=self.state.phase.value,
             round_number=self.state.round_number, state=self.state,

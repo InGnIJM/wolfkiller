@@ -75,7 +75,12 @@ async def get_game(game_id: str):
         players={
             s: {
                 "seat_number": p.seat_number,
+                "role": p.role,
+                "camp": p.camp,
                 "is_alive": p.is_alive,
+                "has_antidote": p.has_antidote,
+                "has_poison": p.has_poison,
+                "has_gun": p.has_gun,
                 "revealed_role": p.revealed_role,
                 "is_sheriff": p.is_sheriff,
             }

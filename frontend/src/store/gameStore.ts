@@ -33,6 +33,7 @@ interface GameStore {
   setPhase: (phase: string, roundNumber: number) => void;
   addSpeech: (speech: SpeechRecord) => void;
   addVote: (vote: VoteRecord) => void;
+  addDeath: (death: DeathRecord) => void;
   setWinResult: (result: { winning_camp: string; reason: string }) => void;
   setConnected: (connected: boolean) => void;
   setNightSubstep: (data: NightSubstepData | null) => void;
@@ -40,7 +41,7 @@ interface GameStore {
   setCurrentSpeaker: (seat: number | null) => void;
 
   // log-driven actions
-  initPlayersFromDetail: (players: Record<number, { seat_number: number; is_alive: boolean }>) => void;
+  initPlayersFromDetail: (players: Record<number, any>) => void;
   loadLogs: (logs: GameLogs) => void;
   mergeLogs: (logs: GameLogs) => void;
   seekTo: (index: number) => void;
@@ -98,7 +99,7 @@ function startTimer(store: any) {
       return;
     }
     store.getState().stepForward();
-  }, speed * 1000);
+  }, speed * 3000);
 }
 
 function buildTimeline(logs: GameLogs): TimelineEntry[] {
@@ -172,9 +173,19 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
   for (let i = 0; i <= upToIndex && i < timeline.length; i++) {
     const entry = timeline[i];
 
+    // Track round from any entry (round is at top level for both types)
+    const entryRound = entry.round_number ?? entry.round;
+    if (entryRound !== undefined && entryRound !== null && entryRound > roundNumber) {
+      roundNumber = entryRound;
+    }
+
     if (entry.type === 'conversation') {
       if (entry.speaker_seat) {
         ensurePlayer(players, entry.speaker_seat, entry.speaker_role);
+      }
+      // Set current speaker from public conversations
+      if (entry.scope === 'public' && entry.speaker_seat) {
+        currentSpeaker = entry.speaker_seat;
       }
       // Compute highlighted seats from conversation scope
       if (entry.scope === 'werewolf') {
@@ -192,7 +203,6 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
       switch (entry.operation) {
         case 'phase_change':
           phase = entry.data?.new_phase || entry.phase;
-          if (entry.data?.round !== undefined) roundNumber = entry.data.round;
           highlightedSeats = [];
           wolfKillTarget = null;
           break;
@@ -281,6 +291,15 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
           }
           if (entry.data?.target) {
             wolfKillTarget = entry.data.target;
+            if (players[entry.data.target]) {
+              players[entry.data.target].is_alive = false;
+              players[entry.data.target].revealed_role = players[entry.data.target].role;
+            }
+            deathHistory.push({
+              player_seat: entry.data.target,
+              cause: 'hunter_shot',
+              round_number: entry.round || 0,
+            });
           }
           break;
         case 'game_over':
@@ -335,6 +354,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentSpeaker: vote.voter_seat,
     })),
 
+  addDeath: (death) =>
+    set((s) => {
+      const players = { ...s.players };
+      if (players[death.player_seat]) {
+        players[death.player_seat] = {
+          ...players[death.player_seat],
+          is_alive: false,
+          revealed_role: players[death.player_seat].revealed_role || players[death.player_seat].role,
+        };
+      }
+      return {
+        players,
+        deathHistory: [...s.deathHistory, death],
+      };
+    }),
+
   setWinResult: (result) =>
     set({ winResult: result, phase: 'game_over', showWinOverlay: true }),
 
@@ -352,19 +387,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   // ── Log-driven actions ──────────────────────────────────
 
-  initPlayersFromDetail: (detail: Record<number, { seat_number: number; is_alive: boolean }>) => {
+  initPlayersFromDetail: (detail: Record<number, any>) => {
     const players: Record<number, PlayerFullState> = {};
     for (const [seatStr, p] of Object.entries(detail)) {
       const seatNum = parseInt(seatStr);
       players[seatNum] = {
         seat_number: p.seat_number || seatNum,
-        role: '',
-        camp: '',
+        role: p.role || '',
+        camp: p.camp || '',
         is_alive: p.is_alive,
-        has_antidote: false,
-        has_poison: false,
-        has_gun: false,
-        revealed_role: null,
+        has_antidote: p.has_antidote ?? false,
+        has_poison: p.has_poison ?? false,
+        has_gun: p.has_gun ?? false,
+        revealed_role: p.revealed_role ?? null,
       };
     }
     set({ players });
@@ -426,6 +461,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
           revealed_role: null,
         };
       }
+      // Fall back to existingPlayers for any seats we couldn't infer roles for
+      for (const [seatStr, p] of Object.entries(existingPlayers)) {
+        const seatNum = parseInt(seatStr);
+        if (!players[seatNum]) {
+          players[seatNum] = { ...p };
+        }
+      }
     }
 
     set({
@@ -448,7 +490,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ timeline: fullTimeline });
 
     if (wasAtEnd) {
-      const newIndex = fullTimeline.length - 1;
+      let newIndex = fullTimeline.length - 1;
+      // Skip speak operations (same logic as seekTo)
+      while (newIndex > 0 && fullTimeline[newIndex].type === 'operation' && fullTimeline[newIndex].operation === 'speak') {
+        newIndex--;
+      }
       const derived = deriveState(fullTimeline, newIndex, basePlayers);
       set({
         timelineIndex: newIndex,
@@ -460,8 +506,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   seekTo: (index: number) => {
     const { timeline, winOverlayDismissed, players: basePlayers } = get();
-    const clamped = Math.max(0, Math.min(index, timeline.length - 1));
+    let clamped = Math.max(0, Math.min(index, timeline.length - 1));
     if (clamped < 0) return;
+    // Skip speak operation entries (they duplicate conversation entries)
+    while (clamped < timeline.length - 1 && timeline[clamped].type === 'operation' && timeline[clamped].operation === 'speak') {
+      clamped++;
+    }
+    while (clamped > 0 && timeline[clamped].type === 'operation' && timeline[clamped].operation === 'speak') {
+      clamped--;
+    }
     const derived = deriveState(timeline, clamped, basePlayers);
     set({
       timelineIndex: clamped,

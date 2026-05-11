@@ -78,7 +78,7 @@ class GameLogger:
     ) -> None:
         self.log_operation(game_id, "hunter_shoot", round_num, "night",
                            seat=seat,
-                           data={"shoot_target": shoot_target})
+                           data={"target": shoot_target})
 
     def log_deaths(
         self, game_id: str, round_num: int, deaths: list[dict],
@@ -103,6 +103,12 @@ class GameLogger:
     ) -> None:
         self.log_operation(game_id, "vote_result", round_num, "vote_resolution",
                            data={"exiled": exiled, "tally": tally})
+
+    def log_role_init(
+        self, game_id: str, players: dict,
+    ) -> None:
+        self.log_operation(game_id, "role_init", 0, "role_deal",
+                           data={"players": players})
 
     def log_game_over(
         self, game_id: str, round_num: int, winner: str, reason: str,

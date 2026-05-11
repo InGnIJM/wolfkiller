@@ -32,6 +32,7 @@ class GameService:
         self._tasks: dict[str, asyncio.Task] = {}
 
         self.event_bus.subscribe(BusEvent.PHASE_CHANGED, self._on_phase_changed)
+        self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._on_player_died)
         self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._on_speech_made)
         self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
@@ -116,6 +117,16 @@ class GameService:
             round_number=kwargs.get("round_number", 0),
             state=state.get_public_state(),
         )
+
+    async def _on_player_died(self, **kwargs) -> None:
+        death = kwargs.get("death")
+        if death is None:
+            return
+        death_dict = death.to_dict() if hasattr(death, "to_dict") else death
+        for game_id in self._games:
+            await self.ws_manager.broadcast(
+                game_id, "player_died", death=death_dict,
+            )
 
     async def _on_speech_made(self, **kwargs) -> None:
         speech = kwargs.get("speech")

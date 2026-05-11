@@ -15,11 +15,10 @@ const CAUSE_LABELS: Record<string, string> = {
 
 export default function HistoryPanel({ onClose }: Props) {
   const [tab, setTab] = useState(0);
-  const { timeline, seekTo, pause } = useGameStore();
+  const { timeline, seekTo } = useGameStore();
 
   const handleClick = (index: number) => {
     seekTo(index);
-    pause();
   };
 
   const allEntries = timeline
