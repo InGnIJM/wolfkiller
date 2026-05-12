@@ -184,6 +184,14 @@ SYSTEM_PROMPT = """你正在玩一局狼人杀游戏。你不是AI助手，你�
 - 避免使用模板化的开场白（如每个人都说"信息不多，大家多发言别划水"）。用你自己的语言和风格开场
 - 结束发言时不要机械地说"过"，可以用更自然的方式收尾，如"我说完了"、"先这样吧"、"就这些"、"听听后面怎么说"等，每次换一种
 
+## 发言顺序规则（极其重要）
+
+- 每轮白天发言，存活玩家按座位号顺序依次发言。你会在 prompt 中看到完整发言顺序
+- **严禁评价尚未发言的玩家**：还没有轮到的人不叫"沉默"、"划水"或"不敢说话"
+- 比如 5 号发言时 7 号还没说话，这不代表 7 号有问题——只是他还没轮到
+- 只有已经发过言的玩家，你才能基于他们的发言内容进行评价和推理
+- 如果你发现对话记录中某玩家在本轮没有说话，请先确认他是否还没轮到，而不是妄下结论
+
 ## 观赏性与个性化发言（非常重要）
 
 这局游戏有观众在观看！你的发言直接影响游戏的观赏性。请务必做到以下几点：
@@ -327,6 +335,9 @@ class PromptBuilder:
 - 存活玩家：{self._format_alive_players(state)}
 - 已出局玩家：{self._format_dead_players(state)}
 
+## 本轮发言进度
+{self._format_speaking_progress(state, seat)}
+
 ## 你的特权信息
 {self._build_role_info(role_name, seat, state, extra)}
 
@@ -335,6 +346,41 @@ class PromptBuilder:
         return prompt
 
     # ── Formatting helpers ─────────────────────────────────────
+
+    def _format_speaking_progress(self, state: GameState, seat: int) -> str:
+        """Generate speaking progress info so LLM knows who has spoken and who hasn't."""
+        order = state.speaking_order
+        if not order:
+            return "（当前不是发言阶段）"
+
+        total = len(order)
+        try:
+            pos = order.index(seat) + 1
+        except ValueError:
+            pos = 0
+
+        already_spoken = [s for s in order if order.index(s) < order.index(seat)]
+        yet_to_speak = [s for s in order if order.index(s) > order.index(seat)]
+
+        lines = [
+            f"发言总人数：{total}人",
+            f"发言顺序：{' → '.join(f'{s}号' for s in order)}",
+            f"当前发言者：{seat}号（你是第 {pos}/{total} 位发言）",
+        ]
+        if already_spoken:
+            lines.append(f"已发言：{'、'.join(f'{s}号' for s in already_spoken)}")
+        else:
+            lines.append("已发言：无（你是第一个发言）")
+
+        if yet_to_speak:
+            lines.append(f"尚未发言：{'、'.join(f'{s}号' for s in yet_to_speak)}")
+
+        lines.append("")
+        lines.append("⚠️ 重要规则：")
+        lines.append("- 尚未发言的玩家不是「沉默」或「不发言」——他们只是还没轮到。")
+        lines.append("- 不要因为后面的玩家还没说话就怀疑他们。")
+        lines.append("- 你只能评价已经发过言的玩家的发言内容。")
+        return "\n".join(lines)
 
     def _format_alive_players(self, state: GameState) -> str:
         alive = state.alive_players()
@@ -373,9 +419,12 @@ class PromptBuilder:
                 prefix = "[狼队频道] "
             elif r.scope.value == "system":
                 prefix = "[系统] "
+            round_tag = ""
+            if r.round_number == round_num and r.scope.value == "public":
+                round_tag = "【本轮】"
             speaker = f"{r.speaker_seat}号" if r.speaker_seat else "系统"
             content = r.content if len(r.content) <= 300 else r.content[:300] + "..."
-            lines.append(f"{prefix}{speaker}: {content}")
+            lines.append(f"{prefix}{round_tag}{speaker}: {content}")
         return "\n".join(lines)
 
     def _build_role_info(
@@ -483,10 +532,24 @@ class PromptBuilder:
             )
 
         if context == "day_speech":
+            order = state.speaking_order
+            pos = order.index(seat) + 1 if seat in order else 0
+            total = len(order)
+            already = [f"{s}号" for s in order if order.index(s) < order.index(seat)] if seat in order else []
+            not_yet = [f"{s}号" for s in order if order.index(s) > order.index(seat)] if seat in order else []
+            already_str = "、".join(already) if already else "无（你是第一位发言）"
+            not_yet_str = "、".join(not_yet) if not_yet else "无（你是最后一位发言）"
+            pos_info = f"你是第 {pos}/{total} 位发言者。" if pos else ""
             return (
                 "## 你的任务：白天发言\n"
-                "现在轮到你发言。请按以下步骤操作：\n"
-                "1. **先深度思考**：回顾本轮对话，分析每个玩家的发言逻辑和投票行为，找出可疑之处。思考你的身份该如何发言（狼人伪装好人？神职报信息？平民分析推理？）。\n"
+                f"现在轮到你发言。{pos_info}\n"
+                f"在你前面已发言的玩家：{already_str}\n"
+                f"在你后面尚未发言的玩家：{not_yet_str}\n\n"
+                "**关键提示**：\n"
+                "- 只能评价已经发过言的人——没轮到的人不是「沉默」，只是还没机会说\n"
+                "- 不要因为后面的玩家还没说话就攻击或怀疑他们——这不合逻辑\n"
+                "- 请按以下步骤操作：\n"
+                "1. **先深度思考**：回顾本轮对话，分析每个**已发言**玩家的发言逻辑和投票行为，找出可疑之处。思考你的身份该如何发言（狼人伪装好人？神职报信息？平民分析推理？）。\n"
                 "   **特别注意**：前面发言的玩家已经说过什么？不要重复他们的话！找到他们没提到的角度，或者直接点名你同意/不同意谁。\n"
                 "2. **再调用函数发言**：思考完毕后，调用 `speak` 函数发表你的发言。\n"
                 "   - 发言要有风格：选择激进攻击、理性分析、情绪渲染等风格之一\n"

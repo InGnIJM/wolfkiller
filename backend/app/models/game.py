@@ -88,6 +88,8 @@ class GameState:
     win_result: Optional[dict] = None
     last_wolf_kill_target: Optional[int] = None
     sheriff_election_complete: bool = False
+    speaking_order: list[int] = field(default_factory=list)  # 本轮发言顺序
+    current_speaker: Optional[int] = None  # 当前正在发言的玩家
 
     def alive_players(self) -> dict[int, PlayerState]:
         return {s: p for s, p in self.players.items() if p.is_alive}

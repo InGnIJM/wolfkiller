@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>狼人杀发言顺序问题 - 解决方案</title>
+<style>
+  :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eee; --muted: #8892b0; --code-bg: #0f0f23; --green: #4ecca3; --yellow: #ffc107; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.7; padding: 2rem; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 2rem; margin-bottom: 0.5rem; color: var(--accent); }
+  h2 { font-size: 1.4rem; margin: 2rem 0 1rem; padding-bottom: 0.4rem; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 1.1rem; margin: 1.2rem 0 0.6rem; color: var(--green); }
+  p, li { color: var(--muted); }
+  li { margin: 0.3rem 0; }
+  ul, ol { padding-left: 1.5rem; }
+  .card { background: var(--card); border-radius: 10px; padding: 1.5rem; margin: 1rem 0; border-left: 4px solid var(--accent); }
+  .card.green { border-left-color: var(--green); }
+  .card.yellow { border-left-color: var(--yellow); }
+  pre { background: var(--code-bg); border-radius: 8px; padding: 1.2rem; overflow-x: auto; margin: 0.8rem 0; font-size: 0.85rem; line-height: 1.5; }
+  code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+  .code-label { font-size: 0.75rem; color: var(--accent); margin-bottom: -0.5rem; display: block; font-weight: bold; }
+  .file-path { color: var(--green); font-weight: bold; }
+  .diff-add { color: var(--green); }
+  .diff-del { color: var(--accent); text-decoration: line-through; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+  .badge-new { background: var(--green); color: #000; }
+  .badge-mod { background: var(--yellow); color: #000; }
+  .badge-keep { background: #555; color: #fff; }
+  .flow { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
+  .flow-step { background: var(--card); padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+  .flow-arrow { color: var(--accent); font-weight: bold; font-size: 1.2rem; }
+  .before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  @media (max-width: 768px) { .before-after { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid #333; }
+  th { color: var(--accent); font-weight: bold; }
+  .speech-demo { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+  .seat { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.85rem; }
+  .seat.spoken { background: #4ecca3; color: #000; }
+  .seat.speaking { background: var(--accent); color: #fff; border: 3px solid #fff; }
+  .seat.waiting { background: #333; color: #888; }
+  .seat.dead { background: #222; color: #555; text-decoration: line-through; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>狼人杀发言顺序问题 — 解决方案</h1>
+<p style="font-size:1.1rem; margin-bottom:1.5rem;">
+  <strong>问题：</strong>玩家轮流发言时，后面发言的玩家会评价尚未发言的玩家"沉默"或"不说话"，这不符合现实逻辑——未发言的玩家只是还没轮到而已。
+</p>
+
+<!-- ============================================================ -->
+<h2>一、问题根因分析</h2>
+
+<div class="card">
+  <h3>当前代码行为</h3>
+  <p>在 <code class="file-path">game_engine.py</code> 的 <code>_execute_speech_round()</code> 中：</p>
+  <pre><code>async def _execute_speech_round(self) -> None:
+    alive = list(self.state.alive_players().items())
+    for seat, player in alive:          # 按座位号顺序遍历
+        speech_text = await self.speak(seat, "day_speech")
+        # ... 记录发言到 conversation_log</code></pre>
+  <p style="margin-top:0.8rem;">玩家确实按顺序发言，但 <strong>LLM 收到的 prompt 中没有明确告知：</strong></p>
+  <ul>
+    <li>当前是第几位发言</li>
+    <li>本轮发言的完整顺序是什么</li>
+    <li>哪些人已经发过言、哪些人还没轮到</li>
+    <li>「未发言 ≠ 沉默不发言」这条关键规则</li>
+  </ul>
+  <p style="margin-top:0.8rem;">LLM 只能看到 conversation_log 中按时间排列的发言记录。如果第 3 号玩家还没发言，第 5 号玩家看到的 log 里没有 3 号的发言，LLM 可能会错误推断"3 号故意不说话"——实际上 3 号只是还没轮到。</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>二、解决方案总览</h2>
+
+<div class="card green">
+  <p><strong>核心思路：</strong>在每个玩家的发言 prompt 中，显式注入"发言进度信息"，让 LLM 明确知道谁已经说过、谁还没轮到、以及自己处于什么位置。</p>
+</div>
+
+<table>
+  <tr><th>修改文件</th><th>改动内容</th></tr>
+  <tr>
+    <td><span class="badge badge-mod">修改</span> <code class="file-path">app/models/game.py</code></td>
+    <td>GameState 新增 <code>speaking_order</code> 和 <code>current_speaker</code> 字段</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-mod">修改</span> <code class="file-path">app/core/game_engine.py</code></td>
+    <td>_execute_speech_round() 中设置发言顺序、标记当前发言者</td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-mod">修改</span> <code class="file-path">app/agents/prompt_builder.py</code></td>
+    <td>新增发言进度区块；增强 day_speech 任务指令；优化对话记录展示</td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>三、详细修改方案</h2>
+
+<!-- ---------- 3.1 ---------- -->
+<h3>3.1 GameState 模型 — 新增字段</h3>
+<p><code class="file-path">backend/app/models/game.py</code></p>
+
+<div class="card">
+  <pre><code>@dataclass
+class GameState:
+    game_id: str
+    phase: GamePhase = GamePhase.WAITING
+    round_number: int = 0
+    config: GameConfig = field(default_factory=GameConfig)
+    players: dict[int, PlayerState] = field(default_factory=dict)
+    sheriff: Optional[int] = None
+    speeches: list = field(default_factory=list)
+    votes: list = field(default_factory=list)
+    night_actions: list = field(default_factory=list)
+    death_history: list = field(default_factory=list)
+    win_result: Optional[dict] = None
+    last_wolf_kill_target: Optional[int] = None
+    sheriff_election_complete: bool = False
+<span class="diff-add">+   speaking_order: list[int] = field(default_factory=list)   # 本轮发言顺序（按座位排列）
++   current_speaker: Optional[int] = None                     # 当前正在发言的玩家座位号</span></code></pre>
+</div>
+
+<!-- ---------- 3.2 ---------- -->
+<h3>3.2 GameEngine — 维护发言进度</h3>
+<p><code class="file-path">backend/app/core/game_engine.py</code></p>
+
+<div class="card">
+  <p><strong>修改 <code>_execute_speech_round()</code>：</strong></p>
+  <pre><code>async def _execute_speech_round(self) -> None:
+    alive = list(self.state.alive_players().items())
+<span class="diff-add">+   # 设置本轮发言顺序
++   self.state.speaking_order = [s for s, _ in alive]</span>
+
+    for seat, player in alive:
+<span class="diff-add">+       # 标记当前发言者
++       self.state.current_speaker = seat</span>
+        speech_text = await self.speak(seat, "day_speech")
+        if speech_text:
+            self.state.speeches.append(SpeechRecord(...))
+            self.conversation_log.add_public_speech(...)
+            await self.event_bus.publish(...)
+            self.game_logger.log_speech(...)
+
+<span class="diff-add">+   # 发言轮次结束，清除状态
++   self.state.current_speaker = None
++   self.state.speaking_order = []</span>
+
+    self.sm.transition(SM_Event.SPEECHES_COMPLETE)
+    await self._broadcast_phase_change()</code></pre>
+
+  <p style="margin-top:1rem;"><strong>同样修改平票加赛发言部分</strong>（约第 578 行）：</p>
+  <pre><code># Extra speech round
+alive = list(self.state.alive_players().items())
+<span class="diff-add">+self.state.speaking_order = [s for s, _ in alive]</span>
+for seat, player in alive:
+<span class="diff-add">+   self.state.current_speaker = seat</span>
+    speech_text = await self.speak(seat, "day_speech")
+    ...
+<span class="diff-add">+self.state.current_speaker = None
++self.state.speaking_order = []</span></code></pre>
+</div>
+
+<!-- ---------- 3.3 ---------- -->
+<h3>3.3 PromptBuilder — 注入发言进度信息（核心修改）</h3>
+<p><code class="file-path">backend/app/agents/prompt_builder.py</code></p>
+
+<div class="card">
+  <p><strong>修改 ①：在 <code>_build_base()</code> 中新增发言进度区块</strong></p>
+  <pre><code>def _build_base(self, state, seat, role_name, conversation_log, **extra):
+    prompt = f"""{self._identity_block(seat, role_name)}
+
+## 当前游戏状态
+- 回合数：第{state.round_number}轮
+- 当前阶段：{self._cn_phase(state.phase.value)}
+- 存活玩家：{self._format_alive_players(state)}
+- 已出局玩家：{self._format_dead_players(state)}
+<span class="diff-add">+
++## 本轮发言进度
++{self._format_speaking_progress(state, seat)}
+
+## 你的特权信息
+{self._build_role_info(role_name, seat, state, extra)}
+
+## 本轮对话记录
+{self._format_conversations(conversation_log, state.round_number, seat, role_name)}"""
+    return prompt</code></pre>
+
+  <p style="margin-top:1rem;"><strong>修改 ②：新增 <code>_format_speaking_progress()</code> 方法</strong></p>
+  <pre><code>def _format_speaking_progress(self, state: GameState, seat: int) -> str:
+    """生成发言进度信息，让 LLM 明确知道谁发过言、谁还没发言。"""
+    order = state.speaking_order
+    if not order:
+        return "（当前不是发言阶段）"
+
+    total = len(order)
+    try:
+        pos = order.index(seat) + 1
+    except ValueError:
+        pos = 0
+
+    # 已发言的玩家（在当前发言者之前的）
+    already_spoken = [s for s in order if order.index(s) < order.index(seat)]
+    # 尚未发言的玩家
+    yet_to_speak = [s for s in order if order.index(s) > order.index(seat)]
+
+    lines = []
+    lines.append(f"发言总人数：{total}人")
+    lines.append(f"发言顺序：{' → '.join(f'{s}号' for s in order)}")
+    lines.append(f"当前发言者：{seat}号（你是第 {pos}/{total} 位发言）")
+
+    if already_spoken:
+        lines.append(f"已发言：{'、'.join(f'{s}号' for s in already_spoken)}")
+    else:
+        lines.append("已发言：无（你是第一个发言）")
+
+    if yet_to_speak:
+        lines.append(f"尚未发言：{'、'.join(f'{s}号' for s in yet_to_speak)}")
+
+    lines.append("")
+    lines.append("⚠️ 重要规则：")
+    lines.append("- 尚未发言的玩家不是「沉默」或「不发言」——他们只是还没轮到。")
+    lines.append("- 不要因为后面的玩家还没说话就怀疑他们。")
+    lines.append("- 你只能评价已经发过言的玩家的发言内容。")
+
+    return "\n".join(lines)</code></pre>
+
+  <p style="margin-top:1rem;"><strong>修改 ③：增强 <code>_task_instruction()</code> 中 <code>day_speech</code> 的任务说明</strong></p>
+  <pre><code>if context == "day_speech":
+<span class="diff-add">+   order = state.speaking_order
++   pos = order.index(seat) + 1 if seat in order else 0
++   total = len(order)
++   already = [f"{s}号" for s in order if order.index(s) < order.index(seat)] if seat in order else []
++   not_yet = [f"{s}号" for s in order if order.index(s) > order.index(seat)] if seat in order else []
++   already_str = "、".join(already) if already else "无（你是第一位发言）"
++   not_yet_str = "、".join(not_yet) if not_yet else "无（你是最后一位发言）"</span>
+    return (
+        "## 你的任务：白天发言\n"
+        "现在轮到你发言。请按以下步骤操作：\n"
+<span class="diff-add">+       f"**你是第 {pos}/{total} 位发言者。**\n"
++       f"在你前面已发言的玩家：{already_str}\n"
++       f"在你后面尚未发言的玩家：{not_yet_str}\n\n"
++       "**关键提示**：\n"
++       "- 只能评价已经发过言的玩家的发言内容\n"
++       "- 尚未发言的玩家不是「沉默」，只是还没轮到\n"
++       "- 不要因为后面的玩家还没说话就攻击或怀疑他们——这不公平也不合逻辑\n"
++       "- 如果你后面的人发言时攻击你，那是他们的权利，你现在无法回应——但你可以预判并先发制人\n\n"</span>
+        "1. **先深度思考**：回顾本轮对话，分析每个<b>已发言</b>玩家的发言逻辑..."</code></pre>
+</div>
+
+<!-- ---------- 3.4 ---------- -->
+<h3>3.4 对话记录优化</h3>
+<p><code class="file-path">backend/app/agents/prompt_builder.py</code> — <code>_format_conversations()</code></p>
+
+<div class="card yellow">
+  <p>在对话记录中标记每条发言属于「本轮」还是「往轮」，帮助 LLM 区分上下文：</p>
+  <pre><code>def _format_conversations(self, conversation_log, round_num, seat, role_name):
+    records = conversation_log.get_conversations_for_role(seat, role_name)
+    if not records:
+        return "（尚无对话记录）"
+
+    lines = []
+    for r in records[-30:]:
+        prefix = ""
+        if r.scope.value == "werewolf":
+            prefix = "[狼队频道] "
+        elif r.scope.value == "system":
+            prefix = "[系统] "
+<span class="diff-add">+       # 标记本轮发言 vs 往轮发言
++       round_tag = ""
++       if r.round_number == round_num and r.scope.value == "public":
++           round_tag = "【本轮】"</span>
+        speaker = f"{r.speaker_seat}号" if r.speaker_seat else "系统"
+        content = r.content if len(r.content) <= 300 else r.content[:300] + "..."
+<span class="diff-add">-       lines.append(f"{prefix}{speaker}: {content}")
++       lines.append(f"{prefix}{round_tag}{speaker}: {content}")</span>
+    return "\n".join(lines)</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2>四、系统提示词补充规则</h2>
+
+<div class="card">
+  <p>在 <code>SYSTEM_PROMPT</code> 的「发言与行为规范」部分追加以下内容：</p>
+  <pre><code>## 发言顺序规则（极其重要）
+
+- 每轮白天发言，玩家按座位顺序依次发言
+- 系统会在你的 prompt 中明确告知：发言顺序、你当前是第几位、谁已发言、谁尚未发言
+- **严禁评价尚未发言的玩家**：还没有轮到的人不叫"沉默"、"划水"或"不敢说话"
+- 比如 5 号发言时，7 号还没说话，这不代表 7 号有问题——只是他还没轮到
+- 只有已经发过言的人，你才能基于他们的发言内容进行评价和推理
+- 如果上轮某人没说话，那是因为你不在那轮或者他在那轮已经出局了——重新检查存活状态</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2>五、效果对比</h2>
+
+<div class="before-after">
+  <div class="card">
+    <h3 style="color:var(--accent);">修改前（有问题）</h3>
+    <p style="font-size:0.9rem;">5号玩家收到的 prompt 关键部分：</p>
+    <pre style="font-size:0.8rem;">## 当前游戏状态
+- 回合数：第2轮
+- 当前阶段：发言阶段
+- 存活玩家：1号、3号、5号、7号、8号、9号
+- 已出局玩家：2号(狼人)-被放逐、4号(平民)-被狼杀
+
+## 本轮对话记录
+1号: 我觉得7号比较可疑...
+3号: 我同意1号，7号的投票确实有问题...
+
+## 你的任务：白天发言
+现在轮到你发言...</pre>
+    <p style="margin-top:0.6rem; color:var(--accent);">❌ LLM 不知道 7号、8号、9号还没发言，可能说"7号为什么不说话"</p>
+  </div>
+  <div class="card green">
+    <h3 style="color:var(--green);">修改后（正确）</h3>
+    <p style="font-size:0.9rem;">5号玩家收到的 prompt 关键部分：</p>
+    <pre style="font-size:0.8rem;">## 当前游戏状态
+- 回合数：第2轮
+- 当前阶段：发言阶段
+- 存活玩家：1号、3号、5号、7号、8号、9号
+- 已出局玩家：2号(狼人)-被放逐、4号(平民)-被狼杀
+
+## 本轮发言进度
+发言总人数：6人
+发言顺序：1号 → 3号 → 5号 → 7号 → 8号 → 9号
+当前发言者：5号（你是第 3/6 位发言）
+已发言：1号、3号
+尚未发言：7号、8号、9号
+
+⚠️ 重要规则：
+- 尚未发言的玩家不是「沉默」或「不发言」——他们只是还没轮到
+- 不要因为后面的玩家还没说话就怀疑他们
+- 你只能评价已经发过言的玩家的发言内容
+
+## 本轮对话记录
+【本轮】1号: 我觉得7号比较可疑...
+【本轮】3号: 我同意1号，7号的投票确实有问题...
+
+## 你的任务：白天发言
+你是第 3/6 位发言者。
+在你前面已发言的玩家：1号、3号
+在你后面尚未发言的玩家：7号、8号、9号
+
+关键提示：
+- 只能评价已经发过言的玩家的发言内容
+- 尚未发言的玩家不是「沉默」，只是还没轮到
+- 不要因为后面的玩家还没说话就攻击或怀疑他们</pre>
+    <p style="margin-top:0.6rem; color:var(--green);">✅ LLM 清楚知道整个发言顺序，知道 7/8/9 号还没轮到，不会误解</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>六、发言轮次可视化示意</h2>
+
+<p>以 9 人局、第 2 天（2/4/6 号已出局）为例，轮到 5 号发言时的状态：</p>
+
+<div class="speech-demo">
+  <div class="seat spoken">1号</div>
+  <div class="seat dead">2号</div>
+  <div class="seat spoken">3号</div>
+  <div class="seat dead">4号</div>
+  <div class="seat speaking">5号</div>
+  <div class="seat dead">6号</div>
+  <div class="seat waiting">7号</div>
+  <div class="seat waiting">8号</div>
+  <div class="seat waiting">9号</div>
+</div>
+<div style="display:flex; gap:1.5rem; margin-top:0.5rem; font-size:0.85rem;">
+  <span><span style="display:inline-block;width:12px;height:12px;background:#4ecca3;border-radius:2px;margin-right:4px;"></span> 已发言</span>
+  <span><span style="display:inline-block;width:12px;height:12px;background:#e94560;border-radius:2px;margin-right:4px;border:2px solid #fff;"></span> 正在发言</span>
+  <span><span style="display:inline-block;width:12px;height:12px;background:#333;border-radius:2px;margin-right:4px;"></span> 尚未发言</span>
+  <span><span style="display:inline-block;width:12px;height:12px;background:#222;border-radius:2px;margin-right:4px;"></span> 已出局</span>
+</div>
+<p style="margin-top:1rem; font-size:0.9rem;">5号只能评价 1号和3号的发言。7/8/9号还<strong>没有机会说话</strong>，因此不能说他们"沉默"。</p>
+
+<!-- ============================================================ -->
+<h2>七、修改总结</h2>
+
+<table>
+  <tr><th>改动量</th><th>说明</th></tr>
+  <tr><td>1 个新字段 (speaking_order)</td><td>GameState 中记录本轮发言顺序</td></tr>
+  <tr><td>1 个新字段 (current_speaker)</td><td>GameState 中记录当前发言者</td></tr>
+  <tr><td>~10 行</td><td>game_engine.py 中设置/清除发言进度状态</td></tr>
+  <tr><td>1 个新方法 (~30 行)</td><td>_format_speaking_progress() 生成发言进度信息</td></tr>
+  <tr><td>~15 行</td><td>_task_instruction() 增强 day_speech 提示</td></tr>
+  <tr><td>~5 行</td><td>_format_conversations() 标记本轮/往轮</td></tr>
+  <tr><td>~8 行</td><td>SYSTEM_PROMPT 新增发言顺序规则</td></tr>
+  <tr><td><strong>共约 70 行</strong></td><td><strong>影响 3 个文件</strong></td></tr>
+</table>
+
+</div>
+</body>
+</html>

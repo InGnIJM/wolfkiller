@@ -513,7 +513,9 @@ class GameEngine:
 
     async def _execute_speech_round(self) -> None:
         alive = list(self.state.alive_players().items())
+        self.state.speaking_order = [s for s, _ in alive]
         for seat, player in alive:
+            self.state.current_speaker = seat
             speech_text = await self.speak(seat, "day_speech")
             if speech_text:
                 self.state.speeches.append(SpeechRecord(
@@ -532,6 +534,8 @@ class GameEngine:
                     self.game_id, self.state.round_number, "speech", seat, speech_text,
                 )
 
+        self.state.current_speaker = None
+        self.state.speaking_order = []
         self.sm.transition(SM_Event.SPEECHES_COMPLETE)
         await self._broadcast_phase_change()
 
@@ -576,7 +580,9 @@ class GameEngine:
 
             # Extra speech round
             alive = list(self.state.alive_players().items())
+            self.state.speaking_order = [s for s, _ in alive]
             for seat, player in alive:
+                self.state.current_speaker = seat
                 speech_text = await self.speak(seat, "day_speech")
                 if speech_text:
                     self.state.speeches.append(SpeechRecord(
@@ -594,6 +600,8 @@ class GameEngine:
                     self.game_logger.log_speech(
                         self.game_id, self.state.round_number, "speech", seat, speech_text,
                     )
+            self.state.current_speaker = None
+            self.state.speaking_order = []
 
             # Re-vote
             self.state.votes.clear()
