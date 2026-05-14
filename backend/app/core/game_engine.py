@@ -554,6 +554,12 @@ class GameEngine:
                 self.game_logger.log_speech(
                     self.game_id, self.state.round_number, "speech", seat, speech_text,
                 )
+            else:
+                logger.warning(
+                    f"Seat {seat}: speak() returned None/empty in speech round "
+                    f"(alive={player.is_alive}, phase={self.state.phase.value}). "
+                    f"This should not happen for a living player in speech phase."
+                )
 
         self.state.current_speaker = None
         self.state.speaking_order = []
@@ -621,6 +627,12 @@ class GameEngine:
                     self.game_logger.log_speech(
                         self.game_id, self.state.round_number, "speech", seat, speech_text,
                     )
+            else:
+                logger.warning(
+                    f"Seat {seat}: speak() returned None/empty in tie-break speech "
+                    f"(alive={player.is_alive}, phase={self.state.phase.value}). "
+                    f"This should not happen for a living player in speech phase."
+                )
             self.state.current_speaker = None
             self.state.speaking_order = []
 
@@ -675,15 +687,68 @@ class GameEngine:
     # =================================================================
 
     async def speak(self, seat: int, context: str) -> Optional[str]:
-        """Generate speech for a player. Returns the speech text or None."""
+        """Generate speech for a player. Returns the speech text or None.
+
+        Guarantees a non-empty string is returned for any living player in a
+        valid speech context — if the role fails to generate speech for any
+        reason, an emergency fallback is produced inline so the player is
+        never silently skipped. Only returns None when the player truly
+        cannot speak (no role found, dead, wrong phase).
+        """
         role = self.roles.get(seat)
         if role is None:
+            logger.warning(f"No role found for seat {seat} during speak() — skipping")
             return None
         try:
-            return await role.speak(self.state, self.conversation_log, context)
+            result = await role.speak(self.state, self.conversation_log, context)
         except Exception as e:
             logger.error(f"Speech error (seat={seat}, context={context}): {e}")
-            return None
+            result = None
+
+        if not result:
+            logger.warning(
+                f"Seat {seat}: role.speak() returned empty/None for context={context}. "
+                f"Generating emergency fallback speech to prevent silent skip."
+            )
+            result = self._emergency_speech(seat, context)
+        return result
+
+    def _emergency_speech(self, seat: int, context: str) -> str:
+        """Last-resort speech when the role's LLM completely fails.
+        Ensures the player is never silently dropped from the conversation.
+        """
+        player = self.state.players.get(seat)
+        role_cn = "玩家"
+        if player and hasattr(player, "role"):
+            role_map = {
+                "wolf-killer-werewolf": "狼人",
+                "wolf-killer-villager": "平民",
+                "wolf-killer-seer": "预言家",
+                "wolf-killer-witch": "女巫",
+                "wolf-killer-hunter": "猎人",
+            }
+            role_cn = role_map.get(player.role, "玩家")
+
+        if context == "last_words":
+            return (
+                f"我是{seat}号{role_cn}，我已经出局了。"
+                f"希望好人能仔细分析场上局势，找出狼人。"
+            )
+
+        # Day speech: reference another alive player as plausible content
+        alive = [s for s in self.state.alive_players() if s != seat]
+        if alive:
+            import random
+            suspect = random.choice(alive)
+            return (
+                f"我是{seat}号，我目前比较关注{suspect}号玩家的发言。"
+                f"前面几位的发言我都认真听了，"
+                f"我会结合所有信息在投票时做出判断。"
+            )
+        return (
+            f"我是{seat}号，现在场上人数很少了，"
+            f"我需要仔细分析之前的发言，慎重做出今天的决定。"
+        )
 
     async def vote(self, seat: int) -> Optional[VoteAction]:
         """Player casts a vote. Returns VoteAction or None."""

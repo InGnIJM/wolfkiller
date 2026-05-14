@@ -12,10 +12,10 @@ Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家�
 
 ```bash
 cd backend
-pip install -r requirements.txt       # 安装依赖
-python -m app.main                    # 启动后端 (localhost:8000)
-python -m pytest tests/ -q            # 运行所有测试
-python -m pytest tests/test_xxx.py -q  # 运行单个测试文件
+pip install -r requirements.txt            # 安装依赖
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动后端（开发模式）
+python -m pytest tests/ -q                 # 运行所有测试
+python -m pytest tests/test_xxx.py -q      # 运行单个测试文件
 ```
 
 ### 前端
@@ -55,6 +55,18 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 **提示词 (`backend/app/agents/prompt_builder.py`)** 是代码库最大文件（~42KB），包含所有角色的系统提示模板和阶段级提示。提示词使用结构化 JSON 输出格式约束 LLM 行为。
 
+**发言系统** 是有多层防线的关键流程（位于 `base.py` 和 `game_engine.py`）：
+1. 玩家发言通过 `BaseRole._speak_with_tools()` 调用 LLM 的 function calling（speak/last_words），失败时重试一次
+2. `_validate_tool_result()` 校验 LLM 输出（函数名匹配、非空文本、≥15 字），任何失败触发 fallback
+3. `GameEngine.speak()` 作为最后防线，若 role 层返回空则调用 `_emergency_speech()` 生成兜底发言
+4. Prompt 与代码一致性：发言字数下限统一为 **15 字**（prompt 和 `MIN_SPEECH_LENGTH` 必须同步，否则 LLM 被门槛吓住导致 tool call 失败）
+
+**女巫毒药系统** 有两层防线（`witch.py` + `action_resolver.py`）：
+1. `Witch._validate_poison_target()` 校验目标存活，给死人投毒自动转为 pass（保留毒药），失败时重试
+2. `ActionResolver._process_witch_poison()` 作为兜底，再次检查目标存活状态
+
+**输出解析 (`backend/app/agents/output_parser.py`)** 处理 LLM 返回的 JSON 和 tool call 解析。`parse_tool_call()` 优先使用原生 function calling 结果，失败时回退到正则匹配文本中的函数调用模式。
+
 **事件总线 (`backend/app/core/event_bus.py`)** 提供异步发布/订阅，所有游戏事件（阶段变更、发言、投票、死亡等）通过它分发，最终推送到 WebSocket。
 
 ### 前端架构
@@ -80,5 +92,6 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - `backend/.env` 已提交到仓库（含 API key），修改时注意不要推送到公开仓库
 - 游戏数据存储在 `backend/data/games/`，每个游戏有独立子目录存放 JSONL 日志和角色记忆
 - 后端 Python 需要 >= 3.11
-- 前端使用 TypeScript 6.0，ESLint 平面配置格式
+- 前端使用 TypeScript，ESLint 平面配置格式
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断
+- LLM 配置在 `backend/.env`（含 API key、model、temperature 等），游戏参数在 `backend/app/config.py`

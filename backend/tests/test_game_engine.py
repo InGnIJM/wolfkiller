@@ -288,7 +288,10 @@ class TestGameEngine:
 
         engine = GameEngine(game_id="test", roles={1: role})
         result = await engine.speak(1, "day_speech")
-        assert result is None
+        # Emergency fallback: engine should never return None for speech errors;
+        # it generates a placeholder speech so the player is never silently skipped.
+        assert result is not None
+        assert len(result) > 0
 
     @pytest.mark.asyncio
     async def test_vote_error_handling(self):

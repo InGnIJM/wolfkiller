@@ -81,7 +81,14 @@ class BaseRole:
             self._last_words_used = True
 
         # ── Attempt 1: normal tool-calling prompt ──
-        tool_result = await self._invoke_llm_with_tools(prompt, tools)
+        try:
+            tool_result = await self._invoke_llm_with_tools(prompt, tools)
+        except Exception as e:
+            logger.error(
+                f"Seat {self.seat}: LLM invocation failed with exception for "
+                f"context={context} (attempt 1): {e}"
+            )
+            tool_result = None
 
         # ── Attempt 2 (retry): stronger prompt emphasising tool call ──
         if tool_result is None:
@@ -93,12 +100,34 @@ class BaseRole:
                 prompt
                 + "\n\n【系统紧急提示】你刚才没有调用发言函数！这是严重的违规。"
                 + "请立即在内心思考后调用 speak 函数（遗言用 last_words 函数），"
-                + "在函数参数中输入至少30字的实质发言内容。"
+                + "在函数参数中输入至少15字的实质发言内容。"
                 + "直接输出文本无效！不调用函数等于放弃发言！"
             )
-            tool_result = await self._invoke_llm_with_tools(retry_prompt, tools)
+            try:
+                tool_result = await self._invoke_llm_with_tools(retry_prompt, tools)
+            except Exception as e:
+                logger.error(
+                    f"Seat {self.seat}: LLM invocation failed with exception for "
+                    f"context={context} (attempt 2): {e}"
+                )
+                tool_result = None
 
-        # ── If both attempts failed to call a tool, generate fallback ──
+        # ── Validate and return ──
+        try:
+            return self._validate_tool_result(tool_result, state, context)
+        except Exception as e:
+            logger.error(
+                f"Seat {self.seat}: Unexpected error validating tool result for "
+                f"context={context}: {e}. Falling back to generated speech."
+            )
+            return self._generate_fallback_speech(state, context)
+
+    def _validate_tool_result(
+        self, tool_result, state: GameState, context: str,
+    ) -> str:
+        """Validate and extract speech text from a tool call result.
+        Returns fallback speech on any validation failure.
+        """
         if tool_result is None:
             logger.error(
                 f"Seat {self.seat}: Both LLM attempts failed to call a tool for "
@@ -107,7 +136,7 @@ class BaseRole:
             return self._generate_fallback_speech(state, context)
 
         fn_name = tool_result.function_name
-        args = tool_result.arguments
+        args = tool_result.arguments if isinstance(tool_result.arguments, dict) else {}
         text = args.get("text", "").strip()
 
         # Validate: context must match function name
