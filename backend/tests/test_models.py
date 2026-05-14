@@ -51,9 +51,15 @@ class TestPlayerState:
 
     def test_mark_dead(self):
         p = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")
-        p.mark_dead("wolf_kill")
+        p.mark_dead("exile")
         assert p.is_alive is False
         assert p.revealed_role == "wolf-killer-werewolf"
+
+    def test_mark_dead_night_cause_hides_role(self):
+        p = PlayerState(seat_number=1, role="wolf-killer-villager", camp="good")
+        p.mark_dead("wolf_kill")
+        assert p.is_alive is False
+        assert p.revealed_role is None
 
     def test_reset_alive(self):
         p = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")

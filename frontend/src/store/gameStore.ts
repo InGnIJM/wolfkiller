@@ -27,6 +27,7 @@ interface GameStore {
   showWinOverlay: boolean;
   winOverlayDismissed: boolean;
   showHistory: boolean;
+  initialPlayers: Record<number, PlayerFullState>;
 
   // live websocket actions (kept for fallback)
   setGameState: (state: PublicGameState) => void;
@@ -77,6 +78,7 @@ const initialState = {
   showWinOverlay: false,
   winOverlayDismissed: false,
   showHistory: false,
+  initialPlayers: {} as Record<number, PlayerFullState>,
 };
 
 let _playTimer: ReturnType<typeof setInterval> | null = null;
@@ -88,17 +90,29 @@ function stopTimer() {
   }
 }
 
+export function isAtTimelineEnd(timeline: TimelineEntry[], index: number): boolean {
+  if (index >= timeline.length - 1) return true;
+  // Check if all remaining entries are speak operations (which seekTo skips)
+  for (let i = index + 1; i < timeline.length; i++) {
+    if (!(timeline[i].type === 'operation' && timeline[i].operation === 'speak')) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function startTimer(store: any) {
   stopTimer();
-  const speed = store.getState().playSpeed;
+  const state = store();
+  const speed = state.playSpeed;
   _playTimer = setInterval(() => {
-    const s = store.getState();
+    const s = store();
     if (!s.isPlaying) { stopTimer(); return; }
-    if (s.timelineIndex >= s.timeline.length - 1) {
-      store.getState().pause();
+    if (isAtTimelineEnd(s.timeline, s.timelineIndex)) {
+      s.pause();
       return;
     }
-    store.getState().stepForward();
+    s.stepForward();
   }, speed * 3000);
 }
 
@@ -248,7 +262,7 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
                 ensurePlayer(players, seat, d.role);
                 if (players[seat]) {
                   players[seat].is_alive = false;
-                  players[seat].revealed_role = players[seat].role;
+                  // Night deaths do NOT reveal role; only exile does
                 }
               }
               deathHistory.push({ player_seat: seat, cause, round_number: entry.round || 0 });
@@ -284,6 +298,16 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
             ensurePlayer(players, entry.seat, 'wolf-killer-seer');
           }
           break;
+        case 'hunter_death':
+          if (entry.seat) {
+            highlightedSeats = [entry.seat];
+            ensurePlayer(players, entry.seat, 'wolf-killer-hunter');
+            if (players[entry.seat]) {
+              players[entry.seat].is_alive = false;
+              players[entry.seat].revealed_role = players[entry.seat].role;
+            }
+          }
+          break;
         case 'hunter_shoot':
           if (entry.seat) {
             highlightedSeats = [entry.seat];
@@ -300,6 +324,9 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
               cause: 'hunter_shot',
               round_number: entry.round || 0,
             });
+          } else {
+            // Hunter passed (abstained from shooting), clear wolfKillTarget
+            wolfKillTarget = null;
           }
           break;
         case 'game_over':
@@ -402,7 +429,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         revealed_role: p.revealed_role ?? null,
       };
     }
-    set({ players });
+    set({ players, initialPlayers: { ...players } });
   },
 
   loadLogs: (logs: GameLogs) => {
@@ -470,30 +497,47 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
+    const savedInitialPlayers = { ...players };
     set({
       gameId: logs.game_id,
       timeline,
       timelineIndex: 0,
       ...deriveState(timeline, 0, existingPlayers),
       players,
+      initialPlayers: savedInitialPlayers,
       winOverlayDismissed: false,
     });
   },
 
   mergeLogs: (logs: GameLogs) => {
     const fullTimeline = buildTimeline(logs);
-    const { timeline: oldTimeline, timelineIndex, players: basePlayers } = get();
+    const { timeline: oldTimeline, timelineIndex, initialPlayers } = get();
+    const basePlayers = Object.keys(initialPlayers).length > 0 ? initialPlayers : get().players;
 
     if (fullTimeline.length <= oldTimeline.length) return;
 
-    const wasAtEnd = timelineIndex >= oldTimeline.length - 1;
+    // Compare against the last "meaningful" entry (not speak ops, which seekTo skips)
+    let oldLastMeaningful = oldTimeline.length - 1;
+    while (oldLastMeaningful > 0 && oldTimeline[oldLastMeaningful].type === 'operation' && oldTimeline[oldLastMeaningful].operation === 'speak') {
+      oldLastMeaningful--;
+    }
+    const wasAtEnd = timelineIndex >= oldLastMeaningful;
+
     set({ timeline: fullTimeline });
 
     if (wasAtEnd) {
-      let newIndex = fullTimeline.length - 1;
-      // Skip speak operations (same logic as seekTo)
-      while (newIndex > 0 && fullTimeline[newIndex].type === 'operation' && fullTimeline[newIndex].operation === 'speak') {
-        newIndex--;
+      // Advance to the NEXT meaningful entry (not the last one).
+      // This prevents skipping intermediate speeches when multiple arrive in one poll.
+      let newIndex = timelineIndex + 1;
+      while (newIndex < fullTimeline.length && fullTimeline[newIndex].type === 'operation' && fullTimeline[newIndex].operation === 'speak') {
+        newIndex++;
+      }
+      if (newIndex >= fullTimeline.length) {
+        // No next meaningful entry — stay at last meaningful
+        newIndex = fullTimeline.length - 1;
+        while (newIndex > 0 && fullTimeline[newIndex].type === 'operation' && fullTimeline[newIndex].operation === 'speak') {
+          newIndex--;
+        }
       }
       const derived = deriveState(fullTimeline, newIndex, basePlayers);
       set({
@@ -501,11 +545,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...derived,
         showWinOverlay: derived.winResult !== null && !get().winOverlayDismissed,
       });
+      // Resume playback if we advanced to new content
+      if (newIndex > timelineIndex && !get().isPlaying) {
+        set({ isPlaying: true, isPaused: false });
+        startTimer(get);
+      }
     }
   },
 
   seekTo: (index: number) => {
-    const { timeline, winOverlayDismissed, players: basePlayers } = get();
+    const { timeline, winOverlayDismissed, initialPlayers } = get();
+    const basePlayers = Object.keys(initialPlayers).length > 0 ? initialPlayers : get().players;
     let clamped = Math.max(0, Math.min(index, timeline.length - 1));
     if (clamped < 0) return;
     // Skip speak operation entries (they duplicate conversation entries)
@@ -549,8 +599,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   play: () => {
     const { timelineIndex, timeline } = get();
-    if (timelineIndex >= timeline.length - 1) {
-      // restart from beginning
+    if (isAtTimelineEnd(timeline, timelineIndex)) {
       get().seekTo(0);
     }
     set({ isPlaying: true, isPaused: false });

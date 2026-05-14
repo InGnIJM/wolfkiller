@@ -60,57 +60,121 @@ class BaseRole:
         self, state: GameState, prompt: str, context: str,
     ) -> str | None:
         """Invoke LLM with speech tools, validate the tool call, return the speech text.
-        For day_speech, returns "过" on failure instead of None to avoid silent skip.
-        For last_words, returns None on failure (last words are optional).
+        Retries once on tool-calling failure, then generates a fallback speech so the
+        player is never silently skipped. Only returns None for legitimate eligibility
+        failures (dead player, wrong phase, already gave last words).
         """
         tools = self.prompt_builder.get_speech_tools()
-        tool_result = await self._invoke_llm_with_tools(prompt, tools)
 
-        if tool_result is None:
-            logger.warning(
-                f"Seat {self.seat}: LLM did not call any tool for context={context}. "
-                f"Model may have output text directly instead of using the function."
-            )
-            return "过" if context == "day_speech" else None
-
-        fn_name = tool_result.function_name
-        args = tool_result.arguments
-        text = args.get("text", "").strip()
-
-        # Validate: context must match function name
+        # ── Pre-validate: only reject when player legitimately cannot speak ──
         if context == "day_speech":
-            if fn_name == "last_words":
-                logger.warning(
-                    f"Seat {self.seat}: 校验失败——发言阶段调用了 last_words 而非 speak，回退为「过」"
-                )
-                return "过"
             valid, reason = self._validate_speak(state)
             if not valid:
                 logger.warning(f"Seat {self.seat} speak validation failed: {reason}")
-                return "过"
+                return None
 
         elif context == "last_words":
-            if fn_name == "speak":
-                logger.warning(
-                    f"Seat {self.seat}: 校验失败——遗言阶段调用了 speak 而非 last_words"
-                )
-                return None
             valid, reason = self._validate_last_words(state)
             if not valid:
                 logger.warning(f"Seat {self.seat} last_words validation failed: {reason}")
                 return None
             self._last_words_used = True
 
-        else:
-            logger.warning(f"Seat {self.seat}: unknown tool function called: {fn_name}")
-            return None
+        # ── Attempt 1: normal tool-calling prompt ──
+        tool_result = await self._invoke_llm_with_tools(prompt, tools)
+
+        # ── Attempt 2 (retry): stronger prompt emphasising tool call ──
+        if tool_result is None:
+            logger.warning(
+                f"Seat {self.seat}: LLM did not call any tool for context={context} "
+                f"(attempt 1). Retrying with stronger instructions."
+            )
+            retry_prompt = (
+                prompt
+                + "\n\n【系统紧急提示】你刚才没有调用发言函数！这是严重的违规。"
+                + "请立即在内心思考后调用 speak 函数（遗言用 last_words 函数），"
+                + "在函数参数中输入至少30字的实质发言内容。"
+                + "直接输出文本无效！不调用函数等于放弃发言！"
+            )
+            tool_result = await self._invoke_llm_with_tools(retry_prompt, tools)
+
+        # ── If both attempts failed to call a tool, generate fallback ──
+        if tool_result is None:
+            logger.error(
+                f"Seat {self.seat}: Both LLM attempts failed to call a tool for "
+                f"context={context}. Generating fallback speech to prevent silent skip."
+            )
+            return self._generate_fallback_speech(state, context)
+
+        fn_name = tool_result.function_name
+        args = tool_result.arguments
+        text = args.get("text", "").strip()
+
+        # Validate: context must match function name
+        if context == "day_speech" and fn_name != "speak":
+            logger.warning(
+                f"Seat {self.seat}: 校验失败——发言阶段调用了 {fn_name} 而非 speak，"
+                f"fallback to auto speech"
+            )
+            return self._generate_fallback_speech(state, context)
+
+        if context == "last_words" and fn_name != "last_words":
+            logger.warning(
+                f"Seat {self.seat}: 校验失败——遗言阶段调用了 {fn_name} 而非 last_words，"
+                f"fallback to auto speech"
+            )
+            return self._generate_fallback_speech(state, context)
 
         if not text:
-            logger.warning(f"Seat {self.seat}: {fn_name} called with empty text")
-            return None
+            logger.warning(
+                f"Seat {self.seat}: {fn_name} called with empty text, "
+                f"fallback to auto speech"
+            )
+            return self._generate_fallback_speech(state, context)
+
+        # Reject speeches that are too short — "过" or trivial replies are never acceptable
+        MIN_SPEECH_LENGTH = 15
+        if context in ("day_speech", "last_words") and len(text) < MIN_SPEECH_LENGTH:
+            logger.warning(
+                f"Seat {self.seat}: {fn_name} text too short ({len(text)} chars), "
+                f"minimum is {MIN_SPEECH_LENGTH}. Text was: '{text}'. "
+                f"Fallback to auto speech."
+            )
+            return self._generate_fallback_speech(state, context)
 
         logger.info(f"Seat {self.seat}: {fn_name} validated OK, text length={len(text)}")
         return text
+
+    def _generate_fallback_speech(self, state: GameState, context: str) -> str:
+        """Generate a minimal but valid speech when the LLM fails to produce one.
+        Ensures the player never silently disappears from the conversation.
+        """
+        cn_name = self.prompt_builder._cn_name(self.role_name)
+        alive_others = [s for s in state.alive_players() if s != self.seat]
+
+        if context == "last_words":
+            if alive_others:
+                suspects = "、".join(f"{s}号" for s in alive_others[:3])
+                return (
+                    f"我是{self.seat}号{cn_name}，我出局了。"
+                    f"我怀疑的玩家是{suspects}，希望好人能仔细分析，找出狼人。"
+                )
+            return f"我是{self.seat}号{cn_name}，我出局了。希望好人阵营加油，找出最后的狼人。"
+
+        # Day speech fallback
+        if alive_others:
+            # Pick a plausible suspect — prefer players with suspicious behavior
+            import random
+            suspect = random.choice(alive_others)
+            return (
+                f"我是{self.seat}号，我目前比较关注{suspect}号玩家的发言，"
+                f"希望能听到更多信息来做出判断。前面几位的发言我都认真听了，"
+                f"我会在后续投票中给出我的决定。"
+            )
+        return (
+            f"我是{self.seat}号，现在场上人很少了，我需要仔细分析一下之前的发言，"
+            f"慎重做出今天的投票决定。"
+        )
 
     # ── Validation ──────────────────────────────────────────────
 

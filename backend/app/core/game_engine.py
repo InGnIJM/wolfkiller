@@ -298,6 +298,10 @@ class GameEngine:
         if self.memory_service:
             self.memory_service.save_memories(self.state)
 
+        if await self._check_game_over():
+            await self._broadcast_phase_change()
+            return
+
         self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
         await self._broadcast_phase_change()
 
@@ -323,9 +327,12 @@ class GameEngine:
                 actions.append(action)
                 # Log each wolf's vote as werewolf chat — subsequent wolves see this to coordinate
                 target_str = f"{action.target_seat}号" if action.target_seat else "弃权"
+                reason = action.reasoning.strip() if action.reasoning else ""
+                if not reason:
+                    reason = "（未说明理由）" if action.target_seat else "（观望一轮，不急于行动）"
                 self.conversation_log.add_werewolf_chat(
                     seat, "wolf-killer-werewolf",
-                    f"我选择刀{target_str}。理由：{action.reasoning}",
+                    f"我选择刀{target_str}。理由：{reason}",
                     round_num,
                 )
                 await self._broadcast_night_substep(
@@ -414,7 +421,16 @@ class GameEngine:
             sys_msg, self.state.round_number, "night", visible_to=[hunter_seat],
         )
 
-        action = await hunter.shoot(self.state, self.conversation_log)
+        action = None
+        try:
+            action = await hunter.shoot(self.state, self.conversation_log)
+        except Exception as e:
+            logger.error(f"Hunter shoot LLM error (seat={hunter_seat}): {e}")
+            self.game_logger.log_hunter_shoot(
+                self.game_id, self.state.round_number, hunter_seat, None,
+            )
+            return None
+
         if action is None or action.action_type == "pass" or action.target_seat is None:
             self.game_logger.log_hunter_shoot(
                 self.game_id, self.state.round_number, hunter_seat, None,
@@ -430,6 +446,11 @@ class GameEngine:
             sys_msg = f"你开枪带走了 {action.target_seat} 号玩家。"
             self.conversation_log.add_night_intel(
                 sys_msg, self.state.round_number, "night", visible_to=[hunter_seat],
+            )
+        else:
+            # Target was dead or invalid, log pass (gun not consumed by resolver)
+            self.game_logger.log_hunter_shoot(
+                self.game_id, self.state.round_number, hunter_seat, None,
             )
         return death
 
@@ -644,21 +665,7 @@ class GameEngine:
                 self.state.votes, None, self.state.round_number,
             )
 
-        # Check win
-        win_result = self.rule_engine.check_win(self.state)
-        if win_result:
-            for p in self.state.players.values():
-                if p.is_alive and p.revealed_role is None:
-                    p.revealed_role = p.role
-            self.state.win_result = win_result.to_dict()
-            self.state.phase = GamePhase.GAME_OVER
-            self.sm.set_state(GamePhase.GAME_OVER)
-            self.game_logger.log_game_over(
-                self.game_id, self.state.round_number,
-                win_result.winning_camp, win_result.reason,
-            )
-            await self.event_bus.publish(BusEvent.GAME_OVER, win_result=win_result)
-        else:
+        if not await self._check_game_over():
             self.sm.transition(SM_Event.VOTE_RESOLVED)
 
         await self._broadcast_phase_change()
@@ -688,6 +695,24 @@ class GameEngine:
         except Exception as e:
             logger.error(f"Vote error (seat={seat}): {e}")
             return None
+
+    async def _check_game_over(self) -> bool:
+        """Check win conditions. If game is over, handle cleanup and broadcast. Returns True if over."""
+        win_result = self.rule_engine.check_win(self.state)
+        if win_result:
+            for p in self.state.players.values():
+                if p.is_alive and p.revealed_role is None:
+                    p.revealed_role = p.role
+            self.state.win_result = win_result.to_dict()
+            self.state.phase = GamePhase.GAME_OVER
+            self.sm.set_state(GamePhase.GAME_OVER)
+            self.game_logger.log_game_over(
+                self.game_id, self.state.round_number,
+                win_result.winning_camp, win_result.reason,
+            )
+            await self.event_bus.publish(BusEvent.GAME_OVER, win_result=win_result)
+            return True
+        return False
 
     def resolve_votes(self) -> Optional[int]:
         """Tally votes. Returns exiled seat, or None on tie."""

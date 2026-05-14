@@ -29,6 +29,7 @@ class GameStateMachine:
         (GamePhase.WAITING, GameEvent.START, GamePhase.ROLE_DEAL),
         (GamePhase.ROLE_DEAL, GameEvent.ROLES_ASSIGNED, GamePhase.NIGHT),
         (GamePhase.NIGHT, GameEvent.NIGHT_ACTIONS_COMPLETE, GamePhase.DAWN),
+        (GamePhase.NIGHT, GameEvent.GAME_OVER, GamePhase.GAME_OVER),
         (GamePhase.DAWN, GameEvent.DAWN_COMPLETE, GamePhase.LAST_WORDS),
 
         # Day cycle

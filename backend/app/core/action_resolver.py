@@ -62,24 +62,26 @@ class ActionResolver:
     def resolve_hunter_shoot(
         self, state: GameState, hunter_seat: int, action: NightAction
     ) -> Optional[DeathReport]:
-        """Resolve hunter's shot. Called by engine after hunter chooses target."""
+        """Resolve hunter's shot. Returns DeathReport on success, None if invalid.
+        Does NOT consume the gun if the target is invalid (dead or missing)."""
         hunter = state.players.get(hunter_seat)
         if not hunter or not hunter.has_gun:
             return None
 
-        hunter.has_gun = False
         target_seat = action.target_seat
         if target_seat is None:
             return None
 
         target = state.players.get(target_seat)
-        if target and target.is_alive:
-            target.mark_dead("hunter_shot")
-            return DeathReport(
-                player_seat=target_seat, cause="hunter_shot",
-                round_number=state.round_number,
-            )
-        return None
+        if not target or not target.is_alive:
+            return None  # don't consume gun for invalid target
+
+        hunter.has_gun = False
+        target.mark_dead("hunter_shot")
+        return DeathReport(
+            player_seat=target_seat, cause="hunter_shot",
+            round_number=state.round_number,
+        )
 
     # ── Private helpers ───────────────────────────────────────────
 
@@ -118,8 +120,13 @@ class ActionResolver:
                 continue
             witch = state.players.get(action.player_seat)
             if witch and witch.has_poison:
+                target_seat = action.target_seat
+                if target_seat is not None:
+                    target = state.players.get(target_seat)
+                    if target and not target.is_alive:
+                        return None  # target already dead, don't consume poison
                 witch.has_poison = False
-                return action.target_seat
+                return target_seat
         return None
 
     def _process_seer_checks(

@@ -3,7 +3,7 @@ import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
-import { useGameStore } from '../../store/gameStore';
+import { useGameStore, isAtTimelineEnd } from '../../store/gameStore';
 
 const SPEEDS = [0.5, 1, 2, 4, 8];
 
@@ -29,7 +29,7 @@ export default function TimelineController() {
   const total = timeline.length;
   const progress = total > 0 ? ((timelineIndex + 1) / total) * 100 : 0;
   const currentPhaseLabel = PHASE_LABELS[phase] || phase;
-  const isAtEnd = timelineIndex >= total - 1;
+  const isAtEnd = isAtTimelineEnd(timeline, timelineIndex);
 
   const handleProgressClick = (e: React.MouseEvent<HTMLElement>) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
