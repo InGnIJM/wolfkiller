@@ -82,7 +82,6 @@ class TestStateFilter:
         sf = StateFilter()
         state = GameState(game_id="test", config=GameConfig())
         p1 = make_player(1, "wolf-killer-villager", "good", alive=False)
-        p1.revealed_role = "wolf-killer-villager"
         state.players = {
             1: p1,
             2: make_player(2, "wolf-killer-werewolf", "werewolf"),
@@ -91,17 +90,15 @@ class TestStateFilter:
 
         view = sf.filter_for_role(state, 2, "wolf-killer-werewolf")
         assert len(view["dead_players"]) == 1
-        assert view["dead_players"][0]["cause"] == "wolf_kill"
 
-    def test_dead_player_no_history_unknown_cause(self):
+    def test_dead_player_no_history(self):
         sf = StateFilter()
         state = GameState(game_id="test", config=GameConfig())
         p1 = make_player(1, "wolf-killer-villager", "good", alive=False)
-        p1.revealed_role = "wolf-killer-villager"
         state.players = {1: p1, 2: make_player(2, "wolf-killer-werewolf", "werewolf")}
 
         view = sf.filter_for_role(state, 2, "wolf-killer-werewolf")
-        assert view["dead_players"][0]["cause"] == "unknown"
+        assert view["dead_players"][0]["seat"] == 1
 
     def test_speeches_truncated(self):
         sf = StateFilter()

@@ -108,7 +108,6 @@ class GameEngine:
                 "has_antidote": player.has_antidote,
                 "has_poison": player.has_poison,
                 "has_gun": player.has_gun,
-                "revealed_role": None,
             }
         self.game_logger.log_role_init(self.game_id, players_dict)
 
@@ -765,9 +764,6 @@ class GameEngine:
         """Check win conditions. If game is over, handle cleanup and broadcast. Returns True if over."""
         win_result = self.rule_engine.check_win(self.state)
         if win_result:
-            for p in self.state.players.values():
-                if p.is_alive and p.revealed_role is None:
-                    p.revealed_role = p.role
             self.state.win_result = win_result.to_dict()
             self.state.phase = GamePhase.GAME_OVER
             self.sm.set_state(GamePhase.GAME_OVER)

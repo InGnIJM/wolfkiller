@@ -66,13 +66,9 @@ class PlayerState:
 
     def mark_dead(self, cause: str = "") -> None:
         self.is_alive = False
-        # Only public exile reveals the role; night deaths (wolf_kill, poison, hunter_shot) stay hidden
-        if cause == "exile":
-            self.revealed_role = self.role
 
     def reset_alive(self) -> None:
         self.is_alive = True
-        self.revealed_role = None
 
 
 @dataclass
@@ -114,7 +110,6 @@ class GameState:
                 s: {
                     "seat_number": p.seat_number,
                     "is_alive": p.is_alive,
-                    "revealed_role": p.revealed_role,
                     "is_sheriff": p.is_sheriff,
                 }
                 for s, p in self.players.items()

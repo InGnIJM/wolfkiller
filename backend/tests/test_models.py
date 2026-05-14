@@ -53,20 +53,18 @@ class TestPlayerState:
         p = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")
         p.mark_dead("exile")
         assert p.is_alive is False
-        assert p.revealed_role == "wolf-killer-werewolf"
+        # revealed_role is never set — identity is never publicly revealed
 
-    def test_mark_dead_night_cause_hides_role(self):
+    def test_mark_dead_night(self):
         p = PlayerState(seat_number=1, role="wolf-killer-villager", camp="good")
         p.mark_dead("wolf_kill")
         assert p.is_alive is False
-        assert p.revealed_role is None
 
     def test_reset_alive(self):
         p = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")
         p.mark_dead("exile")
         p.reset_alive()
         assert p.is_alive is True
-        assert p.revealed_role is None
 
 
 class TestGameState:

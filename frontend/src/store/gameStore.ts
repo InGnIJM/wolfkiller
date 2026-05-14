@@ -247,7 +247,6 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
             const exiledSeat = entry.data.exiled;
             if (players[exiledSeat]) {
               players[exiledSeat].is_alive = false;
-              players[exiledSeat].revealed_role = players[exiledSeat].role;
             }
             deathHistory.push({ player_seat: exiledSeat, cause: 'exile', round_number: entry.round || 0 });
           }
@@ -304,7 +303,6 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
             ensurePlayer(players, entry.seat, 'wolf-killer-hunter');
             if (players[entry.seat]) {
               players[entry.seat].is_alive = false;
-              players[entry.seat].revealed_role = players[entry.seat].role;
             }
           }
           break;
@@ -317,7 +315,6 @@ function deriveState(timeline: TimelineEntry[], upToIndex: number, basePlayers?:
             wolfKillTarget = entry.data.target;
             if (players[entry.data.target]) {
               players[entry.data.target].is_alive = false;
-              players[entry.data.target].revealed_role = players[entry.data.target].role;
             }
             deathHistory.push({
               player_seat: entry.data.target,
@@ -388,7 +385,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
         players[death.player_seat] = {
           ...players[death.player_seat],
           is_alive: false,
-          revealed_role: players[death.player_seat].revealed_role || players[death.player_seat].role,
         };
       }
       return {

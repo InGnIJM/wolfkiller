@@ -55,18 +55,10 @@ class StateFilter:
         return [
             {
                 "seat": s,
-                "revealed_role": p.revealed_role,
-                "cause": self._last_death_cause(state, s),
             }
             for s, p in state.players.items()
             if not p.is_alive
         ]
-
-    def _last_death_cause(self, state: GameState, seat: int) -> str:
-        for d in reversed(state.death_history):
-            if d.player_seat == seat:
-                return d.cause
-        return "unknown"
 
     def _recent_speeches(self, state: GameState, limit: int = 20) -> list[dict]:
         recent = state.speeches[-limit:] if len(state.speeches) > limit else state.speeches

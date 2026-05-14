@@ -81,7 +81,6 @@ async def get_game(game_id: str):
                 "has_antidote": p.has_antidote,
                 "has_poison": p.has_poison,
                 "has_gun": p.has_gun,
-                "revealed_role": p.revealed_role,
                 "is_sheriff": p.is_sheriff,
             }
             for s, p in state.players.items()

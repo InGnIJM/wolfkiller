@@ -160,7 +160,6 @@ class TestPromptBuilder:
         builder = PromptBuilder()
         state = make_state()
         state.players[5].is_alive = False
-        state.players[5].revealed_role = "wolf-killer-villager"
         state.death_history = [DeathReport(player_seat=5, cause="wolf_kill", round_number=1)]
         log = make_log()
 
