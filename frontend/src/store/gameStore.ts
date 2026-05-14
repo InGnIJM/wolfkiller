@@ -113,7 +113,7 @@ function startTimer(store: any) {
       return;
     }
     s.stepForward();
-  }, speed * 3000);
+  }, 3000 / speed);
 }
 
 function buildTimeline(logs: GameLogs): TimelineEntry[] {
