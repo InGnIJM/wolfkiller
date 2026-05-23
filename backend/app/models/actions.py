@@ -9,6 +9,7 @@ class NightAction:
     action_type: str  # kill, check, save, poison, pass
     target_seat: Optional[int] = None
     reasoning: str = ""
+    thinking: str = ""  # LLM 的内心思考过程
 
     def to_dict(self) -> dict:
         return {
@@ -16,6 +17,7 @@ class NightAction:
             "action_type": self.action_type,
             "target_seat": self.target_seat,
             "reasoning": self.reasoning,
+            "thinking": self.thinking,
         }
 
 
@@ -24,12 +26,14 @@ class VoteAction:
     voter_seat: int
     target_seat: Optional[int] = None  # None or 0 = abstain
     reasoning: str = ""
+    thinking: str = ""  # LLM 的内心思考过程
 
     def to_dict(self) -> dict:
         return {
             "voter_seat": self.voter_seat,
             "target_seat": self.target_seat,
             "reasoning": self.reasoning,
+            "thinking": self.thinking,
         }
 
 

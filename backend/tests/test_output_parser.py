@@ -198,3 +198,74 @@ class TestOutputParser:
         msg = AIMessage(content="我觉得3号是狼，但我不调用任何函数。")
         result = parser.parse_tool_call(msg)
         assert result is None
+
+    # ── Thinking extraction tests ──────────────────────────────
+
+    def test_parse_tool_call_extracts_thinking_from_content(self):
+        """Thinking text should be extracted from AIMessage.content."""
+        parser = OutputParser()
+        msg = AIMessage(
+            content="我先分析一下局势：3号发言有漏洞，5号投票可疑。决定指认3号。",
+            tool_calls=[{
+                "name": "speak",
+                "args": {"text": "我觉得3号发言很有问题，建议今天出3号。"},
+                "id": "call_001",
+            }],
+        )
+        result = parser.parse_tool_call(msg)
+        assert result is not None
+        assert "3号发言有漏洞" in result.thinking_text
+
+    def test_parse_tool_call_empty_content_no_thinking(self):
+        """Empty content should result in empty thinking_text."""
+        parser = OutputParser()
+        msg = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "speak",
+                "args": {"text": "我觉得3号可疑。"},
+                "id": "call_001",
+            }],
+        )
+        result = parser.parse_tool_call(msg)
+        assert result is not None
+        assert result.thinking_text == ""
+
+    def test_parse_tool_call_fallback_with_thinking(self):
+        """Fallback text parsing should capture thinking from raw content."""
+        parser = OutputParser()
+        msg = AIMessage(
+            content='让我分析一下...speak(text="我觉得3号可疑")',
+        )
+        result = parser.parse_tool_call(msg)
+        assert result is not None
+        assert result.function_name == "speak"
+        assert "让我分析一下" in result.thinking_text
+
+    def test_parse_night_action_extracts_thinking(self):
+        """Night action JSON with thinking field should be extracted."""
+        parser = OutputParser()
+        raw = '{"thinking":"分析了局势觉得3号像狼","action_type":"kill","target_seat":3,"reasoning":"3号发言有漏洞"}'
+        action = parser.parse_night_action(raw, player_seat=1)
+        assert action.thinking == "分析了局势觉得3号像狼"
+
+    def test_parse_night_action_no_thinking_field(self):
+        """Night action JSON without thinking field should default to empty."""
+        parser = OutputParser()
+        raw = '{"action_type":"check","target_seat":5,"reasoning":"need info"}'
+        action = parser.parse_night_action(raw, player_seat=1)
+        assert action.thinking == ""
+
+    def test_parse_vote_action_extracts_thinking(self):
+        """Vote action JSON with thinking field should be extracted."""
+        parser = OutputParser()
+        raw = '{"thinking":"经过分析决定投3号","target_seat":3,"reasoning":"3号发言最可疑"}'
+        vote = parser.parse_vote_action(raw, voter_seat=1)
+        assert vote.thinking == "经过分析决定投3号"
+
+    def test_parse_vote_action_no_thinking_field(self):
+        """Vote action JSON without thinking field should default to empty."""
+        parser = OutputParser()
+        raw = '{"target_seat":4,"reasoning":"suspicious"}'
+        vote = parser.parse_vote_action(raw, voter_seat=1)
+        assert vote.thinking == ""

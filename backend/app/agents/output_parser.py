@@ -19,6 +19,7 @@ class ToolCallResult:
     function_name: str
     arguments: dict
     raw_text: str = ""
+    thinking_text: str = ""  # LLM 在调用工具前的内心思考
 
 
 class ToolCallError(Exception):
@@ -57,6 +58,7 @@ class OutputParser:
             action_type=parsed.get("action_type", "pass"),
             target_seat=parsed.get("target_seat"),
             reasoning=parsed.get("reasoning", ""),
+            thinking=parsed.get("thinking", ""),
         )
 
     def parse_vote_action(self, raw: str, voter_seat: int) -> VoteAction:
@@ -72,6 +74,7 @@ class OutputParser:
             voter_seat=voter_seat,
             target_seat=target,
             reasoning=parsed.get("reasoning", ""),
+            thinking=parsed.get("thinking", ""),
         )
 
     def parse_speech(self, raw: str) -> str:
@@ -90,6 +93,18 @@ class OutputParser:
         Falls back to parsing the text content as a pseudo function call
         for models that don't support native tool calling.
         """
+        # Extract the model's internal thinking from response.content
+        # DeepSeek outputs reasoning text in content before calling a tool
+        thinking = ""
+        if hasattr(response, "content") and response.content:
+            if isinstance(response.content, str):
+                thinking = response.content.strip()
+            elif isinstance(response.content, list):
+                thinking = "".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in response.content
+                ).strip()
+
         # Native tool calls (OpenAI/DeepSeek function calling)
         if hasattr(response, "tool_calls") and response.tool_calls:
             tc = response.tool_calls[0]
@@ -101,7 +116,7 @@ class OutputParser:
                 except json.JSONDecodeError:
                     args = {}
             logger.info(f"Tool call parsed (native): {name}({args})")
-            return ToolCallResult(function_name=name, arguments=args)
+            return ToolCallResult(function_name=name, arguments=args, thinking_text=thinking)
 
         # Fallback: parse text for function call patterns
         content = response.content if hasattr(response, "content") else str(response)
@@ -119,6 +134,7 @@ class OutputParser:
                     function_name=fn_name,
                     arguments={"text": m.group(1)},
                     raw_text=content,
+                    thinking_text=thinking,
                 )
 
             # Also try with positional arg: speak("...")
@@ -130,6 +146,7 @@ class OutputParser:
                     function_name=fn_name,
                     arguments={"text": m2.group(1)},
                     raw_text=content,
+                    thinking_text=thinking,
                 )
 
         return None
