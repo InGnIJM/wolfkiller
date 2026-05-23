@@ -19,4 +19,7 @@ class Hunter(BaseRole):
             state, self.seat, self.role_name, conversation_log, "hunter_shoot"
         )
         raw = await self._invoke_llm(prompt)
-        return self.output_parser.parse_night_action(raw, self.seat)
+        action = self.output_parser.parse_night_action(raw, self.seat)
+        if action.thinking:
+            self._record_thought(action.thinking, state, conversation_log, "hunter_shoot")
+        return action
