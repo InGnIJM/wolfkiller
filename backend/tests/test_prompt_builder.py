@@ -382,10 +382,13 @@ class TestPromptBuilder:
         assert "对抗" in sp or "冲突" in sp
 
     def test_werewolf_narrative_building(self):
-        """Werewolf section must include narrative-building guidance."""
-        sp = PromptBuilder.get_system_prompt()
-        assert "反派主角" in sp
-        assert "剧本" in sp or "故事线" in sp
+        """Werewolf strategy guide must include narrative-building guidance."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+        prompt = builder.build_speech_prompt(state, 1, "wolf-killer-werewolf", log, "day_speech")
+        assert "反派主角" in prompt
+        assert "剧本" in prompt or "故事线" in prompt
 
     def test_varied_pass_ending(self):
         """System prompt should discourage mechanical '过' ending."""
@@ -421,3 +424,140 @@ class TestPromptBuilder:
         """Specifically forbid 'seeing shadows' related language."""
         sp = PromptBuilder.get_system_prompt()
         assert "看到人影" in sp or "看不到任何东西" in sp
+
+    # ── Thought formatting tests ────────────────────────────────
+
+    def test_format_thoughts_empty(self):
+        """Empty thoughts should return placeholder."""
+        builder = PromptBuilder()
+        log = make_log()
+        result = builder._format_thoughts(log, 1, 1)
+        assert "尚无思考记录" in result
+
+    def test_format_thoughts_with_records(self):
+        """Thoughts should be formatted with round and context labels."""
+        builder = PromptBuilder()
+        log = make_log()
+        log.add_thought(1, "wolf-killer-werewolf", "我分析了场上局势，觉得3号可能有问题", 1, "day_speech")
+        log.add_thought(1, "wolf-killer-werewolf", "夜晚我决定刀预言家", 1, "night_kill")
+
+        result = builder._format_thoughts(log, 1, 1)
+        assert "第1轮" in result
+        assert "我分析了场上局势" in result
+        assert "夜晚我决定刀预言家" in result
+
+    def test_format_thoughts_only_own_thoughts(self):
+        """Only the player's own thoughts should be shown."""
+        builder = PromptBuilder()
+        log = make_log()
+        log.add_thought(1, "wolf-killer-werewolf", "我的思考", 1, "day_speech")
+        log.add_thought(3, "wolf-killer-villager", "别人的思考", 1, "day_speech")
+
+        result = builder._format_thoughts(log, 1, 1)
+        assert "我的思考" in result
+        assert "别人的思考" not in result
+
+    def test_format_thoughts_truncates_long_content(self):
+        """Content over 400 chars should be truncated."""
+        builder = PromptBuilder()
+        log = make_log()
+        long_thought = "思考" * 250  # 500 chars
+        log.add_thought(1, "wolf-killer-werewolf", long_thought, 1, "day_speech")
+
+        result = builder._format_thoughts(log, 1, 1)
+        assert "..." in result
+        assert len(result) < len(long_thought) + 100
+
+    def test_format_thoughts_max_15_records(self):
+        """Should only show last 15 thoughts."""
+        builder = PromptBuilder()
+        log = make_log()
+        for i in range(20):
+            log.add_thought(1, "wolf-killer-werewolf", f"思考第{i}条", i + 1, "day_speech")
+
+        result = builder._format_thoughts(log, 21, 1)
+        assert "思考第0条" not in result  # first 5 dropped
+        assert "思考第19条" in result
+
+    def test_speech_prompt_includes_thought_section(self):
+        """Speech prompt should include thought history section."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+        log.add_thought(1, "wolf-killer-werewolf", "我之前的分析思考", 1, "day_speech")
+
+        prompt = builder.build_speech_prompt(state, 1, "wolf-killer-werewolf", log, "day_speech")
+        assert "你的历史思考回顾" in prompt
+
+    def test_action_prompt_includes_thought_section(self):
+        """Action prompt should include thought history section."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+        log.add_thought(1, "wolf-killer-werewolf", "夜晚前的思考", 1, "night_kill")
+
+        prompt = builder.build_action_prompt(state, 1, "wolf-killer-werewolf", log, "night_kill")
+        assert "你的历史思考回顾" in prompt
+
+    def test_vote_prompt_includes_thought_section(self):
+        """Vote prompt should include thought history section."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_vote_prompt(state, 4, "wolf-killer-villager", log, "exile_vote")
+        assert "你的历史思考回顾" in prompt
+
+    def test_night_kill_task_requires_thinking_field(self):
+        """Night kill task should require thinking field in JSON output."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_action_prompt(state, 1, "wolf-killer-werewolf", log, "night_kill")
+        assert '"thinking"' in prompt
+
+    def test_witch_save_task_requires_thinking_field(self):
+        """Witch save task should require thinking field."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_action_prompt(state, 8, "wolf-killer-witch", log, "witch_save", wolf_target=3)
+        assert '"thinking"' in prompt
+
+    def test_witch_poison_task_requires_thinking_field(self):
+        """Witch poison task should require thinking field."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_action_prompt(state, 8, "wolf-killer-witch", log, "witch_poison", wolf_target=3)
+        assert '"thinking"' in prompt
+
+    def test_night_check_task_requires_thinking_field(self):
+        """Night check task should require thinking field."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_action_prompt(state, 7, "wolf-killer-seer", log, "night_check")
+        assert '"thinking"' in prompt
+
+    def test_hunter_shoot_task_requires_thinking_field(self):
+        """Hunter shoot task should require thinking field."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_action_prompt(state, 9, "wolf-killer-hunter", log, "hunter_shoot")
+        assert '"thinking"' in prompt
+
+    def test_exile_vote_task_requires_thinking_field(self):
+        """Exile vote task should require thinking field."""
+        builder = PromptBuilder()
+        state = make_state()
+        log = make_log()
+
+        prompt = builder.build_vote_prompt(state, 4, "wolf-killer-villager", log, "exile_vote")
+        assert '"thinking"' in prompt
