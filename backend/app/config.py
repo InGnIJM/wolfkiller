@@ -8,7 +8,19 @@ class LLMConfig:
     provider: str = os.getenv("LLM_PROVIDER", "deepseek")
     api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-    model: str = os.getenv("LLM_MODEL", "deepseek-chat")
+
+    @property
+    def models(self) -> list[str]:
+        """Available models for random assignment across players."""
+        models_env = os.getenv("LLM_MODELS", "")
+        if models_env:
+            return [m.strip() for m in models_env.split(",") if m.strip()]
+        # Fall back to single model
+        single = os.getenv("LLM_MODEL", "")
+        if single:
+            return [single]
+        return ["deepseek-v4-pro"]
+
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.2"))
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 

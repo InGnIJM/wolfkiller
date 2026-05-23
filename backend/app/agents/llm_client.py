@@ -8,7 +8,7 @@ class LLMClient:
 
     def __init__(self, model: str | None = None, temperature: float | None = None):
         llm_cfg = app_config.llm
-        self.model_name = model or llm_cfg.model
+        self.model_name = model or llm_cfg.models[0]
         self.temperature = temperature if temperature is not None else llm_cfg.temperature
         self.max_tokens = llm_cfg.max_tokens
 

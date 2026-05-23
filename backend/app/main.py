@@ -45,7 +45,7 @@ async def health_check():
 @app.get("/api/config")
 async def get_config():
     return {
-        "llm_model": app_config.llm.model,
+        "llm_models": app_config.llm.models,
         "debug": app_config.debug,
         "active_games": game_service.list_games(),
     }
