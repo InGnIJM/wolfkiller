@@ -77,7 +77,7 @@ export interface WSMessage {
 // ── Log-driven types (audience / replay mode) ──────────────
 
 export interface ConversationEntry {
-  scope: 'public' | 'werewolf' | 'night_intel';
+  scope: 'public' | 'werewolf' | 'night_intel' | 'thought';
   content: string;
   round_number: number;
   speaker_seat: number | null;

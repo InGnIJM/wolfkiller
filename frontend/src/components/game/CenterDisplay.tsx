@@ -18,6 +18,8 @@ const STEP_LABELS: Record<string, string> = {
   seer_open: '预言家请睁眼',
   seer_check: '预言家查验中',
   seer_close: '预言家请闭眼',
+  hunter_death: '猎人死亡',
+  hunter_shoot: '猎人开枪',
 };
 
 const PHASE_LABELS: Record<string, string> = {
@@ -138,6 +140,36 @@ export default function CenterDisplay() {
         </Box>
       );
     }
+
+    if (scope === 'thought') {
+      return (
+        <Box key={key} sx={{
+          ...panelSx,
+          bgcolor: 'rgba(129,212,250,0.06)',
+          borderRadius: 2,
+          borderLeft: '3px solid rgba(129,212,250,0.3)',
+        }}>
+          <Typography variant="subtitle2" color="info.light" gutterBottom>
+            💭 {entry.speaker_seat != null ? `${entry.speaker_seat}号` : ''} 内心思考
+          </Typography>
+          <Typography
+            variant="body2"
+            color="grey.500"
+            sx={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              maxHeight: 260,
+              overflowY: 'auto',
+              lineHeight: 1.8,
+              fontSize: '0.85rem',
+              fontStyle: 'italic',
+            }}
+          >
+            {entry.content}
+          </Typography>
+        </Box>
+      );
+    }
   }
 
   // ── Operation entries ───────────────────────────────────
@@ -154,11 +186,15 @@ export default function CenterDisplay() {
           <Typography variant="subtitle1" fontWeight={500} color="grey.300">
             🌙 {stepLabel}
           </Typography>
-          {detail.target && (
+          {detail.target ? (
             <Typography variant="body2" color="error.light" sx={{ mt: 0.5 }}>
               目标: {detail.target}号
             </Typography>
-          )}
+          ) : op === 'hunter_shoot' ? (
+            <Typography variant="body2" color="grey.400" sx={{ mt: 0.5 }}>
+              猎人选择压枪（不开枪）
+            </Typography>
+          ) : null}
           {detail.result && (
             <Typography variant="body2" color="grey.400" sx={{ mt: 0.3 }}>
               结果: {detail.result}
