@@ -1,0 +1,169 @@
+"""Persistent game index — survives backend restarts.
+
+Stores lightweight game metadata in data/games/index.json so the
+frontend game list and detail views continue working after a restart.
+"""
+
+from __future__ import annotations
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class GameManifest:
+    """Lightweight on-disk registry of all games (running + completed)."""
+
+    def __init__(self, data_dir: str = "data"):
+        self._dir = Path(data_dir) / "games"
+        self._path = self._dir / "index.json"
+        self._entries: dict[str, dict] = {}
+
+    # ── Public API ─────────────────────────────────────────────────
+
+    def load_or_rebuild(self) -> dict[str, dict]:
+        """Return {game_id: metadata} for every game on disk.
+
+        Prefer index.json; if missing or corrupt, rebuild by scanning
+        game directories and reading their game.log.
+        """
+        self._entries = {}
+        try:
+            if self._path.exists():
+                with open(self._path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, list):
+                    for entry in raw:
+                        gid = entry.get("game_id")
+                        if gid:
+                            self._entries[gid] = entry
+                logger.info(f"Game manifest loaded: {len(self._entries)} games")
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to load game manifest, rebuilding: {e}")
+
+        # Rebuild from disk for any directories not in the index
+        if self._dir.exists():
+            for child in sorted(self._dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                gid = child.name
+                glog = child / "game.log"
+                if not glog.exists():
+                    continue
+                if gid not in self._entries:
+                    meta = self._extract_meta(gid, glog)
+                    if meta:
+                        self._entries[gid] = meta
+                        logger.info(f"Recovered game from disk: {gid}")
+
+        # Persist rebuilt index
+        if self._entries:
+            self._persist()
+        return dict(self._entries)
+
+    def add_game(self, game_id: str, config: dict) -> None:
+        entry = self._entries.get(game_id, {})
+        entry.update({
+            "game_id": game_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "phase": "waiting",
+            "round_number": 0,
+            "player_count": sum(config.values()),
+            "config": config,
+            "winner": None,
+            "finished_at": None,
+        })
+        self._entries[game_id] = entry
+        self._persist()
+
+    def update_game(
+        self, game_id: str, *,
+        phase: Optional[str] = None,
+        round_number: Optional[int] = None,
+        player_count: Optional[int] = None,
+        alive_count: Optional[int] = None,
+        winner: Optional[str] = None,
+    ) -> None:
+        entry = self._entries.get(game_id)
+        if entry is None:
+            return
+        if phase is not None:
+            entry["phase"] = phase
+        if round_number is not None:
+            entry["round_number"] = round_number
+        if player_count is not None:
+            entry["player_count"] = player_count
+        if alive_count is not None:
+            entry["alive_count"] = alive_count
+        if winner is not None:
+            entry["winner"] = winner
+            entry["finished_at"] = datetime.now(timezone.utc).isoformat()
+        self._persist()
+
+    # ── Internals ──────────────────────────────────────────────────
+
+    def _extract_meta(self, game_id: str, log_path: Path) -> Optional[dict]:
+        """Parse a game.log to extract basic metadata for the manifest."""
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return None
+
+        meta: dict = {
+            "game_id": game_id,
+            "created_at": None,
+            "phase": "waiting",
+            "round_number": 0,
+            "player_count": 0,
+            "config": {},
+            "winner": None,
+            "finished_at": None,
+        }
+        players: dict = {}
+
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if meta["created_at"] is None:
+                meta["created_at"] = rec.get("timestamp")
+
+            op = rec.get("operation")
+            data = rec.get("data") or {}
+
+            if op == "role_init":
+                players = data.get("players", {})
+                meta["player_count"] = len(players)
+
+            # Fallback: extract player count from werewolf votes if role_init missing
+            if meta["player_count"] == 0 and op == "werewolf_kill":
+                seen = set()
+                for v in data.get("votes") or []:
+                    s = v.get("player_seat")
+                    if s:
+                        seen.add(s)
+                if seen:
+                    meta["player_count"] = len(seen)
+
+            elif op == "phase_change":
+                meta["phase"] = data.get("new_phase", rec.get("phase", ""))
+                meta["round_number"] = rec.get("round", 0)
+
+            elif op == "game_over":
+                meta["phase"] = "game_over"
+                meta["winner"] = data.get("winner")
+                meta["finished_at"] = rec.get("timestamp")
+
+        return meta
+
+    def _persist(self) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        entries = sorted(self._entries.values(), key=lambda e: e.get("created_at", ""))
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)

@@ -1,22 +1,31 @@
 import asyncio
+import json
 import logging
+import os
 import random
 import uuid
 from typing import Optional
 
-from app.models.game import GameState, GameConfig
+from app.config import config as app_config
+from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
 from app.roles import Werewolf, Witch, Seer, Hunter, Villager
 from app.api.websocket.ws_handler import WSManager
+from app.services.game_manifest import GameManifest
 
 logger = logging.getLogger(__name__)
 
 
 class GameService:
-    """Manages game lifecycle: creation, execution, state access, and event broadcasting."""
+    """Manages game lifecycle: creation, execution, state access, and event broadcasting.
+
+    Game metadata is persisted to data/games/index.json so the game list
+    survives backend restarts.  Completed games can be browsed and their
+    logs replayed without the engine still running.
+    """
 
     def __init__(
         self,
@@ -30,6 +39,10 @@ class GameService:
         self._games: dict[str, GameState] = {}
         self._engines: dict[str, GameEngine] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        self._manifest = GameManifest()
+
+        # Restore completed games so list / detail endpoints still work
+        self._load_persisted_games()
 
         self.event_bus.subscribe(BusEvent.PHASE_CHANGED, self._on_phase_changed)
         self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._on_player_died)
@@ -37,6 +50,125 @@ class GameService:
         self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
         self.event_bus.subscribe(BusEvent.NIGHT_SUBSTEP, self._on_night_substep)
+
+    # ── Persistence helpers ────────────────────────────────────────
+
+    def _load_persisted_games(self) -> None:
+        """Reconstruct lightweight GameState for every completed game on disk."""
+        entries = self._manifest.load_or_rebuild()
+        for game_id, meta in entries.items():
+            # Skip games still running (engine will re-register them)
+            if meta.get("phase") == "game_over" or meta.get("winner"):
+                state = self._reconstruct_state(game_id, meta)
+                if state is not None:
+                    self._games[game_id] = state
+        logger.info(f"Restored {len(self._games)} completed games from disk")
+
+    def _reconstruct_state(
+        self, game_id: str, meta: dict,
+    ) -> Optional[GameState]:
+        """Build a minimal GameState from manifest metadata + game.log."""
+        log_path = os.path.join("data", "games", game_id, "game.log")
+        if not os.path.exists(log_path):
+            return None
+
+        config = GameConfig(**meta.get("config", {})) if meta.get("config") else GameConfig()
+
+        state = GameState(
+            game_id=game_id,
+            phase=GamePhase(meta.get("phase", "game_over")),
+            round_number=meta.get("round_number", 0),
+            config=config,
+        )
+        state.win_result = {
+            "winning_camp": meta["winner"],
+            "reason": "",
+        } if meta.get("winner") else None
+
+        # Reconstruct players + events from log
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return state
+
+        seen_seats: set[int] = set()
+
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            data = rec.get("data") or {}
+            op = rec.get("operation")
+            seat = rec.get("seat")
+
+            # ── Discover players ──────────────────────────────
+            if op == "role_init":
+                for seat_str, pdata in (data.get("players") or {}).items():
+                    s = int(seat_str)
+                    seen_seats.add(s)
+                    state.players[s] = PlayerState(
+                        seat_number=s,
+                        role=pdata.get("role", ""),
+                        camp=pdata.get("camp", ""),
+                        is_alive=pdata.get("is_alive", True),
+                    )
+
+            # Fallback: extract seats from werewolf votes or any seat-bearing event
+            if not state.players:
+                if op == "werewolf_kill":
+                    for v in data.get("votes") or []:
+                        s = v.get("player_seat")
+                        if s and s not in seen_seats:
+                            seen_seats.add(s)
+                            state.players[s] = PlayerState(
+                                seat_number=s, role="?", camp="?",
+                            )
+                if isinstance(seat, int) and seat > 0 and seat not in seen_seats:
+                    seen_seats.add(seat)
+                    state.players[seat] = PlayerState(
+                        seat_number=seat, role="?", camp="?",
+                    )
+
+            # ── Apply deaths ──────────────────────────────────
+            if op == "night_deaths":
+                for d in (data.get("deaths") or []):
+                    ds = d.get("player_seat")
+                    if ds and ds in state.players:
+                        state.players[ds].mark_dead()
+
+            elif op == "vote_result":
+                exiled = data.get("exiled")
+                if exiled and exiled in state.players:
+                    state.players[exiled].mark_dead()
+
+            elif op == "game_over":
+                state.win_result = {
+                    "winning_camp": data.get("winner"),
+                    "reason": data.get("reason", ""),
+                }
+
+        # If manifest or config says N players but we found fewer, fill in placeholder seats
+        total = meta.get("player_count", 0) or config.total_players
+        if total > 0 and len(state.players) < total:
+            for s in range(1, total + 1):
+                if s not in state.players:
+                    state.players[s] = PlayerState(
+                        seat_number=s, role="?", camp="?",
+                    )
+
+        return state
+
+    def _persist_game(self, state: GameState) -> None:
+        """Write current game metadata to the manifest."""
+        self._manifest.update_game(
+            state.game_id,
+            phase=state.phase.value,
+            round_number=state.round_number,
+            alive_count=len(state.alive_players()),
+        )
 
     async def create_game(
         self,
@@ -55,10 +187,10 @@ class GameService:
             num_hunters=num_hunters,
         )
 
-        # Create role instances
-        llm_client = LLMClient()
+        # Create role instances with random model assignment
+        models = app_config.llm.models
         prompt_builder = PromptBuilder()
-        roles = self._create_roles(config, prompt_builder, llm_client)
+        roles = self._create_roles(config, prompt_builder, models)
 
         # Create engine
         engine = GameEngine(
@@ -72,6 +204,15 @@ class GameService:
         self._engines[game_id] = engine
         self._games[game_id] = engine.state
 
+        # Persist to disk immediately so the game shows up after restart
+        self._manifest.add_game(game_id, {
+            "num_werewolves": num_werewolves,
+            "num_villagers": num_villagers,
+            "num_seers": num_seers,
+            "num_witches": num_witches,
+            "num_hunters": num_hunters,
+        })
+
         task = asyncio.create_task(engine.start())
         self._tasks[game_id] = task
 
@@ -79,7 +220,7 @@ class GameService:
         return game_id
 
     def _create_roles(
-        self, config: GameConfig, prompt_builder: PromptBuilder, llm_client: LLMClient,
+        self, config: GameConfig, prompt_builder: PromptBuilder, models: list[str],
     ) -> dict:
         role_names = config.role_distribution()
         random.shuffle(role_names)
@@ -95,7 +236,10 @@ class GameService:
             cls = role_map.get(role_name)
             if cls is None:
                 raise ValueError(f"Unknown role: {role_name}")
+            model = random.choice(models)
+            llm_client = LLMClient(model=model)
             roles[seat] = cls(seat, role_name, prompt_builder, llm_client)
+            logger.debug(f"Seat {seat} ({role_name}): assigned model {model}")
         return roles
 
     def get_game_state(self, game_id: str) -> Optional[GameState]:
@@ -111,6 +255,7 @@ class GameService:
         if state is None:
             return
         self._games[state.game_id] = state
+        self._persist_game(state)
         await self.ws_manager.broadcast(
             state.game_id, "phase_change",
             phase=kwargs.get("phase", ""),
@@ -158,6 +303,12 @@ class GameService:
         for game_id in self._games:
             state = self._games.get(game_id)
             if state:
+                # Persist final result
+                self._manifest.update_game(
+                    game_id,
+                    phase="game_over",
+                    winner=wr_dict.get("winning_camp"),
+                )
                 await self.ws_manager.broadcast(
                     game_id, "game_over", win_result=wr_dict,
                     state=state.get_public_state(),
