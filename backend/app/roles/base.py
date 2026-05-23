@@ -50,7 +50,7 @@ class BaseRole:
 
         # Use tool calling for speech/last_words contexts
         if context in ("day_speech", "last_words"):
-            return await self._speak_with_tools(state, prompt, context)
+            return await self._speak_with_tools(state, prompt, context, conversation_log)
 
         # Other contexts (e.g. werewolf chat handled elsewhere) use plain LLM
         raw = await self._invoke_llm(prompt)
@@ -58,6 +58,7 @@ class BaseRole:
 
     async def _speak_with_tools(
         self, state: GameState, prompt: str, context: str,
+        conversation_log: ConversationLog,
     ) -> str | None:
         """Invoke LLM with speech tools, validate the tool call, return the speech text.
         Retries once on tool-calling failure, then generates a fallback speech so the
@@ -90,6 +91,9 @@ class BaseRole:
             )
             tool_result = None
 
+        if tool_result and tool_result.thinking_text:
+            self._record_thought(tool_result.thinking_text, state, conversation_log, context)
+
         # ── Attempt 2 (retry): stronger prompt emphasising tool call ──
         if tool_result is None:
             logger.warning(
@@ -111,6 +115,9 @@ class BaseRole:
                     f"context={context} (attempt 2): {e}"
                 )
                 tool_result = None
+
+            if tool_result and tool_result.thinking_text:
+                self._record_thought(tool_result.thinking_text, state, conversation_log, context)
 
         # ── Validate and return ──
         try:
@@ -219,10 +226,10 @@ class BaseRole:
                 f"校验失败：{self.seat}号玩家已出局，无法发言。"
                 f"只有存活玩家才能进行白天发言。"
             )
-        if state.phase.value != "speech":
+        if state.phase.value not in ("speech", "vote_resolution"):
             return False, (
                 f"校验失败：当前游戏阶段为「{state.phase.value}」，不是发言阶段。"
-                f"发言只能在发言阶段（speech）进行。"
+                f"发言只能在发言阶段（speech）或平票补充发言（vote_resolution）中进行。"
             )
         return True, ""
 
@@ -276,6 +283,23 @@ class BaseRole:
 
         return True, ""
 
+    # ── Thought recording ───────────────────────────────────────
+
+    def _record_thought(
+        self, content: str, state: GameState,
+        conversation_log: ConversationLog, context: str,
+    ) -> None:
+        """Record a thought to the conversation log if content is non-empty."""
+        if not content or not content.strip():
+            return
+        conversation_log.add_thought(
+            seat=self.seat,
+            role=self.role_name,
+            content=content.strip(),
+            round_num=state.round_number,
+            phase=context,
+        )
+
     # ── Voting ──────────────────────────────────────────────────
 
     async def vote(
@@ -286,6 +310,8 @@ class BaseRole:
         )
         raw = await self._invoke_llm(prompt)
         vote = self.output_parser.parse_vote_action(raw, self.seat)
+        if vote.thinking:
+            self._record_thought(vote.thinking, state, conversation_log, context)
         return vote
 
     # ── LLM invocation ──────────────────────────────────────────
