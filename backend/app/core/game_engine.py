@@ -252,7 +252,7 @@ class GameEngine:
             await self._sleep_night_step()
 
             check_action = await self.seer_check(seer.seat_number)
-            if check_action:
+            if check_action and check_action.target_seat:
                 all_actions.append(check_action)
                 result = self.resolve_seer_check(check_action)
                 self.game_logger.log_seer_check(
@@ -656,13 +656,14 @@ class GameEngine:
                     player_seat=exiled_seat, cause="exile",
                     round_number=self.state.round_number,
                 ))
-                # Exiled player gives last words immediately
-                await self.give_last_words(exiled_seat, "exile", self.state.round_number)
-                # Hunter shot if exiled
+                # Hunter shot FIRST (before last words, so the hunter can reference
+                # their shooting decision in their final speech)
                 if "hunter" in player.role and player.has_gun:
                     hunter_death = await self.hunter_shoot(exiled_seat)
                     if hunter_death:
                         self.state.death_history.append(hunter_death)
+                # Exiled player gives last words AFTER shooting
+                await self.give_last_words(exiled_seat, "exile", self.state.round_number)
 
         # Announce vote result
         if exiled_seat is not None:
