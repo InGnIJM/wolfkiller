@@ -9,6 +9,7 @@ class ConversationScope(str, Enum):
     PUBLIC = "public"              # 全员可见：白天发言、遗言、死亡公告、投票结果
     WEREWOLF = "werewolf"          # 狼人内部频道：夜晚交流
     NIGHT_INTEL = "night_intel"    # 夜间情报：仅特定角色可见（女巫刀口、预言家查验、猎人开枪等），通过 visible_to 控制
+    THOUGHT = "thought"            # 内心思考：仅思考者本人可见（观众可在回放中查看全部思考）
 
 
 @dataclass

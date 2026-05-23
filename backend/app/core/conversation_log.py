@@ -114,6 +114,36 @@ class ConversationLog:
         self._persist(record)
         return record
 
+    # ── Thought (internal monologue) methods ────────────────────────
+
+    def add_thought(
+        self, seat: int, role: str, content: str, round_num: int, phase: str,
+    ) -> Conversation:
+        """Record a player's internal thought. Only visible to the thinker and the audience."""
+        record = Conversation(
+            scope=ConversationScope.THOUGHT,
+            speaker_seat=seat,
+            speaker_role=role,
+            content=content,
+            round_number=round_num,
+            phase=phase,
+            visible_to=[seat],
+        )
+        self.records.append(record)
+        self._persist(record)
+        return record
+
+    def get_thoughts_for_seat(self, seat: int) -> list[Conversation]:
+        """Return all thought records belonging to a specific player."""
+        return [
+            r for r in self.records
+            if r.scope == ConversationScope.THOUGHT and r.speaker_seat == seat
+        ]
+
+    def get_all_thoughts(self) -> list[Conversation]:
+        """Return all thought records (for audience/frontend view)."""
+        return [r for r in self.records if r.scope == ConversationScope.THOUGHT]
+
     # ── Query methods ─────────────────────────────────────────────
 
     def get_conversations_for_role(
