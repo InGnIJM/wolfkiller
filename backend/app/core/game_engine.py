@@ -341,7 +341,11 @@ class GameEngine:
             for contract in builtin_registry.require(player.role).contracts
             if contract.contract_id == contract_id and contract.phase == GamePhase.NIGHT
         )
-        key_suffix = f":{operation}" if operation else ""
+        key_suffix = (
+            f":{operation}"
+            if operation and contract_id != "witch_action"
+            else ""
+        )
         request = ActionRequest(
             actor_seat=seat,
             role_id=player.role,
@@ -353,6 +357,8 @@ class GameEngine:
                 f"{contract.contract_id}{key_suffix}"
             ),
         )
+        if request.idempotency_key in self.state.accepted_action_keys:
+            raise ActionValidationError("action already accepted")
         role = self.roles[seat]
         accepted = await role.request_action(
             self.state, self.conversation_log, request
@@ -654,7 +660,6 @@ class GameEngine:
 
         try:
             accepted = await self._request_hunter_action(hunter_seat)
-            action = self._night_action_from_accepted(accepted)
         except Exception as e:
             logger.error(f"Hunter shoot LLM error (seat={hunter_seat}): {e}")
             self.game_logger.log_hunter_shoot(
@@ -662,19 +667,25 @@ class GameEngine:
             )
             return None
 
-        if action is None or action.action_type == "pass" or action.target_seat is None:
+        if (
+            accepted.command.action_type == "pass"
+            or accepted.command.target_seat is None
+        ):
             self.game_logger.log_hunter_shoot(
                 self.game_id, self.state.round_number, hunter_seat, None,
             )
             return None
 
-        death = self.action_resolver.resolve_hunter_shoot(self.state, hunter_seat, action)
+        death = self.action_resolver.resolve_hunter_shoot(
+            self.state, hunter_seat, accepted
+        )
         if death:
             await self.event_bus.publish(BusEvent.PLAYER_DIED, death=death)
             self.game_logger.log_hunter_shoot(
-                self.game_id, self.state.round_number, hunter_seat, action.target_seat,
+                self.game_id, self.state.round_number, hunter_seat,
+                accepted.command.target_seat,
             )
-            sys_msg = f"你开枪带走了 {action.target_seat} 号玩家。"
+            sys_msg = f"你开枪带走了 {accepted.command.target_seat} 号玩家。"
             self.conversation_log.add_night_intel(
                 sys_msg, self.state.round_number, "night", visible_to=[hunter_seat],
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 
 from app.agents.output_parser import StrictCapabilityError
@@ -264,7 +265,7 @@ async def test_engine_witch_save_uses_role_strict_action_request():
 
     assert used is True
     assert role.request.contract.contract_id == "witch_action"
-    assert role.request.idempotency_key.endswith(":save")
+    assert role.request.idempotency_key.endswith(":witch_action")
 
 
 class RequestingPoisonRole:
@@ -292,7 +293,43 @@ async def test_engine_witch_poison_uses_role_strict_action_request():
 
     assert (action.action_type, action.target_seat) == ("poison", 2)
     assert role.request.contract.contract_id == "witch_action"
-    assert role.request.idempotency_key.endswith(":poison")
+    assert role.request.idempotency_key.endswith(":witch_action")
+
+
+@pytest.mark.asyncio
+async def test_engine_witch_operations_share_one_idempotency_key():
+    class RecordingWitchRole:
+        def __init__(self):
+            self.requests = []
+
+        async def request_action(self, state, conversation_log, request):
+            self.requests.append(request)
+            state.accepted_action_keys.add(request.idempotency_key)
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(
+                    action_type="pass", target_seat=None, reasoning="x"
+                ),
+            )
+
+    role = RecordingWitchRole()
+    engine = GameEngine(game_id="strict-witch-key", roles={1: role})
+    engine.state.phase = GamePhase.NIGHT
+    engine.state.players = {
+        1: PlayerState(
+            1, "wolf-killer-witch", Camp.GOOD.value,
+            has_antidote=True, has_poison=True,
+        ),
+        2: PlayerState(2, "wolf-killer-villager", Camp.GOOD.value),
+    }
+
+    assert await engine.witch_save(1, 2) is False
+    assert await engine.witch_poison(1, 2) is None
+
+    assert [request.idempotency_key for request in role.requests] == [
+        "0:night:1:witch_action"
+    ]
+    assert engine.state.players[1].has_poison is True
 
 
 class RequestingHunterRole:
@@ -316,8 +353,14 @@ async def test_engine_hunter_shot_uses_role_strict_action_request_at_night():
         2: PlayerState(2, "wolf-killer-villager", Camp.GOOD.value),
     }
 
+    resolve_hunter_shoot = MagicMock(
+        wraps=engine.action_resolver.resolve_hunter_shoot
+    )
+    engine.action_resolver.resolve_hunter_shoot = resolve_hunter_shoot
+
     death = await engine.hunter_shoot(1)
 
     assert death.player_seat == 2
     assert role.request.contract.contract_id == "hunter_shoot"
     assert role.request.phase == GamePhase.NIGHT
+    assert isinstance(resolve_hunter_shoot.call_args.args[2], AcceptedAction)
