@@ -508,56 +508,57 @@ class TestPromptBuilder:
         prompt = builder.build_vote_prompt(state, 4, "wolf-killer-villager", log, "exile_vote")
         assert "你的历史思考回顾" in prompt
 
-    def test_night_kill_task_requires_thinking_field(self):
-        """Night kill task should require thinking field in JSON output."""
+    def test_night_kill_task_uses_only_action_schema_fields(self):
         builder = PromptBuilder()
         state = make_state()
         log = make_log()
 
         prompt = builder.build_action_prompt(state, 1, "wolf-killer-werewolf", log, "night_kill")
-        assert '"thinking"' in prompt
+        assert '"thinking"' not in prompt
+        assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
 
-    def test_witch_save_task_requires_thinking_field(self):
-        """Witch save task should require thinking field."""
+    def test_witch_save_task_uses_only_action_schema_fields(self):
         builder = PromptBuilder()
         state = make_state()
         log = make_log()
 
         prompt = builder.build_action_prompt(state, 8, "wolf-killer-witch", log, "witch_save", wolf_target=3)
-        assert '"thinking"' in prompt
+        assert '"thinking"' not in prompt
+        assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
 
-    def test_witch_poison_task_requires_thinking_field(self):
-        """Witch poison task should require thinking field."""
+    def test_witch_poison_task_uses_only_action_schema_fields(self):
         builder = PromptBuilder()
         state = make_state()
         log = make_log()
 
         prompt = builder.build_action_prompt(state, 8, "wolf-killer-witch", log, "witch_poison", wolf_target=3)
-        assert '"thinking"' in prompt
+        assert '"thinking"' not in prompt
+        assert "深度思考" not in prompt
+        assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
 
-    def test_night_check_task_requires_thinking_field(self):
-        """Night check task should require thinking field."""
+    def test_night_check_task_uses_only_action_schema_fields(self):
         builder = PromptBuilder()
         state = make_state()
         log = make_log()
 
         prompt = builder.build_action_prompt(state, 7, "wolf-killer-seer", log, "night_check")
-        assert '"thinking"' in prompt
+        assert '"thinking"' not in prompt
+        assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
 
-    def test_hunter_shoot_task_requires_thinking_field(self):
-        """Hunter shoot task should require thinking field."""
+    def test_hunter_shoot_task_uses_only_action_schema_fields(self):
         builder = PromptBuilder()
         state = make_state()
         log = make_log()
 
         prompt = builder.build_action_prompt(state, 9, "wolf-killer-hunter", log, "hunter_shoot")
-        assert '"thinking"' in prompt
+        assert '"thinking"' not in prompt
+        assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
 
-    def test_exile_vote_task_requires_thinking_field(self):
-        """Exile vote task should require thinking field."""
+    def test_exile_vote_task_uses_only_action_schema_fields(self):
         builder = PromptBuilder()
         state = make_state()
         log = make_log()
 
         prompt = builder.build_vote_prompt(state, 4, "wolf-killer-villager", log, "exile_vote")
-        assert '"thinking"' in prompt
+        assert '"thinking"' not in prompt
+        assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
