@@ -1,5 +1,5 @@
-import random
 from typing import Optional
+from app.models.contracts import AcceptedAction
 from app.models.game import GameState
 from app.models.actions import NightAction, DeathReport
 
@@ -7,20 +7,32 @@ from app.models.actions import NightAction, DeathReport
 class ActionResolver:
     """Resolves all night actions: wolf kill → witch save/poison → seer check → hunter check."""
 
-    def resolve(self, state: GameState, actions: list[NightAction]) -> list[DeathReport]:
+    def resolve(
+        self, state: GameState, actions: list[AcceptedAction | NightAction]
+    ) -> list[DeathReport]:
         """Resolve night actions and return deaths. Does NOT handle hunter shoot —
         caller must check for hunter death and prompt the hunter separately."""
-        wolf_actions = [a for a in actions if a.action_type == "kill"]
-        witch_actions = [a for a in actions if a.action_type in ("save", "poison")]
-        seer_actions = [a for a in actions if a.action_type == "check"]
+        resolved_actions = [self._as_night_action(action) for action in actions]
+        legacy_action_ids = {
+            id(resolved)
+            for original, resolved in zip(actions, resolved_actions)
+            if isinstance(original, NightAction)
+        }
+        wolf_actions = [a for a in resolved_actions if a.action_type == "kill"]
+        witch_actions = [a for a in resolved_actions if a.action_type in ("save", "poison")]
+        seer_actions = [a for a in resolved_actions if a.action_type == "check"]
 
         # 1. Resolve wolf kill target (majority vote)
         wolf_target = self._resolve_wolf_kill(wolf_actions)
         state.last_wolf_kill_target = wolf_target
 
         # 2. Process witch actions (one potion per night enforced by engine)
-        saved = self._process_witch_save(state, witch_actions)
-        poisoned_target = self._process_witch_poison(state, witch_actions)
+        saved = self._process_witch_save(
+            state, wolf_target, witch_actions, legacy_action_ids
+        )
+        poisoned_target = self._process_witch_poison(
+            state, witch_actions, legacy_action_ids
+        )
 
         # 3. Process seer checks
         self._process_seer_checks(state, seer_actions)
@@ -85,10 +97,29 @@ class ActionResolver:
 
     # ── Private helpers ───────────────────────────────────────────
 
+    def _as_night_action(self, action: AcceptedAction | NightAction) -> NightAction:
+        if isinstance(action, AcceptedAction):
+            return NightAction(
+                player_seat=action.request.actor_seat,
+                action_type=action.command.action_type,
+                target_seat=action.command.target_seat,
+                reasoning=action.command.reasoning,
+            )
+        if isinstance(action, NightAction):
+            # NightAction is a legacy, engine-internal trusted command. External
+            # model output must first become AcceptedAction through ActionValidator.
+            return action
+        raise TypeError("resolver requires AcceptedAction or trusted NightAction")
+
     def _resolve_wolf_kill(self, actions: list[NightAction]) -> Optional[int]:
         if not actions:
             return None
-        targets = [a.target_seat for a in actions if a.target_seat is not None]
+        targets = [
+            a.target_seat
+            for a in actions
+            if isinstance(a.target_seat, int) and not isinstance(a.target_seat, bool)
+            and a.target_seat > 0
+        ]
         if not targets:
             return None
 
@@ -98,35 +129,53 @@ class ActionResolver:
 
         max_votes = max(vote_counts.values())
         top = [t for t, c in vote_counts.items() if c == max_votes]
-        return random.choice(top)
+        return min(top)
 
     def _process_witch_save(
-        self, state: GameState, actions: list[NightAction]
+        self,
+        state: GameState,
+        wolf_target: Optional[int],
+        actions: list[NightAction],
+        legacy_action_ids: set[int],
     ) -> bool:
         for action in actions:
             if action.action_type != "save":
                 continue
-            witch = state.players.get(action.player_seat)
-            if witch and witch.has_antidote:
-                witch.has_antidote = False
+            is_legacy = id(action) in legacy_action_ids
+            if is_legacy and action.target_seat is None:
+                witch = state.players.get(action.player_seat)
+                if witch and witch.has_antidote:
+                    witch.has_antidote = False
+                    return True
+            elif action.target_seat == wolf_target:
+                if is_legacy:
+                    witch = state.players.get(action.player_seat)
+                    if not witch or not witch.has_antidote:
+                        continue
+                    witch.has_antidote = False
                 return True
         return False
 
     def _process_witch_poison(
-        self, state: GameState, actions: list[NightAction]
+        self,
+        state: GameState,
+        actions: list[NightAction],
+        legacy_action_ids: set[int],
     ) -> Optional[int]:
         for action in actions:
             if action.action_type != "poison":
                 continue
-            witch = state.players.get(action.player_seat)
-            if witch and witch.has_poison:
-                target_seat = action.target_seat
-                if target_seat is not None:
-                    target = state.players.get(target_seat)
-                    if target and not target.is_alive:
-                        return None  # target already dead, don't consume poison
+            if action.target_seat is None or action.target_seat == 0:
+                return None
+            if id(action) in legacy_action_ids:
+                witch = state.players.get(action.player_seat)
+                if not witch or not witch.has_poison:
+                    continue
+                target = state.players.get(action.target_seat)
+                if target and not target.is_alive:
+                    return None
                 witch.has_poison = False
-                return target_seat
+            return action.target_seat
         return None
 
     def _process_seer_checks(
