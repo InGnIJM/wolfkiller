@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import NightAction, VoteAction, DeathReport
-from app.models.contracts import AcceptedAction
+from app.models.contracts import AcceptedAction, ActionContract, ActionRequest
 from app.core.event_bus import EventBus
 
 
@@ -485,6 +485,71 @@ class TestGameEngine:
         assert [accepted.command.action_type for accepted in accepted_actions] == ["kill"]
         assert duplicate_actions == []
         assert resolve.call_count == 1
+
+    def test_accept_night_actions_keeps_duplicate_bound_to_its_original_contract(self):
+        roles = {1: make_mock_role(1, "wolf-killer-werewolf")}
+        engine = GameEngine(game_id="test", roles=roles)
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.phase = GamePhase.NIGHT
+        kill_request = ActionRequest(
+            actor_seat=1,
+            role_id="wolf-killer-werewolf",
+            contract=ActionContract(
+                contract_id="kill", phase=GamePhase.NIGHT,
+                action_types=("kill",), actions_requiring_target=frozenset({"kill"}),
+                resolution_priority=10, fallback_action_type="pass",
+            ),
+            phase=GamePhase.NIGHT, round_id=0, idempotency_key="0:night:1:kill",
+        )
+        check_request = ActionRequest(
+            actor_seat=1,
+            role_id="wolf-killer-werewolf",
+            contract=ActionContract(
+                contract_id="check", phase=GamePhase.NIGHT,
+                action_types=("check", "pass"), actions_requiring_target=frozenset({"check"}),
+                resolution_priority=20, fallback_action_type="pass",
+            ),
+            phase=GamePhase.NIGHT, round_id=0, idempotency_key="0:night:1:check",
+        )
+        action = NightAction(player_seat=1, action_type="kill", target_seat=2)
+        resolve = MagicMock(wraps=engine.action_resolver.resolve)
+        engine.action_resolver.resolve = resolve
+
+        with patch(
+            "app.core.game_engine.builtin_registry.build_requests",
+            side_effect=([kill_request, check_request], [check_request], [check_request]),
+        ), patch(
+            "app.core.game_engine.builtin_registry.require",
+            return_value=MagicMock(
+                contracts=(kill_request.contract, check_request.contract),
+            ),
+        ):
+            accepted_actions = engine._accept_night_actions([action])
+            engine.state.night_actions = [action]
+            engine.action_resolver.resolve(engine.state, accepted_actions)
+            night_actions_before = list(engine.state.night_actions)
+            accepted_keys_before = set(engine.state.accepted_action_keys)
+            resolver_inputs_before = list(resolve.call_args_list)
+
+            duplicate_actions = engine._accept_night_actions([action])
+            if duplicate_actions:
+                engine.action_resolver.resolve(engine.state, duplicate_actions)
+
+            unknown_actions = engine._accept_night_actions([
+                NightAction(player_seat=1, action_type="unknown", target_seat=None),
+            ])
+            if unknown_actions:
+                engine.action_resolver.resolve(engine.state, unknown_actions)
+
+        assert [accepted.command.action_type for accepted in accepted_actions] == ["kill"]
+        assert duplicate_actions == []
+        assert unknown_actions == []
+        assert engine.state.night_actions == night_actions_before
+        assert engine.state.accepted_action_keys == accepted_keys_before == {"0:night:1:kill"}
+        assert resolve.call_args_list == resolver_inputs_before
 
     @pytest.mark.asyncio
     async def test_execute_speech_round(self):

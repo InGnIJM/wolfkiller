@@ -341,19 +341,59 @@ class GameEngine:
                 )
                 continue
 
-            matching_requests = [
-                request
-                for request in actor_requests
-                if action.action_type in request.contract.action_types
+            player = self.state.players.get(action.player_seat)
+            night_contracts = [
+                contract
+                for contract in builtin_registry.require(player.role).contracts
+                if contract.phase == GamePhase.NIGHT
             ]
-            request = next(
-                (
-                    candidate
-                    for candidate in matching_requests or actor_requests
-                    if candidate.idempotency_key not in self.state.accepted_action_keys
-                ),
-                (matching_requests or actor_requests)[0],
-            )
+            matching_contracts = [
+                contract
+                for contract in night_contracts
+                if action.action_type in contract.action_types
+            ]
+            if len(matching_contracts) > 1:
+                logger.warning(
+                    "Discarding night action with ambiguous contract (seat=%s, action=%s)",
+                    action.player_seat, action.action_type,
+                )
+                continue
+
+            if matching_contracts:
+                contract = matching_contracts[0]
+                idempotency_key = (
+                    f"{self.state.round_number}:{GamePhase.NIGHT.value}:"
+                    f"{action.player_seat}:{contract.contract_id}"
+                )
+                if idempotency_key in self.state.accepted_action_keys:
+                    logger.warning(
+                        "Discarding duplicate night action for accepted contract "
+                        "(seat=%s, contract=%s)",
+                        action.player_seat, contract.contract_id,
+                    )
+                    continue
+                matching_requests = [
+                    request
+                    for request in actor_requests
+                    if request.contract.contract_id == contract.contract_id
+                ]
+                if len(matching_requests) != 1:
+                    logger.warning(
+                        "Discarding night action without an active matching contract "
+                        "(seat=%s, action=%s)",
+                        action.player_seat, action.action_type,
+                    )
+                    continue
+                request = matching_requests[0]
+            elif len(night_contracts) == 1:
+                request = actor_requests[0]
+            else:
+                logger.warning(
+                    "Discarding night action without a unique matching contract "
+                    "(seat=%s, action=%s)",
+                    action.player_seat, action.action_type,
+                )
+                continue
 
             if request.idempotency_key in self.state.accepted_action_keys:
                 logger.warning(
