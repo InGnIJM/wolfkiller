@@ -5,7 +5,9 @@ from app.models.actions import VoteAction
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
-from app.agents.output_parser import OutputParser, ToolCallError
+from app.agents.output_parser import OutputParser, StrictCapabilityError, ToolCallError
+from app.core.action_validator import ActionValidationError, ActionValidator
+from app.models.contracts import AcceptedAction, ActionRequest
 from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ class BaseRole:
         self.prompt_builder = prompt_builder
         self.llm_client = llm_client
         self.output_parser = OutputParser()
+        self.action_validator = ActionValidator()
         self._last_words_used = False
 
     @property
@@ -91,9 +94,6 @@ class BaseRole:
             )
             tool_result = None
 
-        if tool_result and tool_result.thinking_text:
-            self._record_thought(tool_result.thinking_text, state, conversation_log, context)
-
         # ── Attempt 2 (retry): stronger prompt emphasising tool call ──
         if tool_result is None:
             logger.warning(
@@ -115,9 +115,6 @@ class BaseRole:
                     f"context={context} (attempt 2): {e}"
                 )
                 tool_result = None
-
-            if tool_result and tool_result.thinking_text:
-                self._record_thought(tool_result.thinking_text, state, conversation_log, context)
 
         # ── Validate and return ──
         try:
@@ -285,21 +282,6 @@ class BaseRole:
 
     # ── Thought recording ───────────────────────────────────────
 
-    def _record_thought(
-        self, content: str, state: GameState,
-        conversation_log: ConversationLog, context: str,
-    ) -> None:
-        """Record a thought to the conversation log if content is non-empty."""
-        if not content or not content.strip():
-            return
-        conversation_log.add_thought(
-            seat=self.seat,
-            role=self.role_name,
-            content=content.strip(),
-            round_num=state.round_number,
-            phase=context,
-        )
-
     # ── Voting ──────────────────────────────────────────────────
 
     async def vote(
@@ -309,12 +291,87 @@ class BaseRole:
             state, self.seat, self.role_name, conversation_log, context
         )
         raw = await self._invoke_llm(prompt)
-        vote = self.output_parser.parse_vote_action(raw, self.seat)
-        if vote.thinking:
-            self._record_thought(vote.thinking, state, conversation_log, context)
-        return vote
+        return self.output_parser.parse_vote_action(raw, self.seat)
 
     # ── LLM invocation ──────────────────────────────────────────
+
+    async def request_action(
+        self,
+        state: GameState,
+        conversation_log: ConversationLog,
+        request: ActionRequest,
+    ) -> AcceptedAction:
+        """Request, strictly parse, and atomically accept one issued action."""
+        prompt = self._build_contract_action_prompt(state, conversation_log, request)
+        messages = [
+            SystemMessage(content=self.prompt_builder.get_system_prompt()),
+            HumanMessage(content=prompt),
+        ]
+        try:
+            return await self._request_action_with_transport(
+                state, request, messages, self._invoke_strict_action
+            )
+        except StrictCapabilityError:
+            return await self._request_action_with_transport(
+                state, request, messages, self._invoke_json_action
+            )
+
+    def _build_contract_action_prompt(
+        self,
+        state: GameState,
+        conversation_log: ConversationLog,
+        request: ActionRequest,
+    ) -> str:
+        context_by_contract = {
+            "werewolf_kill": "night_kill",
+            "seer_check": "night_check",
+            "witch_action": "witch_save",
+            "hunter_shoot": "hunter_shoot",
+            "exile_vote": "exile_vote",
+        }
+        context = context_by_contract.get(request.contract.contract_id, "action")
+        extra = {}
+        if request.contract.contract_id == "witch_action":
+            extra["wolf_target"] = getattr(state, "last_wolf_kill_target", None)
+        return self.prompt_builder.build_action_prompt(
+            state, self.seat, self.role_name, conversation_log, context, **extra
+        )
+
+    async def _request_action_with_transport(
+        self, state, request, messages, invoke
+    ) -> AcceptedAction:
+        active_messages = messages
+        for attempt in range(2):
+            try:
+                command = await invoke(active_messages, request)
+                return self.action_validator.validate_and_accept(
+                    state, request, command.model_dump()
+                )
+            except ActionValidationError:
+                if attempt == 1:
+                    return self.action_validator.safe_fallback(state, request)
+                active_messages = [
+                    *messages,
+                    HumanMessage(
+                        content=(
+                            "The previous action was invalid. Submit the required "
+                            "action again using the issued schema."
+                        )
+                    ),
+                ]
+        raise AssertionError("unreachable")
+
+    async def _invoke_strict_action(self, messages, request):
+        model = self.llm_client.get_model_with_action_tool(request.contract)
+        response = await model.ainvoke(messages)
+        return self.output_parser.parse_strict_action_response(response, request.contract)
+
+    async def _invoke_json_action(self, messages, request):
+        response = await self.llm_client.get_model().ainvoke(messages)
+        content = response.content if hasattr(response, "content") else str(response)
+        if not isinstance(content, str):
+            raise ActionValidationError("JSON action response must be text")
+        return self.output_parser.parse_action_payload(content, request.contract)
 
     async def _invoke_llm(self, prompt: str) -> str:
         model = self.llm_client.get_model()
@@ -334,18 +391,12 @@ class BaseRole:
         ]
         response = await model.ainvoke(messages)
 
-        # Log full response for debugging
-        content_preview = (
-            response.content[:200] if hasattr(response, "content") and response.content
-            else "(empty)"
-        )
         has_tool_calls = (
             hasattr(response, "tool_calls") and response.tool_calls
         )
         logger.info(
             f"Seat {self.seat} LLM response: "
-            f"has_tool_calls={has_tool_calls}, "
-            f"content_preview={content_preview}"
+            f"has_tool_calls={has_tool_calls}"
         )
 
         return self.output_parser.parse_tool_call(response)
