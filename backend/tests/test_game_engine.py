@@ -486,6 +486,44 @@ class TestGameEngine:
         assert duplicate_actions == []
         assert resolve.call_count == 1
 
+    def test_accept_night_actions_discards_missing_player_without_fallback(self, caplog):
+        engine = GameEngine(game_id="test")
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+        }
+        engine.state.phase = GamePhase.NIGHT
+        missing_player_request = ActionRequest(
+            actor_seat=99,
+            role_id="wolf-killer-werewolf",
+            contract=ActionContract(
+                contract_id="werewolf_kill", phase=GamePhase.NIGHT,
+                action_types=("kill", "pass"), actions_requiring_target=frozenset({"kill"}),
+                resolution_priority=10, fallback_action_type="pass",
+            ),
+            phase=GamePhase.NIGHT, round_id=0,
+            idempotency_key="0:night:99:werewolf_kill",
+        )
+        engine.action_validator.safe_fallback = MagicMock()
+        resolve = MagicMock(wraps=engine.action_resolver.resolve)
+        engine.action_resolver.resolve = resolve
+
+        with patch(
+            "app.core.game_engine.builtin_registry.build_requests",
+            return_value=[missing_player_request],
+        ):
+            accepted_actions = engine._accept_night_actions([
+                NightAction(player_seat=99, action_type="kill", target_seat=1),
+            ])
+        if accepted_actions:
+            engine.action_resolver.resolve(engine.state, accepted_actions)
+
+        assert accepted_actions == []
+        assert engine.state.accepted_action_keys == set()
+        assert engine.state.night_actions == []
+        engine.action_validator.safe_fallback.assert_not_called()
+        resolve.assert_not_called()
+        assert "Discarding night action from missing player (seat=99)" in caplog.text
+
     def test_accept_night_actions_keeps_duplicate_bound_to_its_original_contract(self):
         roles = {1: make_mock_role(1, "wolf-killer-werewolf")}
         engine = GameEngine(game_id="test", roles=roles)

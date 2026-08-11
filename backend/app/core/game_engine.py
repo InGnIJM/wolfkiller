@@ -342,6 +342,12 @@ class GameEngine:
                 continue
 
             player = self.state.players.get(action.player_seat)
+            if player is None:
+                logger.warning(
+                    "Discarding night action from missing player (seat=%s)",
+                    action.player_seat,
+                )
+                continue
             night_contracts = [
                 contract
                 for contract in builtin_registry.require(player.role).contracts
