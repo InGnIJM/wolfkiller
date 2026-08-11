@@ -8,16 +8,11 @@ class ActionResolver:
     """Resolves all night actions: wolf kill → witch save/poison → seer check → hunter check."""
 
     def resolve(
-        self, state: GameState, actions: list[AcceptedAction | NightAction]
+        self, state: GameState, actions: list[AcceptedAction]
     ) -> list[DeathReport]:
         """Resolve night actions and return deaths. Does NOT handle hunter shoot —
         caller must check for hunter death and prompt the hunter separately."""
         resolved_actions = [self._as_night_action(action) for action in actions]
-        legacy_action_ids = {
-            id(resolved)
-            for original, resolved in zip(actions, resolved_actions)
-            if isinstance(original, NightAction)
-        }
         wolf_actions = [a for a in resolved_actions if a.action_type == "kill"]
         witch_actions = [a for a in resolved_actions if a.action_type in ("save", "poison")]
         seer_actions = [a for a in resolved_actions if a.action_type == "check"]
@@ -27,12 +22,8 @@ class ActionResolver:
         state.last_wolf_kill_target = wolf_target
 
         # 2. Process witch actions (one potion per night enforced by engine)
-        saved = self._process_witch_save(
-            state, wolf_target, witch_actions, legacy_action_ids
-        )
-        poisoned_target = self._process_witch_poison(
-            state, witch_actions, legacy_action_ids
-        )
+        saved = self._process_witch_save(wolf_target, witch_actions)
+        poisoned_target = self._process_witch_poison(witch_actions)
 
         # 3. Process seer checks
         self._process_seer_checks(state, seer_actions)
@@ -97,7 +88,7 @@ class ActionResolver:
 
     # ── Private helpers ───────────────────────────────────────────
 
-    def _as_night_action(self, action: AcceptedAction | NightAction) -> NightAction:
+    def _as_night_action(self, action: AcceptedAction) -> NightAction:
         if isinstance(action, AcceptedAction):
             return NightAction(
                 player_seat=action.request.actor_seat,
@@ -105,11 +96,7 @@ class ActionResolver:
                 target_seat=action.command.target_seat,
                 reasoning=action.command.reasoning,
             )
-        if isinstance(action, NightAction):
-            # NightAction is a legacy, engine-internal trusted command. External
-            # model output must first become AcceptedAction through ActionValidator.
-            return action
-        raise TypeError("resolver requires AcceptedAction or trusted NightAction")
+        raise TypeError("resolver requires AcceptedAction")
 
     def _resolve_wolf_kill(self, actions: list[NightAction]) -> Optional[int]:
         if not actions:
@@ -133,48 +120,25 @@ class ActionResolver:
 
     def _process_witch_save(
         self,
-        state: GameState,
         wolf_target: Optional[int],
         actions: list[NightAction],
-        legacy_action_ids: set[int],
     ) -> bool:
         for action in actions:
             if action.action_type != "save":
                 continue
-            is_legacy = id(action) in legacy_action_ids
-            if is_legacy and action.target_seat is None:
-                witch = state.players.get(action.player_seat)
-                if witch and witch.has_antidote:
-                    witch.has_antidote = False
-                    return True
-            elif action.target_seat == wolf_target:
-                if is_legacy:
-                    witch = state.players.get(action.player_seat)
-                    if not witch or not witch.has_antidote:
-                        continue
-                    witch.has_antidote = False
+            if action.target_seat is not None and action.target_seat == wolf_target:
                 return True
         return False
 
     def _process_witch_poison(
         self,
-        state: GameState,
         actions: list[NightAction],
-        legacy_action_ids: set[int],
     ) -> Optional[int]:
         for action in actions:
             if action.action_type != "poison":
                 continue
             if action.target_seat is None or action.target_seat == 0:
                 return None
-            if id(action) in legacy_action_ids:
-                witch = state.players.get(action.player_seat)
-                if not witch or not witch.has_poison:
-                    continue
-                target = state.players.get(action.target_seat)
-                if target and not target.is_alive:
-                    return None
-                witch.has_poison = False
             return action.target_seat
         return None
 
