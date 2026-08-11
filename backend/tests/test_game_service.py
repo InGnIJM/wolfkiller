@@ -204,6 +204,111 @@ class TestGameService:
         assert manifest._extract_meta("game", log)["player_count"] == 2
         assert manifest._extract_meta("game", tmp_path / "missing.log") is None
 
+    def test_manifest_ignores_non_mapping_role_init_players(self, tmp_path):
+        log = tmp_path / "game.log"
+        log.write_text(
+            json.dumps({
+                "timestamp": "t1",
+                "operation": "role_init",
+                "data": {"players": ["not", "a", "mapping"]},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 0
+        assert entry["config"] == {}
+
+    def test_manifest_does_not_persist_partial_role_counts(self, tmp_path):
+        log = tmp_path / "game.log"
+        log.write_text(
+            json.dumps({
+                "timestamp": "t1",
+                "operation": "role_init",
+                "data": {
+                    "players": {
+                        "1": {"role": "wolf-killer-werewolf"},
+                        "2": {"role": None},
+                    },
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 2
+        assert entry["config"] == {}
+
+    @pytest.mark.parametrize("index_config", [None, {}])
+    def test_manifest_backfills_empty_index_config_from_complete_role_init(
+        self, tmp_path, index_config
+    ):
+        games = tmp_path / "games"
+        games.mkdir()
+        entry = {
+            "game_id": "recovered",
+            "created_at": "index-time",
+            "player_count": 2,
+            "phase": "night",
+        }
+        if index_config is not None:
+            entry["config"] = index_config
+        (games / "index.json").write_text(json.dumps([entry]), encoding="utf-8")
+        recovered = games / "recovered"
+        recovered.mkdir()
+        recovered_counts = {
+            "wolf-killer-werewolf": 1,
+            "wolf-killer-villager": 1,
+        }
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "timestamp": "log-time",
+                "operation": "role_init",
+                "data": {
+                    "players": {
+                        "1": {"role": "wolf-killer-werewolf"},
+                        "2": {"role": "wolf-killer-villager"},
+                    },
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
+
+        assert result["config"] == {"role_counts": recovered_counts}
+        assert result["created_at"] == "index-time"
+        assert result["phase"] == "night"
+
+    def test_manifest_keeps_nonempty_index_config_during_recovery(self, tmp_path):
+        games = tmp_path / "games"
+        games.mkdir()
+        original_config = {"role_counts": {"wolf-killer-villager": 2}}
+        (games / "index.json").write_text(
+            json.dumps([{"game_id": "recovered", "config": original_config}]),
+            encoding="utf-8",
+        )
+        recovered = games / "recovered"
+        recovered.mkdir()
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "operation": "role_init",
+                "data": {
+                    "players": {
+                        "1": {"role": "wolf-killer-werewolf"},
+                        "2": {"role": "wolf-killer-villager"},
+                    },
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
+
+        assert result["config"] == original_config
+
     @pytest.mark.asyncio
     async def test_phase_change_handler(self):
         ws_manager = WSManager()

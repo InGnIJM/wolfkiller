@@ -58,6 +58,11 @@ class GameManifest:
                     if meta:
                         self._entries[gid] = meta
                         logger.info(f"Recovered game from disk: {gid}")
+                elif self._entries[gid].get("config") in (None, {}):
+                    meta = self._extract_meta(gid, glog)
+                    if meta and meta["config"]:
+                        self._entries[gid]["config"] = meta["config"]
+                        logger.info(f"Recovered role config from disk: {gid}")
 
         # Persist rebuilt index
         if self._entries:
@@ -144,14 +149,18 @@ class GameManifest:
             data = rec.get("data") or {}
 
             if op == "role_init":
-                players = data.get("players", {})
+                raw_players = data.get("players", {})
+                players = raw_players if isinstance(raw_players, dict) else {}
                 meta["player_count"] = len(players)
                 role_counts: dict[str, int] = {}
+                roles_complete = bool(players)
                 for player in players.values():
                     role_id = player.get("role") if isinstance(player, dict) else None
-                    if isinstance(role_id, str) and role_id:
-                        role_counts[role_id] = role_counts.get(role_id, 0) + 1
-                if role_counts:
+                    if not isinstance(role_id, str) or not role_id:
+                        roles_complete = False
+                        continue
+                    role_counts[role_id] = role_counts.get(role_id, 0) + 1
+                if roles_complete and sum(role_counts.values()) == meta["player_count"]:
                     meta["config"] = {"role_counts": role_counts}
 
             # Fallback: extract player count from werewolf votes if role_init missing
