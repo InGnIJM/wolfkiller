@@ -7,11 +7,51 @@ frontend game list and detail views continue working after a restart.
 from __future__ import annotations
 import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from app.models.game import GamePhase
+
 logger = logging.getLogger(__name__)
+
+_LEGACY_ROLE_COUNT_KEYS = frozenset({
+    "num_werewolves",
+    "num_villagers",
+    "num_seers",
+    "num_witches",
+    "num_hunters",
+})
+
+
+def _is_valid_role_counts(role_counts: object) -> bool:
+    if not isinstance(role_counts, dict) or not role_counts:
+        return False
+    if not all(
+        isinstance(role_id, str)
+        and bool(role_id)
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and count > 0
+        for role_id, count in role_counts.items()
+    ):
+        return False
+    return sum(role_counts.values()) > 0
+
+
+def _has_valid_config(config: object) -> bool:
+    if not isinstance(config, dict) or not config:
+        return False
+    if "role_counts" in config:
+        return (
+            set(config) == {"role_counts"}
+            and _is_valid_role_counts(config["role_counts"])
+        )
+    return (
+        set(config) == _LEGACY_ROLE_COUNT_KEYS
+        and _is_valid_role_counts(config)
+    )
 
 
 class GameManifest:
@@ -61,7 +101,7 @@ class GameManifest:
                     if meta:
                         self._entries[gid] = meta
                         logger.info(f"Recovered game from disk: {gid}")
-                elif self._entries[gid].get("config") in (None, {}):
+                elif not _has_valid_config(self._entries[gid].get("config")):
                     meta = self._extract_meta(gid, glog)
                     if meta and meta["config"]:
                         self._entries[gid]["config"] = meta["config"]
@@ -162,8 +202,11 @@ class GameManifest:
             op = rec.get("operation")
 
             if op == "role_init":
-                raw_players = data.get("players", {})
-                players = raw_players if isinstance(raw_players, dict) else {}
+                raw_players = data.get("players")
+                if not isinstance(raw_players, Mapping):
+                    logger.warning("Skipping malformed role_init players")
+                    continue
+                players = raw_players
                 meta["player_count"] = len(players)
                 role_counts: dict[str, int] = {}
                 roles_complete = bool(players)
@@ -193,7 +236,16 @@ class GameManifest:
                     meta["player_count"] = len(seen)
 
             elif op == "phase_change":
-                meta["phase"] = data.get("new_phase", rec.get("phase", ""))
+                new_phase = data.get("new_phase")
+                if not isinstance(new_phase, str):
+                    logger.warning("Skipping phase change with malformed phase")
+                    continue
+                try:
+                    GamePhase(new_phase)
+                except ValueError:
+                    logger.warning("Skipping phase change with unknown phase: %s", new_phase)
+                    continue
+                meta["phase"] = new_phase
                 meta["round_number"] = rec.get("round", 0)
 
             elif op == "game_over":

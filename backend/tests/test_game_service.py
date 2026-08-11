@@ -384,6 +384,64 @@ class TestGameService:
         assert entry["player_count"] == 0
         assert entry["config"] == {}
 
+    def test_manifest_keeps_valid_role_init_after_malformed_players_record(
+        self, tmp_path, caplog
+    ):
+        log = tmp_path / "game.log"
+        log.write_text(
+            "\n".join([
+                json.dumps({
+                    "operation": "role_init",
+                    "data": {"players": {
+                        "1": {"role": "wolf-killer-werewolf"},
+                        "2": {"role": "wolf-killer-villager"},
+                    }},
+                }),
+                json.dumps({
+                    "operation": "role_init",
+                    "data": {"players": ["not", "a", "mapping"]},
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 2
+        assert entry["config"] == {"role_counts": {
+            "wolf-killer-werewolf": 1,
+            "wolf-killer-villager": 1,
+        }}
+        assert "malformed role_init players" in caplog.text
+
+    def test_manifest_ignores_invalid_phase_changes(self, tmp_path):
+        log = tmp_path / "game.log"
+        log.write_text(
+            "\n".join([
+                json.dumps({
+                    "operation": "phase_change",
+                    "round": 3,
+                    "data": {"new_phase": "night"},
+                }),
+                json.dumps({
+                    "operation": "phase_change",
+                    "round": 99,
+                    "data": {"new_phase": "unknown-phase"},
+                }),
+                json.dumps({
+                    "operation": "phase_change",
+                    "round": 100,
+                    "data": {"new_phase": None},
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["phase"] == "night"
+        assert entry["round_number"] == 3
+
     def test_manifest_does_not_persist_partial_role_counts(self, tmp_path):
         log = tmp_path / "game.log"
         log.write_text(
@@ -473,6 +531,102 @@ class TestGameService:
         result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
 
         assert result["config"] == original_config
+
+    @pytest.mark.parametrize(
+        "index_config",
+        [
+            None,
+            {},
+            [],
+            "not-a-config",
+            {"role_counts": {}},
+            {"role_counts": {"": 1}},
+            {"role_counts": {"wolf-killer-villager": True}},
+            {"role_counts": {"wolf-killer-villager": 0}},
+            {"role_counts": {"wolf-killer-villager": "2"}},
+            {
+                "role_counts": {"wolf-killer-villager": 2},
+                "unexpected": 1,
+            },
+            {"unexpected": 1},
+            {"num_werewolves": 1, "num_villagers": 3},
+        ],
+    )
+    def test_manifest_backfills_invalid_index_config(self, tmp_path, index_config):
+        games = tmp_path / "games"
+        games.mkdir()
+        (games / "index.json").write_text(
+            json.dumps([{
+                "game_id": "recovered",
+                "player_count": 100,
+                "config": index_config,
+            }]),
+            encoding="utf-8",
+        )
+        recovered = games / "recovered"
+        recovered.mkdir()
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "operation": "role_init",
+                "data": {"players": {
+                    "1": {"role": "wolf-killer-werewolf"},
+                    "2": {"role": "wolf-killer-villager"},
+                }},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
+
+        assert result["player_count"] == 2
+        assert result["config"] == {"role_counts": {
+            "wolf-killer-werewolf": 1,
+            "wolf-killer-villager": 1,
+        }}
+
+    @pytest.mark.parametrize(
+        "index_config",
+        [
+            {"role_counts": {"wolf-killer-villager": 2}},
+            {
+                "num_werewolves": 1,
+                "num_villagers": 3,
+                "num_seers": 1,
+                "num_witches": 1,
+                "num_hunters": 1,
+            },
+        ],
+    )
+    def test_manifest_keeps_valid_canonical_or_legacy_index_config(
+        self, tmp_path, index_config
+    ):
+        games = tmp_path / "games"
+        games.mkdir()
+        (games / "index.json").write_text(
+            json.dumps([{
+                "game_id": "recovered",
+                "player_count": 4,
+                "config": index_config,
+            }]),
+            encoding="utf-8",
+        )
+        recovered = games / "recovered"
+        recovered.mkdir()
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "operation": "role_init",
+                "data": {"players": {
+                    "1": {"role": "wolf-killer-werewolf"},
+                    "2": {"role": "wolf-killer-villager"},
+                }},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
+
+        assert result["player_count"] == 4
+        assert result["config"] == index_config
 
     @pytest.mark.asyncio
     async def test_phase_change_handler(self):
