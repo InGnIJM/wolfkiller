@@ -1,4 +1,5 @@
 from typing import Optional
+from app.core.action_validator import ActionValidationError
 from app.models.contracts import AcceptedAction
 from app.models.game import GameState
 from app.models.actions import NightAction, DeathReport
@@ -12,6 +13,7 @@ class ActionResolver:
     ) -> list[DeathReport]:
         """Resolve night actions and return deaths. Does NOT handle hunter shoot —
         caller must check for hunter death and prompt the hunter separately."""
+        self._validate_witch_actions(actions)
         resolved_actions = [self._as_night_action(action) for action in actions]
         wolf_actions = [a for a in resolved_actions if a.action_type == "kill"]
         witch_actions = [a for a in resolved_actions if a.action_type in ("save", "poison")]
@@ -93,6 +95,21 @@ class ActionResolver:
         )
 
     # ── Private helpers ───────────────────────────────────────────
+
+    def _validate_witch_actions(self, actions: list[AcceptedAction]) -> None:
+        """Reject multiple potion actions from one witch in the same round."""
+        witch_action_keys: set[tuple[int, int]] = set()
+        for action in actions:
+            if not isinstance(action, AcceptedAction):
+                continue
+            if action.command.action_type not in {"save", "poison"}:
+                continue
+            key = (action.request.actor_seat, action.request.round_id)
+            if key in witch_action_keys:
+                raise ActionValidationError(
+                    "multiple witch actions for one actor in the same round"
+                )
+            witch_action_keys.add(key)
 
     def _as_night_action(self, action: AcceptedAction) -> NightAction:
         if isinstance(action, AcceptedAction):

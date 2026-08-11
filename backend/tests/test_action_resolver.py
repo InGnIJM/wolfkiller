@@ -1,8 +1,10 @@
+from dataclasses import replace
+
 import pytest
 
 from app.core.action_resolver import ActionResolver
-from app.core.action_validator import ActionValidator
-from app.models.actions import NightAction
+from app.core.action_validator import ActionValidationError, ActionValidator
+from app.models.actions import DeathReport, NightAction
 from app.models.contracts import AcceptedAction, ActionCommand
 from app.models.game import Camp, GameConfig, GamePhase, GameState, PlayerState
 from app.roles.registry import builtin_registry
@@ -127,6 +129,32 @@ class TestActionResolver:
         assert [(death.player_seat, death.cause) for death in deaths] == [(2, "poison")]
         assert state.players[1].has_poison is False
 
+    def test_rejects_multiple_witch_potion_actions_before_resolving_them(self):
+        state = make_state([
+            make_player(1, "wolf-killer-werewolf", "werewolf"),
+            make_player(2, "wolf-killer-witch", "good", has_antidote=False, has_poison=True),
+            make_player(3, "wolf-killer-villager", "good"),
+            make_player(4, "wolf-killer-villager", "good"),
+        ])
+        kill = accept(state, 1, "kill", 3)
+        witch_request = request_for(state, 2)
+        save = AcceptedAction(
+            request=witch_request,
+            command=ActionCommand(action_type="save", target_seat=3, reasoning="x"),
+        )
+        poison = AcceptedAction(
+            request=witch_request,
+            command=ActionCommand(action_type="poison", target_seat=4, reasoning="x"),
+        )
+
+        with pytest.raises(ActionValidationError, match="multiple witch actions"):
+            ActionResolver().resolve(state, [kill, save, poison])
+
+        assert state.players[3].is_alive is True
+        assert state.players[4].is_alive is True
+        assert state.players[2].has_antidote is False
+        assert state.players[2].has_poison is True
+
     def test_ignores_zero_and_none_targets_even_in_accepted_action_objects(self):
         state = make_state([
             make_player(1, "wolf-killer-werewolf", "werewolf"),
@@ -165,3 +193,83 @@ class TestActionResolver:
             state, 1, accepted
         ) is None
         assert state.players[1].has_gun is True
+
+    def test_hunter_shoot_rejects_wrong_actor_type_or_target_before_valid_shot(self):
+        state = make_state([
+            make_player(1, "wolf-killer-hunter", "good", has_gun=True),
+            make_player(2, "wolf-killer-villager", "good"),
+        ])
+        state.phase = GamePhase.DAWN
+        shoot = accept(state, 1, "shoot", 2)
+        resolver = ActionResolver()
+
+        wrong_actor = AcceptedAction(
+            request=replace(shoot.request, actor_seat=2), command=shoot.command
+        )
+        wrong_type = AcceptedAction(
+            request=shoot.request,
+            command=ActionCommand(action_type="pass", target_seat=None, reasoning="x"),
+        )
+        no_target = AcceptedAction(
+            request=shoot.request,
+            command=ActionCommand(action_type="shoot", target_seat=None, reasoning="x"),
+        )
+
+        assert resolver.resolve_hunter_shoot(state, 3, shoot) is None
+        assert resolver.resolve_hunter_shoot(state, 1, wrong_actor) is None
+        assert resolver.resolve_hunter_shoot(state, 1, wrong_type) is None
+        assert resolver.resolve_hunter_shoot(state, 1, no_target) is None
+        assert state.players[1].has_gun is True
+
+        death = resolver.resolve_hunter_shoot(state, 1, shoot)
+
+        assert death == DeathReport(player_seat=2, cause="hunter_shot", round_number=1)
+        assert state.players[1].has_gun is False
+        assert state.players[2].is_alive is False
+
+    def test_identifies_an_armed_hunter_killed_by_non_poison(self):
+        state = make_state([
+            make_player(1, "wolf-killer-hunter", "good", has_gun=True),
+        ])
+        resolver = ActionResolver()
+
+        assert resolver.has_hunter_died(
+            state, [DeathReport(player_seat=1, cause="poison", round_number=1)]
+        ) is None
+        assert resolver.has_hunter_died(
+            state, [DeathReport(player_seat=1, cause="wolf_kill", round_number=1)]
+        ) == 1
+
+    def test_ignores_accepted_seer_checks_without_a_live_target(self):
+        state = make_state([
+            make_player(1, "wolf-killer-seer", "good"),
+        ])
+        seer_request = request_for(state, 1)
+        no_target = AcceptedAction(
+            request=seer_request,
+            command=ActionCommand(action_type="check", target_seat=None, reasoning="x"),
+        )
+        missing_target = AcceptedAction(
+            request=seer_request,
+            command=ActionCommand(action_type="check", target_seat=2, reasoning="x"),
+        )
+
+        assert ActionResolver().resolve(state, [no_target]) == []
+        assert ActionResolver().resolve(state, [missing_target]) == []
+        assert state.players[1].check_results == []
+
+    def test_ignores_malformed_poison_and_non_check_actions(self):
+        state = make_state([
+            make_player(1, "wolf-killer-witch", "good"),
+            make_player(2, "wolf-killer-seer", "good"),
+        ])
+        malformed_poison = AcceptedAction(
+            request=request_for(state, 1),
+            command=ActionCommand(action_type="poison", target_seat=None, reasoning="x"),
+        )
+
+        assert ActionResolver().resolve(state, [malformed_poison]) == []
+        ActionResolver()._process_seer_checks(
+            state, [NightAction(player_seat=2, action_type="pass", target_seat=None)]
+        )
+        assert state.players[2].check_results == []
