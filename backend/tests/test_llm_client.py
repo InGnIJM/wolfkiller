@@ -2,13 +2,61 @@ import importlib
 
 import pytest
 from unittest.mock import patch
+from httpx import Request, Response
+from openai import APIConnectionError, BadRequestError, RateLimitError
 import app.config as config_module
 from app.agents.llm_client import LLMClient
+from app.agents.output_parser import StrictCapabilityError
 from app.config import LLMConfig
 from app.roles.registry import builtin_registry
 
 
 class TestLLMClient:
+    @staticmethod
+    def _provider_error(error_type, message, status_code, body):
+        request = Request("POST", "https://provider.example/chat/completions")
+        response = Response(status_code, request=request, json=body)
+        return error_type(message, response=response, body=body)
+
+    def test_maps_provider_strict_schema_rejection_to_capability_error(self):
+        body = {
+            "error": {
+                "message": "This model does not support strict schema mode",
+                "code": "unsupported_parameter",
+                "param": "strict",
+            }
+        }
+        error = self._provider_error(
+            BadRequestError, body["error"]["message"], 400, body
+        )
+
+        mapped = LLMClient.map_strict_capability_error(error)
+
+        assert isinstance(mapped, StrictCapabilityError)
+        assert str(mapped) == body["error"]["message"]
+
+    @pytest.mark.parametrize(
+        "error_factory",
+        [
+            lambda self: self._provider_error(
+                BadRequestError, "Invalid API key", 401,
+                {"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+            ),
+            lambda self: self._provider_error(
+                RateLimitError, "Too many requests", 429,
+                {"error": {"message": "Too many requests", "code": "rate_limit"}},
+            ),
+            lambda self: APIConnectionError(
+                message="Connection error.",
+                request=Request("POST", "https://provider.example/chat/completions"),
+            ),
+        ],
+    )
+    def test_keeps_non_capability_provider_errors_unchanged(self, error_factory):
+        error = error_factory(self)
+
+        assert LLMClient.map_strict_capability_error(error) is error
+
     def test_init_defaults_from_config(self):
         client = LLMClient()
         assert client.model_name is not None

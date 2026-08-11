@@ -1,6 +1,8 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
+from openai import BadRequestError
 from app.config import config as app_config
+from app.agents.output_parser import StrictCapabilityError
 from app.models.contracts import ActionContract
 
 
@@ -44,6 +46,40 @@ class LLMClient:
             max_tokens=self.max_tokens,
         )
         return model.bind_tools(tools)
+
+    @staticmethod
+    def map_strict_capability_error(error: Exception) -> Exception:
+        """Map only explicit provider strict-schema rejections to a fallback signal."""
+        if isinstance(error, StrictCapabilityError):
+            return error
+        if not isinstance(error, BadRequestError):
+            return error
+
+        response = error.response
+        if response.status_code not in (400, 422):
+            return error
+
+        body = error.body if isinstance(error.body, dict) else {}
+        detail = body.get("error", body)
+        if not isinstance(detail, dict):
+            detail = {}
+        message = str(detail.get("message", error)).lower()
+        code = str(detail.get("code", "")).lower()
+        parameter = str(detail.get("param", "")).lower()
+        strict_or_schema = any(
+            marker in " ".join((message, code, parameter))
+            for marker in ("strict", "schema", "response_format")
+        )
+        unsupported = any(
+            marker in " ".join((message, code))
+            for marker in (
+                "unsupported", "not support", "does not support",
+                "not available", "invalid_parameter",
+            )
+        )
+        if strict_or_schema and unsupported:
+            return StrictCapabilityError(str(error))
+        return error
 
     def get_model_with_action_tool(self, contract: ActionContract) -> BaseChatModel:
         """Return a strict model bound to the one action tool issued by a contract."""

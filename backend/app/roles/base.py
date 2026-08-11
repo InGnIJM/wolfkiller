@@ -6,6 +6,7 @@ from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.output_parser import OutputParser, StrictCapabilityError, ToolCallError
+from app.agents.llm_client import LLMClient
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.models.contracts import AcceptedAction, ActionRequest
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -362,8 +363,14 @@ class BaseRole:
         raise AssertionError("unreachable")
 
     async def _invoke_strict_action(self, messages, request):
-        model = self.llm_client.get_model_with_action_tool(request.contract)
-        response = await model.ainvoke(messages)
+        try:
+            model = self.llm_client.get_model_with_action_tool(request.contract)
+            response = await model.ainvoke(messages)
+        except Exception as error:
+            mapped = LLMClient.map_strict_capability_error(error)
+            if mapped is not error:
+                raise mapped from error
+            raise
         return self.output_parser.parse_strict_action_response(response, request.contract)
 
     async def _invoke_json_action(self, messages, request):
