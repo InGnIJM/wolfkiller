@@ -190,7 +190,7 @@ class GameEngine:
             self.game_id, round_num, wolf_seats, wolf_target, wolf_vote_dicts,
         )
 
-        # ── 2. 女巫睁眼 → 被告知刀口 → 决定解药/毒药 ────────────
+        # ── 2. 女巫睁眼 → 单次决定解药、毒药或放弃 ────────────────
         logger.info(f"Night {round_num}: Witch phase starting")
         witch = self._find_player_by_role("witch")
         witch_role = self.roles.get(witch.seat_number) if witch else None
@@ -200,23 +200,21 @@ class GameEngine:
             await self._broadcast_night_substep("witch_open", highlight_seats=[witch.seat_number])
             await self._sleep_night_step()
 
-            # System message telling witch who was killed
-            if wolf_target is not None:
+            # Only a witch with antidote is told the current wolf target.
+            if witch.has_antidote and wolf_target is not None:
                 sys_msg = f"今晚狼人刀了 {wolf_target} 号玩家。"
-            else:
+            elif witch.has_antidote:
                 sys_msg = "今晚狼人没有刀人。"
+            else:
+                sys_msg = "你已没有解药，本夜只能选择使用毒药或放弃行动。"
             self.conversation_log.add_night_intel(
                 sys_msg, round_num, "night", visible_to=[witch.seat_number],
             )
 
-            # Witch decides: save or not
-            used_save = await self.witch_save(witch.seat_number, wolf_target)
-            if used_save:
-                witch_action = NightAction(
-                    player_seat=witch.seat_number, action_type="save",
-                    target_seat=wolf_target, reasoning="使用解药救人",
-                )
+            witch_action = await self.witch_action(witch.seat_number)
+            if witch_action is not None:
                 all_actions.append(witch_action)
+            if witch_action and witch_action.action_type == "save":
                 self.game_logger.log_witch_save(
                     self.game_id, round_num, witch.seat_number, wolf_target, True,
                 )
@@ -230,31 +228,27 @@ class GameEngine:
                     wolf_kill_target=None,
                 )
                 await self._sleep_night_step()
-            else:
+            elif witch_action:
                 self.game_logger.log_witch_save(
                     self.game_id, round_num, witch.seat_number, wolf_target, False,
                 )
 
-            # Witch decides: poison or not (only if still has poison)
-            if witch.has_poison:
-                poison_action = await self.witch_poison(witch.seat_number, wolf_target)
-                if poison_action and poison_action.action_type == "poison":
-                    all_actions.append(poison_action)
-                    self.game_logger.log_witch_poison(
-                        self.game_id, round_num, witch.seat_number,
-                        poison_action.target_seat,
-                    )
-                    sys_msg = f"你使用了【毒药】，毒杀了 {poison_action.target_seat} 号玩家。"
-                    self.conversation_log.add_night_intel(
-                        sys_msg, round_num, "night", visible_to=[witch.seat_number],
-                    )
-                    await self._broadcast_night_substep(
-                        "witch_action", highlight_seats=[witch.seat_number],
-                        action_seat=witch.seat_number,
-                        action=poison_action.to_dict(),
-                        wolf_kill_target=wolf_target,
-                    )
-                    await self._sleep_night_step()
+            if witch_action and witch_action.action_type == "poison":
+                self.game_logger.log_witch_poison(
+                    self.game_id, round_num, witch.seat_number,
+                    witch_action.target_seat,
+                )
+                sys_msg = f"你使用了【毒药】，毒杀了 {witch_action.target_seat} 号玩家。"
+                self.conversation_log.add_night_intel(
+                    sys_msg, round_num, "night", visible_to=[witch.seat_number],
+                )
+                await self._broadcast_night_substep(
+                    "witch_action", highlight_seats=[witch.seat_number],
+                    action_seat=witch.seat_number,
+                    action=witch_action.to_dict(),
+                    wolf_kill_target=wolf_target,
+                )
+                await self._sleep_night_step()
 
             await self._broadcast_night_substep("witch_close", highlight_seats=[])
             await self._sleep_night_step()
@@ -341,6 +335,21 @@ class GameEngine:
             for contract in builtin_registry.require(player.role).contracts
             if contract.contract_id == contract_id and contract.phase == GamePhase.NIGHT
         )
+        if contract_id == "witch_action":
+            action_types = []
+            if player.has_antidote and self.state.last_wolf_kill_target is not None:
+                action_types.append("save")
+            if player.has_poison:
+                action_types.append("poison")
+            action_types.append("pass")
+            contract = ActionContract(
+                contract_id=contract.contract_id,
+                phase=contract.phase,
+                action_types=tuple(action_types),
+                actions_requiring_target=frozenset(action_types) - {"pass"},
+                resolution_priority=contract.resolution_priority,
+                fallback_action_type=contract.fallback_action_type,
+            )
         key_suffix = (
             f":{operation}"
             if operation and contract_id != "witch_action"
@@ -580,6 +589,22 @@ class GameEngine:
         await self._sleep_night_step()
 
         return actions, target
+
+    async def witch_action(self, witch_seat: int) -> Optional[NightAction]:
+        """Request the witch's single action for the current night."""
+        player = self.state.players.get(witch_seat)
+        if (
+            witch_seat not in self.roles
+            or player is None
+            or not (player.has_antidote or player.has_poison)
+        ):
+            return None
+        try:
+            accepted = await self._request_night_action(witch_seat, "witch_action")
+            return self._night_action_from_accepted(accepted)
+        except Exception as error:
+            logger.error("Witch action error (seat=%s): %s", witch_seat, error)
+            return None
 
     async def witch_save(self, witch_seat: int, wolf_target: Optional[int]) -> bool:
         """Witch decides whether to use antidote. Returns True if used."""

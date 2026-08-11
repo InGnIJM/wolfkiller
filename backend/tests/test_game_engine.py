@@ -6,6 +6,8 @@ from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import NightAction, VoteAction, DeathReport
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus
+from app.core.action_validator import ActionValidationError
+from app.agents.prompt_builder import PromptBuilder
 
 
 def make_mock_role(seat: int, role_name: str,
@@ -110,6 +112,195 @@ def make_9_mock_roles():
 
 
 class TestGameEngine:
+    @pytest.mark.asyncio
+    async def test_witch_pass_then_poison_uses_one_request_per_night(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
+            ),
+            2: make_mock_role(2, "wolf-killer-witch"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="witch-pass-poison", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+        responses = iter([
+            {"action_type": "pass", "target_seat": None, "reasoning": "wait"},
+            {"action_type": "poison", "target_seat": 1, "reasoning": "poison wolf"},
+        ])
+
+        async def witch_action(state, conversation_log, request):
+            return engine.action_validator.validate_and_accept(
+                state, request, next(responses),
+            )
+
+        roles[2].request_action = AsyncMock(side_effect=witch_action)
+
+        await engine._execute_night()
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine.state.phase = GamePhase.NIGHT
+        await engine._execute_night()
+
+        requests = roles[2].request_action.await_args_list
+        assert len(requests) == 2
+        assert all(
+            request.args[2].contract.action_types == ("save", "poison", "pass")
+            for request in requests
+        )
+        assert engine.state.players[2].has_antidote is True
+        assert engine.state.players[2].has_poison is False
+        witch_actions = [
+            action for action in engine.state.night_actions if action.player_seat == 2
+        ]
+        assert [(action.action_type, action.target_seat) for action in witch_actions] == [
+            ("poison", 1),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_witch_save_prevents_poison_and_resolver_gets_one_action(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
+            ),
+            2: make_mock_role(2, "wolf-killer-witch"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="witch-save", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+
+        async def witch_action(state, conversation_log, request):
+            assert request.contract.action_types == ("save", "poison", "pass")
+            return engine.action_validator.validate_and_accept(
+                state,
+                request,
+                {"action_type": "save", "target_seat": 3, "reasoning": "save target"},
+            )
+
+        roles[2].request_action = AsyncMock(side_effect=witch_action)
+        resolve = MagicMock(wraps=engine.action_resolver.resolve)
+        engine.action_resolver.resolve = resolve
+
+        await engine._execute_night()
+
+        witch_actions = [
+            action for action in resolve.call_args.args[1]
+            if action.request.actor_seat == 2
+        ]
+        assert roles[2].request_action.await_count == 1
+        assert [action.command.action_type for action in witch_actions] == ["save"]
+        assert engine.state.players[2].has_antidote is False
+        assert engine.state.players[2].has_poison is True
+
+    @pytest.mark.asyncio
+    async def test_witch_poison_prevents_save_and_hides_wolf_target_without_antidote(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
+            ),
+            2: make_mock_role(2, "wolf-killer-witch"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="witch-poison", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+
+        async def witch_action(state, conversation_log, request):
+            assert request.contract.action_types == ("save", "poison", "pass")
+            return engine.action_validator.validate_and_accept(
+                state,
+                request,
+                {"action_type": "poison", "target_seat": 1, "reasoning": "poison wolf"},
+            )
+
+        roles[2].request_action = AsyncMock(side_effect=witch_action)
+
+        engine.state.players[2].has_antidote = False
+        prompt = PromptBuilder().build_action_prompt(
+            engine.state,
+            2,
+            "wolf-killer-witch",
+            engine.conversation_log,
+            "witch_save",
+            wolf_target=3,
+        )
+        engine.state.players[2].has_antidote = True
+
+        await engine._execute_night()
+        assert roles[2].request_action.await_count == 1
+        assert engine.state.players[2].has_antidote is True
+        assert engine.state.players[2].has_poison is False
+        assert '"action_type":"save"' not in prompt
+        assert "3号玩家" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_witch_with_no_potions_is_not_requested(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
+            ),
+            2: make_mock_role(2, "wolf-killer-witch"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="witch-no-potions", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.players[2].has_antidote = False
+        engine.state.players[2].has_poison = False
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+
+        await engine._execute_night()
+
+        roles[2].request_action.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_witch_invalid_save_target_becomes_pass_without_spending_antidote(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
+            ),
+            2: make_mock_role(2, "wolf-killer-witch"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="witch-invalid-save", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+
+        async def invalid_save(state, conversation_log, request):
+            with pytest.raises(ActionValidationError, match="save target"):
+                engine.action_validator.validate_and_accept(
+                    state,
+                    request,
+                    {"action_type": "save", "target_seat": 1, "reasoning": "wrong target"},
+                )
+            return engine.action_validator.safe_fallback(state, request)
+
+        roles[2].request_action = AsyncMock(side_effect=invalid_save)
+
+        await engine._execute_night()
+
+        assert roles[2].request_action.await_count == 1
+        assert engine.state.players[2].has_antidote is True
+        assert engine.state.players[2].has_poison is True
+        assert [
+            action.action_type for action in engine.state.night_actions
+            if action.player_seat == 2
+        ] == ["pass"]
+
     @pytest.mark.asyncio
     async def test_role_assignment(self):
         roles = make_9_mock_roles()

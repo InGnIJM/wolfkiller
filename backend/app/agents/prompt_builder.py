@@ -668,6 +668,46 @@ class PromptBuilder:
 
         if context == "witch_save":
             wolf_target = extra.get("wolf_target")
+            witch = state.players.get(seat)
+            has_antidote = bool(witch and witch.has_antidote)
+            has_poison = bool(witch and witch.has_poison)
+            alive_str = "、".join(f"{player_seat}号" for player_seat in state.alive_players()) or "无"
+
+            if not has_antidote and has_poison:
+                return (
+                    "## 你的任务：女巫夜晚行动\n"
+                    "你的解药已经用完，系统不会告知今晚的刀口。"
+                    "你只能选择使用毒药，或放弃行动。\n"
+                    f"可毒杀的存活玩家：{alive_str}\n"
+                    '请严格按JSON格式输出：{"action_type":"poison","target_seat":<存活玩家座位号>,"reasoning":"<理由>"} 表示毒人，\n'
+                    '或 {"action_type":"pass","target_seat":null,"reasoning":"<理由>"} 表示放弃。'
+                )
+
+            if has_antidote and wolf_target is not None:
+                poison_option = ""
+                if has_poison:
+                    poison_option = (
+                        f'，或 {{"action_type":"poison","target_seat":<存活玩家座位号>,"reasoning":"<理由>"}} '
+                        "表示毒人"
+                    )
+                return (
+                    "## 你的任务：女巫夜晚行动\n"
+                    f"今晚狼人刀了 {wolf_target} 号玩家。你本夜只能做出一次行动。\n"
+                    f"可毒杀的存活玩家：{alive_str}\n"
+                    f'请严格按JSON格式输出：{{"action_type":"save","target_seat":{wolf_target},"reasoning":"<理由>"}} 表示救人'
+                    f"{poison_option}，\n"
+                    '或 {"action_type":"pass","target_seat":null,"reasoning":"<理由>"} 表示放弃。'
+                )
+
+            if has_poison:
+                return (
+                    "## 你的任务：女巫夜晚行动\n"
+                    "今晚没有可使用解药救援的刀口。你只能选择使用毒药，或放弃行动。\n"
+                    f"可毒杀的存活玩家：{alive_str}\n"
+                    '请严格按JSON格式输出：{"action_type":"poison","target_seat":<存活玩家座位号>,"reasoning":"<理由>"} 表示毒人，\n'
+                    '或 {"action_type":"pass","target_seat":null,"reasoning":"<理由>"} 表示放弃。'
+                )
+
             return (
                 f"## 你的任务：使用解药\n"
                 f"今晚狼人刀了 {wolf_target} 号玩家。你是女巫，可以选择是否使用解药救活他。\n"
