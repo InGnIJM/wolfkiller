@@ -63,15 +63,21 @@ class ActionResolver:
         return None
 
     def resolve_hunter_shoot(
-        self, state: GameState, hunter_seat: int, action: NightAction
+        self, state: GameState, hunter_seat: int, action: AcceptedAction
     ) -> Optional[DeathReport]:
         """Resolve hunter's shot. Returns DeathReport on success, None if invalid.
         Does NOT consume the gun if the target is invalid (dead or missing)."""
+        if not isinstance(action, AcceptedAction):
+            raise TypeError("resolver requires AcceptedAction")
         hunter = state.players.get(hunter_seat)
         if not hunter or not hunter.has_gun:
             return None
 
-        target_seat = action.target_seat
+        if action.request.actor_seat != hunter_seat:
+            return None
+        if action.command.action_type != "shoot":
+            return None
+        target_seat = action.command.target_seat
         if target_seat is None:
             return None
 

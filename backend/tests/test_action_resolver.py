@@ -150,10 +150,18 @@ class TestActionResolver:
     def test_hunter_shoot_does_not_consume_gun_for_invalid_target(self):
         state = make_state([
             make_player(1, "wolf-killer-hunter", "good", has_gun=True),
-            make_player(2, "wolf-killer-villager", "good", is_alive=False),
+            make_player(2, "wolf-killer-villager", "good"),
         ])
+        state.phase = GamePhase.DAWN
+        accepted = accept(state, 1, "shoot", 2)
+        state.players[2].is_alive = False
+
+        with pytest.raises(TypeError, match="AcceptedAction"):
+            ActionResolver().resolve_hunter_shoot(
+                state, 1, NightAction(player_seat=1, action_type="shoot", target_seat=2)
+            )
 
         assert ActionResolver().resolve_hunter_shoot(
-            state, 1, NightAction(player_seat=1, action_type="shoot", target_seat=2)
+            state, 1, accepted
         ) is None
         assert state.players[1].has_gun is True
