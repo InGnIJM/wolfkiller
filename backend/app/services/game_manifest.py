@@ -33,7 +33,7 @@ def _is_valid_role_counts(role_counts: object) -> bool:
         and bool(role_id)
         and isinstance(count, int)
         and not isinstance(count, bool)
-        and count > 0
+        and count >= 0
         for role_id, count in role_counts.items()
     ):
         return False

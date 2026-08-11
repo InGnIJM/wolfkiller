@@ -505,10 +505,29 @@ class TestGameService:
         assert result["created_at"] == "index-time"
         assert result["phase"] == "night"
 
-    def test_manifest_keeps_nonempty_index_config_during_recovery(self, tmp_path):
+    @pytest.mark.parametrize(
+        "original_config",
+        [
+            {
+                "role_counts": {
+                    "wolf-killer-werewolf": 1,
+                    "wolf-killer-seer": 0,
+                },
+            },
+            {
+                "num_werewolves": 1,
+                "num_villagers": 0,
+                "num_seers": 0,
+                "num_witches": 0,
+                "num_hunters": 0,
+            },
+        ],
+    )
+    def test_manifest_keeps_valid_zero_role_counts_during_recovery(
+        self, tmp_path, original_config
+    ):
         games = tmp_path / "games"
         games.mkdir()
-        original_config = {"role_counts": {"wolf-killer-villager": 2}}
         (games / "index.json").write_text(
             json.dumps([{"game_id": "recovered", "config": original_config}]),
             encoding="utf-8",
@@ -542,14 +561,20 @@ class TestGameService:
             {"role_counts": {}},
             {"role_counts": {"": 1}},
             {"role_counts": {"wolf-killer-villager": True}},
-            {"role_counts": {"wolf-killer-villager": 0}},
+            {"role_counts": {"wolf-killer-villager": -1}},
             {"role_counts": {"wolf-killer-villager": "2"}},
             {
                 "role_counts": {"wolf-killer-villager": 2},
                 "unexpected": 1,
             },
             {"unexpected": 1},
-            {"num_werewolves": 1, "num_villagers": 3},
+            {
+                "num_werewolves": 1,
+                "num_villagers": 0,
+                "num_seers": 0,
+                "num_witches": 0,
+                "num_hunters": True,
+            },
         ],
     )
     def test_manifest_backfills_invalid_index_config(self, tmp_path, index_config):
