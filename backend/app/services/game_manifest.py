@@ -66,12 +66,18 @@ class GameManifest:
 
     def add_game(self, game_id: str, config: dict) -> None:
         entry = self._entries.get(game_id, {})
+        role_counts = config.get("role_counts")
+        player_count = (
+            sum(role_counts.values())
+            if isinstance(role_counts, dict)
+            else sum(config.values())
+        )
         entry.update({
             "game_id": game_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "phase": "waiting",
             "round_number": 0,
-            "player_count": sum(config.values()),
+            "player_count": player_count,
             "config": config,
             "winner": None,
             "finished_at": None,

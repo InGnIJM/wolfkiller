@@ -12,7 +12,7 @@ from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
-from app.roles import Werewolf, Witch, Seer, Hunter, Villager
+from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest
 
@@ -172,14 +172,16 @@ class GameService:
 
     async def create_game(
         self,
-        num_werewolves: int = 3,
-        num_villagers: int = 3,
-        num_seers: int = 1,
-        num_witches: int = 1,
-        num_hunters: int = 1,
+        num_werewolves: Optional[int] = None,
+        num_villagers: Optional[int] = None,
+        num_seers: Optional[int] = None,
+        num_witches: Optional[int] = None,
+        num_hunters: Optional[int] = None,
+        role_counts: Optional[dict[str, int]] = None,
     ) -> str:
         game_id = str(uuid.uuid4())[:8]
         config = GameConfig(
+            role_counts=role_counts,
             num_werewolves=num_werewolves,
             num_villagers=num_villagers,
             num_seers=num_seers,
@@ -206,11 +208,7 @@ class GameService:
 
         # Persist to disk immediately so the game shows up after restart
         self._manifest.add_game(game_id, {
-            "num_werewolves": num_werewolves,
-            "num_villagers": num_villagers,
-            "num_seers": num_seers,
-            "num_witches": num_witches,
-            "num_hunters": num_hunters,
+            "role_counts": dict(config.role_counts),
         })
 
         task = asyncio.create_task(engine.start())
@@ -222,25 +220,12 @@ class GameService:
     def _create_roles(
         self, config: GameConfig, prompt_builder: PromptBuilder, models: list[str],
     ) -> dict:
-        role_names = config.role_distribution()
-        random.shuffle(role_names)
-        role_map = {
-            "wolf-killer-werewolf": Werewolf,
-            "wolf-killer-villager": Villager,
-            "wolf-killer-seer": Seer,
-            "wolf-killer-witch": Witch,
-            "wolf-killer-hunter": Hunter,
-        }
-        roles = {}
-        for seat, role_name in enumerate(role_names, start=1):
-            cls = role_map.get(role_name)
-            if cls is None:
-                raise ValueError(f"Unknown role: {role_name}")
-            model = random.choice(models)
-            llm_client = LLMClient(model=model)
-            roles[seat] = cls(seat, role_name, prompt_builder, llm_client)
-            logger.debug(f"Seat {seat} ({role_name}): assigned model {model}")
-        return roles
+        return builtin_registry.create_roles(
+            config.role_counts,
+            config.total_players,
+            prompt_builder,
+            llm_client_factory=lambda: LLMClient(model=random.choice(models)),
+        )
 
     def get_game_state(self, game_id: str) -> Optional[GameState]:
         return self._games.get(game_id)
