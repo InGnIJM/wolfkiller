@@ -146,6 +146,13 @@ class GameManifest:
             if op == "role_init":
                 players = data.get("players", {})
                 meta["player_count"] = len(players)
+                role_counts: dict[str, int] = {}
+                for player in players.values():
+                    role_id = player.get("role") if isinstance(player, dict) else None
+                    if isinstance(role_id, str) and role_id:
+                        role_counts[role_id] = role_counts.get(role_id, 0) + 1
+                if role_counts:
+                    meta["config"] = {"role_counts": role_counts}
 
             # Fallback: extract player count from werewolf votes if role_init missing
             if meta["player_count"] == 0 and op == "werewolf_kill":

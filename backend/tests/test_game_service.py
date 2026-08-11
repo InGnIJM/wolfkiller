@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch, PropertyMock
 from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
@@ -147,8 +148,49 @@ class TestGameService:
         entry = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
 
         assert entry["player_count"] == 2
+        assert entry["config"] == {}
         assert entry["phase"] == "game_over"
         assert entry["winner"] == "good"
+
+    @pytest.mark.parametrize("index_contents", [None, "not-json"])
+    def test_manifest_recovery_rebuilds_role_counts_from_role_init(self, tmp_path, index_contents):
+        games = tmp_path / "games"
+        games.mkdir()
+        if index_contents is not None:
+            (games / "index.json").write_text(index_contents, encoding="utf-8")
+        recovered = games / "recovered"
+        recovered.mkdir()
+        recovered_counts = {
+            "wolf-killer-werewolf": 2,
+            "wolf-killer-villager": 3,
+            "wolf-killer-seer": 1,
+        }
+        players = {
+            str(seat): {"role": role_id}
+            for seat, role_id in enumerate(
+                [
+                    "wolf-killer-werewolf",
+                    "wolf-killer-werewolf",
+                    "wolf-killer-villager",
+                    "wolf-killer-villager",
+                    "wolf-killer-villager",
+                    "wolf-killer-seer",
+                ],
+                start=1,
+            )
+        }
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "timestamp": "t1",
+                "operation": "role_init",
+                "data": {"players": players},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
+
+        assert entry["config"] == {"role_counts": recovered_counts}
 
     def test_manifest_extracts_fallback_votes_and_ignores_bad_lines(self, tmp_path):
         log = tmp_path / "game.log"
