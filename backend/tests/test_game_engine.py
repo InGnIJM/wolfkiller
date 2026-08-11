@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import NightAction, VoteAction, DeathReport
+from app.models.contracts import AcceptedAction
 from app.core.event_bus import EventBus
 
 
@@ -330,11 +331,18 @@ class TestGameEngine:
                 player.has_gun = True
             engine.state.players[seat] = player
         engine.sm.set_state(GamePhase.NIGHT)
+        engine.state.phase = GamePhase.NIGHT
+        resolve = MagicMock(wraps=engine.action_resolver.resolve)
+        engine.action_resolver.resolve = resolve
 
         await engine._execute_night()
 
         assert engine.state.round_number == 1
         assert len(engine.state.night_actions) > 0
+        assert all(
+            isinstance(action, AcceptedAction)
+            for action in resolve.call_args.args[1]
+        )
         assert engine.sm.get_state() == GamePhase.DAWN
 
     @pytest.mark.asyncio

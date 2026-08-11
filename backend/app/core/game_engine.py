@@ -7,12 +7,15 @@ from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
 from app.models.actions import NightAction, VoteAction, SpeechRecord, DeathReport
+from app.models.contracts import AcceptedAction
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
 from app.core.action_resolver import ActionResolver
+from app.core.action_validator import ActionValidationError, ActionValidator
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
+from app.roles.registry import builtin_registry
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ class GameEngine:
         self.sm = GameStateMachine()
         self.rule_engine = RuleEngine()
         self.action_resolver = ActionResolver()
+        self.action_validator = ActionValidator()
         self.event_bus = event_bus or EventBus()
         self.roles = roles or {}
         self.memory_service = memory_service
@@ -277,7 +281,8 @@ class GameEngine:
         # ── 4. 结算死亡 ──────────────────────────────────────
         logger.info(f"Night {round_num}: Resolving actions, total actions={len(all_actions)}")
         self.state.night_actions = all_actions
-        deaths = self.action_resolver.resolve(self.state, all_actions)
+        accepted_actions = self._accept_night_actions(all_actions)
+        deaths = self.action_resolver.resolve(self.state, accepted_actions)
 
         # Hunter death check & shoot
         hunter_seat = self.action_resolver.has_hunter_died(self.state, deaths)
@@ -307,6 +312,55 @@ class GameEngine:
     # =================================================================
     # Night Operation Functions
     # =================================================================
+
+    def _accept_night_actions(
+        self, actions: list[NightAction]
+    ) -> list[AcceptedAction]:
+        """Validate legacy night actions before the resolver settles them."""
+        requests_by_actor = {
+            request.actor_seat: request
+            for request in builtin_registry.build_requests(
+                self.state, self.roles, GamePhase.NIGHT,
+            )
+        }
+        accepted_actions: list[AcceptedAction] = []
+
+        for action in actions:
+            request = requests_by_actor.get(action.player_seat)
+            if request is None:
+                logger.warning(
+                    "Discarding night action without an issued contract (seat=%s)",
+                    action.player_seat,
+                )
+                continue
+
+            payload = {
+                "action_type": action.action_type,
+                "target_seat": action.target_seat,
+                "reasoning": action.reasoning,
+            }
+            try:
+                accepted_actions.append(
+                    self.action_validator.validate_and_accept(
+                        self.state, request, payload,
+                    )
+                )
+            except ActionValidationError as error:
+                logger.warning(
+                    "Night action rejected; using safe fallback (seat=%s): %s",
+                    action.player_seat, error,
+                )
+                try:
+                    accepted_actions.append(
+                        self.action_validator.safe_fallback(self.state, request)
+                    )
+                except ActionValidationError as fallback_error:
+                    logger.warning(
+                        "Night action fallback rejected (seat=%s): %s",
+                        action.player_seat, fallback_error,
+                    )
+
+        return accepted_actions
 
     async def werewolf_kill(self, wolf_seats: list[int]) -> tuple[list[NightAction], Optional[int]]:
         """Werewolves vote on kill target. Returns all actions and resolved target."""
