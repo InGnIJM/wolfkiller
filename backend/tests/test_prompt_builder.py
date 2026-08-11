@@ -5,12 +5,12 @@ import pytest
 from pathlib import Path
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.output_parser import OutputParser
+from app.core.action_validator import ActionValidator
 from app.core.game_engine import VOTE_CONTRACT
 from app.core.conversation_log import ConversationLog
-from app.models.game import GameState, GameConfig, PlayerState
+from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import SpeechRecord, DeathReport, VoteAction
-from app.models.contracts import ActionContract
-from app.models.game import GamePhase
+from app.models.contracts import ActionContract, ActionRequest
 
 
 def make_state(role_assignments: dict[int, str] = None) -> GameState:
@@ -671,6 +671,8 @@ class TestPromptBuilder:
     @pytest.mark.parametrize("is_tiebreak", [False, True])
     def test_exile_vote_prompt_includes_one_valid_action_command_example(self, is_tiebreak):
         state = make_state()
+        state.phase = GamePhase.VOTE_CASTING
+        state.players[1].is_alive = False
         state.is_tiebreak = is_tiebreak
         state.vote_round = 2 if is_tiebreak else 1
         state.tiebreak_candidates = {2, 3} if is_tiebreak else set()
@@ -683,9 +685,22 @@ class TestPromptBuilder:
         example = re.search(r"JSON字段：(\{.+\})。", prompt).group(1)
         payload = json.loads(example)
         command = OutputParser().parse_action_payload(payload, VOTE_CONTRACT)
+        accepted = ActionValidator().validate_and_accept(
+            state,
+            ActionRequest(
+                actor_seat=4,
+                role_id=state.players[4].role,
+                contract=VOTE_CONTRACT,
+                phase=GamePhase.VOTE_CASTING,
+                round_id=state.round_number,
+                idempotency_key=f"vote-example-{is_tiebreak}",
+            ),
+            payload,
+        )
 
-        assert command.action_type == "vote"
-        assert command.target_seat == 1
+        assert command.action_type == "abstain"
+        assert command.target_seat is None
+        assert accepted.command == command
         assert set(payload) == {"action_type", "target_seat", "reasoning"}
         assert '<' not in prompt
         assert '"action_type":"vote"或"abstain"' not in prompt

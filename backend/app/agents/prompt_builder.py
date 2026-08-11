@@ -282,8 +282,8 @@ class PromptBuilder:
             status = f"这是第{state.vote_round}轮放逐投票。可投任意存活座位，也可弃权。"
         example = json.dumps(
             {
-                "action_type": "vote",
-                "target_seat": 1,
+                "action_type": "abstain",
+                "target_seat": None,
                 "reasoning": "基于当前可见事实作出选择",
             },
             ensure_ascii=False,
