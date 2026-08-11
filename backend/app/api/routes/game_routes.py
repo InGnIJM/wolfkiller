@@ -9,6 +9,14 @@ from app.services.game_service import GameService
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
+_LEGACY_ROLE_COUNT_FIELDS = {
+    "num_werewolves": "wolf-killer-werewolf",
+    "num_villagers": "wolf-killer-villager",
+    "num_seers": "wolf-killer-seer",
+    "num_witches": "wolf-killer-witch",
+    "num_hunters": "wolf-killer-hunter",
+}
+
 
 def get_service() -> GameService:
     from app.main import game_service
@@ -18,13 +26,16 @@ def get_service() -> GameService:
 @router.post("", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest = CreateGameRequest()):
     service = get_service()
-    game_id = await service.create_game(
-        num_werewolves=req.num_werewolves,
-        num_villagers=req.num_villagers,
-        num_seers=req.num_seers,
-        num_witches=req.num_witches,
-        num_hunters=req.num_hunters,
-    )
+    if req.role_counts is not None:
+        game_id = await service.create_game(role_counts=req.role_counts)
+    else:
+        game_id = await service.create_game(
+            num_werewolves=req.num_werewolves,
+            num_villagers=req.num_villagers,
+            num_seers=req.num_seers,
+            num_witches=req.num_witches,
+            num_hunters=req.num_hunters,
+        )
     state = service.get_game_state(game_id)
     if state is None:
         raise HTTPException(404, "Game not found after creation")
@@ -32,11 +43,11 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
         game_id=game_id,
         player_count=len(state.players),
         config={
-            "num_werewolves": req.num_werewolves,
-            "num_villagers": req.num_villagers,
-            "num_seers": req.num_seers,
-            "num_witches": req.num_witches,
-            "num_hunters": req.num_hunters,
+            "role_counts": state.config.role_counts,
+            **{
+                field: state.config.role_counts.get(role_id, 0)
+                for field, role_id in _LEGACY_ROLE_COUNT_FIELDS.items()
+            },
         },
     )
 

@@ -1,13 +1,27 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional
 
 
 class CreateGameRequest(BaseModel):
+    role_counts: Optional[dict[str, int]] = None
     num_werewolves: int = 3
     num_villagers: int = 3
     num_seers: int = 1
     num_witches: int = 1
     num_hunters: int = 1
+
+    @model_validator(mode="after")
+    def reject_mixed_role_count_formats(self):
+        legacy_fields = {
+            "num_werewolves",
+            "num_villagers",
+            "num_seers",
+            "num_witches",
+            "num_hunters",
+        }
+        if self.role_counts is not None and self.model_fields_set & legacy_fields:
+            raise ValueError("role_counts cannot be combined with legacy role counts")
+        return self
 
 
 class CreateGameResponse(BaseModel):
