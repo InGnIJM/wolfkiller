@@ -28,8 +28,6 @@ class Seer(BaseRole):
         # ── Attempt 1 ──
         raw = await self._invoke_llm(prompt)
         action = self.output_parser.parse_night_action(raw, self.seat)
-        if action.thinking:
-            self._record_thought(action.thinking, state, conversation_log, "night_check")
         action = self._validate_check_target(state, action)
 
         # ── Attempt 2 (retry) if first attempt was invalid ──
@@ -47,8 +45,6 @@ class Seer(BaseRole):
             )
             raw = await self._invoke_llm(retry_prompt)
             action = self.output_parser.parse_night_action(raw, self.seat)
-            if action.thinking:
-                self._record_thought(action.thinking, state, conversation_log, "night_check")
             action = self._validate_check_target(state, action)
 
         # ── Fallback: pick a random alive player ──
