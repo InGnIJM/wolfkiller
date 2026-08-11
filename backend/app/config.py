@@ -8,6 +8,9 @@ class LLMConfig:
     provider: str = os.getenv("LLM_PROVIDER", "deepseek")
     api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    strict_base_url: str = os.getenv(
+        "DEEPSEEK_STRICT_BASE_URL", "https://api.deepseek.com/beta"
+    )
 
     @property
     def models(self) -> list[str]:
