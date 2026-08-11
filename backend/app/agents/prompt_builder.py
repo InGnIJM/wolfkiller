@@ -280,9 +280,19 @@ class PromptBuilder:
             )
         else:
             status = f"这是第{state.vote_round}轮放逐投票。可投任意存活座位，也可弃权。"
+        example = json.dumps(
+            {
+                "action_type": "vote",
+                "target_seat": 1,
+                "reasoning": "基于当前可见事实作出选择",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         return (
             f"## 你的任务：放逐投票\n{status}\n"
-            '仅输出JSON：{"action_type":"vote"或"abstain","target_seat":<投票座位号或null>,"reasoning":"不超过500字的事实依据"}。'
+            f"JSON字段：{example}。\n"
+            "仅输出符合当前动作契约的JSON对象。"
         )
 
     @staticmethod

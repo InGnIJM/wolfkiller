@@ -4,6 +4,8 @@ import re
 import pytest
 from pathlib import Path
 from app.agents.prompt_builder import PromptBuilder
+from app.agents.output_parser import OutputParser
+from app.core.game_engine import VOTE_CONTRACT
 from app.core.conversation_log import ConversationLog
 from app.models.game import GameState, GameConfig, PlayerState
 from app.models.actions import SpeechRecord, DeathReport, VoteAction
@@ -665,3 +667,25 @@ class TestPromptBuilder:
         prompt = builder.build_vote_prompt(state, 4, "wolf-killer-villager", log, "exile_vote")
         assert '"thinking"' not in prompt
         assert all(field in prompt for field in ('"action_type"', '"target_seat"', '"reasoning"'))
+
+    @pytest.mark.parametrize("is_tiebreak", [False, True])
+    def test_exile_vote_prompt_includes_one_valid_action_command_example(self, is_tiebreak):
+        state = make_state()
+        state.is_tiebreak = is_tiebreak
+        state.vote_round = 2 if is_tiebreak else 1
+        state.tiebreak_candidates = {2, 3} if is_tiebreak else set()
+        state.supplemental_speakers = {2, 3} if is_tiebreak else set()
+
+        prompt = PromptBuilder().build_vote_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "exile_vote"
+        )
+
+        example = re.search(r"JSON字段：(\{.+\})。", prompt).group(1)
+        payload = json.loads(example)
+        command = OutputParser().parse_action_payload(payload, VOTE_CONTRACT)
+
+        assert command.action_type == "vote"
+        assert command.target_seat == 1
+        assert set(payload) == {"action_type", "target_seat", "reasoning"}
+        assert '<' not in prompt
+        assert '"action_type":"vote"或"abstain"' not in prompt
