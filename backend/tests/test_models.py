@@ -43,6 +43,53 @@ class TestGameConfig:
         assert config.total_players == 0
         assert config.role_distribution() == []
 
+    def test_legacy_role_counts_are_converted_to_role_counts(self):
+        config = GameConfig(
+            num_werewolves=1,
+            num_villagers=3,
+            num_seers=0,
+            num_witches=0,
+            num_hunters=0,
+        )
+        assert config.role_counts == {
+            "wolf-killer-werewolf": 1,
+            "wolf-killer-villager": 3,
+            "wolf-killer-seer": 0,
+            "wolf-killer-witch": 0,
+            "wolf-killer-hunter": 0,
+        }
+        assert not hasattr(config, "num_werewolves")
+
+    def test_legacy_config_calculates_total_and_distribution(self):
+        config = GameConfig(
+            num_werewolves=1,
+            num_villagers=3,
+            num_seers=0,
+            num_witches=0,
+            num_hunters=0,
+        )
+        assert config.total_players == 4
+        assert config.role_distribution() == [
+            "wolf-killer-werewolf",
+            "wolf-killer-villager",
+            "wolf-killer-villager",
+            "wolf-killer-villager",
+        ]
+
+    @pytest.mark.parametrize(
+        "legacy_parameter",
+        [
+            "num_werewolves",
+            "num_villagers",
+            "num_seers",
+            "num_witches",
+            "num_hunters",
+        ],
+    )
+    def test_role_counts_cannot_be_combined_with_legacy_counts(self, legacy_parameter):
+        with pytest.raises(ValueError, match="role_counts"):
+            GameConfig(role_counts={"wolf-killer-werewolf": 1}, **{legacy_parameter: 1})
+
 
 class TestPlayerState:
     def test_default_is_alive(self):

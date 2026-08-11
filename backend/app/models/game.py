@@ -23,15 +23,50 @@ class Camp(str, Enum):
     THIRD_PARTY = "third_party"
 
 
-@dataclass
-class GameConfig:
-    role_counts: dict[str, int] = field(default_factory=lambda: {
+def _default_role_counts() -> dict[str, int]:
+    return {
         "wolf-killer-werewolf": 3,
         "wolf-killer-villager": 3,
         "wolf-killer-seer": 1,
         "wolf-killer-witch": 1,
         "wolf-killer-hunter": 1,
-    })
+    }
+
+
+@dataclass(init=False)
+class GameConfig:
+    role_counts: dict[str, int] = field(default_factory=_default_role_counts)
+
+    def __init__(
+        self,
+        role_counts: Optional[dict[str, int]] = None,
+        *,
+        num_werewolves: Optional[int] = None,
+        num_villagers: Optional[int] = None,
+        num_seers: Optional[int] = None,
+        num_witches: Optional[int] = None,
+        num_hunters: Optional[int] = None,
+    ) -> None:
+        legacy_counts = (
+            ("wolf-killer-werewolf", num_werewolves, 3),
+            ("wolf-killer-villager", num_villagers, 3),
+            ("wolf-killer-seer", num_seers, 1),
+            ("wolf-killer-witch", num_witches, 1),
+            ("wolf-killer-hunter", num_hunters, 1),
+        )
+        has_legacy_counts = any(count is not None for _, count, _ in legacy_counts)
+
+        if role_counts is not None:
+            if has_legacy_counts:
+                raise ValueError("role_counts cannot be combined with legacy role counts")
+            self.role_counts = role_counts
+        elif has_legacy_counts:
+            self.role_counts = {
+                role_id: count if count is not None else default_count
+                for role_id, count, default_count in legacy_counts
+            }
+        else:
+            self.role_counts = _default_role_counts()
 
     @property
     def total_players(self) -> int:
