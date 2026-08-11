@@ -1,3 +1,6 @@
+import json
+import re
+
 import pytest
 from pathlib import Path
 from app.agents.prompt_builder import PromptBuilder
@@ -87,6 +90,27 @@ class TestPromptBuilder:
         assert "可查验的存活玩家" not in prompt
         assert "优先查验" not in prompt
         assert "深度思考" not in prompt
+
+    def test_contract_example_is_a_single_parseable_contract_action(self):
+        contract = ActionContract(
+            contract_id="seer_check",
+            phase=GamePhase.NIGHT,
+            action_types=("check", "pass"),
+            actions_requiring_target=frozenset({"check"}),
+            resolution_priority=0,
+            fallback_action_type="pass",
+        )
+
+        prompt = PromptBuilder().build_action_prompt(
+            make_state(), 7, "wolf-killer-seer", make_log(), "night_check", contract=contract
+        )
+
+        example = re.search(r"JSON字段：(\{.+\})。", prompt).group(1)
+        payload = json.loads(example)
+        assert set(payload) == {"action_type", "target_seat", "reasoning"}
+        assert payload["action_type"] == contract.action_types[0]
+        assert isinstance(payload["target_seat"], int)
+        assert isinstance(payload["reasoning"], str)
 
     def test_history_is_delimited_as_non_executable_game_record(self):
         builder = PromptBuilder()
@@ -295,6 +319,42 @@ class TestPromptBuilder:
         )
 
         assert "今晚狼人刀了 3 号玩家" in prompt
+
+    @pytest.mark.parametrize("phase", list(GamePhase))
+    def test_witch_without_antidote_never_receives_wolf_kill_fact(self, phase):
+        state = make_state()
+        state.phase = phase
+        state.last_wolf_kill_target = 3
+        state.players[8].has_antidote = False
+        state.players[8].has_poison = True
+
+        prompt = PromptBuilder().build_action_prompt(
+            state, 8, "wolf-killer-witch", make_log(), "witch_poison"
+        )
+
+        assert "今晚狼人刀了 3 号玩家" not in prompt
+        assert "狼人刀口（银水信息）：3号玩家" not in prompt
+
+    def test_private_role_facts_come_from_the_state_filter_view(self, monkeypatch):
+        state = make_state()
+        state.players[7].check_results = [{"round": 1, "target_seat": 1, "result": "werewolf"}]
+        builder = PromptBuilder()
+        filtered_view = {"check_results": []}
+        filter_calls = []
+
+        def filter_for_role(*args):
+            filter_calls.append(args)
+            return filtered_view
+
+        monkeypatch.setattr(builder.state_filter, "filter_for_role", filter_for_role)
+
+        prompt = builder.build_speech_prompt(
+            state, 7, "wolf-killer-seer", make_log(), "day_speech"
+        )
+
+        assert len(filter_calls) == 1
+        assert "尚未查验任何玩家" in prompt
+        assert "第1轮查验1号：狼人" not in prompt
 
     def test_unknown_role_fallback(self):
         builder = PromptBuilder()
