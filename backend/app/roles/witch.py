@@ -24,8 +24,6 @@ class Witch(BaseRole):
         )
         raw = await self._invoke_llm(prompt)
         action = self.output_parser.parse_night_action(raw, self.seat)
-        if action.thinking:
-            self._record_thought(action.thinking, state, conversation_log, "witch_save")
         return action.action_type == "save"
 
     async def poison(
@@ -44,9 +42,6 @@ class Witch(BaseRole):
         # ── Attempt 1 ──
         raw = await self._invoke_llm(prompt)
         action = self.output_parser.parse_night_action(raw, self.seat)
-        if action.thinking:
-            self._record_thought(action.thinking, state, conversation_log, "witch_poison")
-
         # ── Validate target is alive ──
         action = self._validate_poison_target(state, action)
 
@@ -66,8 +61,6 @@ class Witch(BaseRole):
             )
             raw = await self._invoke_llm(retry_prompt)
             action = self.output_parser.parse_night_action(raw, self.seat)
-            if action.thinking:
-                self._record_thought(action.thinking, state, conversation_log, "witch_poison")
             action = self._validate_poison_target(state, action)
 
         return action
