@@ -4,11 +4,12 @@ import re
 import logging
 from dataclasses import dataclass
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import AIMessage
 
 from app.models.actions import NightAction, VoteAction
+from app.models.contracts import ActionCommand, ActionContract
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,55 @@ class OutputParser:
         self.vote_parser = PydanticOutputParser(pydantic_object=VoteActionModel)
         self.max_retries = max_retries
 
+    def parse_action_payload(
+        self, payload: dict | str, contract: ActionContract
+    ) -> ActionCommand:
+        """Strictly parse one action payload issued for ``contract``."""
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError as error:
+                raise ToolCallError("action payload must be a JSON object") from error
+
+        if not isinstance(payload, dict):
+            raise ToolCallError("action payload must be a JSON object")
+
+        try:
+            command = ActionCommand.model_validate(payload, strict=True)
+        except ValidationError as error:
+            raise ToolCallError("invalid action payload") from error
+
+        schema = contract.json_schema()
+        action_schema = schema["properties"]["action_type"]
+        if command.action_type not in action_schema["enum"]:
+            raise ToolCallError("action type is not permitted by contract")
+        if (
+            command.action_type in contract.actions_requiring_target
+            and command.target_seat is None
+        ):
+            raise ToolCallError("action requires a target")
+        if (
+            command.action_type not in contract.actions_requiring_target
+            and command.target_seat is not None
+        ):
+            raise ToolCallError("action must not include a target")
+
+        max_reasoning_length = schema["properties"]["reasoning"].get("maxLength")
+        if (
+            max_reasoning_length is not None
+            and len(command.reasoning) > max_reasoning_length
+        ):
+            raise ToolCallError("reasoning exceeds contract limit")
+        return command
+
+    def parse_tool_action(
+        self, name: str, args: dict | str, contract: ActionContract
+    ) -> ActionCommand:
+        """Parse the sole action tool that was issued for a contract."""
+        if name != contract.contract_id:
+            raise ToolCallError("tool name does not match issued contract")
+        return self.parse_action_payload(args, contract)
+
     def parse_night_action(self, raw: str, player_seat: int) -> NightAction:
         parsed = self._extract_json(raw)
         if parsed is None:
@@ -58,7 +108,6 @@ class OutputParser:
             action_type=parsed.get("action_type", "pass"),
             target_seat=parsed.get("target_seat"),
             reasoning=parsed.get("reasoning", ""),
-            thinking=parsed.get("thinking", ""),
         )
 
     def parse_vote_action(self, raw: str, voter_seat: int) -> VoteAction:
@@ -74,7 +123,6 @@ class OutputParser:
             voter_seat=voter_seat,
             target_seat=target,
             reasoning=parsed.get("reasoning", ""),
-            thinking=parsed.get("thinking", ""),
         )
 
     def parse_speech(self, raw: str) -> str:
@@ -154,26 +202,8 @@ class OutputParser:
     def _extract_json(self, raw: str) -> dict | None:
         raw = raw.strip()
 
-        # Direct JSON parse
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
-            pass
-
-        # JSON in code block
-        code_block_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", raw, re.DOTALL)
-        if code_block_match:
-            try:
-                return json.loads(code_block_match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-
-        # JSON object in text
-        brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", raw, re.DOTALL)
-        if brace_match:
-            try:
-                return json.loads(brace_match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        return None
+            return None
+        return parsed if isinstance(parsed, dict) else None

@@ -1,10 +1,135 @@
 import pytest
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
-from app.agents.output_parser import OutputParser, ToolCallResult
+from app.agents.output_parser import OutputParser, ToolCallError, ToolCallResult
+from app.roles.registry import builtin_registry
 
 
 class TestOutputParser:
+    @pytest.fixture
+    def werewolf_contract(self):
+        return builtin_registry.require("wolf-killer-werewolf").contracts[0]
+
+    def test_parse_action_payload_returns_validated_command(self, werewolf_contract):
+        command = OutputParser().parse_action_payload(
+            {"action_type": "kill", "target_seat": 3, "reasoning": "suspicious"},
+            werewolf_contract,
+        )
+
+        assert command.action_type == "kill"
+        assert command.target_seat == 3
+        assert command.reasoning == "suspicious"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"action_type": "kill", "target_seat": 3},
+            {"action_type": "kill", "target_seat": 3, "reasoning": "x", "extra": True},
+            {"action_type": "poison", "target_seat": 3, "reasoning": "x"},
+            {"action_type": "kill", "target_seat": "3", "reasoning": "x"},
+        ],
+    )
+    def test_parse_action_payload_rejects_invalid_contract_payload(
+        self, werewolf_contract, payload
+    ):
+        with pytest.raises(ToolCallError):
+            OutputParser().parse_action_payload(payload, werewolf_contract)
+
+    def test_parse_action_payload_rejects_thinking_field(self, werewolf_contract):
+        with pytest.raises(ToolCallError):
+            OutputParser().parse_action_payload(
+                {
+                    "action_type": "kill",
+                    "target_seat": 3,
+                    "reasoning": "x",
+                    "thinking": "private chain of thought",
+                },
+                werewolf_contract,
+            )
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            [],
+            {"action_type": "kill", "target_seat": 3, "reasoning": "x" * 501},
+        ],
+    )
+    def test_parse_action_payload_rejects_values_outside_the_contract_schema(
+        self, werewolf_contract, payload
+    ):
+        with pytest.raises(ToolCallError):
+            OutputParser().parse_action_payload(payload, werewolf_contract)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"action_type": "kill", "target_seat": None, "reasoning": "x"},
+            {"action_type": "pass", "target_seat": 3, "reasoning": "x"},
+        ],
+    )
+    def test_parse_action_payload_rejects_contract_invalid_target_usage(
+        self, werewolf_contract, payload
+    ):
+        with pytest.raises(ToolCallError):
+            OutputParser().parse_action_payload(payload, werewolf_contract)
+
+    def test_parse_tool_action_requires_the_contract_tool_name(self, werewolf_contract):
+        with pytest.raises(ToolCallError, match="tool name"):
+            OutputParser().parse_tool_action(
+                "different_tool",
+                {"action_type": "kill", "target_seat": 3, "reasoning": "x"},
+                werewolf_contract,
+            )
+
+    def test_parse_tool_action_accepts_only_a_single_json_object(self, werewolf_contract):
+        parser = OutputParser()
+
+        command = parser.parse_tool_action(
+            werewolf_contract.contract_id,
+            '{"action_type":"kill","target_seat":3,"reasoning":"x"}',
+            werewolf_contract,
+        )
+
+        assert command.target_seat == 3
+        with pytest.raises(ToolCallError):
+            parser.parse_tool_action(
+                werewolf_contract.contract_id,
+                'I choose {"action_type":"kill","target_seat":3,"reasoning":"x"}',
+                werewolf_contract,
+            )
+
+    def test_parse_tool_call_accepts_native_json_arguments_and_list_content(self):
+        parser = OutputParser()
+        msg = MagicMock(
+            content=[{"text": "analysis"}],
+            tool_calls=[{
+                "name": "speak",
+                "args": '{"text": "hello"}',
+                "id": "call_json_args",
+            }],
+        )
+
+        result = parser.parse_tool_call(msg)
+
+        assert result is not None
+        assert result.arguments == {"text": "hello"}
+
+    def test_parse_tool_call_replaces_malformed_native_json_arguments(self):
+        parser = OutputParser()
+        msg = MagicMock(
+            content="",
+            tool_calls=[{
+                "name": "speak",
+                "args": "not json",
+                "id": "call_bad_json_args",
+            }],
+        )
+
+        result = parser.parse_tool_call(msg)
+
+        assert result is not None
+        assert result.arguments == {}
+
     def test_parse_night_action_json(self):
         parser = OutputParser()
         raw = '{"action_type": "kill", "target_seat": 5, "reasoning": "suspicious"}'
@@ -13,12 +138,12 @@ class TestOutputParser:
         assert action.target_seat == 5
         assert action.player_seat == 1
 
-    def test_parse_night_action_code_block(self):
+    def test_parse_night_action_rejects_code_block_json(self):
         parser = OutputParser()
         raw = '```json\n{"action_type": "check", "target_seat": 3, "reasoning": "need info"}\n```'
         action = parser.parse_night_action(raw, player_seat=1)
-        assert action.action_type == "check"
-        assert action.target_seat == 3
+        assert action.action_type == "pass"
+        assert action.target_seat is None
 
     def test_parse_night_action_malformed_defaults_to_pass(self):
         parser = OutputParser()
@@ -58,12 +183,12 @@ class TestOutputParser:
         speech = parser.parse_speech(raw)
         assert speech == "我怀疑5号是狼"
 
-    def test_parse_night_action_json_in_text(self):
+    def test_parse_night_action_rejects_json_embedded_in_text(self):
         parser = OutputParser()
         raw = '我的想法如下：\n{"action_type": "kill", "target_seat": 2, "reasoning": "必须刀预言家"}'
         action = parser.parse_night_action(raw, player_seat=1)
-        assert action.action_type == "kill"
-        assert action.target_seat == 2
+        assert action.action_type == "pass"
+        assert action.target_seat is None
 
     def test_parse_speech_from_json_with_text_key(self):
         parser = OutputParser()
@@ -87,12 +212,12 @@ class TestOutputParser:
         vote = parser.parse_vote_action("", voter_seat=1)
         assert vote.target_seat is None
 
-    def test_parse_night_action_brace_json_decode_fails(self):
+    def test_parse_night_action_rejects_brace_json_with_surrounding_text(self):
         parser = OutputParser()
         raw = '文本前缀 {"action_type": "check", "target_seat": 3, "reasoning": "test"} 文本后缀'
         action = parser.parse_night_action(raw, player_seat=1)
-        assert action.action_type == "check"
-        assert action.target_seat == 3
+        assert action.action_type == "pass"
+        assert action.target_seat is None
 
     def test_parse_speech_from_code_block_json_decode_fails(self):
         parser = OutputParser()
@@ -242,12 +367,12 @@ class TestOutputParser:
         assert result.function_name == "speak"
         assert "让我分析一下" in result.thinking_text
 
-    def test_parse_night_action_extracts_thinking(self):
-        """Night action JSON with thinking field should be extracted."""
+    def test_parse_night_action_does_not_record_thinking(self):
+        """Night action JSON must not persist private reasoning."""
         parser = OutputParser()
         raw = '{"thinking":"分析了局势觉得3号像狼","action_type":"kill","target_seat":3,"reasoning":"3号发言有漏洞"}'
         action = parser.parse_night_action(raw, player_seat=1)
-        assert action.thinking == "分析了局势觉得3号像狼"
+        assert action.thinking == ""
 
     def test_parse_night_action_no_thinking_field(self):
         """Night action JSON without thinking field should default to empty."""
@@ -256,12 +381,12 @@ class TestOutputParser:
         action = parser.parse_night_action(raw, player_seat=1)
         assert action.thinking == ""
 
-    def test_parse_vote_action_extracts_thinking(self):
-        """Vote action JSON with thinking field should be extracted."""
+    def test_parse_vote_action_does_not_record_thinking(self):
+        """Vote action JSON must not persist private reasoning."""
         parser = OutputParser()
         raw = '{"thinking":"经过分析决定投3号","target_seat":3,"reasoning":"3号发言最可疑"}'
         vote = parser.parse_vote_action(raw, voter_seat=1)
-        assert vote.thinking == "经过分析决定投3号"
+        assert vote.thinking == ""
 
     def test_parse_vote_action_no_thinking_field(self):
         """Vote action JSON without thinking field should default to empty."""
