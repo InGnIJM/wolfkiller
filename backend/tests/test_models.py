@@ -10,25 +10,38 @@ from app.models.actions import (
 class TestGameConfig:
     def test_default_config(self):
         config = GameConfig()
-        assert config.num_werewolves == 3
-        assert config.num_villagers == 3
-        assert config.num_seers == 1
-        assert config.num_witches == 1
-        assert config.num_hunters == 1
-
-    def test_total_players(self):
-        config = GameConfig()
+        assert config.role_counts == {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-villager": 3,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+        }
         assert config.total_players == 9
 
     def test_role_distribution(self):
         config = GameConfig()
-        roles = config.role_distribution()
-        assert len(roles) == 9
-        assert roles.count("wolf-killer-werewolf") == 3
-        assert roles.count("wolf-killer-villager") == 3
-        assert roles.count("wolf-killer-seer") == 1
-        assert roles.count("wolf-killer-witch") == 1
-        assert roles.count("wolf-killer-hunter") == 1
+        assert config.role_distribution() == [
+            "wolf-killer-werewolf",
+            "wolf-killer-werewolf",
+            "wolf-killer-werewolf",
+            "wolf-killer-villager",
+            "wolf-killer-villager",
+            "wolf-killer-villager",
+            "wolf-killer-seer",
+            "wolf-killer-witch",
+            "wolf-killer-hunter",
+        ]
+
+    def test_custom_role_counts_define_total_and_distribution(self):
+        config = GameConfig(role_counts={"werewolf": 1, "villager": 3})
+        assert config.total_players == 4
+        assert config.role_distribution() == ["werewolf", "villager", "villager", "villager"]
+
+    def test_empty_role_counts_has_no_players_or_roles(self):
+        config = GameConfig(role_counts={})
+        assert config.total_players == 0
+        assert config.role_distribution() == []
 
 
 class TestPlayerState:
@@ -68,6 +81,29 @@ class TestPlayerState:
 
 
 class TestGameState:
+    def test_default_tiebreak_state(self):
+        state = GameState(game_id="test")
+        assert state.vote_round == 1
+        assert state.is_tiebreak is False
+        assert state.tiebreak_candidates == set()
+        assert state.supplemental_speakers == set()
+        assert state.voted_seats == set()
+        assert state.accepted_action_keys == set()
+
+    def test_tiebreak_and_vote_sets_are_independent_between_states(self):
+        first = GameState(game_id="first")
+        second = GameState(game_id="second")
+        additions = {
+            "tiebreak_candidates": 1,
+            "supplemental_speakers": 2,
+            "voted_seats": 3,
+            "accepted_action_keys": "night:1:kill",
+        }
+
+        for attribute, value in additions.items():
+            getattr(first, attribute).add(value)
+            assert getattr(second, attribute) == set()
+
     def test_alive_players(self):
         state = GameState(game_id="test")
         state.players = {

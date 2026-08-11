@@ -25,30 +25,24 @@ class Camp(str, Enum):
 
 @dataclass
 class GameConfig:
-    num_werewolves: int = 3
-    num_villagers: int = 3
-    num_seers: int = 1
-    num_witches: int = 1
-    num_hunters: int = 1
+    role_counts: dict[str, int] = field(default_factory=lambda: {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-villager": 3,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-hunter": 1,
+    })
 
     @property
     def total_players(self) -> int:
-        return (
-            self.num_werewolves
-            + self.num_villagers
-            + self.num_seers
-            + self.num_witches
-            + self.num_hunters
-        )
+        return sum(self.role_counts.values())
 
     def role_distribution(self) -> list[str]:
-        roles = []
-        roles.extend(["wolf-killer-werewolf"] * self.num_werewolves)
-        roles.extend(["wolf-killer-villager"] * self.num_villagers)
-        roles.extend(["wolf-killer-seer"] * self.num_seers)
-        roles.extend(["wolf-killer-witch"] * self.num_witches)
-        roles.extend(["wolf-killer-hunter"] * self.num_hunters)
-        return roles
+        return [
+            role_id
+            for role_id, count in self.role_counts.items()
+            for _ in range(count)
+        ]
 
 
 @dataclass
@@ -76,6 +70,12 @@ class GameState:
     game_id: str
     phase: GamePhase = GamePhase.WAITING
     round_number: int = 0
+    vote_round: int = 1
+    is_tiebreak: bool = False
+    tiebreak_candidates: set[int] = field(default_factory=set)
+    supplemental_speakers: set[int] = field(default_factory=set)
+    voted_seats: set[int] = field(default_factory=set)
+    accepted_action_keys: set[str] = field(default_factory=set)
     config: GameConfig = field(default_factory=GameConfig)
     players: dict[int, PlayerState] = field(default_factory=dict)
     sheriff: Optional[int] = None
