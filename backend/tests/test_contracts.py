@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 import pytest
 
+from app.models.contracts import RoleSpec
 from app.models.game import Camp, GamePhase, GameState, PlayerState
 from app.roles.registry import RoleRegistry, builtin_registry
 
@@ -69,6 +71,40 @@ class TestRoleRegistry:
         assert sorted(roles) == [1, 2]
         assert all(role.role_name == "wolf-killer-villager" for role in roles.values())
 
+    def test_create_roles_uses_each_mixed_role_factory_with_constructor_arguments(self):
+        registry = RoleRegistry()
+        calls = []
+        prompt_builder = object()
+        clients = iter([object(), object(), object()])
+
+        def factory(factory_name):
+            def create(seat, role_name, received_prompt_builder, llm_client):
+                calls.append(
+                    (factory_name, seat, role_name, received_prompt_builder, llm_client)
+                )
+                return StubRole(seat, role_name)
+
+            return create
+
+        registry.register(RoleSpec("role-a", Camp.GOOD, factory("a"), ()))
+        registry.register(RoleSpec("role-b", Camp.WEREWOLF, factory("b"), ()))
+
+        roles = registry.create_roles(
+            {"role-a": 2, "role-b": 1},
+            player_count=3,
+            prompt_builder=prompt_builder,
+            llm_client_factory=lambda: next(clients),
+        )
+
+        assert sorted(roles) == [1, 2, 3]
+        assert sorted(role.role_name for role in roles.values()) == [
+            "role-a", "role-a", "role-b"
+        ]
+        assert Counter(factory_name for factory_name, *_ in calls) == {"a": 2, "b": 1}
+        assert all(roles[seat].role_name == role_name for _, seat, role_name, *_ in calls)
+        assert all(builder is prompt_builder for *_, builder, _ in calls)
+        assert len({id(client) for *_, client in calls}) == 3
+
     def test_build_requests_only_for_alive_roles_with_current_phase_contracts(self):
         state = GameState(game_id="contracts", phase=GamePhase.NIGHT, round_number=4)
         state.players = {
@@ -108,6 +144,18 @@ class TestRoleRegistry:
 
         assert builtin_registry.build_requests(
             state, {1: StubRole(1, "wolf-killer-hunter")}, GamePhase.NIGHT
+        ) == []
+
+    def test_build_requests_returns_empty_for_a_phase_other_than_game_state(self):
+        state = GameState(
+            game_id="contracts", phase=GamePhase.VOTE_CASTING, round_number=2
+        )
+        state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", Camp.WEREWOLF.value),
+        }
+
+        assert builtin_registry.build_requests(
+            state, {1: StubRole(1, "wolf-killer-werewolf")}, GamePhase.NIGHT
         ) == []
 
     def test_witch_has_one_combined_action_contract(self):

@@ -67,6 +67,8 @@ class RoleRegistry:
         roles: Mapping[int, object],
         phase: GamePhase,
     ) -> list[ActionRequest]:
+        if phase != state.phase:
+            return []
         accepted_keys = getattr(state, "accepted_action_keys", set())
         requests = []
         for seat, player in state.players.items():
