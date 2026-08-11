@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
 from app.models.actions import NightAction, VoteAction, SpeechRecord, DeathReport
-from app.models.contracts import AcceptedAction, ActionRequest
+from app.models.contracts import AcceptedAction, ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
 from app.core.action_resolver import ActionResolver
@@ -18,6 +18,15 @@ from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 
 logger = logging.getLogger(__name__)
+
+VOTE_CONTRACT = ActionContract(
+    contract_id="exile_vote",
+    phase=GamePhase.VOTE_CASTING,
+    action_types=("vote", "abstain"),
+    actions_requiring_target=frozenset({"vote"}),
+    resolution_priority=0,
+    fallback_action_type="abstain",
+)
 
 
 class GameEngine:
@@ -48,6 +57,7 @@ class GameEngine:
         self._running = False
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
+        self._accepted_action_results: dict[str, AcceptedAction] = {}
 
     @property
     def phase_delay(self) -> float:
@@ -66,6 +76,7 @@ class GameEngine:
         self.sm.reset()
         self.state = GameState(game_id=self.game_id, config=self.config)
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
+        self._accepted_action_results.clear()
 
         self.sm.transition(SM_Event.START)
         await self._broadcast_phase_change()
@@ -321,6 +332,73 @@ class GameEngine:
     # Night Operation Functions
     # =================================================================
 
+    async def _request_night_action(
+        self, seat: int, contract_id: str, operation: str | None = None
+    ) -> AcceptedAction:
+        player = self.state.players[seat]
+        contract = next(
+            contract
+            for contract in builtin_registry.require(player.role).contracts
+            if contract.contract_id == contract_id and contract.phase == GamePhase.NIGHT
+        )
+        key_suffix = f":{operation}" if operation else ""
+        request = ActionRequest(
+            actor_seat=seat,
+            role_id=player.role,
+            contract=contract,
+            phase=GamePhase.NIGHT,
+            round_id=self.state.round_number,
+            idempotency_key=(
+                f"{self.state.round_number}:{GamePhase.NIGHT.value}:{seat}:"
+                f"{contract.contract_id}{key_suffix}"
+            ),
+        )
+        role = self.roles[seat]
+        accepted = await role.request_action(
+            self.state, self.conversation_log, request
+        )
+        self._accepted_action_results[request.idempotency_key] = accepted
+        return accepted
+
+    @staticmethod
+    def _night_action_from_accepted(accepted: AcceptedAction) -> NightAction:
+        return NightAction(
+            player_seat=accepted.request.actor_seat,
+            action_type=accepted.command.action_type,
+            target_seat=accepted.command.target_seat,
+            reasoning=accepted.command.reasoning,
+        )
+
+    async def _request_hunter_action(self, seat: int) -> AcceptedAction:
+        player = self.state.players[seat]
+        registered_contract = next(
+            contract
+            for contract in builtin_registry.require(player.role).contracts
+            if contract.contract_id == "hunter_shoot"
+        )
+        contract = ActionContract(
+            contract_id=registered_contract.contract_id,
+            phase=self.state.phase,
+            action_types=registered_contract.action_types,
+            actions_requiring_target=registered_contract.actions_requiring_target,
+            resolution_priority=registered_contract.resolution_priority,
+            fallback_action_type=registered_contract.fallback_action_type,
+        )
+        request = ActionRequest(
+            actor_seat=seat,
+            role_id=player.role,
+            contract=contract,
+            phase=self.state.phase,
+            round_id=self.state.round_number,
+            idempotency_key=(
+                f"{self.state.round_number}:{self.state.phase.value}:{seat}:"
+                f"{contract.contract_id}"
+            ),
+        )
+        return await self.roles[seat].request_action(
+            self.state, self.conversation_log, request
+        )
+
     def _accept_night_actions(
         self, actions: list[NightAction]
     ) -> list[AcceptedAction]:
@@ -333,6 +411,19 @@ class GameEngine:
         accepted_actions: list[AcceptedAction] = []
 
         for action in actions:
+            cached = next(
+                (
+                    accepted
+                    for accepted in self._accepted_action_results.values()
+                    if accepted.request.actor_seat == action.player_seat
+                    and accepted.command.action_type == action.action_type
+                    and accepted.command.target_seat == action.target_seat
+                ),
+                None,
+            )
+            if cached is not None:
+                accepted_actions.append(cached)
+                continue
             actor_requests = requests_by_actor.get(action.player_seat, [])
             if not actor_requests:
                 logger.warning(
@@ -401,6 +492,11 @@ class GameEngine:
                 )
                 continue
 
+            cached = self._accepted_action_results.get(request.idempotency_key)
+            if cached is not None:
+                accepted_actions.append(cached)
+                continue
+
             if request.idempotency_key in self.state.accepted_action_keys:
                 logger.warning(
                     "Discarding duplicate night action for accepted contract "
@@ -443,11 +539,11 @@ class GameEngine:
         round_num = self.state.round_number
 
         for seat in wolf_seats:
-            wolf = self.roles.get(seat)
-            if wolf is None:
+            if seat not in self.roles:
                 continue
             try:
-                action = await wolf.kill(self.state, self.conversation_log)
+                accepted = await self._request_night_action(seat, "werewolf_kill")
+                action = self._night_action_from_accepted(accepted)
             except Exception as e:
                 logger.error(f"Werewolf kill error (seat={seat}): {e}")
                 action = None
@@ -481,39 +577,46 @@ class GameEngine:
 
     async def witch_save(self, witch_seat: int, wolf_target: Optional[int]) -> bool:
         """Witch decides whether to use antidote. Returns True if used."""
-        witch = self.roles.get(witch_seat)
-        if witch is None or wolf_target is None:
+        if witch_seat not in self.roles or wolf_target is None:
             return False
         player = self.state.players.get(witch_seat)
         if player is None or not player.has_antidote:
             return False
         try:
-            return await witch.save(self.state, self.conversation_log, wolf_target)
+            accepted = await self._request_night_action(
+                witch_seat, "witch_action", "save"
+            )
+            return (
+                accepted.command.action_type == "save"
+                and accepted.command.target_seat == wolf_target
+            )
         except Exception as e:
             logger.error(f"Witch save error (seat={witch_seat}): {e}")
             return False
 
     async def witch_poison(self, witch_seat: int, wolf_target: Optional[int]) -> Optional[NightAction]:
         """Witch decides whether to use poison. Returns action or None."""
-        witch = self.roles.get(witch_seat)
-        if witch is None:
+        if witch_seat not in self.roles:
             return None
         player = self.state.players.get(witch_seat)
         if player is None or not player.has_poison:
             return None
         try:
-            return await witch.poison(self.state, self.conversation_log, wolf_target or 0)
+            accepted = await self._request_night_action(
+                witch_seat, "witch_action", "poison"
+            )
+            return self._night_action_from_accepted(accepted)
         except Exception as e:
             logger.error(f"Witch poison error (seat={witch_seat}): {e}")
             return None
 
     async def seer_check(self, seer_seat: int) -> Optional[NightAction]:
         """Seer decides who to check. Returns the action."""
-        seer = self.roles.get(seer_seat)
-        if seer is None:
+        if seer_seat not in self.roles:
             return None
         try:
-            return await seer.check(self.state, self.conversation_log)
+            accepted = await self._request_night_action(seer_seat, "seer_check")
+            return self._night_action_from_accepted(accepted)
         except Exception as e:
             logger.error(f"Seer check error (seat={seer_seat}): {e}")
             return None
@@ -549,9 +652,9 @@ class GameEngine:
             sys_msg, self.state.round_number, "night", visible_to=[hunter_seat],
         )
 
-        action = None
         try:
-            action = await hunter.shoot(self.state, self.conversation_log)
+            accepted = await self._request_hunter_action(hunter_seat)
+            action = self._night_action_from_accepted(accepted)
         except Exception as e:
             logger.error(f"Hunter shoot LLM error (seat={hunter_seat}): {e}")
             self.game_logger.log_hunter_shoot(
@@ -882,10 +985,29 @@ class GameEngine:
     async def vote(self, seat: int) -> Optional[VoteAction]:
         """Player casts a vote. Returns VoteAction or None."""
         role = self.roles.get(seat)
-        if role is None:
+        player = self.state.players.get(seat)
+        if role is None or player is None:
             return None
+        request = ActionRequest(
+            actor_seat=seat,
+            role_id=player.role,
+            contract=VOTE_CONTRACT,
+            phase=GamePhase.VOTE_CASTING,
+            round_id=self.state.round_number,
+            idempotency_key=(
+                f"{self.state.round_number}:{GamePhase.VOTE_CASTING.value}:"
+                f"{seat}:{VOTE_CONTRACT.contract_id}"
+            ),
+        )
         try:
-            return await role.vote(self.state, self.conversation_log, "exile_vote")
+            accepted = await role.request_action(
+                self.state, self.conversation_log, request
+            )
+            return VoteAction(
+                voter_seat=seat,
+                target_seat=accepted.command.target_seat,
+                reasoning=accepted.command.reasoning,
+            )
         except Exception as e:
             logger.error(f"Vote error (seat={seat}): {e}")
             return None

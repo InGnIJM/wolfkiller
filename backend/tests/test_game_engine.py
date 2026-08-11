@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import NightAction, VoteAction, DeathReport
-from app.models.contracts import AcceptedAction, ActionContract, ActionRequest
+from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus
 
 
@@ -48,11 +48,35 @@ def make_mock_role(seat: int, role_name: str,
             return night_action
         return NightAction(player_seat=seat, action_type="pass")
 
+    async def _request_action(state, conversation_log, request):
+        if request.contract.contract_id == "exile_vote":
+            target = vote.target_seat if vote else None
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(
+                    action_type="vote" if target is not None else "abstain",
+                    target_seat=target,
+                    reasoning="",
+                ),
+            )
+        action = night_action or NightAction(
+            player_seat=seat, action_type="pass", target_seat=None
+        )
+        return AcceptedAction(
+            request=request,
+            command=ActionCommand(
+                action_type=action.action_type,
+                target_seat=action.target_seat,
+                reasoning=action.reasoning,
+            ),
+        )
+
     async def _chat(state, conversation_log):
         return chat_msg
 
     role.speak = AsyncMock(side_effect=_speak)
     role.vote = AsyncMock(side_effect=_vote)
+    role.request_action = AsyncMock(side_effect=_request_action)
 
     if "werewolf" in role_name:
         role.kill = AsyncMock(side_effect=_kill)
@@ -277,6 +301,11 @@ class TestGameEngine:
         role = make_mock_role(1, "wolf-killer-villager",
                               vote=VoteAction(voter_seat=1, target_seat=3))
         engine = GameEngine(game_id="test", roles={1: role})
+        engine.state.phase = GamePhase.VOTE_CASTING
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            3: PlayerState(3, "wolf-killer-villager", "good"),
+        }
 
         vote = await engine.vote(1)
         assert vote is not None
@@ -390,10 +419,16 @@ class TestGameEngine:
             ),
             5: make_mock_role(5, "wolf-killer-villager"),
         }
-        roles[2].save = AsyncMock(return_value=True)
-        roles[2].poison = AsyncMock(return_value=NightAction(
-            player_seat=2, action_type="poison", target_seat=1,
-        ))
+        async def save_action(state, conversation_log, request):
+            state.players[2].has_antidote = False
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(
+                    action_type="save", target_seat=5, reasoning="x"
+                ),
+            )
+
+        roles[2].request_action = AsyncMock(side_effect=save_action)
         engine = GameEngine(game_id="test", roles=roles, data_dir=str(tmp_path))
         engine._assign_roles()
         engine.state.phase = GamePhase.NIGHT
@@ -711,7 +746,15 @@ class TestGameEngine:
 
         # Make re-vote also a tie — all roles abstain so tally is empty
         for role in roles.values():
-            role.vote = AsyncMock(return_value=VoteAction(voter_seat=role.seat, target_seat=None))
+            async def abstain(state, conversation_log, request):
+                return AcceptedAction(
+                    request=request,
+                    command=ActionCommand(
+                        action_type="abstain", target_seat=None, reasoning=""
+                    ),
+                )
+
+            role.request_action = AsyncMock(side_effect=abstain)
 
         await engine._execute_vote_resolution()
 
