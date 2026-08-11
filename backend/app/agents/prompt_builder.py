@@ -1,6 +1,6 @@
 from app.core.conversation_log import ConversationLog
 from app.agents.state_filter import StateFilter
-from app.models.game import GameState
+from app.models.game import GamePhase, GameState
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -468,9 +468,12 @@ class PromptBuilder:
             player = state.players.get(seat)
             lines.append(f"- 解药：{'有' if player.has_antidote else '已用'}")
             lines.append(f"- 毒药：{'有' if player.has_poison else '已用'}")
-            # Show wolf kill target during daytime so Witch can share silver water info
+            # At night, only a witch with antidote may learn the kill target.
+            # During the day the target remains available as silver-water information.
             wolf_target = getattr(state, 'last_wolf_kill_target', None)
-            if wolf_target is not None:
+            if wolf_target is not None and (
+                state.phase != GamePhase.NIGHT or player.has_antidote
+            ):
                 lines.append(f"- 昨晚狼人刀口（银水信息）：{wolf_target}号玩家")
                 lines.append("- 提示：你可以在发言时公开这个信息（发银水），但注意狼人可能自刀，银水不完全可信")
         if "hunter" in role_name:

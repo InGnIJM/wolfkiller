@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 
 from app.agents.output_parser import StrictCapabilityError
+from app.agents.prompt_builder import PromptBuilder
 from app.core.game_engine import GameEngine
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
 from app.models.game import Camp, GamePhase, GameState, PlayerState
@@ -146,6 +147,66 @@ async def test_request_action_does_not_downgrade_network_errors_to_json():
         await role.request_action(state, object(), request_for(state))
 
     assert client.json_model.messages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("has_antidote", "has_poison", "action_type", "target_seat", "expected_actions", "target_visible"),
+    [
+        (False, True, "poison", 2, ("poison", "pass"), False),
+        (True, False, "save", 3, ("save", "pass"), True),
+    ],
+)
+async def test_witch_request_action_sends_only_issued_capabilities_and_private_target(
+    tmp_path,
+    has_antidote: bool,
+    has_poison: bool,
+    action_type: str,
+    target_seat: int,
+    expected_actions: tuple[str, ...],
+    target_visible: bool,
+):
+    client = ClientStub([
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "witch_action",
+                "args": {
+                    "action_type": action_type,
+                    "target_seat": target_seat,
+                    "reasoning": "x",
+                },
+                "id": "call_1",
+            }],
+        ),
+    ])
+    role = BaseRole(1, "wolf-killer-witch", PromptBuilder(), client)
+    engine = GameEngine(
+        game_id="base-witch-prompt", roles={1: role}, data_dir=str(tmp_path)
+    )
+    engine.state.phase = GamePhase.NIGHT
+    engine.state.round_number = 1
+    engine.state.players = {
+        1: PlayerState(
+            1,
+            "wolf-killer-witch",
+            Camp.GOOD.value,
+            has_antidote=has_antidote,
+            has_poison=has_poison,
+        ),
+        2: PlayerState(2, "wolf-killer-villager", Camp.GOOD.value),
+        3: PlayerState(3, "wolf-killer-villager", Camp.GOOD.value),
+    }
+    engine.state.last_wolf_kill_target = 3
+
+    accepted = await engine._request_night_action(1, "witch_action")
+
+    prompt = client.strict_model.messages[0][1].content
+    assert accepted.request.contract.action_types == expected_actions
+    assert client.contracts == [accepted.request.contract]
+    assert ("今晚狼人刀了 3 号玩家" in prompt) is target_visible
+    assert ("狼人刀口（银水信息）：3号玩家" in prompt) is target_visible
+    assert ('"action_type":"save"' in prompt) is target_visible
 
 
 def test_action_transport_does_not_expose_thought_recording_or_content_preview():
