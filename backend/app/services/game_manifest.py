@@ -37,8 +37,11 @@ class GameManifest:
                     raw = json.load(f)
                 if isinstance(raw, list):
                     for entry in raw:
+                        if not isinstance(entry, dict):
+                            logger.warning("Skipping malformed game manifest entry")
+                            continue
                         gid = entry.get("game_id")
-                        if gid:
+                        if isinstance(gid, str) and gid:
                             self._entries[gid] = entry
                 logger.info(f"Game manifest loaded: {len(self._entries)} games")
         except (json.JSONDecodeError, OSError) as e:
@@ -62,6 +65,7 @@ class GameManifest:
                     meta = self._extract_meta(gid, glog)
                     if meta and meta["config"]:
                         self._entries[gid]["config"] = meta["config"]
+                        self._entries[gid]["player_count"] = meta["player_count"]
                         logger.info(f"Recovered role config from disk: {gid}")
 
         # Persist rebuilt index
@@ -142,11 +146,19 @@ class GameManifest:
             except json.JSONDecodeError:
                 continue
 
+            if not isinstance(rec, dict):
+                logger.warning("Skipping malformed game log record")
+                continue
+
+            data = rec.get("data")
+            if not isinstance(data, dict):
+                logger.warning("Skipping game log record with malformed data")
+                continue
+
             if meta["created_at"] is None:
                 meta["created_at"] = rec.get("timestamp")
 
             op = rec.get("operation")
-            data = rec.get("data") or {}
 
             if op == "role_init":
                 raw_players = data.get("players", {})
@@ -186,6 +198,6 @@ class GameManifest:
 
     def _persist(self) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
-        entries = sorted(self._entries.values(), key=lambda e: e.get("created_at", ""))
+        entries = sorted(self._entries.values(), key=lambda e: e.get("created_at") or "")
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)

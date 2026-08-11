@@ -204,6 +204,60 @@ class TestGameService:
         assert manifest._extract_meta("game", log)["player_count"] == 2
         assert manifest._extract_meta("game", tmp_path / "missing.log") is None
 
+    @pytest.mark.parametrize(
+        "invalid_record",
+        ["[]", '"not-an-object"', "null", '{"operation":"role_init","data":[]}'],
+    )
+    def test_manifest_skips_valid_json_records_with_invalid_shapes(
+        self, tmp_path, invalid_record
+    ):
+        log = tmp_path / "game.log"
+        log.write_text(
+            invalid_record
+            + "\n"
+            + json.dumps({
+                "timestamp": "t1",
+                "operation": "werewolf_kill",
+                "data": {"votes": [{"player_seat": 1}, {"player_seat": 2}]},
+            })
+            + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 2
+
+    @pytest.mark.parametrize("invalid_entry", [None, "not-an-object", []])
+    def test_manifest_skips_invalid_index_entries_and_keeps_valid_entries(
+        self, tmp_path, invalid_entry
+    ):
+        games = tmp_path / "games"
+        games.mkdir()
+        valid_entry = {"game_id": "indexed", "config": {"role_counts": {}}}
+        (games / "index.json").write_text(
+            json.dumps([invalid_entry, valid_entry]), encoding="utf-8"
+        )
+        recovered = games / "recovered"
+        recovered.mkdir()
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "operation": "role_init",
+                "data": {
+                    "players": {"1": {"role": "wolf-killer-villager"}},
+                },
+            })
+            + "\n",
+            encoding="utf-8",
+        )
+
+        entries = GameManifest(str(tmp_path)).load_or_rebuild()
+
+        assert entries["indexed"] == valid_entry
+        assert entries["recovered"]["config"] == {
+            "role_counts": {"wolf-killer-villager": 1},
+        }
+
     def test_manifest_ignores_non_mapping_role_init_players(self, tmp_path):
         log = tmp_path / "game.log"
         log.write_text(
@@ -279,6 +333,7 @@ class TestGameService:
         result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
 
         assert result["config"] == {"role_counts": recovered_counts}
+        assert result["player_count"] == 2
         assert result["created_at"] == "index-time"
         assert result["phase"] == "night"
 
