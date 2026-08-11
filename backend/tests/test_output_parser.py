@@ -326,8 +326,8 @@ class TestOutputParser:
 
     # ── Thinking extraction tests ──────────────────────────────
 
-    def test_parse_tool_call_extracts_thinking_from_content(self):
-        """Thinking text should be extracted from AIMessage.content."""
+    def test_parse_tool_call_discards_thinking_from_content(self):
+        """Tool calls must not expose model reasoning text."""
         parser = OutputParser()
         msg = AIMessage(
             content="我先分析一下局势：3号发言有漏洞，5号投票可疑。决定指认3号。",
@@ -339,10 +339,10 @@ class TestOutputParser:
         )
         result = parser.parse_tool_call(msg)
         assert result is not None
-        assert "3号发言有漏洞" in result.thinking_text
+        assert not hasattr(result, "thinking_text")
 
-    def test_parse_tool_call_empty_content_no_thinking(self):
-        """Empty content should result in empty thinking_text."""
+    def test_parse_tool_call_empty_content_has_no_thinking_field(self):
+        """Tool call results do not expose a thinking field."""
         parser = OutputParser()
         msg = AIMessage(
             content="",
@@ -354,10 +354,10 @@ class TestOutputParser:
         )
         result = parser.parse_tool_call(msg)
         assert result is not None
-        assert result.thinking_text == ""
+        assert not hasattr(result, "thinking_text")
 
-    def test_parse_tool_call_fallback_with_thinking(self):
-        """Fallback text parsing should capture thinking from raw content."""
+    def test_parse_tool_call_fallback_discards_thinking(self):
+        """Speech fallback parsing must not expose model reasoning text."""
         parser = OutputParser()
         msg = AIMessage(
             content='让我分析一下...speak(text="我觉得3号可疑")',
@@ -365,7 +365,7 @@ class TestOutputParser:
         result = parser.parse_tool_call(msg)
         assert result is not None
         assert result.function_name == "speak"
-        assert "让我分析一下" in result.thinking_text
+        assert not hasattr(result, "thinking_text")
 
     def test_parse_night_action_does_not_record_thinking(self):
         """Night action JSON must not persist private reasoning."""

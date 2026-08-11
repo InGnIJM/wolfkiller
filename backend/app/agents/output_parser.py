@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage
 
 from app.models.actions import NightAction, VoteAction
 from app.models.contracts import ActionCommand, ActionContract
+from app.core.action_validator import ActionValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +21,17 @@ class ToolCallResult:
     function_name: str
     arguments: dict
     raw_text: str = ""
-    thinking_text: str = ""  # LLM 在调用工具前的内心思考
 
 
-class ToolCallError(Exception):
+class ToolCallError(ActionValidationError):
     """Raised when tool call validation fails, with reason for caller."""
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(reason)
+
+
+class StrictCapabilityError(RuntimeError):
+    """The configured provider explicitly rejects strict tool support."""
 
 
 class NightActionModel(BaseModel):
@@ -98,6 +102,21 @@ class OutputParser:
             raise ToolCallError("tool name does not match issued contract")
         return self.parse_action_payload(args, contract)
 
+    def parse_strict_action_response(
+        self, response: AIMessage, contract: ActionContract
+    ) -> ActionCommand:
+        """Accept exactly one native tool call for an issued strict contract."""
+        tool_calls = getattr(response, "tool_calls", None)
+        if not tool_calls or len(tool_calls) != 1:
+            raise ActionValidationError("strict action response must contain one tool call")
+        tool_call = tool_calls[0]
+        try:
+            return self.parse_tool_action(
+                tool_call["name"], tool_call.get("args", {}), contract
+            )
+        except ToolCallError as error:
+            raise ActionValidationError(error.reason) from error
+
     def parse_night_action(self, raw: str, player_seat: int) -> NightAction:
         parsed = self._extract_json(raw)
         if parsed is None:
@@ -141,18 +160,6 @@ class OutputParser:
         Falls back to parsing the text content as a pseudo function call
         for models that don't support native tool calling.
         """
-        # Extract the model's internal thinking from response.content
-        # DeepSeek outputs reasoning text in content before calling a tool
-        thinking = ""
-        if hasattr(response, "content") and response.content:
-            if isinstance(response.content, str):
-                thinking = response.content.strip()
-            elif isinstance(response.content, list):
-                thinking = "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in response.content
-                ).strip()
-
         # Native tool calls (OpenAI/DeepSeek function calling)
         if hasattr(response, "tool_calls") and response.tool_calls:
             tc = response.tool_calls[0]
@@ -164,7 +171,7 @@ class OutputParser:
                 except json.JSONDecodeError:
                     args = {}
             logger.info(f"Tool call parsed (native): {name}({args})")
-            return ToolCallResult(function_name=name, arguments=args, thinking_text=thinking)
+            return ToolCallResult(function_name=name, arguments=args)
 
         # Fallback: parse text for function call patterns
         content = response.content if hasattr(response, "content") else str(response)
@@ -182,7 +189,6 @@ class OutputParser:
                     function_name=fn_name,
                     arguments={"text": m.group(1)},
                     raw_text=content,
-                    thinking_text=thinking,
                 )
 
             # Also try with positional arg: speak("...")
@@ -194,7 +200,6 @@ class OutputParser:
                     function_name=fn_name,
                     arguments={"text": m2.group(1)},
                     raw_text=content,
-                    thinking_text=thinking,
                 )
 
         return None
