@@ -1,6 +1,6 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
-from openai import BadRequestError
+from openai import BadRequestError, UnprocessableEntityError
 from app.config import config as app_config
 from app.agents.output_parser import StrictCapabilityError
 from app.models.contracts import ActionContract
@@ -52,7 +52,7 @@ class LLMClient:
         """Map only explicit provider strict-schema rejections to a fallback signal."""
         if isinstance(error, StrictCapabilityError):
             return error
-        if not isinstance(error, BadRequestError):
+        if not isinstance(error, (BadRequestError, UnprocessableEntityError)):
             return error
 
         response = error.response

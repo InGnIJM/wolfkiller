@@ -3,7 +3,12 @@ import importlib
 import pytest
 from unittest.mock import patch
 from httpx import Request, Response
-from openai import APIConnectionError, BadRequestError, RateLimitError
+from openai import (
+    APIConnectionError,
+    BadRequestError,
+    RateLimitError,
+    UnprocessableEntityError,
+)
 import app.config as config_module
 from app.agents.llm_client import LLMClient
 from app.agents.output_parser import StrictCapabilityError
@@ -35,12 +40,51 @@ class TestLLMClient:
         assert isinstance(mapped, StrictCapabilityError)
         assert str(mapped) == body["error"]["message"]
 
+    def test_maps_422_strict_schema_rejection_to_capability_error(self):
+        body = {
+            "error": {
+                "message": "This model does not support strict schema mode",
+                "code": "unsupported_parameter",
+                "param": "strict",
+            }
+        }
+        error = self._provider_error(
+            UnprocessableEntityError, body["error"]["message"], 422, body
+        )
+
+        mapped = LLMClient.map_strict_capability_error(error)
+
+        assert isinstance(mapped, StrictCapabilityError)
+        assert str(mapped) == body["error"]["message"]
+
+    def test_keeps_422_non_strict_schema_rejection_unchanged(self):
+        body = {
+            "error": {
+                "message": "The requested game state is invalid",
+                "code": "invalid_request",
+            }
+        }
+        error = self._provider_error(
+            UnprocessableEntityError, body["error"]["message"], 422, body
+        )
+
+        assert LLMClient.map_strict_capability_error(error) is error
+
+    def test_keeps_existing_strict_capability_error_unchanged(self):
+        error = StrictCapabilityError("strict schema is unsupported")
+
+        assert LLMClient.map_strict_capability_error(error) is error
+
     @pytest.mark.parametrize(
         "error_factory",
         [
             lambda self: self._provider_error(
                 BadRequestError, "Invalid API key", 401,
                 {"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+            ),
+            lambda self: self._provider_error(
+                BadRequestError, "Invalid request", 400,
+                {"error": "Invalid request"},
             ),
             lambda self: self._provider_error(
                 RateLimitError, "Too many requests", 429,
