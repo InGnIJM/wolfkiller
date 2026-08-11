@@ -204,6 +204,87 @@ class TestGameService:
         assert manifest._extract_meta("game", log)["player_count"] == 2
         assert manifest._extract_meta("game", tmp_path / "missing.log") is None
 
+    def test_manifest_skips_malformed_werewolf_vote_items(self, tmp_path):
+        log = tmp_path / "game.log"
+        log.write_text(
+            json.dumps({
+                "operation": "werewolf_kill",
+                "data": {
+                    "votes": [
+                        {"player_seat": 1},
+                        "malformed",
+                        None,
+                        ["not", "a", "vote"],
+                        {"player_seat": 2},
+                    ],
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 2
+
+    @pytest.mark.parametrize("votes", [{"player_seat": 1}, "malformed", None])
+    def test_manifest_skips_non_list_werewolf_votes(self, tmp_path, votes):
+        log = tmp_path / "game.log"
+        log.write_text(
+            json.dumps({
+                "operation": "werewolf_kill",
+                "data": {"votes": votes},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 0
+
+    def test_manifest_persists_entries_with_mixed_created_at_types(self, tmp_path):
+        games = tmp_path / "games"
+        games.mkdir()
+        entries = [
+            {"game_id": "newer", "created_at": "2026-01-01T00:00:00+00:00"},
+            {"game_id": "integer-time", "created_at": 1},
+            {"game_id": "list-time", "created_at": []},
+            {"game_id": "older", "created_at": "2025-01-01T00:00:00+00:00"},
+        ]
+        (games / "index.json").write_text(json.dumps(entries), encoding="utf-8")
+
+        restored = GameManifest(str(tmp_path)).load_or_rebuild()
+        persisted = json.loads((games / "index.json").read_text(encoding="utf-8"))
+
+        assert set(restored) == {"newer", "integer-time", "list-time", "older"}
+        assert {entry["game_id"]: entry["created_at"] for entry in persisted} == {
+            entry["game_id"]: entry["created_at"] for entry in entries
+        }
+        assert [
+            entry["game_id"] for entry in persisted
+            if isinstance(entry["created_at"], str)
+        ] == ["older", "newer"]
+
+    def test_manifest_skips_invalid_utf8_log_and_recovers_other_games(self, tmp_path):
+        games = tmp_path / "games"
+        games.mkdir()
+        broken = games / "broken"
+        broken.mkdir()
+        (broken / "game.log").write_bytes(b"\xff\xfe")
+        recovered = games / "recovered"
+        recovered.mkdir()
+        (recovered / "game.log").write_text(
+            json.dumps({
+                "operation": "role_init",
+                "data": {"players": {"1": {"role": "wolf-killer-villager"}}},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entries = GameManifest(str(tmp_path)).load_or_rebuild()
+
+        assert "broken" not in entries
+        assert entries["recovered"]["player_count"] == 1
+
     @pytest.mark.parametrize(
         "invalid_record",
         ["[]", '"not-an-object"', "null", '{"operation":"role_init","data":[]}'],

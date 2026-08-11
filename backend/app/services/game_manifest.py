@@ -125,7 +125,8 @@ class GameManifest:
         try:
             with open(log_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-        except OSError:
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Skipping unreadable game log %s: %s", log_path, exc)
             return None
 
         meta: dict = {
@@ -178,7 +179,13 @@ class GameManifest:
             # Fallback: extract player count from werewolf votes if role_init missing
             if meta["player_count"] == 0 and op == "werewolf_kill":
                 seen = set()
-                for v in data.get("votes") or []:
+                votes = data.get("votes")
+                if not isinstance(votes, list):
+                    votes = []
+                for v in votes:
+                    if not isinstance(v, dict):
+                        logger.warning("Skipping malformed werewolf vote")
+                        continue
                     s = v.get("player_seat")
                     if s:
                         seen.add(s)
@@ -198,6 +205,9 @@ class GameManifest:
 
     def _persist(self) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
-        entries = sorted(self._entries.values(), key=lambda e: e.get("created_at") or "")
+        entries = sorted(
+            self._entries.values(),
+            key=lambda e: e.get("created_at") if isinstance(e.get("created_at"), str) else "",
+        )
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
