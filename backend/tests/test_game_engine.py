@@ -1005,6 +1005,50 @@ class TestGameEngine:
         assert engine.state.is_tiebreak is False
 
     @pytest.mark.asyncio
+    async def test_execute_tiebreak_resumes_only_missing_speakers_and_voters(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+            4: make_mock_role(4, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="resume-tiebreak", roles=roles)
+        engine._assign_roles()
+        engine.state.is_tiebreak = True
+        engine.state.vote_round = 2
+        engine.state.tiebreak_candidates = {1, 2}
+        engine.state.supplemental_speakers = {1, 3}
+        engine.state.voted_seats = {1, 4}
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=1),
+            VoteAction(voter_seat=4, target_seat=2),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.speak = AsyncMock(return_value="resumed supplemental speech")
+        vote_calls = []
+
+        async def revote(state, conversation_log, request):
+            vote_calls.append(request.actor_seat)
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(
+                    action_type="vote", target_seat=1, reasoning="",
+                ),
+            )
+
+        for role in roles.values():
+            role.request_action = AsyncMock(side_effect=revote)
+
+        await engine._execute_vote_resolution()
+
+        supplemental_calls = [
+            call for call in engine.speak.await_args_list if call.args[1] == "day_speech"
+        ]
+        assert [call.args[0] for call in supplemental_calls] == [2, 4]
+        assert vote_calls == [2, 3]
+        assert engine.state.players[1].is_alive is False
+
+    @pytest.mark.asyncio
     async def test_vote_resolution_second_tie_exiles_nobody_and_enters_night(self):
         roles = {
             1: make_mock_role(1, "wolf-killer-werewolf"),

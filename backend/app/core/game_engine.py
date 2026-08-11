@@ -869,24 +869,34 @@ class GameEngine:
 
     async def _execute_tiebreak(self, candidates: list[int]) -> None:
         """Run exactly one persisted supplemental-speech and re-vote round."""
-        self.conversation_log.add_vote_result(
-            self.state.votes, None, self.state.round_number,
-        )
-        self.state.vote_round = 2
-        self.state.is_tiebreak = True
-        self.state.tiebreak_candidates = set(candidates)
-        self.state.supplemental_speakers.clear()
-        self.state.voted_seats.clear()
+        if not self.state.is_tiebreak:
+            self.conversation_log.add_vote_result(
+                self.state.votes, None, self.state.round_number,
+            )
+            self.state.vote_round = 2
+            self.state.is_tiebreak = True
+            self.state.tiebreak_candidates = set(candidates)
+            self.state.supplemental_speakers.clear()
+            self.state.voted_seats.clear()
 
-        self.conversation_log.add_system_message(
-            "平票，进入补充发言轮次后重新投票。",
-            self.state.round_number,
-            "public",
-        )
-        self.sm.set_state(GamePhase.SPEECH)
-        await self._broadcast_phase_change()
-        await self._execute_speech_round()
-        await self._execute_vote_casting()
+            self.conversation_log.add_system_message(
+                "平票，进入补充发言轮次后重新投票。",
+                self.state.round_number,
+                "public",
+            )
+
+        alive_seats = set(self.state.alive_players())
+        if alive_seats - self.state.supplemental_speakers:
+            self.sm.set_state(GamePhase.SPEECH)
+            await self._broadcast_phase_change()
+            await self._execute_speech_round()
+
+        if alive_seats - self.state.voted_seats:
+            self.sm.set_state(GamePhase.VOTE_CASTING)
+            await self._broadcast_phase_change()
+            await self._execute_vote_casting()
+        else:
+            self.sm.set_state(GamePhase.VOTE_RESOLUTION)
 
         exiled_seat = self.resolve_votes()
         if exiled_seat is not None:
@@ -914,20 +924,14 @@ class GameEngine:
         await self._broadcast_phase_change()
 
     async def _execute_vote_resolution(self) -> None:
-        tally = self._tally_votes()
-        tied_candidates = self._tied_top_candidates(tally)
-        if tied_candidates and not self.state.is_tiebreak:
-            await self._execute_tiebreak(tied_candidates)
+        if self.state.is_tiebreak:
+            await self._execute_tiebreak(list(self.state.tiebreak_candidates))
             return
 
-        if tied_candidates and self.state.is_tiebreak:
-            self.conversation_log.add_vote_result(
-                self.state.votes, None, self.state.round_number,
-            )
-            self._clear_tiebreak_state()
-            if not await self._check_game_over():
-                self.sm.transition(SM_Event.VOTE_RESOLVED)
-            await self._broadcast_phase_change()
+        tally = self._tally_votes()
+        tied_candidates = self._tied_top_candidates(tally)
+        if tied_candidates:
+            await self._execute_tiebreak(tied_candidates)
             return
 
         if not tally:
@@ -941,64 +945,6 @@ class GameEngine:
             return
 
         exiled_seat = self.resolve_votes()
-
-        # Tie-break: one extra round of speech + re-vote
-        if exiled_seat is None and self.state.votes:
-            self.conversation_log.add_vote_result(
-                self.state.votes, None, self.state.round_number,
-            )
-            await self._broadcast_phase_change()
-
-            # Announce tie and trigger re-speech
-            tie_msg = "平票，无人被放逐。进入补充发言轮次。"
-            self.conversation_log.add_system_message(tie_msg, self.state.round_number, "public")
-            await self.event_bus.publish(BusEvent.SPEECH_MADE, speech=SpeechRecord(
-                player_seat=0, text=tie_msg, round_number=self.state.round_number,
-            ))
-
-            # Extra speech round
-            alive = list(self.state.alive_players().items())
-            self.state.speaking_order = [s for s, _ in alive]
-            for seat, player in alive:
-                self.state.current_speaker = seat
-                speech_text = await self.speak(seat, "day_speech")
-                if speech_text:
-                    self.state.speeches.append(SpeechRecord(
-                        player_seat=seat, text=speech_text,
-                        round_number=self.state.round_number,
-                    ))
-                    self.conversation_log.add_public_speech(
-                        seat, player.role, speech_text,
-                        self.state.round_number, "speech",
-                    )
-                    await self.event_bus.publish(BusEvent.SPEECH_MADE, speech=SpeechRecord(
-                        player_seat=seat, text=speech_text,
-                        round_number=self.state.round_number,
-                    ))
-                    self.game_logger.log_speech(
-                        self.game_id, self.state.round_number, "speech", seat, speech_text,
-                    )
-            else:
-                logger.warning(
-                    f"Seat {seat}: speak() returned None/empty in tie-break speech "
-                    f"(alive={player.is_alive}, phase={self.state.phase.value}). "
-                    f"This should not happen for a living player in speech phase."
-                )
-            self.state.current_speaker = None
-            self.state.speaking_order = []
-
-            # Re-vote
-            self.state.votes.clear()
-            for seat in self.state.alive_players():
-                vote = await self.vote(seat)
-                if vote:
-                    self.state.votes.append(vote)
-                    self.game_logger.log_vote(
-                        self.game_id, self.state.round_number, seat, vote.target_seat,
-                    )
-                    await self.event_bus.publish(BusEvent.VOTE_CAST, vote=vote)
-
-            exiled_seat = self.resolve_votes()
 
         if exiled_seat is not None:
             player = self.state.players.get(exiled_seat)
