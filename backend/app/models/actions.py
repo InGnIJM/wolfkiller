@@ -28,6 +28,10 @@ class VoteAction:
     reasoning: str = ""
     thinking: str = ""  # LLM 的内心思考过程
 
+    def __post_init__(self) -> None:
+        if self.target_seat == 0:
+            self.target_seat = None
+
     def to_dict(self) -> dict:
         return {
             "voter_seat": self.voter_seat,

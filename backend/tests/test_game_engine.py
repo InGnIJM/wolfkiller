@@ -953,6 +953,117 @@ class TestGameEngine:
         assert engine.state.players[2].is_alive
 
     @pytest.mark.asyncio
+    async def test_vote_resolution_first_tie_gives_all_alive_one_supplemental_speech_then_exiles_revote_winner(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+            4: make_mock_role(4, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="first-tie", roles=roles)
+        engine._assign_roles()
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=1),
+            VoteAction(voter_seat=2, target_seat=1),
+            VoteAction(voter_seat=3, target_seat=2),
+            VoteAction(voter_seat=4, target_seat=2),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.speak = AsyncMock(return_value="supplemental speech")
+        revote_states = []
+
+        async def revote(state, conversation_log, request):
+            revote_states.append((
+                state.vote_round,
+                state.is_tiebreak,
+                set(state.tiebreak_candidates),
+                set(state.supplemental_speakers),
+            ))
+            target = 1 if request.actor_seat != 4 else None
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(
+                    action_type="vote" if target else "abstain",
+                    target_seat=target,
+                    reasoning="",
+                ),
+            )
+
+        for role in roles.values():
+            role.request_action = AsyncMock(side_effect=revote)
+
+        await engine._execute_vote_resolution()
+
+        assert engine.state.players[1].is_alive is False
+        supplemental_calls = [
+            call for call in engine.speak.await_args_list if call.args[1] == "day_speech"
+        ]
+        assert len(supplemental_calls) == 4
+        assert [call.args[0] for call in supplemental_calls] == [1, 2, 3, 4]
+        assert all(state == (2, True, {1, 2}, {1, 2, 3, 4}) for state in revote_states)
+        assert engine.state.vote_round == 1
+        assert engine.state.is_tiebreak is False
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_second_tie_exiles_nobody_and_enters_night(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-seer"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+            4: make_mock_role(4, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="second-tie", roles=roles)
+        engine._assign_roles()
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=1),
+            VoteAction(voter_seat=2, target_seat=1),
+            VoteAction(voter_seat=3, target_seat=2),
+            VoteAction(voter_seat=4, target_seat=2),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.speak = AsyncMock(return_value="supplemental speech")
+
+        async def revote(state, conversation_log, request):
+            target = 1 if request.actor_seat in {1, 2} else 2
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(action_type="vote", target_seat=target, reasoning=""),
+            )
+
+        for role in roles.values():
+            role.request_action = AsyncMock(side_effect=revote)
+
+        await engine._execute_vote_resolution()
+
+        assert all(player.is_alive for player in engine.state.players.values())
+        assert engine.sm.get_state() == GamePhase.NIGHT
+        assert engine.state.vote_round == 1
+        assert engine.state.is_tiebreak is False
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_all_abstain_skips_tiebreak_and_supplemental_speech(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-seer"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="all-abstain", roles=roles)
+        engine._assign_roles()
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=0),
+            VoteAction(voter_seat=2, target_seat=None),
+        ]
+        assert engine.state.votes[0].target_seat is None
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.speak = AsyncMock(return_value="should not speak")
+
+        await engine._execute_vote_resolution()
+
+        assert engine.speak.await_count == 0
+        assert engine.sm.get_state() == GamePhase.NIGHT
+        assert engine.state.is_tiebreak is False
+
+    @pytest.mark.asyncio
     async def test_seer_check_result(self):
         engine = GameEngine(game_id="test")
         engine.state.players[1] = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")

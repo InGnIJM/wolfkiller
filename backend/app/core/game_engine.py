@@ -801,6 +801,12 @@ class GameEngine:
 
     async def _execute_speech_round(self) -> None:
         alive = list(self.state.alive_players().items())
+        if self.state.is_tiebreak:
+            alive = [
+                (seat, player)
+                for seat, player in alive
+                if seat not in self.state.supplemental_speakers
+            ]
         self.state.speaking_order = [s for s, _ in alive]
         for seat, player in alive:
             self.state.current_speaker = seat
@@ -821,6 +827,8 @@ class GameEngine:
                 self.game_logger.log_speech(
                     self.game_id, self.state.round_number, "speech", seat, speech_text,
                 )
+                if self.state.is_tiebreak:
+                    self.state.supplemental_speakers.add(seat)
             else:
                 logger.warning(
                     f"Seat {seat}: speak() returned None/empty in speech round "
@@ -838,11 +846,15 @@ class GameEngine:
     # =================================================================
 
     async def _execute_vote_casting(self) -> None:
-        self.state.votes.clear()
+        if not self.state.voted_seats:
+            self.state.votes.clear()
         for seat in self.state.alive_players():
+            if seat in self.state.voted_seats:
+                continue
             vote = await self.vote(seat)
             if vote:
                 self.state.votes.append(vote)
+                self.state.voted_seats.add(seat)
                 self.game_logger.log_vote(
                     self.game_id, self.state.round_number, seat, vote.target_seat,
                 )
@@ -855,7 +867,79 @@ class GameEngine:
     # Vote Resolution Phase
     # =================================================================
 
+    async def _execute_tiebreak(self, candidates: list[int]) -> None:
+        """Run exactly one persisted supplemental-speech and re-vote round."""
+        self.conversation_log.add_vote_result(
+            self.state.votes, None, self.state.round_number,
+        )
+        self.state.vote_round = 2
+        self.state.is_tiebreak = True
+        self.state.tiebreak_candidates = set(candidates)
+        self.state.supplemental_speakers.clear()
+        self.state.voted_seats.clear()
+
+        self.conversation_log.add_system_message(
+            "平票，进入补充发言轮次后重新投票。",
+            self.state.round_number,
+            "public",
+        )
+        self.sm.set_state(GamePhase.SPEECH)
+        await self._broadcast_phase_change()
+        await self._execute_speech_round()
+        await self._execute_vote_casting()
+
+        exiled_seat = self.resolve_votes()
+        if exiled_seat is not None:
+            player = self.state.players.get(exiled_seat)
+            if player:
+                player.mark_dead("exile")
+                self.state.death_history.append(DeathReport(
+                    player_seat=exiled_seat, cause="exile",
+                    round_number=self.state.round_number,
+                ))
+                if "hunter" in player.role and player.has_gun:
+                    hunter_death = await self.hunter_shoot(exiled_seat)
+                    if hunter_death:
+                        self.state.death_history.append(hunter_death)
+                await self.give_last_words(
+                    exiled_seat, "exile", self.state.round_number,
+                )
+
+        self.conversation_log.add_vote_result(
+            self.state.votes, exiled_seat, self.state.round_number,
+        )
+        self._clear_tiebreak_state()
+        if not await self._check_game_over():
+            self.sm.transition(SM_Event.VOTE_RESOLVED)
+        await self._broadcast_phase_change()
+
     async def _execute_vote_resolution(self) -> None:
+        tally = self._tally_votes()
+        tied_candidates = self._tied_top_candidates(tally)
+        if tied_candidates and not self.state.is_tiebreak:
+            await self._execute_tiebreak(tied_candidates)
+            return
+
+        if tied_candidates and self.state.is_tiebreak:
+            self.conversation_log.add_vote_result(
+                self.state.votes, None, self.state.round_number,
+            )
+            self._clear_tiebreak_state()
+            if not await self._check_game_over():
+                self.sm.transition(SM_Event.VOTE_RESOLVED)
+            await self._broadcast_phase_change()
+            return
+
+        if not tally:
+            self.conversation_log.add_vote_result(
+                self.state.votes, None, self.state.round_number,
+            )
+            self._clear_tiebreak_state()
+            if not await self._check_game_over():
+                self.sm.transition(SM_Event.VOTE_RESOLVED)
+            await self._broadcast_phase_change()
+            return
+
         exiled_seat = self.resolve_votes()
 
         # Tie-break: one extra round of speech + re-vote
@@ -1032,7 +1116,7 @@ class GameEngine:
             round_id=self.state.round_number,
             idempotency_key=(
                 f"{self.state.round_number}:{GamePhase.VOTE_CASTING.value}:"
-                f"{seat}:{VOTE_CONTRACT.contract_id}"
+                f"{self.state.vote_round}:{seat}:{VOTE_CONTRACT.contract_id}"
             ),
         )
         try:
@@ -1065,14 +1149,7 @@ class GameEngine:
 
     def resolve_votes(self) -> Optional[int]:
         """Tally votes. Returns exiled seat, or None on tie."""
-        if not self.state.votes:
-            return None
-
-        tally: dict[int, float] = {}
-        for v in self.state.votes:
-            if v.target_seat is None or v.target_seat == 0:
-                continue
-            tally[v.target_seat] = tally.get(v.target_seat, 0) + 1
+        tally = self._tally_votes()
 
         if not tally:
             return None
@@ -1087,6 +1164,28 @@ class GameEngine:
         )
 
         return top[0] if len(top) == 1 else None
+
+    def _tally_votes(self) -> dict[int, int]:
+        tally: dict[int, int] = {}
+        for vote in self.state.votes:
+            if vote.target_seat is not None:
+                tally[vote.target_seat] = tally.get(vote.target_seat, 0) + 1
+        return tally
+
+    @staticmethod
+    def _tied_top_candidates(tally: dict[int, int]) -> list[int]:
+        if not tally:
+            return []
+        max_votes = max(tally.values())
+        top = [seat for seat, count in tally.items() if count == max_votes]
+        return top if len(top) >= 2 else []
+
+    def _clear_tiebreak_state(self) -> None:
+        self.state.vote_round = 1
+        self.state.is_tiebreak = False
+        self.state.tiebreak_candidates.clear()
+        self.state.supplemental_speakers.clear()
+        self.state.voted_seats.clear()
 
     # =================================================================
     # Helpers
