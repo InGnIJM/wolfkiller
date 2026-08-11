@@ -411,8 +411,80 @@ class TestGameEngine:
         ]
         assert all(isinstance(action, AcceptedAction) for action in resolver_actions)
         assert [action.command.action_type for action in witch_actions] == ["save"]
+        assert [action.action_type for action in engine.state.night_actions if action.player_seat == 2] == ["save"]
         assert engine.state.players[2].has_antidote is False
         assert engine.state.players[2].has_poison is True
+
+    @pytest.mark.asyncio
+    async def test_execute_night_records_safe_fallback_instead_of_invalid_raw_action(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+            ),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        roles[1].kill = AsyncMock(return_value=NightAction(
+            player_seat=1, action_type="poison", target_seat=2,
+        ))
+        engine = GameEngine(game_id="test", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+
+        await engine._execute_night()
+
+        assert [(action.player_seat, action.action_type, action.target_seat) for action in engine.state.night_actions] == [
+            (1, "pass", None),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_execute_night_records_each_wolf_kill_without_overwriting(self, tmp_path):
+        roles = {
+            1: make_mock_role(
+                1, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
+            ),
+            2: make_mock_role(
+                2, "wolf-killer-werewolf",
+                night_action=NightAction(player_seat=2, action_type="kill", target_seat=3),
+            ),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="test", roles=roles, data_dir=str(tmp_path))
+        engine._assign_roles()
+        engine.state.phase = GamePhase.NIGHT
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine._sleep_night_step = AsyncMock()
+
+        await engine._execute_night()
+
+        assert [(action.player_seat, action.action_type, action.target_seat) for action in engine.state.night_actions] == [
+            (1, "kill", 3),
+            (2, "kill", 3),
+        ]
+
+    def test_accept_night_actions_rejects_duplicate_without_second_resolution(self):
+        roles = {1: make_mock_role(1, "wolf-killer-werewolf")}
+        engine = GameEngine(game_id="test", roles=roles)
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.phase = GamePhase.NIGHT
+        action = NightAction(player_seat=1, action_type="kill", target_seat=2)
+        resolve = MagicMock(wraps=engine.action_resolver.resolve)
+        engine.action_resolver.resolve = resolve
+
+        accepted_actions = engine._accept_night_actions([action])
+        engine.action_resolver.resolve(engine.state, accepted_actions)
+        duplicate_actions = engine._accept_night_actions([action])
+        if duplicate_actions:
+            engine.action_resolver.resolve(engine.state, duplicate_actions)
+
+        assert [accepted.command.action_type for accepted in accepted_actions] == ["kill"]
+        assert duplicate_actions == []
+        assert resolve.call_count == 1
 
     @pytest.mark.asyncio
     async def test_execute_speech_round(self):

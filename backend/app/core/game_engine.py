@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
 from app.models.actions import NightAction, VoteAction, SpeechRecord, DeathReport
-from app.models.contracts import AcceptedAction
+from app.models.contracts import AcceptedAction, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
 from app.core.action_resolver import ActionResolver
@@ -280,8 +280,16 @@ class GameEngine:
 
         # ── 4. 结算死亡 ──────────────────────────────────────
         logger.info(f"Night {round_num}: Resolving actions, total actions={len(all_actions)}")
-        self.state.night_actions = all_actions
         accepted_actions = self._accept_night_actions(all_actions)
+        self.state.night_actions = [
+            NightAction(
+                player_seat=accepted.request.actor_seat,
+                action_type=accepted.command.action_type,
+                target_seat=accepted.command.target_seat,
+                reasoning=accepted.command.reasoning,
+            )
+            for accepted in accepted_actions
+        ]
         deaths = self.action_resolver.resolve(self.state, accepted_actions)
 
         # Hunter death check & shoot
@@ -317,20 +325,41 @@ class GameEngine:
         self, actions: list[NightAction]
     ) -> list[AcceptedAction]:
         """Validate legacy night actions before the resolver settles them."""
-        requests_by_actor = {
-            request.actor_seat: request
-            for request in builtin_registry.build_requests(
-                self.state, self.roles, GamePhase.NIGHT,
-            )
-        }
+        requests_by_actor: dict[int, list[ActionRequest]] = {}
+        for request in builtin_registry.build_requests(
+            self.state, self.roles, GamePhase.NIGHT,
+        ):
+            requests_by_actor.setdefault(request.actor_seat, []).append(request)
         accepted_actions: list[AcceptedAction] = []
 
         for action in actions:
-            request = requests_by_actor.get(action.player_seat)
-            if request is None:
+            actor_requests = requests_by_actor.get(action.player_seat, [])
+            if not actor_requests:
                 logger.warning(
                     "Discarding night action without an issued contract (seat=%s)",
                     action.player_seat,
+                )
+                continue
+
+            matching_requests = [
+                request
+                for request in actor_requests
+                if action.action_type in request.contract.action_types
+            ]
+            request = next(
+                (
+                    candidate
+                    for candidate in matching_requests or actor_requests
+                    if candidate.idempotency_key not in self.state.accepted_action_keys
+                ),
+                (matching_requests or actor_requests)[0],
+            )
+
+            if request.idempotency_key in self.state.accepted_action_keys:
+                logger.warning(
+                    "Discarding duplicate night action for accepted contract "
+                    "(seat=%s, contract=%s)",
+                    action.player_seat, request.contract.contract_id,
                 )
                 continue
 
