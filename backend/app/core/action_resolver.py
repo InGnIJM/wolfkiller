@@ -97,12 +97,12 @@ class ActionResolver:
     # ── Private helpers ───────────────────────────────────────────
 
     def _validate_witch_actions(self, actions: list[AcceptedAction]) -> None:
-        """Reject multiple potion actions from one witch in the same round."""
+        """Reject multiple actions from one witch in the same round."""
         witch_action_keys: set[tuple[int, int]] = set()
         for action in actions:
             if not isinstance(action, AcceptedAction):
                 continue
-            if action.command.action_type not in {"save", "poison"}:
+            if action.command.action_type not in {"save", "poison", "pass"}:
                 continue
             key = (action.request.actor_seat, action.request.round_id)
             if key in witch_action_keys:

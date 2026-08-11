@@ -155,6 +155,54 @@ class TestActionResolver:
         assert state.players[2].has_antidote is False
         assert state.players[2].has_poison is True
 
+    @pytest.mark.parametrize(
+        ("first_action_type", "second_action_type"),
+        [
+            ("pass", "pass"),
+            ("pass", "poison"),
+            ("pass", "save"),
+        ],
+    )
+    def test_rejects_multiple_witch_actions_including_pass_before_state_changes(
+        self, first_action_type: str, second_action_type: str
+    ):
+        state = make_state([
+            make_player(1, "wolf-killer-werewolf", "werewolf"),
+            make_player(2, "wolf-killer-witch", "good"),
+            make_player(3, "wolf-killer-villager", "good"),
+            make_player(4, "wolf-killer-villager", "good"),
+        ])
+        kill = accept(state, 1, "kill", 3)
+        witch_request = request_for(state, 2)
+
+        def witch_action(action_type: str) -> AcceptedAction:
+            target_seat = {"save": 3, "poison": 4}.get(action_type)
+            return AcceptedAction(
+                request=witch_request,
+                command=ActionCommand(
+                    action_type=action_type, target_seat=target_seat, reasoning="x"
+                ),
+            )
+
+        with pytest.raises(ActionValidationError, match="multiple witch actions"):
+            ActionResolver().resolve(
+                state,
+                [kill, witch_action(first_action_type), witch_action(second_action_type)],
+            )
+
+        assert state.last_wolf_kill_target is None
+        assert state.players[3].is_alive is True
+        assert state.players[4].is_alive is True
+
+    def test_resolves_single_witch_pass(self):
+        state = make_state([
+            make_player(1, "wolf-killer-witch", "good"),
+        ])
+
+        assert ActionResolver().resolve(state, [accept(state, 1, "pass")]) == []
+        assert state.players[1].has_antidote is True
+        assert state.players[1].has_poison is True
+
     def test_ignores_zero_and_none_targets_even_in_accepted_action_objects(self):
         state = make_state([
             make_player(1, "wolf-killer-werewolf", "werewolf"),
