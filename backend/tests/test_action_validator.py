@@ -2,8 +2,7 @@ import pytest
 
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidationError, ActionValidator
-from app.models.actions import NightAction
-from app.models.contracts import ActionContract, ActionRequest
+from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.models.game import Camp, GamePhase, GameState, PlayerState
 from app.roles.registry import builtin_registry
 
@@ -135,6 +134,22 @@ def test_validator_rejects_wrong_request_phase(state, validator):
         )
 
 
+def test_validator_rejects_request_whose_contract_has_a_different_phase(state, validator):
+    state.phase = GamePhase.VOTE_CASTING
+    request = request_for(make_state(), 1)
+    request = ActionRequest(
+        actor_seat=request.actor_seat, role_id=request.role_id, contract=request.contract,
+        phase=GamePhase.VOTE_CASTING, round_id=request.round_id,
+        idempotency_key=request.idempotency_key,
+    )
+
+    with pytest.raises(ActionValidationError, match="contract phase"):
+        validator.validate_and_accept(
+            state, request,
+            {"action_type": "pass", "target_seat": None, "reasoning": "x"},
+        )
+
+
 def test_validator_rejects_missing_actor(state, validator):
     request = request_for(state, 1)
     request = ActionRequest(
@@ -238,11 +253,18 @@ def test_validator_consumes_poison_only_after_accepting_valid_poison(state, vali
 
 
 def test_resolver_ignores_zero_target_without_random_wolf_kill(state):
+    request = request_for(state, 1)
     deaths = ActionResolver().resolve(
         state,
         [
-            NightAction(player_seat=1, action_type="kill", target_seat=0),
-            NightAction(player_seat=1, action_type="kill", target_seat=None),
+            AcceptedAction(
+                request=request,
+                command=ActionCommand(action_type="kill", target_seat=0, reasoning="x"),
+            ),
+            AcceptedAction(
+                request=request,
+                command=ActionCommand(action_type="kill", target_seat=None, reasoning="x"),
+            ),
         ],
     )
 

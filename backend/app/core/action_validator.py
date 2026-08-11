@@ -26,6 +26,8 @@ class ActionValidator:
 
         if state.phase != request.phase:
             raise ActionValidationError("request phase does not match game phase")
+        if request.contract.phase != request.phase:
+            raise ActionValidationError("contract phase does not match request phase")
 
         actor = state.players.get(request.actor_seat)
         if actor is None or not actor.is_alive:
