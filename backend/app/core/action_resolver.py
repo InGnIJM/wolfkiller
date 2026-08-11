@@ -13,7 +13,7 @@ class ActionResolver:
     ) -> list[DeathReport]:
         """Resolve night actions and return deaths. Does NOT handle hunter shoot —
         caller must check for hunter death and prompt the hunter separately."""
-        self._validate_witch_actions(actions)
+        self._validate_witch_actions(state, actions)
         resolved_actions = [self._as_night_action(action) for action in actions]
         wolf_actions = [a for a in resolved_actions if a.action_type == "kill"]
         witch_actions = [a for a in resolved_actions if a.action_type in ("save", "poison")]
@@ -96,11 +96,21 @@ class ActionResolver:
 
     # ── Private helpers ───────────────────────────────────────────
 
-    def _validate_witch_actions(self, actions: list[AcceptedAction]) -> None:
+    def _validate_witch_actions(
+        self, state: GameState, actions: list[AcceptedAction]
+    ) -> None:
         """Reject multiple actions from one witch in the same round."""
         witch_action_keys: set[tuple[int, int]] = set()
         for action in actions:
             if not isinstance(action, AcceptedAction):
+                continue
+            actor = state.players.get(action.request.actor_seat)
+            if (
+                action.request.contract.contract_id != "witch_action"
+                or action.request.role_id != "wolf-killer-witch"
+                or actor is None
+                or actor.role != "wolf-killer-witch"
+            ):
                 continue
             if action.command.action_type not in {"save", "poison", "pass"}:
                 continue

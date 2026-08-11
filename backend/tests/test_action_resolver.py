@@ -194,6 +194,69 @@ class TestActionResolver:
         assert state.players[3].is_alive is True
         assert state.players[4].is_alive is True
 
+    def test_allows_duplicate_passes_from_non_witch_contracts(self):
+        state = make_state([
+            make_player(1, "wolf-killer-seer", "good"),
+        ])
+        seer_request = request_for(state, 1)
+        actions = [
+            AcceptedAction(
+                request=seer_request,
+                command=ActionCommand(action_type="pass", target_seat=None, reasoning="x"),
+            ),
+            AcceptedAction(
+                request=seer_request,
+                command=ActionCommand(action_type="pass", target_seat=None, reasoning="x"),
+            ),
+        ]
+
+        assert ActionResolver().resolve(state, actions) == []
+
+    @pytest.mark.parametrize("contract_id", ["werewolf_kill", "future_night_action"])
+    def test_does_not_treat_forged_potions_from_non_witch_contract_as_witch_actions(
+        self, contract_id: str
+    ):
+        state = make_state([
+            make_player(1, "wolf-killer-witch", "good"),
+        ])
+        witch_request = request_for(state, 1)
+        forged_request = replace(
+            witch_request,
+            contract=replace(witch_request.contract, contract_id=contract_id),
+        )
+        actions = [
+            AcceptedAction(
+                request=forged_request,
+                command=ActionCommand(action_type="save", target_seat=2, reasoning="x"),
+            ),
+            AcceptedAction(
+                request=forged_request,
+                command=ActionCommand(action_type="poison", target_seat=3, reasoning="x"),
+            ),
+        ]
+
+        assert ActionResolver().resolve(state, actions) == []
+
+    def test_does_not_treat_witch_contract_from_non_witch_role_as_witch_action(self):
+        state = make_state([
+            make_player(1, "wolf-killer-werewolf", "werewolf"),
+        ])
+        werewolf_request = request_for(state, 1)
+        witch_contract = builtin_registry.require("wolf-killer-witch").contracts[0]
+        forged_request = replace(werewolf_request, contract=witch_contract)
+        actions = [
+            AcceptedAction(
+                request=forged_request,
+                command=ActionCommand(action_type="save", target_seat=2, reasoning="x"),
+            ),
+            AcceptedAction(
+                request=forged_request,
+                command=ActionCommand(action_type="poison", target_seat=3, reasoning="x"),
+            ),
+        ]
+
+        assert ActionResolver().resolve(state, actions) == []
+
     def test_resolves_single_witch_pass(self):
         state = make_state([
             make_player(1, "wolf-killer-witch", "good"),
