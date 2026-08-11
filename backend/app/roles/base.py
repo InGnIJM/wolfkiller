@@ -334,6 +334,7 @@ class BaseRole:
         extra = {}
         if request.contract.contract_id == "witch_action":
             extra["wolf_target"] = getattr(state, "last_wolf_kill_target", None)
+        extra["contract"] = request.contract
         return self.prompt_builder.build_action_prompt(
             state, self.seat, self.role_name, conversation_log, context, **extra
         )
