@@ -187,7 +187,7 @@ class GameManifest:
                         logger.warning("Skipping malformed werewolf vote")
                         continue
                     s = v.get("player_seat")
-                    if s:
+                    if isinstance(s, int) and not isinstance(s, bool) and s > 0:
                         seen.add(s)
                 if seen:
                     meta["player_count"] = len(seen)

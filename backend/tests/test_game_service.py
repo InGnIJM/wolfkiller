@@ -226,6 +226,35 @@ class TestGameService:
 
         assert entry["player_count"] == 2
 
+    def test_manifest_counts_only_positive_integer_werewolf_vote_seats(self, tmp_path):
+        log = tmp_path / "game.log"
+        log.write_text(
+            json.dumps({
+                "operation": "werewolf_kill",
+                "data": {
+                    "votes": [
+                        {"player_seat": 1},
+                        {"player_seat": True},
+                        {"player_seat": "2"},
+                        {"player_seat": 0},
+                        {"player_seat": -1},
+                        {"player_seat": 1.5},
+                        {"player_seat": [1]},
+                        {"player_seat": {"seat": 1}},
+                        {},
+                        "malformed",
+                        None,
+                        {"player_seat": 2},
+                    ],
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entry = GameManifest(str(tmp_path))._extract_meta("game", log)
+
+        assert entry["player_count"] == 2
+
     @pytest.mark.parametrize("votes", [{"player_seat": 1}, "malformed", None])
     def test_manifest_skips_non_list_werewolf_votes(self, tmp_path, votes):
         log = tmp_path / "game.log"
