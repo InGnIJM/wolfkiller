@@ -265,6 +265,25 @@ def test_public_replay_skips_operation_without_valid_timestamp():
     assert game_routes._public_replay_events([], [operation]) == []
 
 
+def test_public_replay_sorts_naive_and_z_timestamps_as_utc_without_leaking_timestamps():
+    conversations = [{
+        "timestamp": "2026-01-01T00:00:02", "scope": "public", "speaker_seat": 1,
+        "content": "naive speech", "round_number": 1, "phase": "speech",
+    }]
+    operations = [{
+        "timestamp": "2026-01-01T00:00:01Z", "operation": "phase_change", "round": 1,
+        "phase": "speech", "data": {"new_phase": "speech"},
+    }]
+
+    events = game_routes._public_replay_events(conversations, operations)
+
+    assert events == [
+        {"event_type": "phase", "payload": {"phase": "speech", "round_number": 1}},
+        {"event_type": "speech", "payload": {"player_seat": 1, "text": "naive speech", "round_number": 1}},
+    ]
+    assert "timestamp" not in repr(events)
+
+
 @pytest.mark.asyncio
 async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypatch):
     service = MagicMock()
