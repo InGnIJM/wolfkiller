@@ -152,6 +152,7 @@ def _public_conversation_event(record: dict[str, Any]) -> dict | None:
         _is_positive_int(seat)
         and isinstance(content, str)
         and _is_positive_int(round_number)
+        and isinstance(phase, str)
         and phase in _PUBLIC_GAME_PHASES
     ):
         return None
@@ -170,6 +171,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     if (
         timestamp is None
         or not _is_positive_int(round_number)
+        or not isinstance(phase, str)
         or phase not in _PUBLIC_GAME_PHASES
         or not isinstance(data, dict)
     ):
@@ -209,6 +211,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
                 return []
             if not (
                 _is_positive_int(death["player_seat"])
+                and isinstance(death["cause"], str)
                 and death["cause"] in _PUBLIC_DEATH_CAUSES
                 and _is_positive_int(death["round_number"])
             ):
@@ -225,7 +228,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
 
     if operation == "phase_change":
         new_phase = data.get("new_phase")
-        if new_phase not in _PUBLIC_GAME_PHASES:
+        if not isinstance(new_phase, str) or new_phase not in _PUBLIC_GAME_PHASES:
             return []
         return [{
             "event_type": "phase",
@@ -235,7 +238,12 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     if operation == "game_over":
         winner = data.get("winner")
         reason = data.get("reason")
-        if winner not in _PUBLIC_WINNING_CAMPS or reason not in _PUBLIC_WIN_REASONS:
+        if (
+            not isinstance(winner, str)
+            or winner not in _PUBLIC_WINNING_CAMPS
+            or not isinstance(reason, str)
+            or reason not in _PUBLIC_WIN_REASONS
+        ):
             return []
         return [{
             "event_type": "winner",

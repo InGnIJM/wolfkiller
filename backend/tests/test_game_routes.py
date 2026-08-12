@@ -288,6 +288,58 @@ def test_public_operation_projection_skips_invalid_public_domain_values(record):
     assert game_routes._public_operation_events(record) == []
 
 
+@pytest.mark.parametrize(
+    "conversation, operation",
+    [
+        (
+            {"timestamp": "2026-01-01T00:00:00Z", "scope": "public", "speaker_seat": 1,
+             "content": "bad phase", "round_number": 1, "phase": malformed},
+            None,
+        )
+        for malformed in ([], {})
+    ] + [
+        (None, {"timestamp": "2026-01-01T00:00:00Z", "operation": "vote", "round": 1,
+                "phase": malformed, "data": {"target": 2}, "seat": 1})
+        for malformed in ([], {})
+    ] + [
+        (None, {"timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": 1,
+                "phase": "speech", "data": {"new_phase": malformed}})
+        for malformed in ([], {})
+    ] + [
+        (None, {"timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1,
+                "phase": "dawn", "data": {"deaths": [
+                    {"player_seat": 2, "cause": malformed, "round_number": 1},
+                ]}})
+        for malformed in ([], {})
+    ] + [
+        (None, {"timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1,
+                "phase": "game_over", "data": {"winner": malformed, "reason": "all_wolves_dead"}})
+        for malformed in ([], {})
+    ] + [
+        (None, {"timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1,
+                "phase": "game_over", "data": {"winner": "good", "reason": malformed}})
+        for malformed in ([], {})
+    ],
+)
+def test_public_replay_skips_unhashable_domain_values_and_keeps_later_events(
+    conversation, operation,
+):
+    valid_operation = {
+        "timestamp": "2026-01-01T00:00:01Z", "operation": "phase_change", "round": 1,
+        "phase": "speech", "data": {"new_phase": "speech"},
+    }
+
+    events = game_routes._public_replay_events(
+        [conversation] if conversation is not None else [],
+        [operation, valid_operation] if operation is not None else [valid_operation],
+    )
+
+    assert events == [{
+        "event_type": "phase",
+        "payload": {"phase": "speech", "round_number": 1},
+    }]
+
+
 def test_public_replay_ignores_non_mapping_records():
     assert game_routes._public_replay_events(["bad"], [None]) == []
 
