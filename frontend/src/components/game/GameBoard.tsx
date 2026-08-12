@@ -72,9 +72,14 @@ export default function GameBoard({ onBack, gameId }: Props) {
       if (inFlight) return;
       inFlight = true;
       try {
-        const logs = await fetchGameLogs(gameId);
+        const [detailResult, logsResult] = await Promise.allSettled([
+          fetchGameDetail(gameId),
+          fetchGameLogs(gameId),
+        ]);
+        if (detailResult.status === 'rejected' || logsResult.status === 'rejected') return;
         if (active) {
-          mergeLogs(logs);
+          initPlayersFromDetail(detailResult.value.players);
+          mergeLogs(logsResult.value);
         }
       } catch {
         // Silently ignore poll errors
@@ -89,7 +94,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
       active = false;
       clearInterval(interval);
     };
-  }, [gameId, loading, winResult, mergeLogs]);
+  }, [gameId, loading, winResult, initPlayersFromDetail, mergeLogs]);
 
   const aliveCount = Object.values(players).filter((p) => p.is_alive).length;
 

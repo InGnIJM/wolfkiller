@@ -212,12 +212,109 @@ describe('GameBoard public replay', () => {
     expect(screen.getByTestId('seat-map')).toBeInTheDocument();
 
     await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
     expect(fetchGameLogs).toHaveBeenCalledTimes(2);
     await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(3);
     expect(fetchGameLogs).toHaveBeenCalledTimes(3);
     await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(4);
     expect(fetchGameLogs).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId('seat-map')).toBeInTheDocument();
+  });
+
+  it('refreshes the public player snapshot before merging each successful poll', async () => {
+    vi.useFakeTimers();
+    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    const refreshedDetail: PublicGameState = {
+      ...activeDetail,
+      players: {
+        ...activeDetail.players,
+        1: { ...activeDetail.players[1], is_sheriff: true },
+      },
+      sheriff: 1,
+    };
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const refreshedLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        ...activeLogs.events,
+        { event_type: 'speech', payload: { player_seat: 1, text: 'updated', round_number: 1 } },
+      ],
+    };
+    const initPlayersFromDetail = vi.spyOn(useGameStore.getState(), 'initPlayersFromDetail');
+    const mergeLogs = vi.spyOn(useGameStore.getState(), 'mergeLogs');
+    vi.mocked(fetchGameDetail)
+      .mockResolvedValueOnce(activeDetail)
+      .mockResolvedValueOnce(refreshedDetail);
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(activeLogs)
+      .mockResolvedValueOnce(refreshedLogs);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+    expect(initPlayersFromDetail).toHaveBeenCalledTimes(2);
+    expect(mergeLogs).toHaveBeenCalledOnce();
+    expect(initPlayersFromDetail.mock.invocationCallOrder[1])
+      .toBeLessThan(mergeLogs.mock.invocationCallOrder[0]);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(true);
+    expect(useGameStore.getState().timeline).toEqual(refreshedLogs.events);
+  });
+
+  it('discards both poll responses when the public detail request fails and retries next tick', async () => {
+    vi.useFakeTimers();
+    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    const refreshedDetail: PublicGameState = {
+      ...activeDetail,
+      players: {
+        ...activeDetail.players,
+        1: { ...activeDetail.players[1], is_sheriff: true },
+      },
+      sheriff: 1,
+    };
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const refreshedLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        ...activeLogs.events,
+        { event_type: 'speech', payload: { player_seat: 1, text: 'new', round_number: 1 } },
+      ],
+    };
+    vi.mocked(fetchGameDetail)
+      .mockResolvedValueOnce(activeDetail)
+      .mockRejectedValueOnce(new Error('temporary detail failure'))
+      .mockResolvedValueOnce(refreshedDetail);
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(activeLogs)
+      .mockResolvedValueOnce(refreshedLogs)
+      .mockResolvedValueOnce(refreshedLogs);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(useGameStore.getState().timeline).toEqual(activeLogs.events);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(useGameStore.getState().timeline).toEqual(refreshedLogs.events);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(true);
   });
 
   it('does not merge a pending poll after the board unmounts', async () => {
@@ -243,6 +340,7 @@ describe('GameBoard public replay', () => {
       await Promise.resolve();
     });
     await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
     expect(fetchGameLogs).toHaveBeenCalledTimes(2);
 
     unmount();
@@ -261,16 +359,16 @@ describe('GameBoard public replay', () => {
       game_id: 'game-2',
       events: [{ event_type: 'phase', payload: { phase: 'dawn', round_number: 1 } }],
     };
-    const pendingPoll = deferred<GameLogs>();
+    const pendingPoll = deferred<PublicGameState>();
     const mergeLogs = vi.spyOn(useGameStore.getState(), 'mergeLogs');
-    vi.mocked(fetchGameDetail).mockResolvedValue({
-      ...detail,
-      phase: 'speech',
-      win_result: null,
-    });
+    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    vi.mocked(fetchGameDetail)
+      .mockResolvedValueOnce(activeDetail)
+      .mockReturnValueOnce(pendingPoll.promise)
+      .mockResolvedValueOnce({ ...activeDetail, game_id: 'game-2' });
     vi.mocked(fetchGameLogs)
       .mockResolvedValueOnce(firstLogs)
-      .mockReturnValueOnce(pendingPoll.promise)
+      .mockResolvedValueOnce(firstLogs)
       .mockResolvedValueOnce(secondLogs);
 
     const { rerender } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
@@ -286,7 +384,7 @@ describe('GameBoard public replay', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    await act(async () => pendingPoll.resolve(firstLogs));
+    await act(async () => pendingPoll.resolve(activeDetail));
 
     expect(mergeLogs).not.toHaveBeenCalled();
     expect(useGameStore.getState().timeline).toEqual(secondLogs.events);
@@ -316,12 +414,84 @@ describe('GameBoard public replay', () => {
     });
 
     await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
     expect(fetchGameLogs).toHaveBeenCalledTimes(2);
     await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
     expect(fetchGameLogs).toHaveBeenCalledTimes(2);
 
     await act(async () => pendingPoll.resolve(activeLogs));
     await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(3);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits for a pending public detail request before starting another poll batch', async () => {
+    vi.useFakeTimers();
+    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const pendingDetail = deferred<PublicGameState>();
+    vi.mocked(fetchGameDetail)
+      .mockResolvedValueOnce(activeDetail)
+      .mockReturnValueOnce(pendingDetail.promise)
+      .mockResolvedValueOnce(activeDetail);
+    vi.mocked(fetchGameLogs).mockResolvedValue(activeLogs);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+
+    await act(async () => pendingDetail.resolve(activeDetail));
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(3);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps a failed poll batch locked until both public requests settle', async () => {
+    vi.useFakeTimers();
+    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const pendingLogs = deferred<GameLogs>();
+    vi.mocked(fetchGameDetail)
+      .mockResolvedValueOnce(activeDetail)
+      .mockRejectedValueOnce(new Error('fast detail failure'))
+      .mockResolvedValue(activeDetail);
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(activeLogs)
+      .mockReturnValueOnce(pendingLogs.promise)
+      .mockResolvedValue(activeLogs);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(2);
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+
+    await act(async () => pendingLogs.resolve(activeLogs));
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameDetail).toHaveBeenCalledTimes(3);
     expect(fetchGameLogs).toHaveBeenCalledTimes(3);
   });
 
