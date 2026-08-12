@@ -1,13 +1,39 @@
-import pytest
+import ast
 import asyncio
+import inspect
+
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import NightAction, VoteAction, DeathReport
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
-from app.core.event_bus import EventBus
+from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.action_validator import ActionValidationError
 from app.agents.prompt_builder import PromptBuilder
+from app.services.game_service import PUBLIC_NIGHT_SUBSTEPS
+
+
+def _night_substeps_emitted_by_engine_source() -> set[str]:
+    """Return every literal night-progress step emitted by GameEngine itself."""
+    source = inspect.getsource(GameEngine)
+    tree = ast.parse(source)
+    steps: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_broadcast_night_substep"
+        ):
+            continue
+        assert node.args, "Every night-progress broadcast must name its step"
+        step = node.args[0]
+        assert isinstance(step, ast.Constant) and isinstance(step.value, str), (
+            "Night-progress steps must be string literals so the public contract "
+            "can be checked statically"
+        )
+        steps.add(step.value)
+    return steps
 
 
 def make_mock_role(seat: int, role_name: str,
@@ -112,6 +138,31 @@ def make_9_mock_roles():
 
 
 class TestGameEngine:
+    @pytest.mark.asyncio
+    async def test_engine_night_progress_steps_match_public_service_contract(self):
+        """Every engine NIGHT_SUBSTEP reaches EventBus and is public-safe."""
+        emitted_steps = _night_substeps_emitted_by_engine_source()
+        captured_events = []
+        bus = EventBus()
+
+        async def capture(**kwargs):
+            captured_events.append(kwargs)
+
+        bus.subscribe(BusEvent.NIGHT_SUBSTEP, capture)
+        engine = GameEngine(game_id="night-progress-contract", event_bus=bus)
+        engine.state.round_number = 1
+
+        for step in emitted_steps:
+            await engine._broadcast_night_substep(step)
+
+        captured_steps = {event["step"] for event in captured_events}
+        assert captured_steps == emitted_steps
+        assert captured_steps == PUBLIC_NIGHT_SUBSTEPS
+        assert all(
+            event["game_id"] == engine.game_id and event["round_number"] == 1
+            for event in captured_events
+        )
+
     @pytest.mark.asyncio
     async def test_witch_pass_then_poison_uses_one_request_per_night(self, tmp_path):
         roles = {
