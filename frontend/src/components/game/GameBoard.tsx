@@ -6,6 +6,7 @@ import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
 import HistoryPanel from './HistoryPanel';
+import WinOverlay from './WinOverlay';
 
 interface Props {
   onBack: () => void;
@@ -14,7 +15,7 @@ interface Props {
 
 export default function GameBoard({ onBack, gameId }: Props) {
   const {
-    players, phase, roundNumber, winResult,
+    players, phase, roundNumber, winResult, showWinOverlay,
     showHistory, currentSpeaker,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
   } = useGameStore();
@@ -42,9 +43,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
           }
           setLoading(false);
         }
-      } catch (e: any) {
+      } catch (error: unknown) {
         if (!cancelled) {
-          setError(e.message || 'Failed to load game logs');
+          setError(error instanceof Error ? error.message : 'Failed to load game logs');
           setLoading(false);
         }
       }
@@ -138,6 +139,8 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
         {showHistory && <HistoryPanel onClose={toggleHistory} />}
       </Box>
+
+      {showWinOverlay && winResult && <WinOverlay winResult={winResult} />}
     </Box>
   );
 }
