@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import FrozenInstanceError
 from enum import Enum
@@ -124,7 +125,7 @@ def test_action_context_supports_plan_defaults() -> None:
     [object(), {1: "not-a-string-key"}, {"value": float("nan")}, {"value": {1, 2}}],
 )
 def test_context_rejects_values_that_are_not_strict_json(bad_value: object) -> None:
-    with pytest.raises((TypeError, ValueError), match="JSON"):
+    with pytest.raises((TypeError, ValueError), match="JSON|mapping"):
         _context(facts=bad_value)
 
 
@@ -204,6 +205,15 @@ def test_context_freezes_trigger_and_aggregation_inputs() -> None:
     ],
 )
 def test_context_rejects_invalid_container_shapes(
+    field: str, bad_value: object
+) -> None:
+    with pytest.raises(TypeError, match=field):
+        _context(**{field: bad_value})
+
+
+@pytest.mark.parametrize("field", ["facts", "resources", "counters"])
+@pytest.mark.parametrize("bad_value", [[], (), "value", 1])
+def test_context_mapping_fields_reject_every_non_mapping_shape(
     field: str, bad_value: object
 ) -> None:
     with pytest.raises(TypeError, match=field):
@@ -356,9 +366,11 @@ def test_contract_serializes_hooks_by_stable_qualified_name() -> None:
         return ()
 
     contract = _contract(resolve=resolve_hook)
-    with pytest.raises(TypeError, match="Hook.*registry"):
-        contract.to_json()
-    assert len(contract.stable_digest()) == 64
+    encoded = json.loads(contract.to_json())
+    assert encoded["resolve"].endswith("resolve_hook")
+    assert contract.stable_digest() == hashlib.sha256(
+        contract.to_json().encode("utf-8")
+    ).hexdigest()
 
 
 def test_contract_from_json_rejects_hook_references() -> None:
@@ -447,6 +459,27 @@ def test_contract_rejects_coercible_scalar_and_sequence_types(
 def test_role_rejects_unknown_effect_kind() -> None:
     with pytest.raises(ValueError, match="effect kind"):
         RoleSpec(role_id="role", allowed_effects=frozenset({"invalid"}))
+
+
+@pytest.mark.parametrize("field", ["initial_resources", "initial_private_data"])
+@pytest.mark.parametrize("bad_value", [[], (), "value", 1])
+def test_role_mapping_fields_reject_every_non_mapping_shape(
+    field: str, bad_value: object
+) -> None:
+    with pytest.raises(TypeError, match=field):
+        RoleSpec(role_id="role", **{field: bad_value})
+
+
+def test_role_with_hook_contract_serializes_descriptor_but_cannot_restore_it() -> None:
+    def resolve_hook() -> tuple[()]:
+        return ()
+
+    role = RoleSpec(role_id="role", contracts=(_contract(resolve=resolve_hook),))
+    encoded = json.loads(role.to_json())
+    assert encoded["contracts"][0]["resolve"].endswith("resolve_hook")
+    assert role.stable_digest() == hashlib.sha256(role.to_json().encode("utf-8")).hexdigest()
+    with pytest.raises(ValueError, match="Hook.*registry"):
+        RoleSpec.from_json(role.to_json())
 
 
 def test_role_from_json_requires_contract_mappings() -> None:
@@ -632,6 +665,38 @@ def test_violation_rejects_coercible_scalar_types(
     values = {"code": "invalid", "message": "invalid command", field: bad_value}
     with pytest.raises(TypeError, match=field):
         RuleViolation(**values)
+
+
+@pytest.mark.parametrize(
+    "factory, field",
+    [
+        (lambda value: RuleViolation("code", "message", details=value), "details"),
+        (
+            lambda value: GameEffect(
+                effect_id="effect",
+                kind=EffectKind.EMIT_EVENT,
+                source_action_key="action",
+                payload=value,
+            ),
+            "payload",
+        ),
+        (
+            lambda value: GameEffect(
+                effect_id="effect",
+                kind=EffectKind.EMIT_EVENT,
+                source_action_key="action",
+                preconditions=value,
+            ),
+            "preconditions",
+        ),
+    ],
+)
+@pytest.mark.parametrize("bad_value", [[], (), "value", 1])
+def test_remaining_mapping_fields_reject_every_non_mapping_shape(
+    factory: object, field: str, bad_value: object
+) -> None:
+    with pytest.raises(TypeError, match=field):
+        factory(bad_value)
 
 
 @pytest.mark.parametrize(

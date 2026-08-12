@@ -86,18 +86,6 @@ def _callable_name(value: Callable[..., object]) -> str:
     return f"{value.__module__}.{value.__qualname__}"
 
 
-def _contains_callable(value: object) -> bool:
-    if callable(value):
-        return True
-    if isinstance(value, Mapping):
-        return any(_contains_callable(item) for item in value.values())
-    if isinstance(value, (tuple, list, set, frozenset)):
-        return any(_contains_callable(item) for item in value)
-    if is_dataclass(value):
-        return any(_contains_callable(getattr(value, field.name)) for field in fields(value))
-    return False
-
-
 def _require_str(name: str, value: object, *, optional: bool = False) -> None:
     if optional and value is None:
         return
@@ -170,8 +158,6 @@ class _FrozenValue:
     SCHEMA_VERSION: ClassVar[int] = 1
 
     def to_json(self) -> str:
-        if _contains_callable(self):
-            raise TypeError("Hook values require trusted registry rebind before persistence")
         return _stable_json(self)
 
     def stable_digest(self) -> str:
@@ -261,6 +247,10 @@ class ActionContext(_FrozenValue):
         except (TypeError, ValueError) as error:
             raise ValueError(f"unknown schedule_point: {self.schedule_point}") from error
         object.__setattr__(self, "schedule_point", point)
+        if not isinstance(self.resources, Mapping):
+            raise TypeError("resources must be a mapping")
+        if not isinstance(self.facts, Mapping):
+            raise TypeError("facts must be a mapping")
         object.__setattr__(self, "resources", _freeze_json(self.resources, path="resources"))
         object.__setattr__(self, "facts", _freeze_json(self.facts, path="facts"))
         object.__setattr__(self, "counters", _freeze_int_mapping(self.counters, path="counters"))
@@ -436,6 +426,10 @@ class RoleSpec(_FrozenValue):
             for contract in self.contracts
         )
         object.__setattr__(self, "contracts", contracts)
+        if not isinstance(self.initial_resources, Mapping):
+            raise TypeError("initial_resources must be a mapping")
+        if not isinstance(self.initial_private_data, Mapping):
+            raise TypeError("initial_private_data must be a mapping")
         object.__setattr__(
             self, "initial_resources", _freeze_json(self.initial_resources, path="initial_resources")
         )
@@ -530,6 +524,8 @@ class RuleViolation(_FrozenValue):
         self._validate_schema_version()
         _require_str("code", self.code)
         _require_str("message", self.message)
+        if not isinstance(self.details, Mapping):
+            raise TypeError("details must be a mapping")
         object.__setattr__(self, "details", _freeze_json(self.details, path="details"))
 
 
@@ -560,6 +556,10 @@ class GameEffect(_FrozenValue):
         _require_int("target_seat", self.target_seat, optional=True)
         _require_str("source_event_id", self.source_event_id, optional=True)
         _require_tuple_of("sort_key", self.sort_key, int)
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("payload must be a mapping")
+        if not isinstance(self.preconditions, Mapping):
+            raise TypeError("preconditions must be a mapping")
         try:
             kind = EffectKind(self.kind)
         except (TypeError, ValueError) as error:
