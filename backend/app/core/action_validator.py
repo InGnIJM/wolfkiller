@@ -34,6 +34,15 @@ class ActionValidator:
             raise TypeError("command must be an exact ActionCommand")
 
         violations: list[RuleViolation] = []
+        if context.contract_id != contract.contract_id:
+            violations.append(self._violation(
+                "contract_id_mismatch", "context contract id does not match contract"
+            ))
+        if context.contract_version != contract.schema_version:
+            violations.append(self._violation(
+                "contract_version_mismatch",
+                "context contract version does not match contract schema version",
+            ))
         if context.schedule_point != contract.schedule_point:
             violations.append(self._violation(
                 "schedule_point_mismatch", "context schedule point does not match contract"
@@ -46,7 +55,7 @@ class ActionValidator:
             violations.append(self._violation(
                 "invalid_actor_role", "actor role id must not be empty"
             ))
-        if not context.actor_alive:
+        if not context.actor_alive and not contract.response_event_types:
             violations.append(self._violation("actor_not_alive", "actor must be alive"))
         if context.revision < 0:
             violations.append(self._violation(
@@ -99,7 +108,7 @@ class ActionValidator:
         self._validate_counters(context, contract, violations)
         self._validate_resources(context, contract, violations)
 
-        if contract.validate is not None:
+        if not violations and contract.validate is not None:
             hook_violations = contract.validate(context, command)
             if type(hook_violations) is not tuple or any(
                 type(item) is not RuleViolation for item in hook_violations

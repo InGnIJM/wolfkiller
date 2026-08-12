@@ -50,6 +50,8 @@ def pipeline_context(**changes: object) -> PipelineActionContext:
         "game_id": "pipeline-game",
         "revision": 3,
         "config_version": "registry-v1",
+        "contract_id": "werewolf-kill",
+        "contract_version": 1,
         "round_number": 2,
         "phase": "night",
         "window_id": "night:2",
@@ -248,6 +250,43 @@ def test_pipeline_validate_checks_context_binding(validator, context_changes, ex
             pipeline_context(**context_changes), pipeline_contract(), pipeline_command()
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("context_changes", "expected"),
+    [
+        ({"contract_id": "different-contract"}, "contract_id_mismatch"),
+        ({"contract_version": 2}, "contract_version_mismatch"),
+    ],
+)
+def test_pipeline_validate_binds_context_to_exact_contract(
+    validator, context_changes, expected
+):
+    assert expected in violation_codes(
+        validator.validate(
+            pipeline_context(**context_changes), pipeline_contract(), pipeline_command()
+        )
+    )
+
+
+def test_pipeline_response_contract_allows_dead_actor_for_reaction_validation(validator):
+    contract = pipeline_contract(response_event_types=frozenset({"PLAYER_DIED"}))
+
+    assert validator.validate(
+        pipeline_context(actor_alive=False), contract, pipeline_command()
+    ) == ()
+
+
+def test_pipeline_generic_violation_prevents_validate_hook_execution(validator):
+    PIPELINE_HOOK_CALLS.clear()
+    violations = validator.validate(
+        pipeline_context(),
+        pipeline_contract(validate=pipeline_valid_hook),
+        pipeline_command("dance", None),
+    )
+
+    assert PIPELINE_HOOK_CALLS == []
+    assert violation_codes(violations) == ("action_not_allowed",)
 
 
 @pytest.mark.parametrize(
