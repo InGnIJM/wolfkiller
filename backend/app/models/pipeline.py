@@ -285,6 +285,8 @@ class ActionContext(_FrozenValue):
     facts: Mapping[str, JsonValue]
     schema_version: int = 1
     config_version: str = ""
+    contract_id: str = ""
+    contract_version: int = 1
     round_number: int = 0
     phase: str = ""
     window_id: str = ""
@@ -308,6 +310,7 @@ class ActionContext(_FrozenValue):
         for name in (
             "game_id",
             "config_version",
+            "contract_id",
             "phase",
             "window_id",
             "actor_role_id",
@@ -317,6 +320,7 @@ class ActionContext(_FrozenValue):
         _require_str("source_event_id", self.source_event_id, optional=True)
         _require_str("trigger_reason", self.trigger_reason, optional=True)
         _require_int("revision", self.revision)
+        _require_int("contract_version", self.contract_version)
         _require_int("round_number", self.round_number)
         _require_int("actor_seat", self.actor_seat)
         _require_bool("actor_alive", self.actor_alive)
