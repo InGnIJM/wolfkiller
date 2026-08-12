@@ -3,9 +3,14 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import weakref
 from collections import deque
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
+from queue import Empty, Queue
+from threading import Lock, RLock, Semaphore, Thread
+from time import monotonic
 from types import MappingProxyType
 
 from app.core.action_resolver import ActionResolver, RuleExecutionError
@@ -22,6 +27,24 @@ from app.roles.registry import RegistrySnapshot
 _EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _INT32 = 2_147_483_647
+_LOCK_GUARD = Lock(); _STATE_LOCKS: dict[int, tuple[weakref.ReferenceType[GameState], RLock]] = {}
+_RULE_SLOTS = Semaphore(32)
+
+
+def _state_lock(state: GameState) -> RLock:
+    key = id(state)
+    with _LOCK_GUARD:
+        entry = _STATE_LOCKS.get(key)
+        if entry is not None and entry[0]() is state: lock = entry[1]
+        else:
+            lock = RLock(); reference = weakref.ref(state, lambda current, k=key: _drop_lock(k, current))
+            _STATE_LOCKS[key] = (reference, lock)
+    return lock
+
+
+def _drop_lock(key: int, reference: weakref.ReferenceType[GameState]) -> None:
+    with _LOCK_GUARD:
+        if (entry := _STATE_LOCKS.get(key)) is not None and entry[0] is reference: _STATE_LOCKS.pop(key, None)
 
 
 class ResponseLimitExceeded(RuntimeError): pass
@@ -128,29 +151,39 @@ class ResponseQueue:
             if type(value) is not int or value < 0: raise ValueError(f"invalid {name}")
         self.registry, self.max_depth, self.max_events = registry, max_depth, max_events
         self._events: deque[tuple[DomainEvent, int]] = deque(); self._seen: set[str] = set()
-        self._windows: dict[str, tuple[ResponseWindow, ...]] = {}
+        self._windows: dict[str, tuple[ResponseWindow, ...]] = {}; self._lock = RLock()
 
     def enqueue(self, event: DomainEvent, *, depth: int) -> bool:
         if type(event) is not DomainEvent: raise TypeError("event must be DomainEvent")
-        self._depth(depth)
-        if event.event_id in self._seen: return False
-        if len(self._seen) >= self.max_events: raise ResponseLimitExceeded("event limit exceeded")
-        self._seen.add(event.event_id); self._events.append((event, depth)); return True
+        with self._lock:
+            self._depth(depth)
+            if event.event_id in self._seen: result = False
+            else:
+                if len(self._seen) >= self.max_events:
+                    raise ResponseLimitExceeded("event limit exceeded")
+                self._seen.add(event.event_id); self._events.append((event, depth)); result = True
+        return result
 
     def pop(self, state: GameState) -> tuple[DomainEvent, int, tuple[ResponseWindow, ...]] | None:
         if type(state) is not GameState: raise TypeError("state must be GameState")
-        if not self._events: return None
-        event, depth = self._events.popleft()
-        return event, depth, self._open_new(state, event, depth)
+        with self._lock:
+            if not self._events: result = None
+            else:
+                event, depth = self._events.popleft(); result = (event, depth, self._open_new(state, event, depth))
+        return result
 
     def open(self, state: GameState, event: DomainEvent, *, depth: int) -> tuple[ResponseWindow, ...]:
         if type(state) is not GameState or type(event) is not DomainEvent: raise TypeError("invalid response input")
-        self._depth(depth)
-        if event.event_id in self._windows: return self._windows[event.event_id]
-        if event.event_id not in self._seen:
-            if len(self._seen) >= self.max_events: raise ResponseLimitExceeded("event limit exceeded")
-            self._seen.add(event.event_id)
-        return self._open_new(state, event, depth)
+        with self._lock:
+            self._depth(depth)
+            if event.event_id in self._windows: result = self._windows[event.event_id]
+            else:
+                if event.event_id not in self._seen:
+                    if len(self._seen) >= self.max_events:
+                        raise ResponseLimitExceeded("event limit exceeded")
+                    self._seen.add(event.event_id)
+                result = self._open_new(state, event, depth)
+        return result
 
     def _depth(self, depth: int) -> None:
         if type(depth) is not int or depth < 0: raise ValueError("invalid depth")
@@ -173,9 +206,35 @@ class ResponseQueue:
 class Scheduler:
     def __init__(self, registry: RegistrySnapshot, projector: ContextProjector,
                  validator: ActionValidator, resolver: ActionResolver,
-                 applier: EffectApplier, command_provider: Callable[..., ActionCommand]):
+                 applier: EffectApplier, command_provider: Callable[..., ActionCommand],
+                 *, hook_soft_ms: int = 50, hook_hard_ms: int = 200):
+        for value, name in ((hook_soft_ms, "hook_soft_ms"), (hook_hard_ms, "hook_hard_ms")):
+            if type(value) is not int: raise TypeError(f"{name} must be an integer")
+            if value <= 0: raise ValueError(f"{name} must be positive")
+        if hook_soft_ms > hook_hard_ms: raise ValueError("soft budget must not exceed hard budget")
         self.registry, self.projector, self.validator = registry, projector, validator
         self.resolver, self.applier, self.command_provider = resolver, applier, command_provider
+        self.hook_soft_ms, self.hook_hard_ms = hook_soft_ms, hook_hard_ms
+        self._faults: ContextVar[list[Mapping[str, object]] | None] = ContextVar("scheduler_faults", default=None)
+
+    def _rule_call(self, label: str, call: Callable[[], object]) -> object:
+        """Bound trusted hooks; a timed-out daemon may finish but cannot access GameState."""
+        if not _RULE_SLOTS.acquire(blocking=False): raise PipelinePaused("rule execution capacity exceeded")
+        output: Queue[tuple[bool, object]] = Queue(maxsize=1)
+        def invoke() -> None:
+            try: output.put((True, call()))
+            except BaseException as error: output.put((False, error))
+            finally: _RULE_SLOTS.release()
+        started = monotonic(); Thread(target=invoke, daemon=True).start()
+        try: successful, value = output.get(timeout=self.hook_hard_ms / 1000)
+        except Empty: raise PipelinePaused("rule execution timed out") from None
+        elapsed = (monotonic() - started) * 1000
+        if elapsed > self.hook_soft_ms and (faults := self._faults.get()) is not None:
+            faults.append({"code": "slow_rule", "label": label, "elapsed_bucket": "soft_exceeded"})
+        if successful: return value
+        if isinstance(value, (KeyboardInterrupt, SystemExit)): raise value
+        if isinstance(value, RuleExecutionError): raise value
+        raise PipelinePaused(f"{label} rule failed") from None
 
     @staticmethod
     def _revision(state: GameState) -> int:
@@ -184,6 +243,9 @@ class Scheduler:
 
     def issue(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
         if type(state) is not GameState or type(point) is not SchedulePoint or type(registry) is not RegistrySnapshot: raise TypeError("invalid issue input")
+        with _state_lock(state): return self._issue_locked(state, point, registry)
+
+    def _issue_locked(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
         for player in state.players.values(): registry.require(player.role)
         revision = self._revision(state); phase = state.phase.value if hasattr(state.phase, "value") else state.phase
         requests = []
@@ -195,8 +257,7 @@ class Scheduler:
                     token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, registry.digest)
                     request = IssuedActionRequest(seat, role_id, contract, revision, state.round_number, phase, token, token)
                     context = self.projector.project(state, request, registry)
-                    try: applies = contract.is_applicable is None or contract.is_applicable(context)
-                    except Exception: raise PipelinePaused("applicability rule failed") from None
+                    applies = contract.is_applicable is None or self._rule_call("applicability", lambda: contract.is_applicable(context))
                     if type(applies) is not bool: raise PipelinePaused("applicability rule failed")
                     if applies: requests.append(request)
         return tuple(sorted(requests, key=lambda r: (r.contract.order, r.role_id, r.contract.contract_id, r.actor_seat)))
@@ -211,25 +272,23 @@ class Scheduler:
             try: command = self.command_provider(request, context, attempt)
             except Exception: raise PipelinePaused("command provider failed") from None
             if type(command) is not ActionCommand: raise TypeError("provider must return ActionCommand")
-            try: violations = self.validator.validate(context, request.contract, command)
-            except Exception: raise PipelinePaused("validation rule failed") from None
+            violations = self._rule_call("validation", lambda: self.validator.validate(context, request.contract, command))
             if not violations: return command
         return self._fallback(context, request.contract)
 
     def _fallback(self, context: ActionContext, contract: ActionContract) -> ActionCommand:
         command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="safe fallback")
-        try: violations = self.validator.validate(context, contract, command)
-        except Exception: raise PipelinePaused("validation rule failed") from None
+        violations = self._rule_call("validation", lambda: self.validator.validate(context, contract, command))
         if violations: raise PipelinePaused("fallback command invalid")
         return command
 
     def _resolve_with_fallback(self, context: ActionContext, role: RoleSpec,
                                contract: ActionContract, command: ActionCommand):
-        try: return self.resolver.resolve_effects(context, role, contract, command)
+        try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(context, role, contract, command))
         except RuleExecutionError:
             if command.action_type == contract.fallback_action_type: raise PipelinePaused("rule execution failed") from None
             fallback = self._fallback(context, contract)
-            try: return self.resolver.resolve_effects(context, role, contract, fallback)
+            try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(context, role, contract, fallback))
             except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
 
     @staticmethod
@@ -254,6 +313,14 @@ class Scheduler:
         except Exception: raise PipelinePaused("invalid internal event") from None
 
     def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
+        if type(state) is not GameState: raise TypeError("state must be GameState")
+        with _state_lock(state):
+            faults: list[Mapping[str, object]] = []; token = self._faults.set(faults)
+            try: return self._run_point_locked(state, point, faults)
+            finally: self._faults.reset(token)
+
+    def _run_point_locked(self, state: GameState, point: SchedulePoint,
+                          faults: list[Mapping[str, object]]) -> PointResult:
         issued = self.issue(state, point, self.registry); actual = []; commits = []; events = []
         queue = ResponseQueue(self.registry); groups: dict[tuple[str, str], list[IssuedActionRequest]] = {}
         for request in issued: groups.setdefault((request.role_id, request.contract.contract_id), []).append(request)
@@ -272,11 +339,11 @@ class Scheduler:
                 key = _digest(*(sorted(request.action_key for request in bound)))
                 group_request = self._bind(bound[0], state, action_key=key)
                 group_context = self.projector.project(state, group_request, self.registry)
-                try: effects = self.resolver.aggregate_effects(group_context, role, contract, commands)
+                try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, commands))
                 except RuleExecutionError:
                     if all(command.action_type == contract.fallback_action_type for command in commands): raise PipelinePaused("rule execution failed") from None
                     fallbacks = tuple(self._fallback(context, contract) for context in contexts)
-                    try: effects = self.resolver.aggregate_effects(group_context, role, contract, fallbacks)
+                    try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, fallbacks))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
                 actual.extend(bound); commit = self._apply(state, group_context, role, contract, effects, commits, events)
                 for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=0)
@@ -292,14 +359,14 @@ class Scheduler:
                 try: context = self.projector.project(state, base, self.registry, source_event_id=event.event_id, trigger_event=trigger, trigger_reason=event.reason)
                 except Exception: raise PipelinePaused("invalid response context") from None
                 if contract.react is not None:
-                    try: effects = self.resolver.react_effects(context, role, contract)
+                    try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
                 else:
                     command = self._command(base, context); effects = self._resolve_with_fallback(context, role, contract, command)
                 actual.append(base); commit = self._apply(state, context, role, contract, effects, commits, events)
                 for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=depth + 1)
         digest = commits[-1].state_digest if commits else _digest(state.game_id, self._revision(state))
-        return PointResult(tuple(actual), tuple(commits), tuple(events), digest)
+        return PointResult(tuple(actual), tuple(commits), tuple(events), digest, tuple(faults))
 
     @staticmethod
     def can_advance(*, pending_requests: int, pending_effects: int, queued_events: int) -> bool:

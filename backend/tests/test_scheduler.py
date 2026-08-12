@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 import traceback
+from threading import Barrier, Event, Lock, Thread
+from time import monotonic
 
 import pytest
+import app.core.scheduler as scheduler_module
 
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
@@ -461,3 +464,93 @@ def test_fallback_validation_failure_is_sanitized() -> None:
     with pytest.raises(PipelinePaused) as caught:
         scheduler(registry, lambda *args: ActionCommand(action_type="invalid", target_seat=None, reasoning="x")).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
     assert "SECRET" not in str(caught.value) and caught.value.__cause__ is None
+
+
+def test_run_point_serializes_same_state_across_scheduler_instances() -> None:
+    registry = snapshot(spec("r", contract("c"))); game = state("r")
+    first_entered, release_first, second_attempted, second_entered = Event(), Event(), Event(), Event()
+    guard = Lock(); calls = 0; failures = []
+    def provider(request, context, attempt):
+        nonlocal calls
+        with guard: calls += 1; current = calls
+        if current == 1: first_entered.set(); release_first.wait()
+        else: second_entered.set()
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+    def run(engine, attempted=None):
+        if attempted is not None: attempted.set()
+        try: engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+        except BaseException as error: failures.append(error)
+    first = Thread(target=run, args=(scheduler(registry, provider),)); first.start(); first_entered.wait()
+    second = Thread(target=run, args=(scheduler(registry, provider), second_attempted)); second.start(); second_attempted.wait()
+    try: assert not second_entered.is_set()
+    finally: release_first.set(); first.join(); second.join()
+    assert failures == [] and second_entered.is_set()
+    assert scheduler(registry)._revision(game) == 1 and len(game._pipeline_runtime.commits) == 1
+
+
+def test_rule_hard_timeout_returns_and_soft_budget_records_fault() -> None:
+    blocked = Event(); c = contract("c")
+    object.__setattr__(c, "validate", lambda context, command: blocked.wait() or ())
+    registry = snapshot(spec("r", c)); start = monotonic()
+    with pytest.raises(PipelinePaused, match="timed out"):
+        Scheduler(registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(),
+                  lambda *args: ActionCommand(action_type="act", target_seat=None, reasoning="ok"),
+                  hook_soft_ms=5, hook_hard_ms=15).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert monotonic() - start < .5
+    blocked.set()
+
+    delayed = Event()
+    def slow(context, command): delayed.wait(.02); return ()
+    object.__setattr__(c, "validate", slow)
+    result = Scheduler(registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(),
+                       lambda *args: ActionCommand(action_type="act", target_seat=None, reasoning="ok"),
+                       hook_soft_ms=5, hook_hard_ms=100).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert result.faults == ({"code": "slow_rule", "label": "validation", "elapsed_bucket": "soft_exceeded"},)
+
+
+def test_scheduler_budget_config_is_strict() -> None:
+    registry = snapshot()
+    dependencies = (registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(), lambda *args: None)
+    for soft, hard in ((True, 10), (0, 10), (20, 10)):
+        with pytest.raises((TypeError, ValueError)): Scheduler(*dependencies, hook_soft_ms=soft, hook_hard_ms=hard)
+
+
+def test_response_queue_enqueue_is_thread_safe_and_idempotent() -> None:
+    queue = ResponseQueue(snapshot(), max_events=1)
+    event = DomainEvent("event:" + "f" * 16, "E", {})
+    barrier = Barrier(3); results = []
+    def enqueue(): barrier.wait(); results.append(queue.enqueue(event, depth=0))
+    threads = [Thread(target=enqueue), Thread(target=enqueue)]
+    for thread in threads: thread.start()
+    barrier.wait()
+    for thread in threads: thread.join()
+    assert sorted(results) == [False, True]
+
+
+def test_lock_registry_reuses_identity_and_cleans_up() -> None:
+    game = state(); first = scheduler_module._state_lock(game)
+    assert scheduler_module._state_lock(game) is first
+    key, reference = id(game), scheduler_module._STATE_LOCKS[id(game)][0]
+    scheduler_module._drop_lock(key, object())
+    assert key in scheduler_module._STATE_LOCKS
+    scheduler_module._drop_lock(key, reference)
+    assert key not in scheduler_module._STATE_LOCKS
+
+
+def test_rule_capacity_and_public_run_boundaries(monkeypatch) -> None:
+    registry = snapshot(); engine = scheduler(registry)
+    monkeypatch.setattr(scheduler_module._RULE_SLOTS, "acquire", lambda blocking=False: False)
+    with pytest.raises(PipelinePaused, match="capacity"): engine._rule_call("x", lambda: None)
+    with pytest.raises(TypeError): engine.run_point(object(), SchedulePoint.NIGHT_ACTION)
+
+
+def test_queue_locked_branches_remain_bounded() -> None:
+    registry = snapshot(); event = DomainEvent("event:" + "0" * 16, "E", {})
+    queue = ResponseQueue(registry, max_events=1)
+    assert queue.enqueue(event, depth=0) and not queue.enqueue(event, depth=0)
+    assert queue.pop(state()) is not None and queue.pop(state()) is None
+    assert queue.open(state(), event, depth=0) == ()
+    full = ResponseQueue(registry, max_events=0)
+    with pytest.raises(ResponseLimitExceeded): full.enqueue(event, depth=0)
+    full._seen.add("occupied")
+    with pytest.raises(ResponseLimitExceeded): full.open(state(), event, depth=0)
