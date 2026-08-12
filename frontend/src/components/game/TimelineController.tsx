@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Box, IconButton, Typography, LinearProgress, Chip } from '@mui/material';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -31,19 +32,32 @@ export default function TimelineController() {
   const currentPhaseLabel = PHASE_LABELS[phase] || phase;
   const isAtEnd = isAtTimelineEnd(timeline, timelineIndex);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepForward();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stepBack();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        if (isPlaying) pause(); else play();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [stepForward, stepBack, isPlaying, play, pause]);
+
   const handleProgressClick = (e: React.MouseEvent<HTMLElement>) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - rect.left;
     const pct = x / rect.width;
     let idx = Math.floor(pct * (total - 1));
     idx = Math.max(0, Math.min(idx, total - 1));
-    // Skip speak operations (duplicates of conversations)
-    while (idx < total - 1 && timeline[idx].type === 'operation' && timeline[idx].operation === 'speak') {
-      idx++;
-    }
-    while (idx > 0 && timeline[idx].type === 'operation' && timeline[idx].operation === 'speak') {
-      idx--;
-    }
     seekTo(idx);
   };
 
