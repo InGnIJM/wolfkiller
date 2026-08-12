@@ -1,7 +1,12 @@
 import pytest
+from pydantic import ValidationError
+
 from app.api.schemas import (
     CreateGameRequest, CreateGameResponse, GameListItem,
-    GameListResponse, GameDetailResponse, SetSpeedRequest, WSMessage,
+    GameListResponse, GameDetailResponse, GameLogsResponse,
+    PublicDeathResponse, PublicPhaseResponse, PublicPlayerResponse,
+    PublicSpeechResponse, PublicVoteResponse, PublicWinnerResponse,
+    SetSpeedRequest, WSMessage,
 )
 
 
@@ -14,6 +19,13 @@ class TestSchemas:
     def test_create_game_request_custom(self):
         req = CreateGameRequest(num_werewolves=4, num_villagers=4)
         assert req.num_werewolves == 4
+
+    def test_create_game_request_rejects_mixed_role_count_formats(self):
+        with pytest.raises(ValidationError, match="role_counts cannot be combined"):
+            CreateGameRequest(
+                role_counts={"wolf-killer-werewolf": 1},
+                num_werewolves=1,
+            )
 
     def test_create_game_response(self):
         resp = CreateGameResponse(game_id="abc", player_count=9, config={"test": 1})
@@ -47,6 +59,71 @@ class TestSchemas:
         )
         assert resp.game_id == "abc"
 
+    def test_public_observer_models_expose_only_public_fields(self):
+        detail = GameDetailResponse(
+            game_id="abc",
+            phase="speech",
+            round_number=2,
+            players={1: PublicPlayerResponse(
+                seat_number=1,
+                is_alive=True,
+                is_sheriff=False,
+            )},
+            sheriff=None,
+            speeches=[PublicSpeechResponse(
+                player_seat=1,
+                text="公开发言",
+                round_number=2,
+            )],
+            votes=[PublicVoteResponse(
+                voter_seat=1,
+                target_seat=2,
+                round_number=2,
+            )],
+            death_history=[PublicDeathResponse(
+                player_seat=2,
+                cause="exile",
+                round_number=2,
+            )],
+            win_result=PublicWinnerResponse(
+                winning_camp="good",
+                reason="all_wolves_dead",
+            ),
+        )
+        logs = GameLogsResponse(
+            game_id="abc",
+            events=[
+                {"event_type": "speech", "payload": {
+                    "player_seat": 1, "text": "公开发言", "round_number": 2,
+                }},
+                {"event_type": "phase", "payload": PublicPhaseResponse(
+                    phase="speech", round_number=2,
+                )},
+            ],
+        )
+
+        serialized = {"detail": detail.model_dump(), "logs": logs.model_dump()}
+        forbidden = {"role", "camp", "has_antidote", "has_poison", "has_gun"}
+        assert not (forbidden & _all_keys(serialized))
+
+    def test_public_player_rejects_private_identity_fields(self):
+        with pytest.raises(ValidationError):
+            PublicPlayerResponse(
+                seat_number=1,
+                is_alive=True,
+                is_sheriff=False,
+                role="wolf-killer-werewolf",
+            )
+
+    def test_game_logs_rejects_legacy_private_log_collections(self):
+        with pytest.raises(ValidationError):
+            GameLogsResponse(
+                game_id="abc",
+                events=[],
+                conversations=[],
+                operations=[],
+            )
+
     def test_set_speed_request(self):
         req = SetSpeedRequest(delay_seconds=5.0)
         assert req.delay_seconds == 5.0
@@ -55,3 +132,11 @@ class TestSchemas:
         msg = WSMessage(type="phase_change", payload={"phase": "night"})
         assert msg.type == "phase_change"
         assert msg.payload["phase"] == "night"
+
+
+def _all_keys(value):
+    if isinstance(value, dict):
+        return set(value) | set().union(*(_all_keys(item) for item in value.values()))
+    if isinstance(value, list):
+        return set().union(*(_all_keys(item) for item in value)) if value else set()
+    return set()
