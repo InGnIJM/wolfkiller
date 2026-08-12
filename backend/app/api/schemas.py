@@ -72,6 +72,11 @@ class PublicVoteResponse(_PublicResponse):
     round_number: int
 
 
+class PublicVoteResultResponse(_PublicResponse):
+    round_number: int
+    exiled_seat: Optional[int] = Field(default=None, gt=0)
+
+
 class PublicPhaseResponse(_PublicResponse):
     phase: str
     round_number: int
@@ -97,6 +102,11 @@ class PublicVoteReplayEvent(_PublicResponse):
     payload: PublicVoteResponse
 
 
+class PublicVoteResultReplayEvent(_PublicResponse):
+    event_type: Literal["vote_result"]
+    payload: PublicVoteResultResponse
+
+
 class PublicPhaseReplayEvent(_PublicResponse):
     event_type: Literal["phase"]
     payload: PublicPhaseResponse
@@ -112,6 +122,7 @@ PublicReplayEvent = Annotated[
         PublicSpeechReplayEvent,
         PublicDeathReplayEvent,
         PublicVoteReplayEvent,
+        PublicVoteResultReplayEvent,
         PublicPhaseReplayEvent,
         PublicWinnerReplayEvent,
     ],
@@ -126,7 +137,6 @@ class GameDetailResponse(_PublicResponse):
     players: dict[int, PublicPlayerResponse]
     sheriff: Optional[int]
     speeches: list[PublicSpeechResponse]
-    votes: list[PublicVoteResponse]
     death_history: list[PublicDeathResponse]
     win_result: Optional[PublicWinnerResponse]
 

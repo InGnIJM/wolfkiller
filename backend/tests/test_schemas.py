@@ -5,7 +5,8 @@ from app.api.schemas import (
     CreateGameRequest, CreateGameResponse, GameListItem,
     GameListResponse, GameDetailResponse, GameLogsResponse,
     PublicDeathResponse, PublicPhaseResponse, PublicPlayerResponse,
-    PublicSpeechResponse, PublicVoteResponse, PublicWinnerResponse,
+    PublicSpeechResponse, PublicVoteResponse, PublicVoteResultResponse,
+    PublicWinnerResponse,
     SetSpeedRequest, WSMessage,
 )
 
@@ -54,10 +55,38 @@ class TestSchemas:
     def test_game_detail_response(self):
         resp = GameDetailResponse(
             game_id="abc", phase="speech", round_number=2,
-            players={}, sheriff=None, speeches=[], votes=[],
+            players={}, sheriff=None, speeches=[],
             death_history=[], win_result=None,
         )
         assert resp.game_id == "abc"
+
+    def test_game_detail_response_rejects_votes_outside_public_contract(self):
+        with pytest.raises(ValidationError):
+            GameDetailResponse(
+                game_id="abc", phase="speech", round_number=2,
+                players={}, sheriff=None, speeches=[], votes=[],
+                death_history=[], win_result=None,
+            )
+
+    def test_public_vote_result_replay_event_is_closed(self):
+        logs = GameLogsResponse(
+            game_id="abc",
+            events=[{
+                "event_type": "vote_result",
+                "payload": {"round_number": 2, "exiled_seat": None},
+            }],
+        )
+
+        assert logs.model_dump()["events"] == [{
+            "event_type": "vote_result",
+            "payload": {"round_number": 2, "exiled_seat": None},
+        }]
+        with pytest.raises(ValidationError):
+            PublicVoteResultResponse(
+                round_number=2,
+                exiled_seat=3,
+                tally={3: 4},
+            )
 
     def test_public_observer_models_expose_only_public_fields(self):
         detail = GameDetailResponse(
@@ -73,11 +102,6 @@ class TestSchemas:
             speeches=[PublicSpeechResponse(
                 player_seat=1,
                 text="公开发言",
-                round_number=2,
-            )],
-            votes=[PublicVoteResponse(
-                voter_seat=1,
-                target_seat=2,
                 round_number=2,
             )],
             death_history=[PublicDeathResponse(
@@ -99,6 +123,10 @@ class TestSchemas:
                 {"event_type": "phase", "payload": PublicPhaseResponse(
                     phase="speech", round_number=2,
                 )},
+                {
+                    "event_type": "vote_result",
+                    "payload": {"round_number": 2, "exiled_seat": None},
+                },
             ],
         )
 
