@@ -31,6 +31,35 @@ afterEach(() => {
 });
 
 describe('TimelineController accessibility', () => {
+  it('allows replay from the end, pauses while playing, and disables play only when empty', () => {
+    const play = vi.fn();
+    const pause = vi.fn();
+    useGameStore.setState({
+      timeline,
+      timelineIndex: timeline.length - 1,
+      phase: 'game_over',
+      play,
+      pause,
+    });
+
+    const { rerender } = render(<TimelineController />);
+    const replayButton = screen.getByRole('button', { name: '播放' });
+    expect(replayButton).toBeEnabled();
+    fireEvent.click(replayButton);
+    expect(play).toHaveBeenCalledOnce();
+
+    useGameStore.setState({ isPlaying: true });
+    rerender(<TimelineController />);
+    const pauseButton = screen.getByRole('button', { name: '暂停' });
+    expect(pauseButton).toBeEnabled();
+    fireEvent.click(pauseButton);
+    expect(pause).toHaveBeenCalledOnce();
+
+    useGameStore.setState({ timeline: [], timelineIndex: -1, isPlaying: false });
+    rerender(<TimelineController />);
+    expect(screen.getByRole('button', { name: '播放' })).toBeDisabled();
+  });
+
   it('labels icon controls and exposes an operable slider without double handling arrows', () => {
     const seekTo = vi.fn();
     const stepBack = vi.fn();

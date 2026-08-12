@@ -93,7 +93,7 @@ export default function TimelineController() {
           size="small"
           color={isPlaying ? 'primary' : 'default'}
           onClick={isPlaying ? pause : play}
-          disabled={isAtEnd && !isPlaying}
+          disabled={total === 0}
         >
           {isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
         </IconButton>
