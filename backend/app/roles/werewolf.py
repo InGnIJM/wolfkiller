@@ -3,6 +3,57 @@ from app.models.game import GameState
 from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
+from app.core.effect_applier import derive_effect_id
+from app.models.pipeline import (
+    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
+    RuleViolation, SchedulePoint,
+)
+
+
+def werewolf_applicable(context: ActionContext) -> bool:
+    return context.actor_alive
+
+
+def validate_werewolf_action(
+    context: ActionContext, command: ActionCommand,
+) -> tuple[RuleViolation, ...]:
+    return ()
+
+
+def aggregate_werewolf_votes(
+    context: ActionContext, commands: tuple[ActionCommand, ...],
+) -> tuple[GameEffect, ...]:
+    counts: dict[int, int] = {}
+    for command in commands:
+        if command.action_type == "kill" and command.target_seat is not None:
+            counts[command.target_seat] = counts.get(command.target_seat, 0) + 1
+    if not counts:
+        return ()
+    target = min(counts, key=lambda seat: (-counts[seat], seat))
+    return (GameEffect(
+        derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_DAMAGE,
+        context.action_key, target_seat=target,
+        payload={"target": target, "amount": 1},
+        expected_revision=context.revision, source_event_id=context.source_event_id,
+        sort_key=(1,),
+    ),)
+
+
+WEREWOLF_SPEC = RoleSpec(
+    role_id="wolf-killer-werewolf", display_name="Werewolf", camp_id="werewolf",
+    contracts=(ActionContract(
+        contract_id="werewolf_kill", schedule_point=SchedulePoint.NIGHT_ACTION,
+        order=10, action_types=("kill", "pass"),
+        actions_requiring_target=frozenset({"kill"}), fallback_action_type="pass",
+        allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE}),
+        visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
+        is_applicable=werewolf_applicable, validate=validate_werewolf_action,
+        aggregate=aggregate_werewolf_votes,
+    ),),
+    allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE}),
+    visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
+    instructions="Choose a night kill target or pass.",
+)
 
 
 class Werewolf(BaseRole):
