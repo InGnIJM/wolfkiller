@@ -23,40 +23,33 @@ export function useWebSocket() {
         const msg: WSMessage = JSON.parse(event.data);
         switch (msg.type) {
           case 'game_state':
+            setGameState(msg.state);
+            break;
           case 'phase_change':
-            if (msg.state) {
-              setGameState(msg.state);
-            }
-            if (msg.phase) {
-              setPhase(msg.phase, msg.round_number || 0);
-            }
+            setGameState(msg.state);
+            setPhase(msg.phase, msg.round_number);
             break;
           case 'speech':
-            if (msg.speech) addSpeech(msg.speech);
+            addSpeech(msg.speech);
             break;
           case 'vote_cast':
-            if (msg.vote) addVote(msg.vote);
+            addVote(msg.vote);
             break;
           case 'game_over':
-            if (msg.win_result) setWinResult(msg.win_result);
+            setGameState(msg.state);
+            setWinResult(msg.win_result);
             break;
           case 'night_substep':
             setNightSubstep({
-              step: msg.step || '',
-              highlightSeats: msg.highlight_seats || [],
-              actionSeat: msg.action_seat ?? null,
-              action: msg.action || null,
-              wolfKillTarget: msg.wolf_kill_target ?? null,
-              roundNumber: msg.round_number || 0,
+              substep: msg.substep,
+              roundNumber: msg.round_number,
             });
             break;
           case 'player_died':
-            if (msg.death) {
-              useGameStore.getState().addDeath(msg.death);
-            }
+            useGameStore.getState().addDeath(msg.death);
             break;
           case 'paused_state':
-            setPaused(msg.paused ?? false);
+            setPaused(msg.paused);
             break;
         }
       } catch (e) {

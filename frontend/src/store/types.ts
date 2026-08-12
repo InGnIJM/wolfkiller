@@ -1,9 +1,26 @@
-// ── Player / Game state (shared with backend) ──────────────
+// Public observer contracts. These types intentionally contain no role,
+// camp, resource, or private night-action information.
 
-export interface PlayerState {
+export type GamePhase =
+  | 'waiting'
+  | 'role_deal'
+  | 'night'
+  | 'dawn'
+  | 'last_words'
+  | 'sheriff_election'
+  | 'speech'
+  | 'vote_casting'
+  | 'vote_resolution'
+  | 'game_over';
+
+export type DeathCause = 'wolf_kill' | 'poison' | 'hunter_shot' | 'exile';
+export type WinningCamp = 'good' | 'werewolf';
+export type WinReason = 'all_gods_dead' | 'all_villagers_dead' | 'all_wolves_dead';
+
+export interface PublicPlayerState {
   seat_number: number;
   is_alive: boolean;
-  revealed_role: string | null;
+  is_sheriff: boolean;
 }
 
 export interface SpeechRecord {
@@ -15,121 +32,78 @@ export interface SpeechRecord {
 export interface VoteRecord {
   voter_seat: number;
   target_seat: number | null;
-  reasoning: string;
+  round_number: number;
 }
 
 export interface DeathRecord {
   player_seat: number;
-  cause: string;
+  cause: DeathCause;
   round_number: number;
+}
+
+export interface VoteResult {
+  round_number: number;
+  exiled_seat: number | null;
+}
+
+export interface WinResult {
+  winning_camp: WinningCamp;
+  reason: WinReason;
 }
 
 export interface PublicGameState {
   game_id: string;
-  phase: string;
+  phase: GamePhase;
   round_number: number;
-  players: Record<number, PlayerState>;
+  players: Record<number, PublicPlayerState>;
+  sheriff: number | null;
   speeches: SpeechRecord[];
   death_history: DeathRecord[];
-  win_result: { winning_camp: string; reason: string } | null;
+  win_result: WinResult | null;
 }
 
-export type GamePhase =
-  | 'waiting' | 'role_deal' | 'night' | 'dawn' | 'last_words'
-  | 'speech' | 'vote_casting' | 'vote_resolution'
-  | 'game_over';
-
-// ── WebSocket messages ─────────────────────────────────────
-
-export interface NightActionInfo {
-  action_type: string;
-  target_seat: number | null;
-  reasoning: string;
-  seer_result?: string | null;
-}
-
-export interface NightSubstepData {
-  step: string;
-  highlightSeats: number[];
-  actionSeat: number | null;
-  action: NightActionInfo | null;
-  wolfKillTarget: number | null;
-  roundNumber: number;
-}
-
-export interface WSMessage {
-  type: string;
-  state?: PublicGameState;
-  phase?: string;
-  round_number?: number;
-  speech?: SpeechRecord;
-  vote?: VoteRecord;
-  death?: DeathRecord;
-  win_result?: { winning_camp: string; reason: string };
-  step?: string;
-  highlight_seats?: number[];
-  action_seat?: number | null;
-  action?: NightActionInfo | null;
-  wolf_kill_target?: number | null;
-  paused?: boolean;
-}
-
-// ── Log-driven types (audience / replay mode) ──────────────
-
-export interface ConversationEntry {
-  scope: 'public' | 'werewolf' | 'night_intel' | 'thought';
-  content: string;
-  round_number: number;
-  speaker_seat: number | null;
-  speaker_role: string | null;
-  phase: string;
-  visible_to: number[] | null;
-  timestamp: string;
-}
-
-export interface OperationEntry {
-  timestamp: string;
-  round: number;
-  phase: string;
-  operation: string;
-  seat: number | null;
-  data: Record<string, any>;
-}
-
-export interface TimelineEntry {
-  type: 'conversation' | 'operation';
-  // conversation fields
-  scope?: string;
-  content?: string;
-  round_number?: number;
-  speaker_seat?: number | null;
-  speaker_role?: string | null;
-  visible_to?: number[] | null;
-  // operation fields
-  round?: number;
-  operation?: string;
-  seat?: number | null;
-  data?: Record<string, any>;
-  // common
-  phase: string;
-  timestamp: string;
-}
+export type PublicReplayEvent =
+  | { event_type: 'speech'; payload: SpeechRecord }
+  | { event_type: 'death'; payload: DeathRecord }
+  | { event_type: 'vote'; payload: VoteRecord }
+  | { event_type: 'vote_result'; payload: VoteResult }
+  | { event_type: 'phase'; payload: { phase: GamePhase; round_number: number } }
+  | { event_type: 'winner'; payload: WinResult };
 
 export interface GameLogs {
   game_id: string;
-  conversations: ConversationEntry[];
-  operations: OperationEntry[];
+  events: PublicReplayEvent[];
 }
 
-// ── Extended player state (audience view — roles visible) ──
-
-export interface PlayerFullState {
-  seat_number: number;
-  role: string;
-  camp: string;
-  is_alive: boolean;
-  has_antidote: boolean;
-  has_poison: boolean;
-  has_gun: boolean;
-  revealed_role: string | null;
+export interface GameListItem {
+  game_id: string;
+  phase: GamePhase;
+  round_number: number;
+  player_count: number;
+  alive_count: number;
+  winner: WinningCamp | null;
 }
+
+export interface GameListResponse {
+  games: GameListItem[];
+}
+
+export type WSMessage =
+  | { type: 'game_state'; state: PublicGameState }
+  | {
+      type: 'phase_change';
+      phase: GamePhase;
+      round_number: number;
+      state: PublicGameState;
+    }
+  | { type: 'speech'; speech: SpeechRecord }
+  | { type: 'vote_cast'; vote: VoteRecord }
+  | { type: 'player_died'; death: DeathRecord }
+  | { type: 'game_over'; win_result: WinResult; state: PublicGameState }
+  | {
+      type: 'night_substep';
+      phase: 'night';
+      substep: string;
+      round_number: number;
+    }
+  | { type: 'paused_state'; paused: boolean };

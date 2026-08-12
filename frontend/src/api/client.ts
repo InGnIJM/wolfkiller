@@ -1,3 +1,5 @@
+import type { GameListResponse, GameLogs, PublicGameState } from '../store/types';
+
 function getApiBase(): string {
   return import.meta.env.VITE_API_URL || 'http://localhost:8000';
 }
@@ -22,39 +24,19 @@ export async function createGame(config?: {
   return res.json();
 }
 
-export async function listGames(): Promise<{ games: any[] }> {
+export async function listGames(): Promise<GameListResponse> {
   const res = await fetch(`${getApiBase()}/api/games`);
   if (!res.ok) throw new Error(`List games failed: ${res.status}`);
   return res.json();
 }
 
-export async function fetchGameLogs(gameId: string): Promise<{
-  game_id: string;
-  conversations: any[];
-  operations: any[];
-}> {
+export async function fetchGameLogs(gameId: string): Promise<GameLogs> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}/logs`);
   if (!res.ok) throw new Error(`Fetch logs failed: ${res.status}`);
   return res.json();
 }
 
-export async function fetchGameDetail(gameId: string): Promise<{
-  game_id: string;
-  phase: string;
-  round_number: number;
-  players: Record<number, {
-    seat_number: number;
-    role: string;
-    camp: string;
-    is_alive: boolean;
-    has_antidote: boolean;
-    has_poison: boolean;
-    has_gun: boolean;
-    revealed_role: string | null;
-    is_sheriff: boolean;
-  }>;
-  win_result: { winning_camp: string; reason: string } | null;
-}> {
+export async function fetchGameDetail(gameId: string): Promise<PublicGameState> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}`);
   if (!res.ok) throw new Error(`Fetch game detail failed: ${res.status}`);
   return res.json();
