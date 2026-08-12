@@ -29,13 +29,13 @@ export default function WinOverlay({ winResult }: Props) {
   return (
     <Dialog open={true} maxWidth="sm" fullWidth aria-labelledby="game-over-title">
       <DialogTitle sx={{ textAlign: 'center', pt: 4 }}>
-        <Typography id="game-over-title" variant="h5" sx={{ mt: 1.5, fontWeight: 500 }}>
+        <Typography component="span" variant="h5" sx={{ mt: 1.5, fontWeight: 500 }}>
           游戏结束
         </Typography>
       </DialogTitle>
       <DialogContent>
         <Box sx={{ textAlign: 'center', mb: 3 }}>
-          <Typography variant="h5" sx={{ fontWeight: 400, mb: 0.5 }}>
+          <Typography component="span" variant="h5" sx={{ display: 'block', fontWeight: 400, mb: 0.5 }}>
             {CAMP_LABELS[winResult.winning_camp] || winResult.winning_camp}获胜
           </Typography>
           <Typography variant="body2" color="text.secondary">

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +18,18 @@ afterEach(() => {
 });
 
 describe('WinOverlay', () => {
+  it('uses a single labelled heading for the result dialog', () => {
+    render(
+      <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} />,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const headings = within(dialog).getAllByRole('heading');
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveAttribute('id', 'game-over-title');
+    expect(dialog).toHaveAttribute('aria-labelledby', 'game-over-title');
+  });
+
   it('dismisses the result, rewinds, and starts replay after the delay', () => {
     vi.useFakeTimers();
     const dismissWinOverlay = vi.fn();
