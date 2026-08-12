@@ -12,7 +12,7 @@ from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
-from app.api.websocket.public_events import PublicNightSubstep
+from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest
@@ -299,8 +299,19 @@ class GameService:
         vote = kwargs.get("vote")
         if game_id is None or vote is None:
             return
-        vote_dict = vote.to_dict() if hasattr(vote, "to_dict") else vote
-        await self.ws_manager.broadcast(game_id, "vote_cast", vote=vote_dict)
+        public_vote = PublicVoteEvent.from_internal(
+            vote=vote,
+            round_number=self._games[game_id].round_number,
+            **{
+                key: value for key, value in kwargs.items()
+                if key not in {"game_id", "vote"}
+            },
+        )
+        if public_vote is None:
+            return
+        await self.ws_manager.broadcast(
+            game_id, "vote_cast", vote=public_vote.to_payload(),
+        )
 
     async def _on_game_over(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)
