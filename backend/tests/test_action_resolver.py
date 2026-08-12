@@ -1,13 +1,152 @@
 from dataclasses import replace
+from types import MappingProxyType
 
 import pytest
 
-from app.core.action_resolver import ActionResolver
+from app.core.action_resolver import ActionResolver, RuleExecutionError
+from app.core.effect_applier import derive_effect_id
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.models.actions import DeathReport, NightAction
 from app.models.contracts import AcceptedAction, ActionCommand
 from app.models.game import Camp, GameConfig, GamePhase, GameState, PlayerState
+from app.models.pipeline import (
+    ActionCommand as PipelineActionCommand,
+    ActionContext,
+    ActionContract as PipelineActionContract,
+    EffectKind,
+    GameEffect,
+    RoleSpec,
+    SchedulePoint,
+)
 from app.roles.registry import builtin_registry
+
+
+PIPELINE_CALLS: list[object] = []
+PIPELINE_MODE = "ok"
+
+
+class GameEffectSubclass(GameEffect):
+    pass
+
+
+def _pipeline_effect(
+    context: ActionContext,
+    *,
+    ordinal: int = 1,
+    kind: EffectKind = EffectKind.SUBMIT_DAMAGE,
+    target: int | None = 2,
+    visibility: tuple[str, ...] = ("ACTOR",),
+    source_key: str | None = None,
+    revision: int | None = None,
+    source_event_id: str | None | object = ...,
+    effect_id: str | None = None,
+    sort_key: tuple[int, ...] | None = None,
+) -> GameEffect:
+    event_id = context.source_event_id if source_event_id is ... else source_event_id
+    return GameEffect(
+        effect_id=effect_id or derive_effect_id(context.action_key, ordinal),
+        kind=kind,
+        source_action_key=source_key or context.action_key,
+        payload={"target": target, "amount": 1},
+        visibility=visibility,
+        expected_revision=context.revision if revision is None else revision,
+        target_seat=target,
+        source_event_id=event_id,
+        sort_key=sort_key or (ordinal,),
+    )
+
+
+def pipeline_resolve_hook(
+    context: ActionContext, command: PipelineActionCommand
+) -> object:
+    PIPELINE_CALLS.append(command)
+    if PIPELINE_MODE == "raise":
+        raise RuntimeError("SECRET target/reasoning leaked")
+    if PIPELINE_MODE == "list":
+        return [_pipeline_effect(context)]
+    if PIPELINE_MODE == "subclass":
+        item = _pipeline_effect(context)
+        return (GameEffectSubclass(**item.__dict__),)
+    if PIPELINE_MODE == "accept":
+        return (_pipeline_effect(context, kind=EffectKind.ACCEPT_ACTION, target=None),)
+    return (_pipeline_effect(context),)
+
+
+def pipeline_aggregate_hook(
+    context: ActionContext, commands: tuple[PipelineActionCommand, ...]
+) -> tuple[GameEffect, ...]:
+    PIPELINE_CALLS.append(commands)
+    return (_pipeline_effect(context),)
+
+
+def pipeline_react_hook(
+    context: ActionContext, contract: PipelineActionContract
+) -> tuple[GameEffect, ...]:
+    PIPELINE_CALLS.append(contract)
+    return (_pipeline_effect(context, target=context.actor_seat),)
+
+
+def pipeline_contract(**changes: object) -> PipelineActionContract:
+    values: dict[str, object] = {
+        "contract_id": "pipeline-action",
+        "schedule_point": SchedulePoint.NIGHT_ACTION,
+        "order": 1,
+        "action_types": ("kill", "pass"),
+        "actions_requiring_target": frozenset({"kill"}),
+        "fallback_action_type": "pass",
+        "allowed_effects": frozenset({EffectKind.SUBMIT_DAMAGE}),
+        "visibility_namespaces": frozenset({"ACTOR"}),
+        "resolve": pipeline_resolve_hook,
+    }
+    values.update(changes)
+    return PipelineActionContract(**values)
+
+
+def pipeline_role(contract: PipelineActionContract, **changes: object) -> RoleSpec:
+    values: dict[str, object] = {
+        "role_id": "pipeline-role",
+        "contracts": (contract,),
+        "allowed_effects": frozenset({EffectKind.SUBMIT_DAMAGE}),
+        "visibility_namespaces": frozenset({"ACTOR"}),
+    }
+    values.update(changes)
+    return RoleSpec(**values)
+
+
+def pipeline_context(contract: PipelineActionContract, **changes: object) -> ActionContext:
+    values: dict[str, object] = {
+        "game_id": "pipeline-game",
+        "revision": 4,
+        "config_version": "registry-version-secret-free",
+        "contract_id": contract.contract_id,
+        "contract_version": contract.schema_version,
+        "contract_digest": contract.stable_digest(),
+        "round_number": 2,
+        "phase": "night",
+        "window_id": "window",
+        "schedule_point": contract.schedule_point,
+        "actor_seat": 1,
+        "actor_role_id": "pipeline-role",
+        "actor_alive": True,
+        "action_key": "pipeline:action:1",
+        "facts": {"alive_seats": (1, 2, 3)},
+    }
+    values.update(changes)
+    return ActionContext(**values)
+
+
+def pipeline_command(action: str = "kill", target: int | None = 2) -> PipelineActionCommand:
+    return PipelineActionCommand(action_type=action, target_seat=target, reasoning="SECRET")
+
+
+@pytest.fixture(autouse=True)
+def reset_pipeline_hook_state():
+    global PIPELINE_MODE
+    PIPELINE_MODE = "ok"
+    PIPELINE_CALLS.clear()
+    yield
+    PIPELINE_MODE = "ok"
+    PIPELINE_CALLS.clear()
 
 
 def make_player(seat: int, role: str, camp: str, **kwargs) -> PlayerState:
@@ -48,6 +187,259 @@ def accept(state: GameState, seat: int, action_type: str, target_seat: int | Non
     )
 
 
+def test_pipeline_resolve_is_pure_adds_accept_and_is_deterministic():
+    contract = pipeline_contract()
+    role = pipeline_role(contract)
+    context = pipeline_context(contract)
+    command = pipeline_command()
+    before = (context.to_json(), role.to_json(), contract.to_json(), command.to_json())
+
+    first = ActionResolver().resolve_effects(context, role, contract, command)
+    second = ActionResolver().resolve_effects(context, role, contract, command)
+
+    assert tuple(effect.kind for effect in first) == (
+        EffectKind.ACCEPT_ACTION,
+        EffectKind.SUBMIT_DAMAGE,
+    )
+    assert tuple(effect.to_json() for effect in first) == tuple(
+        effect.to_json() for effect in second
+    )
+    assert (context.to_json(), role.to_json(), contract.to_json(), command.to_json()) == before
+
+
+def test_pipeline_aggregate_sorts_commands_stably_and_allows_self_target():
+    contract = pipeline_contract(resolve=None, aggregate=pipeline_aggregate_hook)
+    role = pipeline_role(contract)
+    context = pipeline_context(contract)
+    commands = (
+        pipeline_command("pass", None),
+        pipeline_command("kill", 3),
+        pipeline_command("kill", 1),
+        pipeline_command("kill", 2),
+    )
+
+    ActionResolver().aggregate_effects(context, role, contract, commands)
+
+    observed = PIPELINE_CALLS[0]
+    assert type(observed) is tuple
+    assert [(item.action_type, item.target_seat) for item in observed] == [
+        ("kill", 1), ("kill", 2), ("kill", 3), ("pass", None)
+    ]
+
+
+def test_pipeline_react_requires_bound_response_and_allows_dead_actor_effect():
+    contract = pipeline_contract(
+        schedule_point=SchedulePoint.DAWN_REACTION,
+        resolve=None,
+        react=pipeline_react_hook,
+        response_event_types=frozenset({"PLAYER_DIED"}),
+    )
+    role = pipeline_role(contract)
+    context = pipeline_context(
+        contract,
+        actor_alive=False,
+        source_event_id="event:0123456789abcdef",
+        trigger_event={"event_id": "event:0123456789abcdef", "type": "PLAYER_DIED"},
+    )
+
+    effects = ActionResolver().react_effects(context, role, contract)
+
+    assert effects[1].target_seat == context.actor_seat
+
+
+@pytest.mark.parametrize(
+    ("method", "arguments", "message"),
+    [
+        ("resolve_effects", (object(), None, None, None), "context"),
+        ("resolve_effects", (None, object(), None, None), "role_spec"),
+        ("resolve_effects", (None, None, object(), None), "contract"),
+        ("resolve_effects", (None, None, None, object()), "command"),
+    ],
+)
+def test_pipeline_resolve_requires_exact_types(method, arguments, message):
+    contract = pipeline_contract()
+    valid = [pipeline_context(contract), pipeline_role(contract), contract, pipeline_command()]
+    for index, argument in enumerate(arguments):
+        if argument is not None:
+            valid[index] = argument
+    with pytest.raises(TypeError, match=message):
+        getattr(ActionResolver(), method)(*valid)
+
+
+def test_pipeline_aggregate_requires_exact_tuple_and_command_items():
+    contract = pipeline_contract(resolve=None, aggregate=pipeline_aggregate_hook)
+    role = pipeline_role(contract)
+    context = pipeline_context(contract)
+    with pytest.raises(TypeError, match="commands must be an exact tuple"):
+        ActionResolver().aggregate_effects(context, role, contract, [pipeline_command()])
+    with pytest.raises(TypeError, match="exact ActionCommand"):
+        ActionResolver().aggregate_effects(context, role, contract, (object(),))
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"contract_id": "other"}, "contract id"),
+        ({"contract_version": 2}, "contract version"),
+        ({"contract_digest": "other"}, "contract digest"),
+        ({"schedule_point": SchedulePoint.DAY_ACTION}, "schedule point"),
+        ({"actor_role_id": "other"}, "actor role"),
+    ],
+)
+def test_pipeline_rejects_unbound_context(changes, message):
+    contract = pipeline_contract()
+    with pytest.raises(ValueError, match=message):
+        ActionResolver().resolve_effects(
+            pipeline_context(contract, **changes),
+            pipeline_role(contract), contract, pipeline_command(),
+        )
+
+
+def test_pipeline_rejects_unregistered_equal_contract_and_missing_hook():
+    contract = pipeline_contract()
+    clone = pipeline_contract()
+    with pytest.raises(ValueError, match="registered contract"):
+        ActionResolver().resolve_effects(
+            pipeline_context(clone), pipeline_role(contract), clone, pipeline_command()
+        )
+    no_hook = pipeline_contract(resolve=None)
+    with pytest.raises(ValueError, match="resolve hook"):
+        ActionResolver().resolve_effects(
+            pipeline_context(no_hook), pipeline_role(no_hook), no_hook, pipeline_command()
+        )
+
+
+def test_pipeline_requires_aggregate_and_react_hooks_and_response_context():
+    contract = pipeline_contract(resolve=None)
+    role = pipeline_role(contract)
+    context = pipeline_context(contract)
+    with pytest.raises(ValueError, match="aggregate hook"):
+        ActionResolver().aggregate_effects(context, role, contract, ())
+    with pytest.raises(ValueError, match="react hook"):
+        ActionResolver().react_effects(context, role, contract)
+    reaction = pipeline_contract(resolve=None, react=pipeline_react_hook)
+    with pytest.raises(ValueError, match="response context"):
+        ActionResolver().react_effects(
+            pipeline_context(reaction), pipeline_role(reaction), reaction
+        )
+
+
+@pytest.mark.parametrize(
+    ("role_effects", "contract_effects"),
+    [
+        (frozenset({EffectKind.SUBMIT_DAMAGE}), frozenset({EffectKind.EMIT_EVENT})),
+        (frozenset({EffectKind.EMIT_EVENT}), frozenset({EffectKind.SUBMIT_DAMAGE})),
+    ],
+)
+def test_pipeline_effect_kind_must_be_in_role_contract_intersection(
+    role_effects, contract_effects
+):
+    contract = pipeline_contract(allowed_effects=contract_effects)
+    role = pipeline_role(contract, allowed_effects=role_effects)
+    with pytest.raises(RuleExecutionError) as caught:
+        ActionResolver().resolve_effects(
+            pipeline_context(contract), role, contract, pipeline_command()
+        )
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
+@pytest.mark.parametrize("mode", ["list", "subclass", "accept"])
+def test_pipeline_rejects_bad_hook_output_container_subclass_and_accept(mode):
+    global PIPELINE_MODE
+    PIPELINE_MODE = mode
+    contract = pipeline_contract()
+    with pytest.raises(RuleExecutionError):
+        ActionResolver().resolve_effects(
+            pipeline_context(contract), pipeline_role(contract), contract, pipeline_command()
+        )
+
+
+@pytest.mark.parametrize(
+    "effect_changes",
+    [
+        {"source_key": "other"},
+        {"revision": 99},
+        {"source_event_id": "event:other"},
+        {"target": 99},
+        {"target": 0},
+        {"visibility": ("CAMP",)},
+        {"effect_id": "not-canonical"},
+        {"sort_key": (99,)},
+    ],
+)
+def test_pipeline_rejects_invalid_effect_boundaries(monkeypatch, effect_changes):
+    contract = pipeline_contract()
+    context = pipeline_context(contract, source_event_id="event:source")
+
+    def bad_hook(ctx, command):
+        return (_pipeline_effect(ctx, **effect_changes),)
+
+    object.__setattr__(contract, "resolve", bad_hook)
+    object.__setattr__(context, "contract_digest", contract.stable_digest())
+    with pytest.raises(RuleExecutionError):
+        ActionResolver().resolve_effects(
+            context, pipeline_role(contract), contract, pipeline_command()
+        )
+
+
+def test_pipeline_rejects_duplicate_effect_ids():
+    contract = pipeline_contract()
+    context = pipeline_context(contract)
+
+    def duplicate(ctx, command):
+        item = _pipeline_effect(ctx)
+        return (item, item)
+
+    object.__setattr__(contract, "resolve", duplicate)
+    object.__setattr__(context, "contract_digest", contract.stable_digest())
+    with pytest.raises(RuleExecutionError):
+        ActionResolver().resolve_effects(
+            context, pipeline_role(contract), contract, pipeline_command()
+        )
+
+
+def test_pipeline_rule_error_is_sanitized_but_keeps_internal_cause():
+    global PIPELINE_MODE
+    PIPELINE_MODE = "raise"
+    contract = pipeline_contract()
+    context = pipeline_context(contract)
+    with pytest.raises(RuleExecutionError) as caught:
+        ActionResolver().resolve_effects(
+            context, pipeline_role(contract), contract, pipeline_command()
+        )
+    rendered = str(caught.value)
+    assert context.config_version in rendered and context.action_key in rendered
+    assert "role_version=1" in rendered
+    assert "SECRET" not in rendered and "target" not in rendered
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
+@pytest.mark.parametrize("alive", [(), (1, True)])
+def test_pipeline_rejects_malformed_visible_targets(alive):
+    contract = pipeline_contract()
+    with pytest.raises(RuleExecutionError):
+        ActionResolver().resolve_effects(
+            pipeline_context(contract, facts={"alive_seats": alive}),
+            pipeline_role(contract), contract, pipeline_command(),
+        )
+
+
+@pytest.mark.parametrize("raised", [KeyboardInterrupt(), SystemExit()])
+def test_pipeline_base_exceptions_propagate(monkeypatch, raised):
+    contract = pipeline_contract()
+    context = pipeline_context(contract)
+
+    def interrupt(ctx, command):
+        raise raised
+
+    object.__setattr__(contract, "resolve", interrupt)
+    object.__setattr__(context, "contract_digest", contract.stable_digest())
+    with pytest.raises(type(raised)):
+        ActionResolver().resolve_effects(
+            context, pipeline_role(contract), contract, pipeline_command()
+        )
+
+
 class TestActionResolver:
     def test_resolver_rejects_unaccepted_night_action(self):
         state = make_state([
@@ -76,6 +468,25 @@ class TestActionResolver:
         ])
 
         assert [(death.player_seat, death.cause) for death in deaths] == [(4, "wolf_kill")]
+
+    def test_legacy_skips_missing_or_already_dead_damage_targets(self):
+        state = make_state([
+            make_player(1, "wolf-killer-werewolf", "werewolf"),
+            make_player(2, "wolf-killer-villager", "good", is_alive=False),
+        ])
+        request = request_for(state, 1)
+        dead_kill = AcceptedAction(
+            request=request,
+            command=ActionCommand(action_type="kill", target_seat=2, reasoning="x"),
+        )
+        assert ActionResolver().resolve(state, [dead_kill]) == []
+
+        state.players[3] = make_player(3, "wolf-killer-witch", "good")
+        poison = AcceptedAction(
+            request=request_for(state, 3),
+            command=ActionCommand(action_type="poison", target_seat=99, reasoning="x"),
+        )
+        assert ActionResolver().resolve(state, [poison]) == []
 
     def test_resolves_accepted_seer_check(self):
         state = make_state([
@@ -350,6 +761,37 @@ class TestActionResolver:
         assert resolver.has_hunter_died(
             state, [DeathReport(player_seat=1, cause="wolf_kill", round_number=1)]
         ) == 1
+        state.players[1].has_gun = False
+        assert resolver.has_hunter_died(
+            state,
+            [
+                DeathReport(player_seat=99, cause="wolf_kill", round_number=1),
+                DeathReport(player_seat=1, cause="wolf_kill", round_number=1),
+            ],
+        ) is None
+
+    def test_legacy_ignores_nonaccepted_and_wrong_actor_witch_rows(self):
+        state = make_state([make_player(1, "wolf-killer-witch", "good")])
+        request = request_for(state, 1)
+        forged = replace(request, actor_seat=99)
+        ActionResolver()._validate_witch_actions(
+            state,
+            [object(), AcceptedAction(
+                request=forged,
+                command=ActionCommand(action_type="save", target_seat=1, reasoning="x"),
+            )],
+        )
+
+    def test_legacy_ignores_unknown_action_from_valid_witch_contract(self):
+        state = make_state([make_player(1, "wolf-killer-witch", "good")])
+        request = request_for(state, 1)
+        ActionResolver()._validate_witch_actions(
+            state,
+            [AcceptedAction(
+                request=request,
+                command=ActionCommand(action_type="future", target_seat=None, reasoning="x"),
+            )],
+        )
 
     def test_ignores_accepted_seer_checks_without_a_live_target(self):
         state = make_state([
@@ -382,5 +824,10 @@ class TestActionResolver:
         assert ActionResolver().resolve(state, [malformed_poison]) == []
         ActionResolver()._process_seer_checks(
             state, [NightAction(player_seat=2, action_type="pass", target_seat=None)]
+        )
+        state.players[1].role = "wolf-killer-werewolf"
+        ActionResolver()._process_seer_checks(
+            state,
+            [NightAction(player_seat=99, action_type="check", target_seat=1)],
         )
         assert state.players[2].check_results == []
