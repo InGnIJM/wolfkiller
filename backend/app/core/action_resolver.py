@@ -1,3 +1,4 @@
+import hashlib
 from typing import Optional
 from app.core.action_validator import ActionValidationError
 from app.core.effect_applier import derive_effect_id
@@ -19,11 +20,13 @@ class RuleExecutionError(RuntimeError):
 
     def __init__(self, role_version: int, config_version: str, action_key: str):
         self.role_version = role_version
-        self.config_version = config_version
-        self.action_key = action_key
+        self.correlation_id = hashlib.sha256(
+            f"{config_version}\0{action_key}".encode("utf-8", errors="strict")
+        ).hexdigest()[:16]
+        self.failure_type = "Exception"
         super().__init__(
             f"rule execution failed (role_version={role_version}, "
-            f"config_version={config_version}, action_key={action_key})"
+            f"correlation_id={self.correlation_id})"
         )
 
 
@@ -103,17 +106,23 @@ class ActionResolver:
         try:
             return self._validate_effects(context, role_spec, contract, call())
         except Exception as error:
-            raise RuleExecutionError(
+            public_error = RuleExecutionError(
                 role_spec.schema_version, context.config_version, context.action_key
-            ) from error
+            )
+            public_error.failure_type = type(error).__name__
+            raise public_error from None
 
     @staticmethod
     def _validate_effects(context, role_spec, contract, raw) -> tuple[GameEffect, ...]:
-        if type(raw) is not tuple or any(type(effect) is not GameEffect for effect in raw):
+        if type(raw) is not tuple:
+            raise TypeError("hook must return an exact tuple of exact GameEffect values")
+        if len(raw) > 64:
+            raise ValueError("hook must return at most 64 effects")
+        if any(type(effect) is not GameEffect for effect in raw):
             raise TypeError("hook must return an exact tuple of exact GameEffect values")
         allowed_effects = role_spec.allowed_effects & contract.allowed_effects
         allowed_visibility = role_spec.visibility_namespaces & contract.visibility_namespaces
-        visible_targets = ActionResolver._visible_targets(context)
+        visible_targets = ActionResolver._visible_targets(context, contract)
         seen_ids: set[str] = set()
         for ordinal, effect in enumerate(raw, start=1):
             if effect.kind is EffectKind.ACCEPT_ACTION:
@@ -148,11 +157,20 @@ class ActionResolver:
         return (accept, *raw)
 
     @staticmethod
-    def _visible_targets(context: ActionContext) -> frozenset[int]:
+    def _visible_targets(
+        context: ActionContext, contract: PipelineActionContract
+    ) -> frozenset[int]:
         alive = context.facts.get("alive_seats", ())
         if type(alive) is not tuple or any(type(seat) is not int or seat <= 0 for seat in alive):
             raise ValueError("alive_seats must contain positive integers")
-        return frozenset(alive)
+        targets = set(alive)
+        if (
+            contract.response_event_types
+            and context.source_event_id is not None
+            and context.trigger_event is not None
+        ):
+            targets.add(context.actor_seat)
+        return frozenset(targets)
 
     def resolve(
         self, state: GameState, actions: list[AcceptedAction]

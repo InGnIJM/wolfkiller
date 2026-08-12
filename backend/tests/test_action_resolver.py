@@ -1,4 +1,5 @@
 from dataclasses import replace
+import traceback
 from types import MappingProxyType
 
 import pytest
@@ -238,12 +239,30 @@ def test_pipeline_react_requires_bound_response_and_allows_dead_actor_effect():
         actor_alive=False,
         source_event_id="event:0123456789abcdef",
         trigger_event={"event_id": "event:0123456789abcdef", "type": "PLAYER_DIED"},
+        facts={"alive_seats": (2, 3), "dead_seats": (1,)},
     )
 
     effects = ActionResolver().react_effects(context, role, contract)
 
     assert effects[1].target_seat == context.actor_seat
     assert PIPELINE_CALLS == [context]
+
+
+def test_pipeline_normal_contract_cannot_target_dead_actor():
+    contract = pipeline_contract()
+    context = pipeline_context(
+        contract, actor_alive=False, facts={"alive_seats": (2, 3), "dead_seats": (1,)}
+    )
+
+    def dead_actor(ctx, command):
+        return (_pipeline_effect(ctx, target=ctx.actor_seat),)
+
+    object.__setattr__(contract, "resolve", dead_actor)
+    object.__setattr__(context, "contract_digest", contract.stable_digest())
+    with pytest.raises(RuleExecutionError):
+        ActionResolver().resolve_effects(
+            context, pipeline_role(contract), contract, pipeline_command()
+        )
 
 
 @pytest.mark.parametrize(
@@ -339,7 +358,8 @@ def test_pipeline_effect_kind_must_be_in_role_contract_intersection(
         ActionResolver().resolve_effects(
             pipeline_context(contract), role, contract, pipeline_command()
         )
-    assert isinstance(caught.value.__cause__, ValueError)
+    assert caught.value.__cause__ is None
+    assert caught.value.failure_type == "ValueError"
 
 
 @pytest.mark.parametrize("mode", ["list", "subclass", "accept"])
@@ -406,11 +426,33 @@ def test_pipeline_rule_error_is_sanitized_but_keeps_internal_cause():
         ActionResolver().resolve_effects(
             context, pipeline_role(contract), contract, pipeline_command()
         )
-    rendered = str(caught.value)
-    assert context.config_version in rendered and context.action_key in rendered
-    assert "role_version=1" in rendered
+    rendered = "\n".join(
+        (str(caught.value), repr(caught.value), "".join(traceback.format_exception(caught.value)))
+    )
+    assert "role_version=1" in rendered and "correlation_id=" in rendered
+    assert context.config_version not in rendered and context.action_key not in rendered
     assert "SECRET" not in rendered and "target" not in rendered
-    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert caught.value.__cause__ is None
+    assert not hasattr(caught.value, "config_version")
+    assert not hasattr(caught.value, "action_key")
+    assert caught.value.failure_type == "RuntimeError"
+
+
+def test_pipeline_rejects_more_than_64_hook_effects_before_item_validation():
+    contract = pipeline_contract()
+    context = pipeline_context(contract)
+    invalid = object()
+
+    def too_many(ctx, command):
+        return tuple([invalid] * 65)
+
+    object.__setattr__(contract, "resolve", too_many)
+    object.__setattr__(context, "contract_digest", contract.stable_digest())
+    with pytest.raises(RuleExecutionError) as caught:
+        ActionResolver().resolve_effects(
+            context, pipeline_role(contract), contract, pipeline_command()
+        )
+    assert caught.value.failure_type == "ValueError"
 
 
 @pytest.mark.parametrize("alive", [(), (1, True)])
