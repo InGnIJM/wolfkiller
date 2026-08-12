@@ -61,6 +61,15 @@ export default function TimelineController() {
     seekTo(idx);
   };
 
+  const handleProgressKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const offset = e.key === 'ArrowRight' ? 1 : -1;
+    seekTo(Math.max(0, Math.min(timelineIndex + offset, total - 1)));
+  };
+
   return (
     <Box sx={{ flexShrink: 0 }}>
       <Box
@@ -75,11 +84,12 @@ export default function TimelineController() {
           borderColor: 'divider',
         }}
       >
-        <IconButton size="small" onClick={stepBack} disabled={timelineIndex <= 0}>
+        <IconButton aria-label="上一个事件" size="small" onClick={stepBack} disabled={timelineIndex <= 0}>
           <SkipPreviousIcon fontSize="small" />
         </IconButton>
 
         <IconButton
+          aria-label={isPlaying ? '暂停' : '播放'}
           size="small"
           color={isPlaying ? 'primary' : 'default'}
           onClick={isPlaying ? pause : play}
@@ -88,7 +98,7 @@ export default function TimelineController() {
           {isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
         </IconButton>
 
-        <IconButton size="small" onClick={stepForward} disabled={isAtEnd}>
+        <IconButton aria-label="下一个事件" size="small" onClick={stepForward} disabled={isAtEnd}>
           <SkipNextIcon fontSize="small" />
         </IconButton>
 
@@ -124,6 +134,13 @@ export default function TimelineController() {
       </Box>
 
       <Box
+        aria-label="回放进度"
+        aria-valuemax={Math.max(0, total - 1)}
+        aria-valuemin={0}
+        aria-valuenow={Math.max(0, timelineIndex)}
+        aria-valuetext={total > 0 ? `第${timelineIndex + 1}条，共${total}条事件` : '暂无回放事件'}
+        role="slider"
+        tabIndex={0}
         sx={{
           height: 3,
           cursor: 'pointer',
@@ -132,6 +149,7 @@ export default function TimelineController() {
           transition: 'height 0.15s',
         }}
         onClick={handleProgressClick}
+        onKeyDown={handleProgressKeyDown}
       >
         <LinearProgress
           variant="determinate"

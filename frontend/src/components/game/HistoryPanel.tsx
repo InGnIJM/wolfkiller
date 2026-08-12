@@ -77,6 +77,13 @@ function EventCard({
   return (
     <Box
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        onClick();
+      }}
+      role="button"
+      tabIndex={0}
       sx={{
         p: 1.2,
         mb: 0.6,
@@ -112,7 +119,7 @@ export default function HistoryPanel({ onClose }: Props) {
     <Box sx={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', overflow: 'hidden' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', px: 2, py: 1.2, borderBottom: '1px solid', borderColor: 'divider' }}>
         <Typography variant="body1" sx={{ fontWeight: 500 }}>历史记录</Typography>
-        <IconButton onClick={onClose} size="small"><CloseIcon fontSize="small" /></IconButton>
+        <IconButton aria-label="关闭历史记录" onClick={onClose} size="small"><CloseIcon fontSize="small" /></IconButton>
       </Box>
 
       <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons={false} sx={{ borderBottom: '1px solid', borderColor: 'divider', minHeight: 40, '& .MuiTab-root': { minHeight: 40, py: 0.5 } }}>
