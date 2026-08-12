@@ -119,6 +119,7 @@ class ContextProjector:
             config_version=registry.digest,
             contract_id=request.contract.contract_id,
             contract_version=request.contract.schema_version,
+            contract_digest=request.contract.stable_digest(),
             round_number=request.round_number,
             phase=request.phase,
             window_id=request.window_id,
