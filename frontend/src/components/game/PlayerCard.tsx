@@ -1,7 +1,6 @@
 import { Box, Typography, keyframes } from '@mui/material';
 import Avatar from '../shared/Avatar';
-import RoleIcon from '../shared/RoleIcon';
-import { PlayerFullState } from '../../store/types';
+import type { PublicPlayerState } from '../../store/types';
 
 const highlightPulse = keyframes`
   0%, 100% { boxShadow: '0 0 0 0 rgba(168,199,250,0.4)'; }
@@ -13,39 +12,23 @@ const speakerPulse = keyframes`
   50% { boxShadow: '0 0 0 6px rgba(168,199,250,0.3), 0 0 16px rgba(168,199,250,0.15)'; }
 `;
 
-const clawPulse = keyframes`
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.15); }
-`;
-
 interface Props {
   seat: number;
-  player: PlayerFullState;
+  player: PublicPlayerState;
   isCurrentSpeaker?: boolean;
   isHighlighted?: boolean;
-  hasWolfClaw?: boolean;
   cardSize?: number;
   voteTarget?: number | null;
 }
 
 export default function PlayerCard({
-  seat, player, isCurrentSpeaker, isHighlighted, hasWolfClaw,
-  cardSize = 52, voteTarget,
+  seat, player, isCurrentSpeaker, isHighlighted, cardSize = 52, voteTarget,
 }: Props) {
-  const campBg = player.camp === 'werewolf'
-    ? 'rgba(242, 184, 181, 0.08)'
-    : player.camp === 'good'
-      ? 'rgba(168, 199, 250, 0.08)'
-      : 'transparent';
-
-  const campBorder = player.camp === 'werewolf'
-    ? 'rgba(242, 184, 181, 0.3)'
-    : player.camp === 'good'
-      ? 'rgba(168, 199, 250, 0.3)'
-      : 'transparent';
+  const status = player.is_alive ? '存活' : '出局';
 
   return (
     <Box
+      aria-label={`${seat}号玩家，${status}${player.is_sheriff ? '，警长' : ''}`}
       sx={{
         display: 'flex',
         flexDirection: 'column',
@@ -53,9 +36,10 @@ export default function PlayerCard({
         gap: 0.4,
         p: 0.8,
         borderRadius: 2,
-        bgcolor: campBg,
+        bgcolor: player.is_alive ? 'background.paper' : 'action.disabledBackground',
+        opacity: player.is_alive ? 1 : 0.65,
         border: '1px solid',
-        borderColor: isCurrentSpeaker ? 'primary.main' : campBorder,
+        borderColor: isCurrentSpeaker ? 'primary.main' : 'divider',
         transition: 'all 0.25s ease',
         ...(isCurrentSpeaker
           ? { animation: `${speakerPulse} 1s ease-in-out infinite` }
@@ -68,6 +52,7 @@ export default function PlayerCard({
         <Avatar seat={seat} size={cardSize} isAlive={player.is_alive} />
         {!player.is_alive && (
           <Box
+            aria-hidden="true"
             sx={{
               position: 'absolute',
               inset: 0,
@@ -75,29 +60,18 @@ export default function PlayerCard({
             }}
           >
             <Typography sx={{ fontSize: cardSize * 0.5, color: 'error.main', fontWeight: 300 }}>
-              ✕
+              ×
             </Typography>
-          </Box>
-        )}
-        {hasWolfClaw && player.is_alive && (
-          <Box
-            sx={{
-              position: 'absolute',
-              top: -4,
-              right: -4,
-              fontSize: '1.2rem',
-              animation: `${clawPulse} 1s ease-in-out infinite`,
-              pointerEvents: 'none',
-            }}
-          >
-            🐺
           </Box>
         )}
       </Box>
       <Typography variant="caption" sx={{ fontWeight: 500, lineHeight: 1 }}>
         {seat}号
       </Typography>
-      <RoleIcon role={player.role || player.revealed_role || ''} size={20} />
+      <Typography variant="caption" color={player.is_alive ? 'success.light' : 'text.disabled'}>
+        {status}
+      </Typography>
+      {player.is_sheriff && <Typography variant="caption" color="warning.light">警长</Typography>}
       {voteTarget !== undefined && (
         <Typography
           variant="caption"
@@ -106,13 +80,13 @@ export default function PlayerCard({
             px: 0.6,
             py: 0.1,
             borderRadius: 1,
-            bgcolor: voteTarget ? 'rgba(255,217,104,0.12)' : 'rgba(255,255,255,0.04)',
-            color: voteTarget ? 'warning.light' : 'text.disabled',
+            bgcolor: voteTarget !== null ? 'rgba(255,217,104,0.12)' : 'rgba(255,255,255,0.04)',
+            color: voteTarget !== null ? 'warning.light' : 'text.disabled',
             fontSize: '0.6rem',
             fontWeight: 500,
           }}
         >
-          {voteTarget ? `→ ${voteTarget}号` : '弃权'}
+          {voteTarget !== null ? `投给 ${voteTarget}号` : '弃权'}
         </Typography>
       )}
     </Box>
