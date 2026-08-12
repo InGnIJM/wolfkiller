@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import traceback
 
 import pytest
 
@@ -424,3 +425,39 @@ def test_response_projector_failure_is_sanitized() -> None:
     engine.projector.project = failing
     with pytest.raises(PipelinePaused) as caught: engine.run_point(state("r"), SchedulePoint.NIGHT_ACTION)
     assert "secret" not in str(caught.value)
+
+
+def test_validation_hook_failure_is_sanitized_and_control_exceptions_escape() -> None:
+    c = contract("c")
+    def fail(context, command): raise RuntimeError("SECRET")
+    object.__setattr__(c, "validate", fail); registry = snapshot(spec("r", c))
+    with pytest.raises(PipelinePaused) as caught:
+        scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    rendered = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+    assert "SECRET" not in str(caught.value) + repr(caught.value) + rendered
+    assert caught.value.__cause__ is None
+    for exception in (KeyboardInterrupt, SystemExit):
+        object.__setattr__(c, "validate", lambda context, command, kind=exception: (_ for _ in ()).throw(kind()))
+        with pytest.raises(exception): scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+
+def test_second_actor_failure_preserves_first_committed_transaction() -> None:
+    c = contract("c")
+    def validate(context, command):
+        if context.actor_seat == 2: raise RuntimeError("SECRET")
+        return ()
+    object.__setattr__(c, "validate", validate); registry = snapshot(spec("r", c)); game = state("r", "r")
+    with pytest.raises(PipelinePaused): scheduler(registry).run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert scheduler(registry)._revision(game) == 1
+    assert len(game._pipeline_runtime.commits) == 1
+
+
+def test_fallback_validation_failure_is_sanitized() -> None:
+    c = contract("c")
+    def validate(context, command):
+        if command.action_type == "pass": raise RuntimeError("SECRET")
+        return ()
+    object.__setattr__(c, "validate", validate); registry = snapshot(spec("r", c))
+    with pytest.raises(PipelinePaused) as caught:
+        scheduler(registry, lambda *args: ActionCommand(action_type="invalid", target_seat=None, reasoning="x")).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert "SECRET" not in str(caught.value) and caught.value.__cause__ is None

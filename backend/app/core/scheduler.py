@@ -211,13 +211,16 @@ class Scheduler:
             try: command = self.command_provider(request, context, attempt)
             except Exception: raise PipelinePaused("command provider failed") from None
             if type(command) is not ActionCommand: raise TypeError("provider must return ActionCommand")
-            violations = self.validator.validate(context, request.contract, command)
+            try: violations = self.validator.validate(context, request.contract, command)
+            except Exception: raise PipelinePaused("validation rule failed") from None
             if not violations: return command
         return self._fallback(context, request.contract)
 
     def _fallback(self, context: ActionContext, contract: ActionContract) -> ActionCommand:
         command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="safe fallback")
-        if self.validator.validate(context, contract, command): raise PipelinePaused("fallback command invalid")
+        try: violations = self.validator.validate(context, contract, command)
+        except Exception: raise PipelinePaused("validation rule failed") from None
+        if violations: raise PipelinePaused("fallback command invalid")
         return command
 
     def _resolve_with_fallback(self, context: ActionContext, role: RoleSpec,
