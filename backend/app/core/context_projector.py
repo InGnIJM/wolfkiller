@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import ActionContext, IssuedActionRequest
 from app.roles.registry import RegistrySnapshot
@@ -29,6 +30,20 @@ _ACCEPTED_SUMMARY_FIELDS = frozenset(
 _PUBLIC_TRIGGER_REASONS = frozenset(
     {"wolf_kill", "poison", "hunter_shot", "exile", "self_explode", "love_death"}
 )
+_PUBLIC_EVENT_TYPES = frozenset({"PLAYER_DIED"})
+_PUBLIC_PHASES = frozenset(
+    {
+        "waiting", "role_deal", "night", "dawn", "last_words",
+        "sheriff_election", "speech", "vote_casting", "vote_resolution",
+        "game_over",
+    }
+)
+_CAMPS = frozenset({"good", "werewolf", "third_party"})
+_RESOURCE_ADAPTERS = {
+    "antidote": "has_antidote", "has_antidote": "has_antidote",
+    "poison": "has_poison", "has_poison": "has_poison",
+    "gun": "has_gun", "has_gun": "has_gun",
+}
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
 
@@ -77,6 +92,7 @@ class ContextProjector:
                 )
             )
         if "CAMP" in visible:
+            # Known identities persist after death; only public life state changes.
             facts["camp_members"] = tuple(
                 sorted(
                     seat
@@ -102,19 +118,21 @@ class ContextProjector:
             resources=resources,
             action_key=request.action_key,
             counters={} if counters is None else dict(counters),
-            source_event_id=source_event_id,
-            trigger_event=self._project_allowlisted_mapping(
-                trigger_event, _TRIGGER_EVENT_FIELDS, "trigger_event"
+            source_event_id=self._optional_text(source_event_id, "source_event_id", 128),
+            trigger_event=self._project_trigger_event(trigger_event, request.contract),
+            trigger_reason=self._validate_trigger_reason(
+                trigger_reason, request.contract.response_reasons
             ),
-            trigger_reason=self._validate_trigger_reason(trigger_reason),
             accepted_command_summaries=tuple(
-                self._project_required_mapping(
-                    summary, _ACCEPTED_SUMMARY_FIELDS, "accepted command summary"
+                self._project_command_result(
+                    summary, request.contract, "accepted command summary", False
                 )
                 for summary in accepted_command_summaries
             ),
-            aggregate_result=self._project_allowlisted_mapping(
-                aggregate_result, _AGGREGATE_RESULT_FIELDS, "aggregate_result"
+            aggregate_result=(
+                None if aggregate_result is None else self._project_command_result(
+                    aggregate_result, request.contract, "aggregate_result", True
+                )
             ),
             facts=facts,
         )
@@ -172,20 +190,65 @@ class ContextProjector:
             "phase": state.phase.value if hasattr(state.phase, "value") else state.phase,
             "round_number": state.round_number,
             "speeches": tuple(
-                cls._allowlisted_record(record, _SPEECH_FIELDS)
-                for record in state.speeches
+                projected
+                for record in state.speeches[-20:]
+                if (projected := cls._project_speech(record)) is not None
             ),
             "votes": tuple(
-                cls._allowlisted_record(record, _VOTE_FIELDS) for record in state.votes
+                projected
+                for record in state.votes[-20:]
+                if (projected := cls._project_vote(record)) is not None
             ),
         }
 
-    @staticmethod
-    def _allowlisted_record(record: object, fields: tuple[str, ...]) -> dict[str, object]:
-        raw = record.to_dict() if hasattr(record, "to_dict") else record
-        if not isinstance(raw, Mapping):
-            return {}
-        return {field: raw[field] for field in fields if field in raw}
+    @classmethod
+    def _project_speech(cls, record: object) -> dict[str, object] | None:
+        if type(record) is SpeechRecord:
+            raw: Mapping[str, object] = {
+                "player_seat": record.player_seat,
+                "text": record.text,
+                "round_number": record.round_number,
+            }
+        elif isinstance(record, Mapping):
+            raw = record
+        else:
+            return None
+        try:
+            return {
+                "player_seat": cls._positive_int(raw.get("player_seat"), "player_seat"),
+                "text": cls._text(raw.get("text"), "speech text", 2000),
+                "round_number": cls._nonnegative_int(
+                    raw.get("round_number"), "round_number"
+                ),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _project_vote(cls, record: object) -> dict[str, object] | None:
+        if type(record) is VoteAction:
+            raw: Mapping[str, object] = {
+                "voter_seat": record.voter_seat,
+                "target_seat": record.target_seat,
+            }
+        elif isinstance(record, Mapping):
+            raw = record
+        else:
+            return None
+        try:
+            projected: dict[str, object] = {
+                "voter_seat": cls._positive_int(raw.get("voter_seat"), "voter_seat"),
+                "target_seat": cls._optional_positive_int(
+                    raw.get("target_seat"), "target_seat"
+                ),
+            }
+            if "round_number" in raw:
+                projected["round_number"] = cls._nonnegative_int(
+                    raw["round_number"], "round_number"
+                )
+            return projected
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _actor_resources(
@@ -193,15 +256,12 @@ class ContextProjector:
     ) -> dict[str, object]:
         resources: dict[str, object] = {}
         for key, default in declarations.items():
-            if hasattr(actor, key):
-                value = getattr(actor, key)
-            elif hasattr(actor, f"has_{key}"):
-                value = getattr(actor, f"has_{key}")
-            elif key.startswith("has_") and hasattr(actor, key[4:]):
-                value = getattr(actor, key[4:])
-            else:
-                value = default
-            resources[key] = value
+            attribute = _RESOURCE_ADAPTERS.get(key)
+            resources[key] = (
+                getattr(actor, attribute)
+                if attribute is not None
+                else ContextProjector._copy_json_value(default)
+            )
         return resources
 
     @classmethod
@@ -216,7 +276,9 @@ class ContextProjector:
         for key, default in declarations.items():
             if key in {"private_checks", "check_results"}:
                 facts["private_checks"] = tuple(
-                    cls._project_check_result(result) for result in actor.check_results
+                    projected
+                    for result in actor.check_results[-20:]
+                    if (projected := cls._project_check_result(result)) is not None
                 )
             elif key in {"wolf_kill_target", "last_wolf_kill_target"}:
                 has_antidote = bool(
@@ -224,61 +286,137 @@ class ContextProjector:
                 )
                 if has_antidote:
                     facts["wolf_kill_target"] = state.last_wolf_kill_target
-            elif hasattr(actor, key):
-                facts[key] = cls._copy_json_value(getattr(actor, key))
             else:
                 facts[key] = cls._copy_json_value(default)
         return facts
 
     @staticmethod
-    def _project_check_result(result: object) -> dict[str, object]:
+    def _project_check_result(result: object) -> dict[str, object] | None:
         if not isinstance(result, Mapping):
-            return {}
-        projected: dict[str, object] = {}
-        if "target" in result or "target_seat" in result:
-            projected["target"] = result.get("target", result.get("target_seat"))
-        if "camp" in result or "result" in result:
-            projected["camp"] = result.get("camp", result.get("result"))
-        return projected
+            return None
+        target = result.get("target", result.get("target_seat"))
+        camp = result.get("camp", result.get("result"))
+        if type(target) is not int or target <= 0 or camp not in _CAMPS:
+            return None
+        return {"target": target, "camp": camp}
 
     @classmethod
-    def _project_allowlisted_mapping(
-        cls,
-        value: Mapping[str, object] | None,
-        allowed_fields: frozenset[str],
-        name: str,
+    def _project_trigger_event(
+        cls, value: Mapping[str, object] | None, contract: object
     ) -> dict[str, object] | None:
         if value is None:
             return None
         if not isinstance(value, Mapping):
-            raise TypeError(f"{name} must be a mapping")
-        return {
-            key: item
-            for key, item in value.items()
-            if key in allowed_fields and cls._is_scalar(item)
-        }
+            raise TypeError("trigger_event must be a mapping")
+        projected: dict[str, object] = {}
+        if "event_id" in value:
+            projected["event_id"] = cls._text(value["event_id"], "event_id", 128)
+        if "type" in value:
+            event_type = cls._text(value["type"], "event type", 64)
+            allowed = contract.response_event_types or _PUBLIC_EVENT_TYPES
+            if event_type not in allowed:
+                raise ValueError("unknown event type")
+            projected["type"] = event_type
+        for key in ("source_seat", "target_seat"):
+            if key in value:
+                projected[key] = cls._positive_int(value[key], key)
+        if "cause" in value:
+            cause = cls._text(value["cause"], "cause", 32)
+            allowed_reasons = contract.response_reasons or _PUBLIC_TRIGGER_REASONS
+            if cause not in allowed_reasons:
+                raise ValueError("unknown cause")
+            projected["cause"] = cause
+        if "round_number" in value:
+            projected["round_number"] = cls._nonnegative_int(
+                value["round_number"], "round_number"
+            )
+        if "phase" in value:
+            phase = cls._text(value["phase"], "phase", 32)
+            if phase not in _PUBLIC_PHASES:
+                raise ValueError("unknown phase")
+            projected["phase"] = phase
+        return projected
 
     @classmethod
-    def _project_required_mapping(
-        cls, value: object, allowed_fields: frozenset[str], name: str
+    def _project_command_result(
+        cls, value: object, contract: object, name: str, aggregate: bool
     ) -> dict[str, object]:
         if not isinstance(value, Mapping):
             raise TypeError(f"{name} must be a mapping")
-        projected = cls._project_allowlisted_mapping(value, allowed_fields, name)
-        assert projected is not None
+        allowed = _AGGREGATE_RESULT_FIELDS if aggregate else _ACCEPTED_SUMMARY_FIELDS
+        projected: dict[str, object] = {}
+        if "actor_seat" in allowed and "actor_seat" in value:
+            projected["actor_seat"] = cls._positive_int(
+                value["actor_seat"], "actor_seat"
+            )
+        if "contract_id" in value:
+            contract_id = cls._text(value["contract_id"], "contract_id", 128)
+            if contract_id != contract.contract_id:
+                raise ValueError("contract_id does not match request contract")
+            projected["contract_id"] = contract_id
+        if "action_type" in value:
+            action_type = cls._text(value["action_type"], "action_type", 64)
+            if action_type not in contract.action_types:
+                raise ValueError("action_type is not allowed by request contract")
+            projected["action_type"] = action_type
+        if "target_seat" in value:
+            projected["target_seat"] = cls._optional_positive_int(
+                value["target_seat"], "target_seat"
+            )
+        if aggregate and "count" in value:
+            projected["count"] = cls._nonnegative_int(value["count"], "count")
+        if aggregate and "tied" in value:
+            if type(value["tied"]) is not bool:
+                raise TypeError("tied must be a boolean")
+            projected["tied"] = value["tied"]
+        if aggregate and "selected_seat" in value:
+            projected["selected_seat"] = cls._optional_positive_int(
+                value["selected_seat"], "selected_seat"
+            )
         return projected
 
-    @staticmethod
-    def _validate_trigger_reason(reason: str | None) -> str | None:
+    @classmethod
+    def _validate_trigger_reason(
+        cls, reason: str | None, declared: frozenset[str]
+    ) -> str | None:
         if reason is None:
             return None
-        if reason not in _PUBLIC_TRIGGER_REASONS:
+        reason = cls._text(reason, "trigger reason", 32)
+        if reason not in (declared or _PUBLIC_TRIGGER_REASONS):
             raise ValueError("unknown public trigger reason")
         return reason
 
     @staticmethod
-    def _is_scalar(value: object) -> bool:
-        return value is None or type(value) in (bool, int, float, str)
+    def _text(value: object, name: str, limit: int) -> str:
+        if type(value) is not str:
+            raise TypeError(f"{name} must be a string")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError(f"{name} must be valid UTF-8") from error
+        if len(value) > limit:
+            raise ValueError(f"{name} is too long")
+        return value
+
+    @classmethod
+    def _optional_text(cls, value: object, name: str, limit: int) -> str | None:
+        return None if value is None else cls._text(value, name, limit)
+
+    @staticmethod
+    def _positive_int(value: object, name: str) -> int:
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+        return value
+
+    @classmethod
+    def _optional_positive_int(cls, value: object, name: str) -> int | None:
+        return None if value is None else cls._positive_int(value, name)
+
+    @staticmethod
+    def _nonnegative_int(value: object, name: str) -> int:
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+        return value
 
     @classmethod
     def _copy_json_value(cls, value: object) -> object:

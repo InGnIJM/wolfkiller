@@ -264,7 +264,7 @@ def test_context_is_deep_frozen_detached_and_contains_no_state_or_callbacks(
         trigger_event={"type": "PLAYER_DIED", "target_seat": 5},
         trigger_reason="wolf_kill",
         source_event_id="event-1",
-        accepted_command_summaries=({"action_type": "kill", "seats": [6]},),
+        accepted_command_summaries=({"action_type": "act", "seats": [6]},),
         aggregate_result={"target_seat": 6, "votes": [1, 2]},
         counters={"window": 1},
     )
@@ -272,7 +272,7 @@ def test_context_is_deep_frozen_detached_and_contains_no_state_or_callbacks(
     assert isinstance(context.facts, MappingProxyType)
     assert isinstance(context.trigger_event, MappingProxyType)
     assert context.trigger_event == {"type": "PLAYER_DIED", "target_seat": 5}
-    assert context.accepted_command_summaries == ({"action_type": "kill"},)
+    assert context.accepted_command_summaries == ({"action_type": "act"},)
     assert context.aggregate_result == {"target_seat": 6}
     with pytest.raises(TypeError):
         context.facts["alive_seats"] = ()  # type: ignore[index]
@@ -408,7 +408,7 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
             {
                 "actor_seat": 3,
                 "contract_id": "seer-action",
-                "action_type": "check",
+                "action_type": "act",
                 "target_seat": 1,
                 "revealed_role": "wolf",
                 "nested": {"has_poison": True},
@@ -416,7 +416,7 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         ),
         aggregate_result={
             "contract_id": "seer-action",
-            "action_type": "check",
+            "action_type": "act",
             "target_seat": 1,
             "count": 1,
             "tied": False,
@@ -438,13 +438,13 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         {
             "actor_seat": 3,
             "contract_id": "seer-action",
-            "action_type": "check",
+            "action_type": "act",
             "target_seat": 1,
         },
     )
     assert projected.aggregate_result == {
         "contract_id": "seer-action",
-        "action_type": "check",
+        "action_type": "act",
         "target_seat": 1,
         "count": 1,
         "tied": False,
@@ -531,6 +531,7 @@ def test_generic_declared_resources_and_private_data_use_safe_fallbacks(
 ) -> None:
     actor = state.players[6]
     actor.token = 3  # type: ignore[attr-defined]
+    actor.revealed_role = "wolf"
     contract = _contract("ACTOR", contract_id="generic-action")
     spec = RoleSpec(
         role_id="villager",
@@ -540,9 +541,15 @@ def test_generic_declared_resources_and_private_data_use_safe_fallbacks(
         initial_resources={
             "is_alive": False,
             "has_token": 0,
+            "role": "registered-default",
+            "camp": "registered-camp",
             "future_charge": 2,
         },
-        initial_private_data={"is_sheriff": False, "future_fact": [1]},
+        initial_private_data={
+            "is_sheriff": False,
+            "revealed_role": "registered-hidden",
+            "future_fact": [1],
+        },
     )
     registry = RegistrySnapshot(specs={"villager": spec}, digest="generic")
     request = IssuedActionRequest(
@@ -558,12 +565,16 @@ def test_generic_declared_resources_and_private_data_use_safe_fallbacks(
 
     context = ContextProjector().project(state, request, registry)
     assert context.resources == {
-        "is_alive": True,
-        "has_token": 3,
+        "is_alive": False,
+        "has_token": 0,
+        "role": "registered-default",
+        "camp": "registered-camp",
         "future_charge": 2,
     }
     assert context.facts["is_sheriff"] is False
+    assert context.facts["revealed_role"] == "registered-hidden"
     assert context.facts["future_fact"] == (1,)
+    assert "wolf" not in context.to_json()
 
 
 def test_defensive_projection_handles_malformed_public_and_private_records(
@@ -599,11 +610,9 @@ def test_defensive_projection_handles_malformed_public_and_private_records(
     context = ContextProjector().project(state, request, registry)
     assert context.phase == "night"
     assert context.facts["phase"] == "night"
-    assert context.facts["speeches"][-1] == {}
+    assert context.facts["speeches"][-1]["text"] == "mapped speech"
     assert context.facts["private_checks"] == (
-        {},
         {"target": 2, "camp": "good"},
-        {},
     )
 
 
@@ -655,3 +664,214 @@ def test_accepted_summary_requires_mapping_and_private_defaults_are_detached(
     )
     context = ContextProjector().project(state, request, private_registry)
     assert context.facts["future_mapping"] == {"seats": (1,)}
+
+
+def test_legacy_resource_aliases_are_the_only_player_attribute_reads(
+    state: GameState,
+) -> None:
+    contract = _contract("ACTOR", contract_id="legacy-action")
+    spec = RoleSpec(
+        role_id="witch",
+        camp_id="good",
+        contracts=(contract,),
+        visibility_namespaces=frozenset({"ACTOR"}),
+        initial_resources={
+            "antidote": False,
+            "has_poison": True,
+            "gun": False,
+            "role": "default-role",
+        },
+    )
+    registry = RegistrySnapshot(specs={"witch": spec}, digest="legacy")
+    state.players[4].has_antidote = True
+    state.players[4].has_poison = False
+    state.players[4].has_gun = True
+
+    context = ContextProjector().project(
+        state, _request(registry, 4, "witch"), registry
+    )
+
+    assert context.resources == {
+        "antidote": True,
+        "has_poison": False,
+        "gun": True,
+        "role": "default-role",
+    }
+
+
+def test_camp_identity_knowledge_includes_dead_members(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    state.players[2].is_alive = False
+
+    context = ContextProjector().project(
+        state, _request(registry, 1, "wolf"), registry
+    )
+
+    assert context.facts["camp_members"] == (1, 2)
+
+
+def test_public_history_never_executes_arbitrary_to_dict_and_is_bounded(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    class Bomb:
+        def to_dict(self) -> object:
+            raise AssertionError("untrusted to_dict executed")
+
+    state.speeches = [
+        SpeechRecord(index, f"speech-{index}", index) for index in range(1, 23)
+    ] + [
+        Bomb(),
+        {"player_seat": True, "text": "bad seat", "round_number": 2},
+        {"player_seat": 1, "text": "\ud800", "round_number": 2},
+        {"player_seat": 1, "text": "x" * 2001, "round_number": 2},
+    ]
+    state.votes = [VoteAction(index, 1) for index in range(1, 23)] + [
+        Bomb(),
+        {"voter_seat": 1, "target_seat": False, "round_number": 2},
+        {"voter_seat": 1, "target_seat": 2, "round_number": -1},
+    ]
+
+    context = ContextProjector().project(
+        state, _request(registry, 6, "villager"), registry
+    )
+
+    assert len(context.facts["speeches"]) == 16
+    assert context.facts["speeches"][0]["text"] == "speech-7"
+    assert context.facts["speeches"][-1]["text"] == "speech-22"
+    assert len(context.facts["votes"]) == 17
+    assert context.facts["votes"][0]["voter_seat"] == 6
+    assert context.facts["votes"][-1]["voter_seat"] == 22
+
+
+def test_private_checks_are_semantically_valid_and_bounded(
+    state: GameState,
+) -> None:
+    valid = [
+        {"target": index, "camp": "good" if index % 2 else "werewolf"}
+        for index in range(1, 23)
+    ]
+    state.players[3].check_results = valid + [
+        object(),
+        {"target": True, "camp": "good"},
+        {"target": 1, "camp": "secret-seer"},
+        {"target": 0, "camp": "third_party"},
+    ]
+    contract = _contract("ACTOR", contract_id="seer-action")
+    spec = RoleSpec(
+        role_id="seer",
+        camp_id="good",
+        contracts=(contract,),
+        visibility_namespaces=frozenset({"ACTOR"}),
+        initial_private_data={"check_results": ()},
+    )
+    registry = RegistrySnapshot(specs={"seer": spec}, digest="checks")
+
+    context = ContextProjector().project(
+        state, _request(registry, 3, "seer"), registry
+    )
+
+    assert len(context.facts["private_checks"]) == 16
+    assert context.facts["private_checks"][0] == {"target": 7, "camp": "good"}
+    assert context.facts["private_checks"][-1] == {
+        "target": 22,
+        "camp": "werewolf",
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs,error",
+    [
+        ({"source_event_id": "x" * 129}, "source_event_id"),
+        ({"source_event_id": 1}, "source_event_id"),
+        ({"trigger_event": {"event_id": "x" * 129}}, "event_id"),
+        ({"trigger_event": {"type": "secret_event"}}, "event type"),
+        ({"trigger_event": {"cause": "the seer is seat 3"}}, "cause"),
+        ({"trigger_event": {"source_seat": True}}, "source_seat"),
+        ({"trigger_event": {"target_seat": 0}}, "target_seat"),
+        ({"trigger_event": {"round_number": -1}}, "round_number"),
+        ({"trigger_event": {"phase": "secret"}}, "phase"),
+        (
+            {"accepted_command_summaries": ({"contract_id": "other"},)},
+            "contract_id",
+        ),
+        (
+            {"accepted_command_summaries": ({"action_type": "secret"},)},
+            "action_type",
+        ),
+        (
+            {"accepted_command_summaries": ({"actor_seat": False},)},
+            "actor_seat",
+        ),
+        ({"aggregate_result": {"count": -1}}, "count"),
+        ({"aggregate_result": {"tied": 1}}, "tied"),
+        ({"aggregate_result": {"selected_seat": True}}, "selected_seat"),
+    ],
+)
+def test_response_projection_rejects_semantically_invalid_values(
+    state: GameState,
+    registry: RegistrySnapshot,
+    kwargs: dict[str, object],
+    error: str,
+) -> None:
+    with pytest.raises((TypeError, ValueError), match=error):
+        ContextProjector().project(
+            state,
+            _request(registry, 1, "wolf"),
+            registry,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
+def test_response_event_and_reason_are_bound_to_contract_declarations(
+    state: GameState,
+) -> None:
+    contract = ActionContract(
+        contract_id="hunter-response",
+        schedule_point=SchedulePoint.NIGHT_ACTION,
+        order=10,
+        action_types=("act", "pass"),
+        actions_requiring_target=frozenset({"act"}),
+        fallback_action_type="pass",
+        visibility_namespaces=frozenset({"ACTOR"}),
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"poison"}),
+    )
+    spec = RoleSpec(
+        role_id="hunter",
+        camp_id="good",
+        contracts=(contract,),
+        visibility_namespaces=frozenset({"ACTOR"}),
+    )
+    registry = RegistrySnapshot(specs={"hunter": spec}, digest="response")
+    request = IssuedActionRequest(
+        actor_seat=5,
+        role_id="hunter",
+        contract=contract,
+        context_revision=1,
+        round_number=2,
+        phase="night",
+        window_id="w",
+        action_key="a",
+    )
+
+    context = ContextProjector().project(
+        state,
+        request,
+        registry,
+        trigger_event={"type": "PLAYER_DIED", "cause": "poison"},
+        trigger_reason="poison",
+    )
+    assert context.trigger_reason == "poison"
+
+    with pytest.raises(ValueError, match="event type"):
+        ContextProjector().project(
+            state,
+            request,
+            registry,
+            trigger_event={"type": "player_died"},
+        )
+    with pytest.raises(ValueError, match="trigger reason"):
+        ContextProjector().project(
+            state, request, registry, trigger_reason="wolf_kill"
+        )
