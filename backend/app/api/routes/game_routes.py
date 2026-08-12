@@ -19,6 +19,17 @@ _LEGACY_ROLE_COUNT_FIELDS = {
     "num_hunters": "wolf-killer-hunter",
 }
 
+_PUBLIC_GAME_PHASES = frozenset({
+    "waiting", "role_deal", "night", "dawn", "last_words",
+    "sheriff_election", "speech", "vote_casting", "vote_resolution",
+    "game_over",
+})
+_PUBLIC_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot", "exile"})
+_PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
+_PUBLIC_WIN_REASONS = frozenset({
+    "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
+})
+
 
 def get_service() -> GameService:
     from app.main import game_service
@@ -126,6 +137,10 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_positive_int(value: Any) -> bool:
+    return _is_int(value) and value > 0
+
+
 def _public_conversation_event(record: dict[str, Any]) -> dict | None:
     if record.get("scope") != "public" or _timestamp(record) is None:
         return None
@@ -133,7 +148,12 @@ def _public_conversation_event(record: dict[str, Any]) -> dict | None:
     content = record.get("content")
     round_number = record.get("round_number")
     phase = record.get("phase")
-    if not (_is_int(seat) and isinstance(content, str) and _is_int(round_number) and isinstance(phase, str)):
+    if not (
+        _is_positive_int(seat)
+        and isinstance(content, str)
+        and _is_positive_int(round_number)
+        and phase in _PUBLIC_GAME_PHASES
+    ):
         return None
     return {
         "event_type": "speech",
@@ -147,13 +167,22 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     round_number = record.get("round")
     phase = record.get("phase")
     data = record.get("data")
-    if timestamp is None or not _is_int(round_number) or not isinstance(phase, str) or not isinstance(data, dict):
+    if (
+        timestamp is None
+        or not _is_positive_int(round_number)
+        or phase not in _PUBLIC_GAME_PHASES
+        or not isinstance(data, dict)
+    ):
         return []
 
     if operation == "vote":
         seat = record.get("seat")
         target = data.get("target")
-        if phase != "vote_casting" or not _is_int(seat) or (target is not None and not _is_int(target)):
+        if (
+            phase != "vote_casting"
+            or not _is_positive_int(seat)
+            or (target is not None and not _is_positive_int(target))
+        ):
             return []
         return [{
             "event_type": "vote",
@@ -178,7 +207,11 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
         for death in data["deaths"]:
             if not isinstance(death, dict) or set(death) != {"player_seat", "cause", "round_number"}:
                 return []
-            if not (_is_int(death["player_seat"]) and isinstance(death["cause"], str) and _is_int(death["round_number"])):
+            if not (
+                _is_positive_int(death["player_seat"])
+                and death["cause"] in _PUBLIC_DEATH_CAUSES
+                and _is_positive_int(death["round_number"])
+            ):
                 return []
             events.append({
                 "event_type": "death",
@@ -192,7 +225,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
 
     if operation == "phase_change":
         new_phase = data.get("new_phase")
-        if not isinstance(new_phase, str):
+        if new_phase not in _PUBLIC_GAME_PHASES:
             return []
         return [{
             "event_type": "phase",
@@ -202,7 +235,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     if operation == "game_over":
         winner = data.get("winner")
         reason = data.get("reason")
-        if not isinstance(winner, str) or not isinstance(reason, str):
+        if winner not in _PUBLIC_WINNING_CAMPS or reason not in _PUBLIC_WIN_REASONS:
             return []
         return [{
             "event_type": "winner",

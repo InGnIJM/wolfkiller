@@ -257,6 +257,37 @@ def test_public_death_projection_rejects_any_malformed_or_private_death(deaths):
     assert game_routes._public_operation_events(record) == []
 
 
+@pytest.mark.parametrize(
+    "record",
+    [
+        {
+            "timestamp": "2026-01-01T00:00:00Z", "operation": "vote", "round": 1,
+            "phase": "vote_casting", "seat": -1, "data": {"target": 2},
+        },
+        {
+            "timestamp": "2026-01-01T00:00:00Z", "operation": "vote", "round": 1,
+            "phase": "vote_casting", "seat": 1, "data": {"target": 0},
+        },
+        {
+            "timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": 1,
+            "phase": "speech", "data": {"new_phase": "secret: seer checked seat 2"},
+        },
+        {
+            "timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1,
+            "phase": "game_over", "data": {"winner": "good", "reason": "secret: antidote used"},
+        },
+        {
+            "timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1,
+            "phase": "dawn", "data": {"deaths": [
+                {"player_seat": 2, "cause": "secret: player 2 was seer", "round_number": 1},
+            ]},
+        },
+    ],
+)
+def test_public_operation_projection_skips_invalid_public_domain_values(record):
+    assert game_routes._public_operation_events(record) == []
+
+
 def test_public_replay_ignores_non_mapping_records():
     assert game_routes._public_replay_events(["bad"], [None]) == []
 
