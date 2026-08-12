@@ -261,19 +261,19 @@ def test_context_is_deep_frozen_detached_and_contains_no_state_or_callbacks(
         state,
         _request(registry, 1, "wolf"),
         registry,
-        trigger_event={"type": "PLAYER_DIED", "payload": {"seats": [5]}},
-        trigger_reason="hunter_response",
+        trigger_event={"type": "PLAYER_DIED", "target_seat": 5},
+        trigger_reason="wolf_kill",
         source_event_id="event-1",
-        accepted_command_summaries=({"action": "kill", "seats": [6]},),
-        aggregate_result={"target": 6, "votes": [1, 2]},
+        accepted_command_summaries=({"action_type": "kill", "seats": [6]},),
+        aggregate_result={"target_seat": 6, "votes": [1, 2]},
         counters={"window": 1},
     )
 
     assert isinstance(context.facts, MappingProxyType)
     assert isinstance(context.trigger_event, MappingProxyType)
-    assert context.trigger_event["payload"]["seats"] == (5,)
-    assert context.accepted_command_summaries[0]["seats"] == (6,)
-    assert context.aggregate_result["votes"] == (1, 2)
+    assert context.trigger_event == {"type": "PLAYER_DIED", "target_seat": 5}
+    assert context.accepted_command_summaries == ({"action_type": "kill"},)
+    assert context.aggregate_result == {"target_seat": 6}
     with pytest.raises(TypeError):
         context.facts["alive_seats"] = ()  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
@@ -387,23 +387,143 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         request,
         registry,
         trigger_event={
-            "type": "CHECK_DONE",
-            "target": 1,
-            "reasoning": "secret",
-            "nested": {"thinking": "hidden", "safe": True},
+            "event_id": "event-2",
+            "type": "PLAYER_DIED",
+            "source_seat": 3,
+            "target_seat": 1,
+            "cause": "wolf_kill",
+            "round_number": 2,
+            "phase": "night",
+            "revealed_role": "wolf",
+            "has_poison": True,
+            "wolf_kill_target": 6,
+            "check_history": [{"target": 1, "camp": "werewolf"}],
+            "nested": {
+                "event_id": "nested-event",
+                "revealed_role": "seer",
+                "has_poison": True,
+            },
         },
         accepted_command_summaries=(
-            {"action": "check", "reasoning": "secret", "target": 1},
+            {
+                "actor_seat": 3,
+                "contract_id": "seer-action",
+                "action_type": "check",
+                "target_seat": 1,
+                "revealed_role": "wolf",
+                "nested": {"has_poison": True},
+            },
         ),
-        aggregate_result={"target": 1, "private_data": {"camp": "werewolf"}},
+        aggregate_result={
+            "contract_id": "seer-action",
+            "action_type": "check",
+            "target_seat": 1,
+            "count": 1,
+            "tied": False,
+            "selected_seat": 1,
+            "wolf_kill_target": 6,
+            "nested": {"check_history": [1]},
+        },
     )
     assert projected.trigger_event == {
-        "type": "CHECK_DONE",
-        "target": 1,
-        "nested": {"safe": True},
+        "event_id": "event-2",
+        "type": "PLAYER_DIED",
+        "source_seat": 3,
+        "target_seat": 1,
+        "cause": "wolf_kill",
+        "round_number": 2,
+        "phase": "night",
     }
-    assert projected.accepted_command_summaries == ({"action": "check", "target": 1},)
-    assert projected.aggregate_result == {"target": 1}
+    assert projected.accepted_command_summaries == (
+        {
+            "actor_seat": 3,
+            "contract_id": "seer-action",
+            "action_type": "check",
+            "target_seat": 1,
+        },
+    )
+    assert projected.aggregate_result == {
+        "contract_id": "seer-action",
+        "action_type": "check",
+        "target_seat": 1,
+        "count": 1,
+        "tied": False,
+        "selected_seat": 1,
+    }
+    serialized = projected.to_json()
+    for secret in (
+        "revealed_role",
+        "has_poison",
+        "wolf_kill_target",
+        "check_history",
+        "nested-event",
+    ):
+        assert secret not in serialized
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["secret: target is the seer", "hunter_response", "", "WOLF_KILL"],
+)
+def test_trigger_reason_rejects_free_text_and_unknown_values(
+    state: GameState,
+    registry: RegistrySnapshot,
+    reason: str,
+) -> None:
+    with pytest.raises(ValueError, match="trigger reason"):
+        ContextProjector().project(
+            state,
+            _request(registry, 1, "wolf"),
+            registry,
+            trigger_reason=reason,
+        )
+
+
+def test_public_facts_are_unconditional_and_revision_comes_from_signed_request(
+    state: GameState,
+) -> None:
+    contract = _contract(contract_id="publicless-action")
+    spec = RoleSpec(
+        role_id="villager",
+        camp_id="good",
+        contracts=(contract,),
+        visibility_namespaces=frozenset(),
+    )
+    registry = RegistrySnapshot(specs={"villager": spec}, digest="v")
+    request = IssuedActionRequest(
+        actor_seat=6,
+        role_id="villager",
+        contract=contract,
+        context_revision=23,
+        round_number=2,
+        phase="night",
+        window_id="w",
+        action_key="a",
+    )
+
+    context = ContextProjector().project(state, request, registry)
+    assert context.revision == 23
+    assert context.facts["alive_seats"] == (1, 2, 3, 4, 6)
+    assert context.facts["phase"] == "night"
+
+
+def test_rejects_actor_whose_embedded_seat_disagrees_with_request(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    state.players[1].seat_number = 99
+    with pytest.raises(ValueError, match="seat number"):
+        ContextProjector().project(state, _request(registry, 1, "wolf"), registry)
+
+
+def test_rejects_negative_signed_context_revision(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    with pytest.raises(ValueError, match="context revision"):
+        ContextProjector().project(
+            state,
+            _request(registry, 1, "wolf", revision=-1),
+            registry,
+        )
 
 
 def test_generic_declared_resources_and_private_data_use_safe_fallbacks(
@@ -501,3 +621,37 @@ def test_optional_projection_mappings_reject_non_mapping_values(
             registry,
             **kwargs,  # type: ignore[arg-type]
         )
+
+
+def test_accepted_summary_requires_mapping_and_private_defaults_are_detached(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    with pytest.raises(TypeError, match="accepted command summary"):
+        ContextProjector().project(
+            state,
+            _request(registry, 1, "wolf"),
+            registry,
+            accepted_command_summaries=("not-a-mapping",),
+        )
+
+    contract = _contract("ACTOR", contract_id="mapping-private-action")
+    spec = RoleSpec(
+        role_id="villager",
+        camp_id="good",
+        contracts=(contract,),
+        visibility_namespaces=frozenset({"ACTOR"}),
+        initial_private_data={"future_mapping": {"seats": [1]}},
+    )
+    private_registry = RegistrySnapshot(specs={"villager": spec}, digest="v")
+    request = IssuedActionRequest(
+        actor_seat=6,
+        role_id="villager",
+        contract=contract,
+        context_revision=0,
+        round_number=2,
+        phase="night",
+        window_id="w",
+        action_key="a",
+    )
+    context = ContextProjector().project(state, request, private_registry)
+    assert context.facts["future_mapping"] == {"seats": (1,)}

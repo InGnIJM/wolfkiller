@@ -3,27 +3,31 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
-
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import ActionContext, IssuedActionRequest
 from app.roles.registry import RegistrySnapshot
 
 
 _KNOWN_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
-_SENSITIVE_KEYS = frozenset(
+_TRIGGER_EVENT_FIELDS = frozenset(
     {
-        "reasoning",
-        "thinking",
-        "private",
-        "private_data",
-        "check_results",
-        "role",
-        "role_id",
-        "camp",
-        "camp_id",
-        "resources",
+        "event_id",
+        "type",
+        "source_seat",
+        "target_seat",
+        "cause",
+        "round_number",
+        "phase",
     }
+)
+_AGGREGATE_RESULT_FIELDS = frozenset(
+    {"contract_id", "action_type", "target_seat", "count", "tied", "selected_seat"}
+)
+_ACCEPTED_SUMMARY_FIELDS = frozenset(
+    {"actor_seat", "contract_id", "action_type", "target_seat"}
+)
+_PUBLIC_TRIGGER_REASONS = frozenset(
+    {"wolf_kill", "poison", "hunter_shot", "exile", "self_explode", "love_death"}
 )
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
@@ -82,6 +86,8 @@ class ContextProjector:
             )
         # RELATION is intentionally a no-op until GameState has tagged relation facts.
 
+        # Until Task 19 adds GameState.state_revision, the signed request is the
+        # only authoritative revision boundary and must be copied exactly.
         return ActionContext(
             game_id=state.game_id,
             revision=request.context_revision,
@@ -97,12 +103,19 @@ class ContextProjector:
             action_key=request.action_key,
             counters={} if counters is None else dict(counters),
             source_event_id=source_event_id,
-            trigger_event=self._sanitize_mapping(trigger_event),
-            trigger_reason=trigger_reason,
-            accepted_command_summaries=tuple(
-                self._sanitize_value(summary) for summary in accepted_command_summaries
+            trigger_event=self._project_allowlisted_mapping(
+                trigger_event, _TRIGGER_EVENT_FIELDS, "trigger_event"
             ),
-            aggregate_result=self._sanitize_mapping(aggregate_result),
+            trigger_reason=self._validate_trigger_reason(trigger_reason),
+            accepted_command_summaries=tuple(
+                self._project_required_mapping(
+                    summary, _ACCEPTED_SUMMARY_FIELDS, "accepted command summary"
+                )
+                for summary in accepted_command_summaries
+            ),
+            aggregate_result=self._project_allowlisted_mapping(
+                aggregate_result, _AGGREGATE_RESULT_FIELDS, "aggregate_result"
+            ),
             facts=facts,
         )
 
@@ -127,6 +140,8 @@ class ContextProjector:
         actor = state.players.get(request.actor_seat)
         if actor is None:
             raise ValueError("actor seat does not exist in state")
+        if actor.seat_number != request.actor_seat:
+            raise ValueError("actor seat number does not match request")
         if actor.role != request.role_id:
             raise ValueError("actor role does not match state")
         if actor.camp != camp_id:
@@ -136,6 +151,8 @@ class ContextProjector:
             raise ValueError("request phase does not match state")
         if state.round_number != request.round_number:
             raise ValueError("request round does not match state")
+        if request.context_revision < 0:
+            raise ValueError("context revision must be non-negative")
         if request.contract not in contracts:
             raise ValueError("request contract is not registered for actor role")
         return actor
@@ -208,9 +225,9 @@ class ContextProjector:
                 if has_antidote:
                     facts["wolf_kill_target"] = state.last_wolf_kill_target
             elif hasattr(actor, key):
-                facts[key] = cls._sanitize_value(getattr(actor, key))
+                facts[key] = cls._copy_json_value(getattr(actor, key))
             else:
-                facts[key] = cls._sanitize_value(default)
+                facts[key] = cls._copy_json_value(default)
         return facts
 
     @staticmethod
@@ -225,23 +242,48 @@ class ContextProjector:
         return projected
 
     @classmethod
-    def _sanitize_mapping(
-        cls, value: Mapping[str, object] | None
+    def _project_allowlisted_mapping(
+        cls,
+        value: Mapping[str, object] | None,
+        allowed_fields: frozenset[str],
+        name: str,
     ) -> dict[str, object] | None:
         if value is None:
             return None
         if not isinstance(value, Mapping):
-            raise TypeError("optional projected data must be a mapping")
+            raise TypeError(f"{name} must be a mapping")
         return {
-            key: cls._sanitize_value(item)
+            key: item
             for key, item in value.items()
-            if key not in _SENSITIVE_KEYS
+            if key in allowed_fields and cls._is_scalar(item)
         }
 
     @classmethod
-    def _sanitize_value(cls, value: Any) -> Any:
+    def _project_required_mapping(
+        cls, value: object, allowed_fields: frozenset[str], name: str
+    ) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{name} must be a mapping")
+        projected = cls._project_allowlisted_mapping(value, allowed_fields, name)
+        assert projected is not None
+        return projected
+
+    @staticmethod
+    def _validate_trigger_reason(reason: str | None) -> str | None:
+        if reason is None:
+            return None
+        if reason not in _PUBLIC_TRIGGER_REASONS:
+            raise ValueError("unknown public trigger reason")
+        return reason
+
+    @staticmethod
+    def _is_scalar(value: object) -> bool:
+        return value is None or type(value) in (bool, int, float, str)
+
+    @classmethod
+    def _copy_json_value(cls, value: object) -> object:
         if isinstance(value, Mapping):
-            return cls._sanitize_mapping(value)
+            return {key: cls._copy_json_value(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
-            return tuple(cls._sanitize_value(item) for item in value)
+            return tuple(cls._copy_json_value(item) for item in value)
         return value
