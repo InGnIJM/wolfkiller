@@ -45,46 +45,59 @@ class GameListResponse(BaseModel):
 
 
 class _PublicResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+PositivePublicInt = Annotated[int, Field(gt=0)]
+PublicGamePhase = Literal[
+    "waiting", "role_deal", "night", "dawn", "last_words",
+    "sheriff_election", "speech", "vote_casting", "vote_resolution",
+    "game_over",
+]
+PublicDeathCause = Literal["wolf_kill", "poison", "hunter_shot", "exile"]
+PublicWinningCamp = Literal["good", "werewolf"]
+PublicWinReason = Literal[
+    "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
+]
 
 
 class PublicPlayerResponse(_PublicResponse):
-    seat_number: int
+    seat_number: PositivePublicInt
     is_alive: bool
     is_sheriff: bool
 
 
 class PublicSpeechResponse(_PublicResponse):
-    player_seat: int
+    player_seat: PositivePublicInt
     text: str
-    round_number: int
+    round_number: PositivePublicInt
 
 
 class PublicDeathResponse(_PublicResponse):
-    player_seat: int
-    cause: str
-    round_number: int
+    player_seat: PositivePublicInt
+    cause: PublicDeathCause
+    round_number: PositivePublicInt
 
 
 class PublicVoteResponse(_PublicResponse):
-    voter_seat: int
-    target_seat: Optional[int] = None
-    round_number: int
+    voter_seat: PositivePublicInt
+    target_seat: Optional[PositivePublicInt] = None
+    round_number: PositivePublicInt
 
 
 class PublicVoteResultResponse(_PublicResponse):
-    round_number: int
-    exiled_seat: Optional[int] = Field(default=None, gt=0)
+    round_number: PositivePublicInt
+    exiled_seat: Optional[PositivePublicInt] = None
 
 
 class PublicPhaseResponse(_PublicResponse):
-    phase: str
-    round_number: int
+    phase: PublicGamePhase
+    round_number: PositivePublicInt
 
 
 class PublicWinnerResponse(_PublicResponse):
-    winning_camp: str
-    reason: str
+    winning_camp: PublicWinningCamp
+    reason: PublicWinReason
 
 
 class PublicSpeechReplayEvent(_PublicResponse):
@@ -132,10 +145,10 @@ PublicReplayEvent = Annotated[
 
 class GameDetailResponse(_PublicResponse):
     game_id: str
-    phase: str
-    round_number: int
+    phase: PublicGamePhase
+    round_number: PositivePublicInt
     players: dict[int, PublicPlayerResponse]
-    sheriff: Optional[int]
+    sheriff: Optional[PositivePublicInt]
     speeches: list[PublicSpeechResponse]
     death_history: list[PublicDeathResponse]
     win_result: Optional[PublicWinnerResponse]

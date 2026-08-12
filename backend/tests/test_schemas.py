@@ -12,6 +12,43 @@ from app.api.schemas import (
 
 
 class TestSchemas:
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"voter_seat": "1", "target_seat": "2", "round_number": "3"},
+            {"voter_seat": True, "target_seat": 2, "round_number": 3},
+            {"voter_seat": 1, "target_seat": True, "round_number": 3},
+            {"voter_seat": 1, "target_seat": 2, "round_number": False},
+            {"voter_seat": 0, "target_seat": 2, "round_number": 3},
+            {"voter_seat": 1, "target_seat": 0, "round_number": 3},
+            {"voter_seat": 1, "target_seat": 2, "round_number": -1},
+        ],
+    )
+    def test_public_vote_rejects_coerced_or_non_positive_identifiers(self, payload):
+        with pytest.raises(ValidationError):
+            GameLogsResponse(game_id="abc", events=[{
+                "event_type": "vote", "payload": payload,
+            }])
+
+    @pytest.mark.parametrize(
+        "response_factory, kwargs",
+        [
+            (PublicPlayerResponse, {"seat_number": True, "is_alive": "true", "is_sheriff": False}),
+            (PublicSpeechResponse, {"player_seat": "1", "text": "public", "round_number": 1}),
+            (PublicDeathResponse, {"player_seat": 1, "cause": "secret: seer", "round_number": 1}),
+            (PublicPhaseResponse, {"phase": "secret: seer checked", "round_number": 1}),
+            (PublicWinnerResponse, {"winning_camp": "third_party", "reason": "all_wolves_dead"}),
+            (PublicWinnerResponse, {"winning_camp": "good", "reason": "secret: antidote used"}),
+            (PublicVoteResultResponse, {"round_number": 1, "exiled_seat": False}),
+        ],
+    )
+    def test_public_responses_reject_coercion_and_unknown_public_values(
+        self, response_factory, kwargs,
+    ):
+        with pytest.raises(ValidationError):
+            response_factory(**kwargs)
+
     def test_create_game_request_defaults(self):
         req = CreateGameRequest()
         assert req.num_werewolves == 3
