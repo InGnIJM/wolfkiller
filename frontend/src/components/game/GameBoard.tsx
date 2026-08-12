@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Box, Typography, Button, CircularProgress } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
 import { fetchGameLogs, fetchGameDetail } from '../../api/client';
+import { useWebSocket } from '../../api/websocket';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export default function GameBoard({ onBack, gameId }: Props) {
+  const { connect, disconnect } = useWebSocket();
   const {
     players, phase, roundNumber, winResult, showWinOverlay,
     showHistory, currentSpeaker,
@@ -22,6 +24,11 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    connect(gameId);
+    return disconnect;
+  }, [connect, disconnect, gameId]);
 
   useEffect(() => {
     let cancelled = false;

@@ -9,9 +9,18 @@ import { useGameStore } from '../../../store/gameStore';
 import type { GameLogs, PublicGameState } from '../../../store/types';
 import GameBoard from '../GameBoard';
 
+const { connect, disconnect } = vi.hoisted(() => ({
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+}));
+
 vi.mock('../../../api/client', () => ({
   fetchGameDetail: vi.fn(),
   fetchGameLogs: vi.fn(),
+}));
+
+vi.mock('../../../api/websocket', () => ({
+  useWebSocket: () => ({ connect, disconnect, isConnected: false }),
 }));
 
 vi.mock('../TimelineController', () => ({
@@ -85,6 +94,49 @@ afterEach(() => {
 });
 
 describe('GameBoard public replay', () => {
+  it('connects to the game websocket once without waiting for REST loading', () => {
+    const pendingDetail = deferred<PublicGameState>();
+    vi.mocked(fetchGameDetail).mockReturnValueOnce(pendingDetail.promise);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect).toHaveBeenCalledWith('game-1');
+  });
+
+  it('does not reconnect when rerendered with the same game id', () => {
+    const pendingDetail = deferred<PublicGameState>();
+    vi.mocked(fetchGameDetail).mockReturnValueOnce(pendingDetail.promise);
+
+    const { rerender } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    rerender(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it('disconnects the previous websocket before connecting a different game', () => {
+    const pendingDetail = deferred<PublicGameState>();
+    vi.mocked(fetchGameDetail).mockReturnValue(pendingDetail.promise);
+
+    const { rerender } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    rerender(<GameBoard gameId="game-2" onBack={vi.fn()} />);
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(connect).toHaveBeenNthCalledWith(1, 'game-1');
+    expect(connect).toHaveBeenNthCalledWith(2, 'game-2');
+  });
+
+  it('disconnects the websocket when the board unmounts', () => {
+    const pendingDetail = deferred<PublicGameState>();
+    vi.mocked(fetchGameDetail).mockReturnValueOnce(pendingDetail.promise);
+
+    const { unmount } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    unmount();
+
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
   it('shows the public winner overlay after loading a winner event', async () => {
     render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
 
