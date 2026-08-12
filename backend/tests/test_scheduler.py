@@ -39,8 +39,26 @@ def explode_resolve(context: ActionContext, command: ActionCommand) -> tuple[Gam
 def resolve_event(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
     return (GameEffect(
         derive_effect_id(context.action_key, 1), EffectKind.EMIT_EVENT,
-        context.action_key, payload={"event_type": "DONE", "payload": {"seat": context.actor_seat}},
+        context.action_key, payload={"event_type": "DONE", "payload": {"target_seat": context.actor_seat}},
         expected_revision=context.revision, sort_key=(1,),
+    ),)
+
+
+def fallback_resolve(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
+    if command.action_type != "pass":
+        raise RuntimeError("secret")
+    return resolve_event(context, command)
+
+
+def always_fail(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
+    raise RuntimeError("secret")
+
+
+def react_event(context: ActionContext) -> tuple[GameEffect, ...]:
+    return (GameEffect(
+        derive_effect_id(context.action_key, 1), EffectKind.EMIT_EVENT,
+        context.action_key, payload={"event_type": "REACTED", "payload": {"target_seat": context.actor_seat}},
+        expected_revision=context.revision, source_event_id=context.source_event_id, sort_key=(1,),
     ),)
 
 
@@ -49,6 +67,24 @@ def aggregate_event(context: ActionContext, commands: tuple[ActionCommand, ...])
         derive_effect_id(context.action_key, 1), EffectKind.EMIT_EVENT,
         context.action_key, payload={"event_type": "GROUP", "payload": {"count": len(commands)}},
         expected_revision=context.revision, sort_key=(1,),
+    ),)
+
+
+def fallback_aggregate(context: ActionContext, commands: tuple[ActionCommand, ...]) -> tuple[GameEffect, ...]:
+    if any(command.action_type != "pass" for command in commands):
+        raise RuntimeError("secret")
+    return aggregate_event(context, commands)
+
+
+def failing_aggregate(context: ActionContext, commands: tuple[ActionCommand, ...]) -> tuple[GameEffect, ...]:
+    raise RuntimeError("secret")
+
+
+def response_event(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
+    return (GameEffect(
+        derive_effect_id(context.action_key, 1), EffectKind.EMIT_EVENT,
+        context.action_key, payload={"event_type": "REACTED", "payload": {"target_seat": context.actor_seat}},
+        expected_revision=context.revision, source_event_id=context.source_event_id, sort_key=(1,),
     ),)
 
 
@@ -222,4 +258,169 @@ def test_invalid_utf8_and_rule_execution_pause_are_sanitized() -> None:
     registry = snapshot(spec("r", c))
     with pytest.raises(PipelinePaused) as caught:
         scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert "secret" not in str(caught.value)
+
+
+def test_validation_once_per_attempt_and_provider_failure_is_sanitized() -> None:
+    registry = snapshot(spec("r", contract("c")))
+    engine = scheduler(registry)
+    calls = 0
+    original = engine.validator.validate
+    def counted(*args):
+        nonlocal calls
+        calls += 1
+        return original(*args)
+    engine.validator.validate = counted
+    engine.run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert calls == 1
+    with pytest.raises(PipelinePaused) as caught:
+        scheduler(registry, lambda *args: (_ for _ in ()).throw(RuntimeError("secret"))).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert "secret" not in str(caught.value)
+
+
+def test_nonaggregate_reprojects_each_actor_at_current_revision() -> None:
+    registry = snapshot(spec("r", contract("c")))
+    seen = []
+    def provider(request, context, attempt):
+        seen.append((request.actor_seat, request.context_revision, context.revision))
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+    result = scheduler(registry, provider).run_point(state("r", "r"), SchedulePoint.NIGHT_ACTION)
+    assert seen == [(1, 0, 0), (2, 1, 1)]
+    assert [item.context_revision for item in result.requests] == [0, 1]
+    assert [item.revision for item in result.commits] == [1, 2]
+
+
+def test_rule_failure_retries_fallback_once_and_failure_pauses() -> None:
+    c = contract("c"); object.__setattr__(c, "resolve", fallback_resolve)
+    registry = snapshot(spec("r", c))
+    result = scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert result.commits[0].revision == 1
+    object.__setattr__(c, "resolve", always_fail)
+    with pytest.raises(PipelinePaused):
+        scheduler(registry, lambda *args: ActionCommand(action_type="pass", target_seat=None, reasoning="ok")).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+
+def test_response_queue_enqueues_events_fifo_and_windows_stably() -> None:
+    c = contract("react", responses=frozenset({"E"}))
+    registry = snapshot(spec("r", c)); queue = ResponseQueue(registry)
+    first = DomainEvent("event:" + "1" * 16, "E", {"target_seat": 1})
+    second = DomainEvent("event:" + "2" * 16, "E", {"target_seat": 1})
+    assert queue.enqueue(first, depth=0) is True
+    assert queue.enqueue(first, depth=0) is False
+    assert queue.enqueue(second, depth=1) is True
+    assert queue.pop(state("r"))[0].event_id == first.event_id
+    assert queue.pop(state("r"))[0].event_id == second.event_id
+    assert queue.pop(state("r")) is None
+
+
+def test_run_point_drains_reaction_events_breadth_first() -> None:
+    primary = contract("primary")
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "react", react_event)
+    registry = snapshot(spec("r", primary, response))
+    result = scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert [event["event_type"] for event in result.events] == ["DONE", "REACTED"]
+    assert [commit.revision for commit in result.commits] == [1, 2]
+    assert len(result.requests) == 2
+
+
+def test_point_result_validates_elements_and_bounded_json() -> None:
+    with pytest.raises(TypeError): PointResult((object(),), (), (), "d")
+    with pytest.raises(TypeError): PointResult((), (object(),), (), "d")
+    with pytest.raises(TypeError): PointResult((), (), (object(),), "d")
+    cycle = {}; cycle["self"] = cycle
+    with pytest.raises(ValueError): PointResult((), (), (cycle,), "d")
+
+
+def test_aggregate_rerun_is_idempotent() -> None:
+    registry = snapshot(spec("r", contract("group", aggregate=True))); game = state("r", "r")
+    engine = scheduler(registry)
+    first = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    second = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert second.commits == first.commits
+    assert engine._revision(game) == 1
+
+
+def test_frozen_json_limits_and_scalar_paths() -> None:
+    payload = {"none": None, "bool": True, "int": 1, "float": 1.5, "list": ["x"]}
+    event = DomainEvent("event:" + "e" * 16, "E", payload)
+    assert event.payload["float"] == 1.5 and event.payload["list"] == ("x",)
+    for bad in (-1, 2_147_483_648, float("nan"), object(), {1: "x"}):
+        with pytest.raises((TypeError, ValueError)):
+            DomainEvent("event:" + "e" * 16, "E", {"bad": bad})
+    deep = value = {}
+    for _ in range(65): value["x"] = {}; value = value["x"]
+    with pytest.raises(ValueError): DomainEvent("event:" + "e" * 16, "E", deep)
+    with pytest.raises(ValueError): DomainEvent("event:" + "e" * 16, "E", {str(i): i for i in range(10_001)})
+
+
+def test_queue_strict_enqueue_pop_open_limits_and_reason_policy() -> None:
+    registry = snapshot(spec("r", contract("react", responses=frozenset({"E"}))))
+    queue = ResponseQueue(registry, max_events=1)
+    with pytest.raises(TypeError): queue.enqueue(object(), depth=0)
+    with pytest.raises(TypeError): queue.pop(object())
+    first = DomainEvent("event:" + "7" * 16, "E", {"target_seat": 1}, "reason")
+    queue.enqueue(first, depth=0)
+    assert queue.pop(state("r"))[2] == ()
+    with pytest.raises(ResponseLimitExceeded): queue.enqueue(DomainEvent("event:" + "8" * 16, "E", {}), depth=0)
+    queue = ResponseQueue(registry, max_events=0)
+    with pytest.raises(ResponseLimitExceeded): queue.open(state("r"), DomainEvent("event:" + "9" * 16, "E", {}), depth=0)
+
+
+def test_response_without_react_uses_provider_and_resolver() -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "resolve", response_event)
+    registry = snapshot(spec("r", contract("primary"), response))
+    result = scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert [event["event_type"] for event in result.events] == ["DONE", "REACTED"]
+
+
+def test_aggregate_fallback_success_and_failures_pause() -> None:
+    c = contract("group", aggregate=True); object.__setattr__(c, "aggregate", fallback_aggregate)
+    registry = snapshot(spec("r", c))
+    assert scheduler(registry).run_point(state("r", "r"), SchedulePoint.NIGHT_ACTION).commits[0].revision == 1
+    object.__setattr__(c, "aggregate", failing_aggregate)
+    with pytest.raises(PipelinePaused): scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    with pytest.raises(PipelinePaused):
+        scheduler(registry, lambda *args: ActionCommand(action_type="pass", target_seat=None, reasoning="ok")).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+
+def test_internal_response_failures_are_sanitized() -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "react", always_fail)
+    registry = snapshot(spec("r", contract("primary"), response))
+    with pytest.raises(PipelinePaused): scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    primary = contract("bad")
+    object.__setattr__(primary, "resolve", lambda context, command: (GameEffect(
+        derive_effect_id(context.action_key, 1), EffectKind.EMIT_EVENT, context.action_key,
+        payload={"event_type": "DONE", "payload": {"target_seat": context.actor_seat, "cause": "bad reason"}},
+        expected_revision=context.revision, sort_key=(1,),
+    ),))
+    with pytest.raises(PipelinePaused): scheduler(snapshot(spec("r", primary))).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+
+def test_defensive_response_boundaries(monkeypatch) -> None:
+    registry = snapshot(spec("r", contract("c"))); game = state("r")
+    queue = ResponseQueue(registry)
+    event = DomainEvent("event:" + "a" * 16, "E", {"target_seat": 1})
+    queue.enqueue(event, depth=0)
+    assert queue.open(game, event, depth=0) == ()
+    assert queue._open_new(game, event, 0) == ()
+    with pytest.raises(PipelinePaused): Scheduler._domain(object(), 0, {})
+
+    bad_window = ResponseWindow("w", event.event_id, "missing", 1, 0)
+    calls = iter([(event, 0, (bad_window,)), None])
+    monkeypatch.setattr(ResponseQueue, "pop", lambda self, state: next(calls))
+    with pytest.raises(PipelinePaused): scheduler(registry).run_point(game, SchedulePoint.DAY_ACTION)
+
+
+def test_response_projector_failure_is_sanitized() -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    registry = snapshot(spec("r", contract("primary"), response)); engine = scheduler(registry)
+    original = engine.projector.project
+    def failing(*args, **kwargs):
+        if kwargs.get("source_event_id") is not None: raise RuntimeError("secret")
+        return original(*args, **kwargs)
+    engine.projector.project = failing
+    with pytest.raises(PipelinePaused) as caught: engine.run_point(state("r"), SchedulePoint.NIGHT_ACTION)
     assert "secret" not in str(caught.value)

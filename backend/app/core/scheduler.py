@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -19,6 +21,7 @@ from app.roles.registry import RegistrySnapshot
 
 _EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
+_INT32 = 2_147_483_647
 
 
 class ResponseLimitExceeded(RuntimeError): pass
@@ -33,13 +36,29 @@ def _text(value: object, name: str, token: bool = False) -> str:
     return value
 
 
-def _freeze(value: object) -> object:
-    if isinstance(value, Mapping):
-        if any(type(key) is not str for key in value): raise TypeError("mapping keys must be strings")
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, (list, tuple)): return tuple(_freeze(item) for item in value)
-    if value is None or type(value) in (str, int, float, bool): return value
-    raise TypeError("unsupported frozen value")
+def _freeze(value: object, depth: int = 0, active: set[int] | None = None,
+            nodes: list[int] | None = None) -> object:
+    if depth > 64: raise ValueError("frozen value exceeds maximum depth")
+    nodes = [0] if nodes is None else nodes; nodes[0] += 1
+    if nodes[0] > 10_000: raise ValueError("frozen value is too large")
+    if value is None or type(value) is bool: return value
+    if type(value) is int:
+        if not 0 <= value <= _INT32: raise ValueError("integer out of range")
+        return value
+    if type(value) is float:
+        if not math.isfinite(value): raise ValueError("number must be finite")
+        return value
+    if type(value) is str: return _text(value, "value")
+    if not isinstance(value, (Mapping, list, tuple)): raise TypeError("unsupported frozen value")
+    active = set() if active is None else active; identity = id(value)
+    if identity in active: raise ValueError("frozen value contains a cycle")
+    active.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            if any(type(key) is not str for key in value): raise TypeError("mapping keys must be strings")
+            return MappingProxyType({key: _freeze(item, depth + 1, active, nodes) for key, item in value.items()})
+        return tuple(_freeze(item, depth + 1, active, nodes) for item in value)
+    finally: active.remove(identity)
 
 
 @dataclass(frozen=True)
@@ -84,6 +103,9 @@ class PointResult:
     def __post_init__(self) -> None:
         for name in ("requests", "commits", "events", "faults"):
             if type(getattr(self, name)) is not tuple: raise TypeError(f"{name} must be a tuple")
+        if any(type(item) is not IssuedActionRequest for item in self.requests): raise TypeError("invalid request")
+        if any(type(item) is not CommitResult for item in self.commits): raise TypeError("invalid commit")
+        if any(not isinstance(item, Mapping) for item in self.events + self.faults): raise TypeError("invalid result mapping")
         _text(self.state_digest, "state_digest")
         object.__setattr__(self, "events", tuple(_freeze(event) for event in self.events))
         object.__setattr__(self, "faults", tuple(_freeze(fault) for fault in self.faults))
@@ -105,30 +127,47 @@ class ResponseQueue:
         for value, name in ((max_depth, "max_depth"), (max_events, "max_events")):
             if type(value) is not int or value < 0: raise ValueError(f"invalid {name}")
         self.registry, self.max_depth, self.max_events = registry, max_depth, max_events
-        self._seen_events: set[str] = set(); self._windows: dict[str, ResponseWindow] = {}
+        self._events: deque[tuple[DomainEvent, int]] = deque(); self._seen: set[str] = set()
+        self._windows: dict[str, tuple[ResponseWindow, ...]] = {}
+
+    def enqueue(self, event: DomainEvent, *, depth: int) -> bool:
+        if type(event) is not DomainEvent: raise TypeError("event must be DomainEvent")
+        self._depth(depth)
+        if event.event_id in self._seen: return False
+        if len(self._seen) >= self.max_events: raise ResponseLimitExceeded("event limit exceeded")
+        self._seen.add(event.event_id); self._events.append((event, depth)); return True
+
+    def pop(self, state: GameState) -> tuple[DomainEvent, int, tuple[ResponseWindow, ...]] | None:
+        if type(state) is not GameState: raise TypeError("state must be GameState")
+        if not self._events: return None
+        event, depth = self._events.popleft()
+        return event, depth, self._open_new(state, event, depth)
 
     def open(self, state: GameState, event: DomainEvent, *, depth: int) -> tuple[ResponseWindow, ...]:
         if type(state) is not GameState or type(event) is not DomainEvent: raise TypeError("invalid response input")
+        self._depth(depth)
+        if event.event_id in self._windows: return self._windows[event.event_id]
+        if event.event_id not in self._seen:
+            if len(self._seen) >= self.max_events: raise ResponseLimitExceeded("event limit exceeded")
+            self._seen.add(event.event_id)
+        return self._open_new(state, event, depth)
+
+    def _depth(self, depth: int) -> None:
         if type(depth) is not int or depth < 0: raise ValueError("invalid depth")
         if depth > self.max_depth: raise ResponseLimitExceeded("response depth exceeded")
-        if event.event_id in self._seen_events:
-            return tuple(window for window in self._windows.values() if window.event_id == event.event_id)
-        if len(self._seen_events) >= self.max_events: raise ResponseLimitExceeded("event limit exceeded")
-        self._seen_events.add(event.event_id)
+
+    def _open_new(self, state: GameState, event: DomainEvent, depth: int) -> tuple[ResponseWindow, ...]:
+        if event.event_id in self._windows: return self._windows[event.event_id]
         target = event.payload.get("target_seat")
-        if type(target) is not int or target <= 0: return ()
-        player = state.players.get(target)
-        if player is None: return ()
+        player = state.players.get(target) if type(target) is int and target > 0 else None
+        spec = None if player is None else self.registry.specs.get(player.role)
         windows = []
-        spec = self.registry.specs.get(player.role)
-        if spec is None: return ()
-        contracts = sorted(spec.contracts, key=lambda c: (c.order, spec.role_id, c.contract_id, target))
-        for contract in contracts:
+        for contract in () if spec is None else sorted(spec.contracts, key=lambda c: (c.order, spec.role_id, c.contract_id, target)):
             if event.event_type not in contract.response_event_types: continue
-            if event.reason is not None and event.reason not in contract.response_reasons: continue
-            window = ResponseWindow(stable_window_id(state.game_id, event.event_id, contract.contract_id, target), event.event_id, contract.contract_id, target, depth)
-            self._windows.setdefault(window.window_id, window); windows.append(self._windows[window.window_id])
-        return tuple(windows)
+            if contract.response_reasons and event.reason not in contract.response_reasons: continue
+            if not contract.response_reasons and event.reason is not None: continue
+            windows.append(ResponseWindow(stable_window_id(state.game_id, event.event_id, contract.contract_id, target), event.event_id, contract.contract_id, target, depth))
+        self._windows[event.event_id] = tuple(windows); return self._windows[event.event_id]
 
 
 class Scheduler:
@@ -162,40 +201,102 @@ class Scheduler:
                     if applies: requests.append(request)
         return tuple(sorted(requests, key=lambda r: (r.contract.order, r.role_id, r.contract.contract_id, r.actor_seat)))
 
-    def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
-        requests = self.issue(state, point, self.registry); accepted = []
-        for request in requests:
-            context = self.projector.project(state, request, self.registry)
-            command = None
-            for attempt in (0, 1):
-                command = self.command_provider(request, context, attempt)
-                if type(command) is not ActionCommand: raise TypeError("provider must return ActionCommand")
-                if not self.validator.validate(context, request.contract, command): break
-            if command is None or self.validator.validate(context, request.contract, command):
-                command = ActionCommand(action_type=request.contract.fallback_action_type, target_seat=None, reasoning="safe fallback")
-                if self.validator.validate(context, request.contract, command): raise PipelinePaused("fallback command invalid")
-            accepted.append((request, context, command))
-        commits, events = [], []
-        groups: dict[tuple[str, str], list] = {}
-        for item in accepted: groups.setdefault((item[0].role_id, item[0].contract.contract_id), []).append(item)
-        for items in groups.values():
-            request, context, command = items[0]; role = self.registry.require(request.role_id)
-            try:
-                if request.contract.aggregate is None:
-                    batches = [(context, self.resolver.resolve_effects(context, role, request.contract, item[2])) for item in items]
-                else:
-                    key = _digest(*(item[0].action_key for item in items))
-                    group_request = IssuedActionRequest(request.actor_seat, request.role_id, request.contract, self._revision(state), request.round_number, request.phase, key, key)
-                    group_context = self.projector.project(state, group_request, self.registry)
-                    batches = [(group_context, self.resolver.aggregate_effects(group_context, role, request.contract, tuple(item[2] for item in items)))]
+    def _bind(self, request: IssuedActionRequest, state: GameState, *, action_key: str | None = None) -> IssuedActionRequest:
+        return IssuedActionRequest(request.actor_seat, request.role_id, request.contract, self._revision(state),
+                                   request.round_number, request.phase, request.window_id,
+                                   request.action_key if action_key is None else action_key)
+
+    def _command(self, request: IssuedActionRequest, context: ActionContext) -> ActionCommand:
+        for attempt in (0, 1):
+            try: command = self.command_provider(request, context, attempt)
+            except Exception: raise PipelinePaused("command provider failed") from None
+            if type(command) is not ActionCommand: raise TypeError("provider must return ActionCommand")
+            violations = self.validator.validate(context, request.contract, command)
+            if not violations: return command
+        return self._fallback(context, request.contract)
+
+    def _fallback(self, context: ActionContext, contract: ActionContract) -> ActionCommand:
+        command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="safe fallback")
+        if self.validator.validate(context, contract, command): raise PipelinePaused("fallback command invalid")
+        return command
+
+    def _resolve_with_fallback(self, context: ActionContext, role: RoleSpec,
+                               contract: ActionContract, command: ActionCommand):
+        try: return self.resolver.resolve_effects(context, role, contract, command)
+        except RuleExecutionError:
+            if command.action_type == contract.fallback_action_type: raise PipelinePaused("rule execution failed") from None
+            fallback = self._fallback(context, contract)
+            try: return self.resolver.resolve_effects(context, role, contract, fallback)
             except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
-            for bound_context, effects in batches:
-                permission = EffectPermission(bound_context.actor_seat, role.allowed_effects, request.contract.allowed_effects,
-                    frozenset(bound_context.facts.get("alive_seats", ())) | {bound_context.actor_seat},
-                    role.visibility_namespaces & request.contract.visibility_namespaces)
-                commit = self.applier.apply(state, effects, permission); commits.append(commit); events.extend(commit.events)
+
+    @staticmethod
+    def _permission(context: ActionContext, role: RoleSpec, contract: ActionContract) -> EffectPermission:
+        return EffectPermission(context.actor_seat, role.allowed_effects, contract.allowed_effects,
+            frozenset(context.facts.get("alive_seats", ())) | {context.actor_seat},
+            role.visibility_namespaces & contract.visibility_namespaces)
+
+    def _apply(self, state: GameState, context: ActionContext, role: RoleSpec,
+               contract: ActionContract, effects, commits: list, events: list) -> CommitResult:
+        commit = self.applier.apply(state, effects, self._permission(context, role, contract))
+        commits.append(commit); events.extend(commit.events); return commit
+
+    @staticmethod
+    def _domain(commit: CommitResult, ordinal: int, raw: Mapping[str, object]) -> DomainEvent:
+        try:
+            if not isinstance(raw, Mapping) or type(raw.get("event_type")) is not str or not isinstance(raw.get("payload"), Mapping): raise TypeError
+            payload = dict(raw["payload"])
+            if "seat" in payload and "target_seat" not in payload: payload["target_seat"] = payload.pop("seat")
+            reason = payload.get("cause") if type(payload.get("cause")) is str else None
+            return DomainEvent("event:" + _digest(commit.action_key, ordinal), raw["event_type"], payload, reason)
+        except Exception: raise PipelinePaused("invalid internal event") from None
+
+    def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
+        issued = self.issue(state, point, self.registry); actual = []; commits = []; events = []
+        queue = ResponseQueue(self.registry); groups: dict[tuple[str, str], list[IssuedActionRequest]] = {}
+        for request in issued: groups.setdefault((request.role_id, request.contract.contract_id), []).append(request)
+        for members in groups.values():
+            contract = members[0].contract; role = self.registry.require(members[0].role_id)
+            if contract.aggregate is None:
+                for member in members:
+                    request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
+                    command = self._command(request, context); effects = self._resolve_with_fallback(context, role, contract, command)
+                    actual.append(request); commit = self._apply(state, context, role, contract, effects, commits, events)
+                    for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=0)
+            else:
+                bound = tuple(self._bind(member, state) for member in members)
+                contexts = tuple(self.projector.project(state, request, self.registry) for request in bound)
+                commands = tuple(self._command(request, context) for request, context in zip(bound, contexts))
+                key = _digest(*(sorted(request.action_key for request in bound)))
+                group_request = self._bind(bound[0], state, action_key=key)
+                group_context = self.projector.project(state, group_request, self.registry)
+                try: effects = self.resolver.aggregate_effects(group_context, role, contract, commands)
+                except RuleExecutionError:
+                    if all(command.action_type == contract.fallback_action_type for command in commands): raise PipelinePaused("rule execution failed") from None
+                    fallbacks = tuple(self._fallback(context, contract) for context in contexts)
+                    try: effects = self.resolver.aggregate_effects(group_context, role, contract, fallbacks)
+                    except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
+                actual.extend(bound); commit = self._apply(state, group_context, role, contract, effects, commits, events)
+                for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=0)
+        while (entry := queue.pop(state)) is not None:
+            event, depth, windows = entry
+            for window in windows:
+                player = state.players.get(window.actor_seat); role = None if player is None else self.registry.specs.get(player.role)
+                contract = None if role is None else next((item for item in role.contracts if item.contract_id == window.contract_id), None)
+                if contract is None: raise PipelinePaused("invalid response window")
+                base = IssuedActionRequest(window.actor_seat, role.role_id, contract, self._revision(state), state.round_number,
+                    state.phase.value if hasattr(state.phase, "value") else state.phase, window.window_id, window.window_id)
+                trigger = {"event_id": event.event_id, "type": event.event_type, **{key: event.payload[key] for key in ("source_seat", "target_seat", "cause", "round_number", "phase") if key in event.payload}}
+                try: context = self.projector.project(state, base, self.registry, source_event_id=event.event_id, trigger_event=trigger, trigger_reason=event.reason)
+                except Exception: raise PipelinePaused("invalid response context") from None
+                if contract.react is not None:
+                    try: effects = self.resolver.react_effects(context, role, contract)
+                    except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
+                else:
+                    command = self._command(base, context); effects = self._resolve_with_fallback(context, role, contract, command)
+                actual.append(base); commit = self._apply(state, context, role, contract, effects, commits, events)
+                for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=depth + 1)
         digest = commits[-1].state_digest if commits else _digest(state.game_id, self._revision(state))
-        return PointResult(requests, tuple(commits), tuple(events), digest)
+        return PointResult(tuple(actual), tuple(commits), tuple(events), digest)
 
     @staticmethod
     def can_advance(*, pending_requests: int, pending_effects: int, queued_events: int) -> bool:
