@@ -1,7 +1,29 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  test: {
+    coverage: {
+      provider: 'v8',
+      reporter: ['text'],
+      include: [
+        'src/store/gameStore.ts',
+        'src/api/websocket.ts',
+        'src/components/game/GameBoard.tsx',
+        'src/components/game/TimelineController.tsx',
+        'src/components/game/HistoryPanel.tsx',
+        'src/components/game/WinOverlay.tsx',
+        'src/components/lobby/GameList.tsx',
+      ],
+      exclude: ['src/**/test/**', 'src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+      thresholds: {
+        statements: 100,
+        branches: 100,
+        functions: 100,
+        lines: 100,
+      },
+    },
+  },
 })

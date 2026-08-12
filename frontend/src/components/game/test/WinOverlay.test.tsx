@@ -1,0 +1,58 @@
+// @vitest-environment jsdom
+
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { useGameStore } from '../../../store/gameStore';
+import WinOverlay from '../WinOverlay';
+
+beforeEach(() => {
+  useGameStore.getState().reset();
+});
+
+afterEach(() => {
+  cleanup();
+  useGameStore.getState().reset();
+  vi.useRealTimers();
+});
+
+describe('WinOverlay', () => {
+  it('dismisses the result, rewinds, and starts replay after the delay', () => {
+    vi.useFakeTimers();
+    const dismissWinOverlay = vi.fn();
+    const seekTo = vi.fn();
+    const play = vi.fn();
+    useGameStore.setState({ dismissWinOverlay, seekTo, play });
+
+    render(
+      <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '从头播放' }));
+
+    expect(dismissWinOverlay).toHaveBeenCalledOnce();
+    expect(seekTo).toHaveBeenCalledWith(0);
+    expect(play).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(100));
+    expect(play).toHaveBeenCalledOnce();
+  });
+
+  it('supports closing and displays unknown public result values verbatim', () => {
+    const dismissWinOverlay = vi.fn();
+    useGameStore.setState({ dismissWinOverlay });
+
+    render(
+      <WinOverlay
+        winResult={{
+          winning_camp: 'mystery_camp' as never,
+          reason: 'unlisted_reason' as never,
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/mystery_camp/)).toBeVisible();
+    expect(screen.getByText('unlisted_reason')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '查看对局' }));
+    expect(dismissWinOverlay).toHaveBeenCalledOnce();
+  });
+});
