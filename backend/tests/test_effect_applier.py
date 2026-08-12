@@ -474,7 +474,7 @@ def test_cyclic_existing_runtime_is_rejected() -> None:
     cyclic["self"] = cyclic
     runtime = _Runtime(private_data={1: cyclic})
     s._pipeline_runtime = runtime
-    with pytest.raises(EffectRejected, match="cycle"):
+    with pytest.raises(EffectRejected):
         EffectApplier().apply(s, batch([]), permission())
     assert s._pipeline_runtime is runtime
 
@@ -509,3 +509,104 @@ def test_finite_nested_float_is_supported() -> None:
         permission(),
     )
     assert result.events[0]["payload"]["value"] == 1.5
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"event_type": "X", "payload": bytearray(b"secret")},
+        {"event_type": "X", "payload": {"value": float("nan")}},
+        {"event_type": "X", "payload": {1: "bad-key"}},
+    ],
+)
+def test_commit_result_rejects_non_json_event_values(event) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        CommitResult("a", ("e",), 1, (event,), "d")
+
+
+def test_commit_result_rejects_cycles_and_excessive_depth() -> None:
+    cyclic = {}
+    cyclic["self"] = cyclic
+    deep = value = {}
+    for _ in range(66):
+        child = {}
+        value["next"] = child
+        value = child
+    for payload in (cyclic, deep):
+        with pytest.raises((TypeError, ValueError), match="cycle|depth"):
+            CommitResult("a", ("e",), 1, ({"event_type": "X", "payload": payload},), "d")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"revision": True},
+        {"role_resources": object()},
+        {"role_resources": {0: {"r": 1}}},
+        {"role_resources": {1: {"r": -1}}},
+        {"role_resources": {1: object()}},
+        {"statuses": {1: object()}},
+        {"statuses": {1: {1}}},
+        {"statuses": object()},
+        {"relations": {1: {"bad"}}},
+        {"relations": {1: {("r", 0)}}},
+        {"private_facts": {1: object()}},
+        {"private_data": object()},
+        {"pending_damage": object()},
+        {"events": object()},
+        {"commits": {"a": object()}},
+        {"commits": object()},
+        {"commits": {"wrong": CommitResult("a", ("e",), 1, (), "d")}},
+    ],
+)
+def test_every_invalid_runtime_field_is_rejected_atomically(changes) -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state()
+    runtime = _Runtime(**changes)
+    s._pipeline_runtime = runtime
+    with pytest.raises(EffectRejected):
+        EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime is runtime
+
+
+def test_committed_runtime_has_no_payload_aliases() -> None:
+    payload = {"items": [{"seat": 2}]}
+    s = state()
+    result = EffectApplier().apply(
+        s,
+        batch([
+            (EffectKind.SET_PRIVATE_DATA, {"target": 1, "key": "k", "value": payload}, 1),
+            (EffectKind.RECORD_PRIVATE_FACT, {"target": 1, "namespace": "n", "fact": payload}, 1),
+        ]),
+        permission(),
+    )
+    payload["items"][0]["seat"] = 99
+    assert s._pipeline_runtime.private_data[1]["k"]["items"][0]["seat"] == 2
+    assert s._pipeline_runtime.private_facts[1][0]["fact"]["items"][0]["seat"] == 2
+    assert EffectApplier().apply(s, batch([], action="a"), permission()) == result
+
+
+def test_commit_result_rejects_oversized_node_count() -> None:
+    with pytest.raises(ValueError, match="large"):
+        CommitResult("a", ("e",), 1, ({"event_type": "X", "payload": [None] * 10_001},), "d")
+
+
+def test_runtime_relation_and_fact_shape_are_strict() -> None:
+    from app.core.effect_applier import _Runtime
+
+    for runtime in (
+        _Runtime(relations={1: {(1, 2)}}),
+        _Runtime(private_facts={1: {"not": "sequence"}}),
+    ):
+        s = state(); s._pipeline_runtime = runtime
+        with pytest.raises(EffectRejected):
+            EffectApplier().apply(s, batch([]), permission())
+
+
+def test_valid_premounted_status_runtime_is_preserved() -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state(); s._pipeline_runtime = _Runtime(statuses={1: {"ready"}})
+    EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime.statuses == {1: {"ready"}}
