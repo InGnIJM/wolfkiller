@@ -128,8 +128,8 @@ class _Runtime:
             resources = _resource_map(self.role_resources)
             statuses = _set_map(self.statuses, "status", relation=False)
             relations = _set_map(self.relations, "relation", relation=True)
-            data = _seat_json(self.private_data, "private_data", sequence=False)
-            facts = _seat_json(self.private_facts, "private_facts", sequence=True)
+            data = _private_data(self.private_data)
+            facts = _private_facts(self.private_facts)
             damage = _json_sequence(self.pending_damage, "pending_damage")
             protection = _json_sequence(self.pending_protection, "pending_protection")
             events = _json_sequence(self.events, "events")
@@ -164,13 +164,20 @@ def _set_item(item: object, name: str, relation: bool) -> object:
         if type(item) is not tuple or len(item) != 2: raise TypeError
         return (_utf8(item[0], name, token=True), _integer(item[1], "relation seat", positive=True))
     except (TypeError, ValueError) as error: raise EffectRejected(f"invalid {name}") from error
-def _seat_json(value: object, name: str, *, sequence: bool) -> dict[int, object]:
-    if not isinstance(value, Mapping): raise EffectRejected(f"invalid {name}")
-    result = {}
-    for seat, item in value.items():
-        if sequence and type(item) not in (list, tuple): raise EffectRejected(f"invalid {name}")
-        result[_seat(seat)] = _json(item, name)
-    return result
+def _private_data(value: object) -> dict[int, dict]:
+    if not isinstance(value, Mapping): raise EffectRejected("invalid private_data")
+    if any(not isinstance(item, Mapping) for item in value.values()): raise EffectRejected("invalid private_data")
+    return {_seat(seat): dict(_json(item, "private_data")) for seat, item in value.items()}
+def _private_facts(value: object) -> dict[int, list]:
+    return dict(_private_fact_row(seat, records) for seat, records in value.items())
+def _private_fact_row(seat: object, records: object) -> tuple[int, list]:
+    _fact_sequence(records); return _seat(seat), [_private_fact(record) for record in records]
+def _fact_sequence(value: object) -> bool:
+    if type(value) not in (list, tuple): raise EffectRejected("invalid private_facts")
+    return True
+def _private_fact(record: object) -> dict:
+    if not isinstance(record, Mapping) or set(record) != {"namespace", "fact"} or not isinstance(record.get("fact"), Mapping): raise EffectRejected("invalid private fact")
+    return {"namespace": _token_field(record, "namespace"), "fact": _json(record["fact"], "private_fact")}
 def _json_sequence(value: object, name: str) -> tuple:
     if type(value) not in (list, tuple): raise EffectRejected(f"invalid {name}")
     return tuple(_json(item, name) for item in value)
@@ -178,8 +185,7 @@ def _commit_map(value: object) -> dict[str, CommitResult]:
     if not isinstance(value, Mapping): raise EffectRejected("invalid commits")
     result = {}
     for key, commit in value.items():
-        if type(key) is not str or type(commit) is not CommitResult or key != commit.action_key:
-            raise EffectRejected("invalid commit ledger")
+        if type(key) is not str or type(commit) is not CommitResult or key != commit.action_key: raise EffectRejected("invalid commit ledger")
         result[key] = commit
     return result
 def _runtime(state: GameState) -> _Runtime:
@@ -258,8 +264,7 @@ def _check_preconditions(effect: GameEffect, runtime: _Runtime, alive: dict[int,
     target = effect.target_seat
     if "target_alive" in effect.preconditions:
         expected = effect.preconditions["target_alive"]
-        if type(expected) is not bool or target is None or alive[target] is not expected:
-            raise EffectRejected("target_alive precondition failed")
+        if type(expected) is not bool or target is None or alive[target] is not expected: raise EffectRejected("target_alive precondition failed")
     if "resource_equals" in effect.preconditions:
         condition = effect.preconditions["resource_equals"]
         if not isinstance(condition, Mapping): raise EffectRejected("resource precondition invalid")
@@ -289,11 +294,9 @@ def _check_preconditions(effect: GameEffect, runtime: _Runtime, alive: dict[int,
 def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime,
                alive: dict[int, bool], events: list[Mapping[str, object]]) -> None:
     kind = effect.kind
-    if kind is EffectKind.ACCEPT_ACTION:
-        return
+    if kind is EffectKind.ACCEPT_ACTION: return
     if kind is EffectKind.EMIT_EVENT:
-        events.append({"event_type": payload["event_type"], "payload": payload["payload"], "visibility": effect.visibility})
-        return
+        events.append({"event_type": payload["event_type"], "payload": payload["payload"], "visibility": effect.visibility}); return
     target = effect.target_seat; assert target is not None
     if kind is EffectKind.SET_RESOURCE:
         runtime.role_resources.setdefault(target, {})[str(payload["resource"])] = int(payload["value"])
@@ -332,8 +335,7 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
         alive[target] = False
         events.append({"event_type": "PLAYER_DIED", "payload": {"seat": target, "cause": payload["cause"]}, "visibility": effect.visibility})
 def _jsonable(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
+    if isinstance(value, Mapping): return {str(key): _jsonable(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
     if isinstance(value, (tuple, list, set, frozenset)):
         items = [_jsonable(item) for item in value]
         return sorted(items, key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False)) if isinstance(value, (set, frozenset)) else items
@@ -352,8 +354,7 @@ def _digest(state: GameState, runtime: _Runtime, alive: dict[int, bool]) -> str:
         "pending_protection": runtime.pending_protection,
         "events": runtime.events,
     }
-    raw = json.dumps(_jsonable(document), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps(_jsonable(document), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 class EffectApplier:
     def apply(self, state: GameState, effects: tuple[GameEffect, ...],
               permission: EffectPermission) -> CommitResult:
@@ -394,7 +395,6 @@ class EffectApplier:
         digest = _digest(state, simulated, alive)
         result = CommitResult(action_key, tuple(ids), simulated.revision, tuple(generated_events), digest)
         simulated.commits[action_key] = result
-        for seat, is_alive in alive.items():
-            state.players[seat].is_alive = is_alive
+        for seat, is_alive in alive.items(): state.players[seat].is_alive = is_alive
         setattr(state, "_pipeline_runtime", simulated)
         return result

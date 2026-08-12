@@ -610,3 +610,55 @@ def test_valid_premounted_status_runtime_is_preserved() -> None:
     s = state(); s._pipeline_runtime = _Runtime(statuses={1: {"ready"}})
     EffectApplier().apply(s, batch([]), permission())
     assert s._pipeline_runtime.statuses == {1: {"ready"}}
+
+
+def test_premounted_private_fact_remains_mutable_and_new_fact_appends() -> None:
+    from app.core.effect_applier import _Runtime
+
+    old = {"namespace": "old", "fact": {}}
+    incoming = {"nested": [{"seat": 2}]}
+    s = state(); s._pipeline_runtime = _Runtime(private_facts={1: [old]})
+    EffectApplier().apply(
+        s,
+        batch([(EffectKind.RECORD_PRIVATE_FACT, {"target": 1, "namespace": "new", "fact": incoming}, 1)]),
+        permission(),
+    )
+    incoming["nested"][0]["seat"] = 99
+    assert s._pipeline_runtime.private_facts[1][0] == old
+    assert s._pipeline_runtime.private_facts[1][1]["fact"]["nested"][0]["seat"] == 2
+
+
+@pytest.mark.parametrize(
+    "private_facts",
+    [
+        {1: ["not-record"]},
+        {1: [{"namespace": "old"}]},
+        {1: [{"namespace": "old", "fact": {}, "extra": True}]},
+        {1: [{"namespace": 1, "fact": {}}]},
+        {1: [{"namespace": "old", "fact": []}]},
+    ],
+)
+def test_invalid_private_fact_records_are_rejected(private_facts) -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state(); runtime = _Runtime(private_facts=private_facts); s._pipeline_runtime = runtime
+    with pytest.raises(EffectRejected):
+        EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime is runtime
+
+
+def test_non_mapping_private_data_value_is_rejected_atomically() -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state(); runtime = _Runtime(private_data={1: 42}); s._pipeline_runtime = runtime
+    with pytest.raises(EffectRejected):
+        EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime is runtime
+
+
+def test_empty_premounted_private_fact_map_is_valid() -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state(); s._pipeline_runtime = _Runtime(private_facts={})
+    EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime.private_facts == {}
