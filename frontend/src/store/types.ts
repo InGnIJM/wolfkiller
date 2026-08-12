@@ -16,6 +16,7 @@ export type GamePhase =
 export type DeathCause = 'wolf_kill' | 'poison' | 'hunter_shot' | 'exile';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason = 'all_gods_dead' | 'all_villagers_dead' | 'all_wolves_dead';
+export type UtcTimestamp = `${string}Z`;
 
 export interface PublicPlayerState {
   seat_number: number;
@@ -62,13 +63,19 @@ export interface PublicGameState {
   win_result: WinResult | null;
 }
 
+type PublicReplayEnvelope<TType extends string, TPayload> = {
+  timestamp: UtcTimestamp;
+  event_type: TType;
+  payload: TPayload;
+};
+
 export type PublicReplayEvent =
-  | { event_type: 'speech'; payload: SpeechRecord }
-  | { event_type: 'death'; payload: DeathRecord }
-  | { event_type: 'vote'; payload: VoteRecord }
-  | { event_type: 'vote_result'; payload: VoteResult }
-  | { event_type: 'phase'; payload: { phase: GamePhase; round_number: number } }
-  | { event_type: 'winner'; payload: WinResult };
+  | PublicReplayEnvelope<'speech', SpeechRecord>
+  | PublicReplayEnvelope<'death', DeathRecord>
+  | PublicReplayEnvelope<'vote', VoteRecord>
+  | PublicReplayEnvelope<'vote_result', VoteResult>
+  | PublicReplayEnvelope<'phase', { phase: GamePhase; round_number: number }>
+  | PublicReplayEnvelope<'winner', WinResult>;
 
 export interface GameLogs {
   game_id: string;
