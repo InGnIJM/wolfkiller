@@ -6,6 +6,7 @@ import random
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from threading import RLock
 from types import MappingProxyType
 from typing import get_type_hints
 
@@ -94,33 +95,38 @@ class RoleRegistry:
     def __init__(self) -> None:
         self._specs: dict[str, LegacyRoleSpec] = {}
         self._pipeline_specs: dict[str, PipelineRoleSpec] = {}
+        self._lock = RLock()
 
     def register(self, spec: LegacyRoleSpec) -> None:
-        if not isinstance(spec, LegacyRoleSpec):
+        if type(spec) is not LegacyRoleSpec:
             raise TypeError(
                 "legacy register requires app.models.contracts.RoleSpec"
             )
-        if spec.role_id in self._specs:
-            raise ValueError(f"role already registered: {spec.role_id}")
-        self._specs[spec.role_id] = spec
+        with self._lock:
+            if spec.role_id in self._specs:
+                raise ValueError(f"role already registered: {spec.role_id}")
+            self._specs[spec.role_id] = spec
 
     def register_pipeline(self, spec: PipelineRoleSpec) -> None:
-        if not isinstance(spec, PipelineRoleSpec):
+        if type(spec) is not PipelineRoleSpec:
             raise TypeError(
                 "pipeline register requires app.models.pipeline.RoleSpec"
             )
-        if spec.role_id in self._pipeline_specs:
-            raise ValueError(f"role already registered: {spec.role_id}")
-        self._pipeline_specs[spec.role_id] = spec
+        with self._lock:
+            if spec.role_id in self._pipeline_specs:
+                raise ValueError(f"role already registered: {spec.role_id}")
+            self._pipeline_specs[spec.role_id] = spec
 
     def freeze(self) -> RegistrySnapshot:
+        with self._lock:
+            local_specs = dict(self._pipeline_specs)
         contract_ids: set[str] = set()
-        known_roles = set(self._pipeline_specs)
-        for spec in dict(sorted(self._pipeline_specs.items())).values():
+        known_roles = set(local_specs)
+        for spec in dict(sorted(local_specs.items())).values():
             self._validate_pipeline_spec(spec, contract_ids, known_roles)
-        specs = MappingProxyType(dict(sorted(self._pipeline_specs.items())))
+        specs = MappingProxyType(dict(sorted(local_specs.items())))
         digest_source = "[" + ",".join(
-            spec.to_json() for spec in specs.values()
+            PipelineRoleSpec.to_json(spec) for spec in specs.values()
         ) + "]"
         digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
         return RegistrySnapshot(specs=specs, digest=digest)
@@ -239,11 +245,11 @@ class RoleRegistry:
         expected_parameters: tuple[tuple[str, object], ...],
         expected_return: object,
     ) -> None:
-        signature = inspect.signature(hook)
-        parameters = tuple(signature.parameters.values())
         try:
+            signature = inspect.signature(hook)
+            parameters = tuple(signature.parameters.values())
             hints = get_type_hints(hook)
-        except (NameError, TypeError) as error:
+        except Exception as error:
             raise ValueError(f"hook signature mismatch: {name}") from error
         if len(parameters) != len(expected_parameters):
             raise ValueError(f"hook signature mismatch: {name}")
@@ -271,10 +277,11 @@ class RoleRegistry:
             raise ValueError(f"hook signature mismatch: {name}")
 
     def require(self, role_id: str) -> LegacyRoleSpec:
-        try:
-            return self._specs[role_id]
-        except KeyError as error:
-            raise ValueError(f"unknown role: {role_id}") from error
+        with self._lock:
+            try:
+                return self._specs[role_id]
+            except KeyError as error:
+                raise ValueError(f"unknown role: {role_id}") from error
 
     def validate_role_counts(
         self, role_counts: Mapping[str, int], player_count: int

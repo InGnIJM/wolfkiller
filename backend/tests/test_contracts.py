@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from threading import Event, Thread
 from types import MappingProxyType
 
 import pytest
@@ -29,6 +30,14 @@ class StubRole:
 
 class DuckSpec:
     role_id = "duck-role"
+
+
+class LegacyRoleSpecSubclass(RoleSpec):
+    pass
+
+
+class PipelineRoleSpecSubclass(PipelineRoleSpec):
+    pass
 
 
 def applicable_hook(context: ActionContext) -> bool:
@@ -87,6 +96,11 @@ def wrong_return_hook(context: ActionContext) -> object:
 
 
 def unresolved_type_hook(context: "MissingContext") -> bool:
+    del context
+    return True
+
+
+def broken_signature_hook(context: ActionContext) -> bool:
     del context
     return True
 
@@ -349,6 +363,79 @@ class TestPipelineRoleRegistry:
         assert dict(registry.freeze().specs) == {}
         with pytest.raises(ValueError, match="unknown role"):
             registry.require("duck-role")
+
+    def test_both_registration_entries_reject_spec_subclasses(self):
+        legacy = builtin_registry.require("wolf-killer-villager")
+        legacy_subclass = LegacyRoleSpecSubclass(
+            legacy.role_id, legacy.camp, legacy.role_factory, legacy.contracts
+        )
+        pipeline = _pipeline_spec()
+        pipeline_subclass = PipelineRoleSpecSubclass(
+            role_id=pipeline.role_id,
+            display_name=pipeline.display_name,
+            camp_id=pipeline.camp_id,
+            contracts=pipeline.contracts,
+            visibility_namespaces=pipeline.visibility_namespaces,
+            allowed_effects=pipeline.allowed_effects,
+        )
+        registry = RoleRegistry()
+
+        with pytest.raises(TypeError, match="legacy register"):
+            registry.register(legacy_subclass)
+        with pytest.raises(TypeError, match="pipeline register"):
+            registry.register_pipeline(pipeline_subclass)
+
+        with pytest.raises(ValueError, match="unknown role"):
+            registry.require(legacy.role_id)
+        assert dict(registry.freeze().specs) == {}
+
+    def test_snapshot_is_unchanged_by_later_registration(self):
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec("first"))
+
+        first = registry.freeze()
+        registry.register_pipeline(_pipeline_spec("second", contracts=()))
+
+        assert tuple(first.specs) == ("first",)
+        assert tuple(registry.freeze().specs) == ("first", "second")
+
+    def test_freeze_atomically_copies_specs_before_concurrent_registration(
+        self, monkeypatch
+    ):
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec("first"))
+        validation_started = Event()
+        continue_validation = Event()
+        original = RoleRegistry._validate_pipeline_spec
+        results = []
+        failures = []
+
+        def gated_validation(spec, contract_ids, known_roles):
+            validation_started.set()
+            assert continue_validation.wait(timeout=5)
+            return original(spec, contract_ids, known_roles)
+
+        monkeypatch.setattr(
+            RoleRegistry, "_validate_pipeline_spec", staticmethod(gated_validation)
+        )
+
+        def freeze_in_thread():
+            try:
+                results.append(registry.freeze())
+            except BaseException as error:
+                failures.append(error)
+
+        thread = Thread(target=freeze_in_thread)
+        thread.start()
+        assert validation_started.wait(timeout=5)
+        registry.register_pipeline(_pipeline_spec("second", contracts=()))
+        continue_validation.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert failures == []
+        assert tuple(results[0].specs) == ("first",)
+        assert tuple(registry.freeze().specs) == ("first", "second")
 
     def test_snapshot_require_rejects_unknown_role(self):
         snapshot = RoleRegistry().freeze()
@@ -629,6 +716,38 @@ class TestPipelineRoleRegistry:
         )
 
         with pytest.raises(ValueError, match="hook signature"):
+            registry.freeze()
+
+    def test_freeze_wraps_inspect_signature_errors(self, monkeypatch):
+        monkeypatch.setattr(
+            broken_signature_hook, "__signature__", "invalid", raising=False
+        )
+        registry = RoleRegistry()
+        registry.register_pipeline(
+            _pipeline_spec(
+                contracts=(
+                    _pipeline_contract(is_applicable=broken_signature_hook),
+                )
+            )
+        )
+
+        with pytest.raises(ValueError, match="hook signature mismatch"):
+            registry.freeze()
+
+    @pytest.mark.parametrize("control_error", [KeyboardInterrupt(), SystemExit()])
+    def test_freeze_does_not_wrap_process_control_errors(
+        self, monkeypatch, control_error
+    ):
+        def raise_control_error(_hook):
+            raise control_error
+
+        monkeypatch.setattr(
+            "app.roles.registry.inspect.signature", raise_control_error
+        )
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec())
+
+        with pytest.raises(type(control_error)):
             registry.freeze()
 
     @pytest.mark.parametrize("count", [-1, 1.5, True])
