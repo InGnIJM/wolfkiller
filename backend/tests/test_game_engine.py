@@ -415,7 +415,125 @@ class TestGameEngine:
         await engine._broadcast_phase_change()
 
         assert len(received) == 1
+        assert received[0]["game_id"] == engine.game_id
         assert received[0]["phase"] == engine.sm.get_state().value
+
+    @pytest.mark.asyncio
+    async def test_public_speech_and_vote_events_are_game_scoped(self):
+        bus = EventBus()
+        speeches = []
+        votes = []
+
+        async def record_speech(**kwargs):
+            speeches.append(kwargs)
+
+        async def record_vote(**kwargs):
+            votes.append(kwargs)
+
+        bus.subscribe("speech_made", record_speech)
+        bus.subscribe("vote_cast", record_vote)
+        roles = {
+            1: make_mock_role(1, "wolf-killer-villager", vote=VoteAction(1, 2)),
+            2: make_mock_role(2, "wolf-killer-villager", vote=VoteAction(2, 1)),
+        }
+        engine = GameEngine(game_id="public-day-events", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.sm.set_state(GamePhase.SPEECH)
+        engine.state.phase = GamePhase.SPEECH
+
+        await engine._execute_speech_round()
+        await engine._execute_vote_casting()
+
+        assert speeches
+        assert votes
+        assert {event["game_id"] for event in speeches} == {engine.game_id}
+        assert {event["game_id"] for event in votes} == {engine.game_id}
+
+    @pytest.mark.asyncio
+    async def test_night_death_and_game_over_events_are_game_scoped(self):
+        bus = EventBus()
+        deaths = []
+        game_over = []
+
+        async def record_death(**kwargs):
+            deaths.append(kwargs)
+
+        async def record_game_over(**kwargs):
+            game_over.append(kwargs)
+
+        bus.subscribe("player_died", record_death)
+        bus.subscribe("game_over", record_game_over)
+        roles = {
+            1: make_mock_role(
+                1,
+                "wolf-killer-werewolf",
+                night_action=NightAction(1, "kill", 3),
+            ),
+            2: make_mock_role(
+                2,
+                "wolf-killer-seer",
+                night_action=NightAction(2, "check", 1),
+            ),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="public-night-events", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine.state.phase = GamePhase.NIGHT
+        engine._sleep_night_step = AsyncMock()
+
+        await engine._execute_night()
+
+        assert len(deaths) == 1
+        assert len(game_over) == 1
+        assert deaths[0]["game_id"] == engine.game_id
+        assert game_over[0]["game_id"] == engine.game_id
+
+    @pytest.mark.asyncio
+    async def test_hunter_death_event_is_game_scoped(self):
+        bus = EventBus()
+        deaths = []
+
+        async def record_death(**kwargs):
+            deaths.append(kwargs)
+
+        bus.subscribe("player_died", record_death)
+        roles = {
+            1: make_mock_role(
+                1,
+                "wolf-killer-hunter",
+                night_action=NightAction(1, "shoot", 2),
+            ),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="public-hunter-event", roles=roles, event_bus=bus)
+        engine._assign_roles()
+
+        death = await engine.hunter_shoot(1)
+
+        assert death is not None
+        assert len(deaths) == 1
+        assert deaths[0]["game_id"] == engine.game_id
+
+    @pytest.mark.asyncio
+    async def test_last_words_speech_event_is_game_scoped(self):
+        bus = EventBus()
+        speeches = []
+
+        async def record_speech(**kwargs):
+            speeches.append(kwargs)
+
+        bus.subscribe("speech_made", record_speech)
+        roles = {1: make_mock_role(1, "wolf-killer-villager")}
+        engine = GameEngine(game_id="public-last-words", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.state.players[1].is_alive = False
+
+        last_words = await engine.give_last_words(1, "exile", 1)
+
+        assert last_words
+        assert len(speeches) == 1
+        assert speeches[0]["game_id"] == engine.game_id
 
     @pytest.mark.asyncio
     async def test_vote_resolution_wolf_wins(self):

@@ -306,7 +306,9 @@ class GameEngine:
 
         for d in deaths:
             self.state.death_history.append(d)
-            await self.event_bus.publish(BusEvent.PLAYER_DIED, death=d)
+            await self.event_bus.publish(
+                BusEvent.PLAYER_DIED, game_id=self.game_id, death=d,
+            )
 
         self.game_logger.log_deaths(
             self.game_id, round_num, [d.to_dict() for d in deaths],
@@ -705,7 +707,9 @@ class GameEngine:
             self.state, hunter_seat, accepted
         )
         if death:
-            await self.event_bus.publish(BusEvent.PLAYER_DIED, death=death)
+            await self.event_bus.publish(
+                BusEvent.PLAYER_DIED, game_id=self.game_id, death=death,
+            )
             self.game_logger.log_hunter_shoot(
                 self.game_id, self.state.round_number, hunter_seat,
                 accepted.command.target_seat,
@@ -758,10 +762,14 @@ class GameEngine:
                 seat, player.role, speech_text,
                 self.state.round_number, "last_words",
             )
-            await self.event_bus.publish(BusEvent.SPEECH_MADE, speech=SpeechRecord(
-                player_seat=seat, text=speech_text,
-                round_number=self.state.round_number,
-            ))
+            await self.event_bus.publish(
+                BusEvent.SPEECH_MADE,
+                game_id=self.game_id,
+                speech=SpeechRecord(
+                    player_seat=seat, text=speech_text,
+                    round_number=self.state.round_number,
+                ),
+            )
             self.game_logger.log_speech(
                 self.game_id, self.state.round_number, "last_words",
                 seat, speech_text,
@@ -820,10 +828,14 @@ class GameEngine:
                     seat, player.role, speech_text,
                     self.state.round_number, "speech",
                 )
-                await self.event_bus.publish(BusEvent.SPEECH_MADE, speech=SpeechRecord(
-                    player_seat=seat, text=speech_text,
-                    round_number=self.state.round_number,
-                ))
+                await self.event_bus.publish(
+                    BusEvent.SPEECH_MADE,
+                    game_id=self.game_id,
+                    speech=SpeechRecord(
+                        player_seat=seat, text=speech_text,
+                        round_number=self.state.round_number,
+                    ),
+                )
                 self.game_logger.log_speech(
                     self.game_id, self.state.round_number, "speech", seat, speech_text,
                 )
@@ -858,7 +870,9 @@ class GameEngine:
                 self.game_logger.log_vote(
                     self.game_id, self.state.round_number, seat, vote.target_seat,
                 )
-                await self.event_bus.publish(BusEvent.VOTE_CAST, vote=vote)
+                await self.event_bus.publish(
+                    BusEvent.VOTE_CAST, game_id=self.game_id, vote=vote,
+                )
 
         self.sm.transition(SM_Event.VOTES_COMPLETE)
         await self._broadcast_phase_change()
@@ -1089,7 +1103,9 @@ class GameEngine:
                 self.game_id, self.state.round_number,
                 win_result.winning_camp, win_result.reason,
             )
-            await self.event_bus.publish(BusEvent.GAME_OVER, win_result=win_result)
+            await self.event_bus.publish(
+                BusEvent.GAME_OVER, game_id=self.game_id, win_result=win_result,
+            )
             return True
         return False
 
@@ -1166,6 +1182,6 @@ class GameEngine:
             self.game_id, self.state.phase.value, self.state.round_number,
         )
         await self.event_bus.publish(
-            BusEvent.PHASE_CHANGED, phase=self.state.phase.value,
+            BusEvent.PHASE_CHANGED, game_id=self.game_id, phase=self.state.phase.value,
             round_number=self.state.round_number, state=self.state,
         )
