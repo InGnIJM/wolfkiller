@@ -12,6 +12,7 @@ from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
+from app.api.websocket.public_events import PublicNightSubstep
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest
@@ -306,15 +307,24 @@ class GameService:
         )
 
     async def _on_night_substep(self, **kwargs) -> None:
-        game_id = kwargs.get("game_id")
-        if game_id is None:
+        game_id = self._known_game_id(kwargs)
+        step = kwargs.get("step")
+        round_number = kwargs.get("round_number")
+        if (
+            game_id is None
+            or not isinstance(step, str)
+            or not isinstance(round_number, int)
+            or isinstance(round_number, bool)
+        ):
             return
+        payload = PublicNightSubstep.from_internal(
+            step=step,
+            round_number=round_number,
+            **{
+                key: value for key, value in kwargs.items()
+                if key not in {"game_id", "step", "round_number"}
+            },
+        )
         await self.ws_manager.broadcast(
-            game_id, "night_substep",
-            step=kwargs.get("step", ""),
-            highlight_seats=kwargs.get("highlight_seats", []),
-            action_seat=kwargs.get("action_seat"),
-            action=kwargs.get("action"),
-            wolf_kill_target=kwargs.get("wolf_kill_target"),
-            round_number=kwargs.get("round_number", 0),
+            game_id, "night_substep", **payload.to_payload(),
         )

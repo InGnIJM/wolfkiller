@@ -744,32 +744,65 @@ class TestGameService:
         )
 
     @pytest.mark.asyncio
-    async def test_night_substep_handler_broadcasts_or_ignores_missing_game_id(self):
+    async def test_night_substep_broadcasts_exact_public_payload_only(self):
         ws_manager = WSManager()
         ws_manager.broadcast = AsyncMock()
         service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
 
-        await service._on_night_substep()
         await service._on_night_substep(
-            game_id="game-1",
-            step="witch",
-            highlight_seats=[2],
-            action_seat=1,
-            action="save",
+            game_id="game-a",
+            step="seer_check",
+            highlight_seats=[4],
+            action_seat=4,
+            action={"target_seat": 2, "seer_result": "werewolf"},
             wolf_kill_target=2,
             round_number=3,
         )
 
         ws_manager.broadcast.assert_awaited_once_with(
-            "game-1",
+            "game-a",
             "night_substep",
-            step="witch",
-            highlight_seats=[2],
-            action_seat=1,
-            action="save",
-            wolf_kill_target=2,
+            phase="night",
             round_number=3,
+            substep="seer_check",
         )
+        assert not {
+            "action", "action_seat", "highlight_seats", "wolf_kill_target",
+            "target_seat", "seer_result", "actor", "role", "result",
+        } & set(ws_manager.broadcast.await_args.kwargs)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("game_id", "step", "round_number"),
+        [
+            (None, "seer_check", 3),
+            ("unknown", "seer_check", 3),
+            ("game-a", None, 3),
+            ("game-a", 42, 3),
+            ("game-a", "seer_check", None),
+            ("game-a", "seer_check", "3"),
+            ("game-a", "seer_check", True),
+        ],
+    )
+    async def test_night_substep_drops_unknown_or_invalid_envelopes(
+        self, game_id, step, round_number,
+    ):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_night_substep(
+            game_id=game_id,
+            step=step,
+            round_number=round_number,
+            target_seat=2,
+            role="seer",
+            result="werewolf",
+        )
+
+        ws_manager.broadcast.assert_not_awaited()
 
     def test_reconstruct_state_handles_missing_log_open_errors_and_invalid_records(self, monkeypatch):
         service = GameService(WSManager(), EventBus())
