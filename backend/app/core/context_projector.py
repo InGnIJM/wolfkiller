@@ -38,7 +38,7 @@ _PUBLIC_PHASES = frozenset(
 _CAMPS = frozenset({"good", "werewolf", "third_party"})
 _STABLE_TOKEN = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _EVENT_TOKEN = re.compile(r"^(?:[a-z][a-z0-9_.-]*|[A-Z][A-Z0-9_]*)$")
-_OPAQUE_EVENT_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,31}:[0-9a-f]{16,64}$")
+_OPAQUE_EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _MAX_INT = 2_147_483_647
 _MAX_SUMMARIES = 64
 _RESOURCE_ADAPTERS = {
@@ -167,11 +167,23 @@ class ContextProjector:
     ) -> None:
         if trigger_event is not None and type(trigger_event) is not dict:
             raise TypeError("trigger_event must be an exact dict")
+        if (source_event_id is None) != (trigger_event is None):
+            raise ValueError("source_event_id and trigger_event must be paired")
         declared_events = request.contract.response_event_types
         if (source_event_id is not None or trigger_event is not None) and not declared_events:
             raise ValueError("response event payload requires a declared response event")
         if trigger_reason is not None and not request.contract.response_reasons:
             raise ValueError("trigger reason requires a declared response reason")
+        if trigger_event is not None:
+            if "event_id" not in trigger_event:
+                raise ValueError("trigger_event event_id is required")
+            if "type" not in trigger_event:
+                raise ValueError("trigger_event type is required")
+            event_id = ContextProjector._event_id(
+                trigger_event["event_id"], "event_id"
+            )
+            if event_id != source_event_id:
+                raise ValueError("trigger_event event_id must match source_event_id")
         try:
             count = len(summaries)
         except TypeError as error:
@@ -355,14 +367,13 @@ class ContextProjector:
             return None
         if type(value) is not dict:
             raise TypeError("trigger_event must be an exact dict")
-        projected: dict[str, object] = {}
-        if "event_id" in value:
-            projected["event_id"] = cls._event_id(value["event_id"], "event_id")
-        if "type" in value:
-            event_type = cls._event_token(value["type"], "event type", 64)
-            if event_type not in contract.response_event_types:
-                raise ValueError("unknown event type")
-            projected["type"] = event_type
+        event_type = cls._event_token(value["type"], "event type", 64)
+        if event_type not in contract.response_event_types:
+            raise ValueError("unknown event type")
+        projected: dict[str, object] = {
+            "event_id": cls._event_id(value["event_id"], "event_id"),
+            "type": event_type,
+        }
         for key in ("source_seat", "target_seat"):
             if key in value:
                 projected[key] = cls._positive_int(value[key], key)

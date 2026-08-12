@@ -283,9 +283,13 @@ def test_context_is_deep_frozen_detached_and_contains_no_state_or_callbacks(
         state,
         _request(response_registry, 1, "wolf"),
         response_registry,
-        trigger_event={"type": "PLAYER_DIED", "target_seat": 5},
+        trigger_event={
+            "event_id": "event:0123456789abcdef",
+            "type": "PLAYER_DIED",
+            "target_seat": 5,
+        },
         trigger_reason="wolf_kill",
-        source_event_id="player_died:0123456789abcdef",
+        source_event_id="event:0123456789abcdef",
         accepted_command_summaries=(
             {"contract_id": "wolf-response", "action_type": "act", "seats": [6]},
         ),
@@ -298,7 +302,11 @@ def test_context_is_deep_frozen_detached_and_contains_no_state_or_callbacks(
 
     assert isinstance(context.facts, MappingProxyType)
     assert isinstance(context.trigger_event, MappingProxyType)
-    assert context.trigger_event == {"type": "PLAYER_DIED", "target_seat": 5}
+    assert context.trigger_event == {
+        "event_id": "event:0123456789abcdef",
+        "type": "PLAYER_DIED",
+        "target_seat": 5,
+    }
     assert context.accepted_command_summaries == (
         {"contract_id": "wolf-response", "action_type": "act"},
     )
@@ -434,8 +442,9 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         state,
         response_request,
         response_registry,
+        source_event_id="event:abcdef0123456789",
         trigger_event={
-            "event_id": "player_died:abcdef0123456789",
+            "event_id": "event:abcdef0123456789",
             "type": "PLAYER_DIED",
             "source_seat": 3,
             "target_seat": 1,
@@ -474,7 +483,7 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         },
     )
     assert projected.trigger_event == {
-        "event_id": "player_died:abcdef0123456789",
+        "event_id": "event:abcdef0123456789",
         "type": "PLAYER_DIED",
         "source_seat": 3,
         "target_seat": 1,
@@ -873,6 +882,12 @@ def test_response_projection_rejects_semantically_invalid_values(
     )
     response_registry = RegistrySnapshot(specs={"wolf": spec}, digest="response")
     normalized = dict(kwargs)
+    if "trigger_event" in normalized:
+        trigger = dict(normalized["trigger_event"])
+        trigger.setdefault("event_id", "event:0123456789abcdef")
+        trigger.setdefault("type", "PLAYER_DIED")
+        normalized["trigger_event"] = trigger
+        normalized["source_event_id"] = "event:0123456789abcdef"
     if "accepted_command_summaries" in normalized:
         summary = dict(normalized["accepted_command_summaries"][0])  # type: ignore[index]
         summary.setdefault("contract_id", "wolf-response")
@@ -928,7 +943,12 @@ def test_response_event_and_reason_are_bound_to_contract_declarations(
         state,
         request,
         registry,
-        trigger_event={"type": "PLAYER_DIED", "cause": "poison"},
+        source_event_id="event:0123456789abcdef",
+        trigger_event={
+            "event_id": "event:0123456789abcdef",
+            "type": "PLAYER_DIED",
+            "cause": "poison",
+        },
         trigger_reason="poison",
     )
     assert context.trigger_reason == "poison"
@@ -938,7 +958,10 @@ def test_response_event_and_reason_are_bound_to_contract_declarations(
             state,
             request,
             registry,
-            trigger_event={"type": "player_died"},
+            source_event_id="event:0123456789abcdef",
+            trigger_event={
+                "event_id": "event:0123456789abcdef", "type": "player_died"
+            },
         )
     with pytest.raises(ValueError, match="trigger reason"):
         ContextProjector().project(
@@ -952,13 +975,17 @@ def test_response_payload_requires_an_explicit_response_contract(
     request = _request(registry, 1, "wolf")
     with pytest.raises(ValueError, match="response event"):
         ContextProjector().project(
-            state, request, registry, trigger_event={"type": "PLAYER_DIED"}
+            state, request, registry,
+            source_event_id="event:0123456789abcdef",
+            trigger_event={
+                "event_id": "event:0123456789abcdef", "type": "PLAYER_DIED"
+            },
         )
     with pytest.raises(ValueError, match="response reason"):
         ContextProjector().project(
             state, request, registry, trigger_reason="wolf_kill"
         )
-    with pytest.raises(ValueError, match="response event"):
+    with pytest.raises(ValueError, match="paired"):
         ContextProjector().project(
             state, request, registry, source_event_id="event-1"
         )
@@ -990,9 +1017,20 @@ def test_response_identifiers_reject_secret_shaped_text(
         visibility_namespaces=frozenset({"ACTOR"}),
     )
     registry = RegistrySnapshot(specs={"wolf": spec}, digest="response")
+    normalized = dict(kwargs)
+    if "source_event_id" in normalized:
+        normalized["trigger_event"] = {
+            "event_id": normalized["source_event_id"], "type": "PLAYER_DIED"
+        }
+    elif "trigger_event" in normalized:
+        normalized["trigger_event"] = {
+            **normalized["trigger_event"],  # type: ignore[dict-item]
+            "type": "PLAYER_DIED",
+        }
+        normalized["source_event_id"] = normalized["trigger_event"]["event_id"]  # type: ignore[index]
     with pytest.raises(ValueError, match=error):
         ContextProjector().project(
-            state, _request(registry, 1, "wolf"), registry, **kwargs  # type: ignore[arg-type]
+            state, _request(registry, 1, "wolf"), registry, **normalized  # type: ignore[arg-type]
         )
 
 
@@ -1117,7 +1155,12 @@ def test_response_sequence_type_and_remaining_numeric_bounds(
         ContextProjector._project_trigger_event(object(), contract)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="cause"):
         ContextProjector().project(
-            state, request, registry, trigger_event={"cause": "exile"}
+            state, request, registry,
+            source_event_id="event:0123456789abcdef",
+            trigger_event={
+                "event_id": "event:0123456789abcdef", "type": "PLAYER_DIED",
+                "cause": "exile",
+            },
         )
     with pytest.raises(ValueError, match="32-bit"):
         ContextProjector().project(
@@ -1132,6 +1175,8 @@ def test_response_sequence_type_and_remaining_numeric_bounds(
 
 
 def test_identifier_and_integer_helpers_reject_uncovered_invalid_shapes() -> None:
+    with pytest.raises(TypeError, match="string"):
+        ContextProjector._text(1, "event type", 64)
     with pytest.raises(ValueError, match="stable token"):
         ContextProjector._token("INVALID", "contract_id", 128)
     with pytest.raises(ValueError, match="event type"):
@@ -1195,3 +1240,74 @@ def test_witch_target_seat_is_bounded(
         ContextProjector().project(
             state, _request(registry, 4, "witch"), registry
         )
+
+
+def test_response_event_id_has_a_fixed_opaque_prefix(
+    state: GameState,
+) -> None:
+    contract, registry, request = _response_fixture(state)
+    with pytest.raises(ValueError, match="opaque event id"):
+        ContextProjector().project(
+            state,
+            request,
+            registry,
+            source_event_id="seer_is_seat_3:0123456789abcdef",
+            trigger_event={
+                "event_id": "seer_is_seat_3:0123456789abcdef",
+                "type": "PLAYER_DIED",
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "source_event_id,trigger_event,error",
+    [
+        ("event:0123456789abcdef", None, "paired"),
+        (None, {"event_id": "event:0123456789abcdef", "type": "PLAYER_DIED"}, "paired"),
+        ("event:0123456789abcdef", {}, "event_id.*required"),
+        (
+            "event:0123456789abcdef",
+            {"event_id": "event:0123456789abcdef"},
+            "type.*required",
+        ),
+        (
+            "event:0123456789abcdef",
+            {"event_id": "event:fedcba9876543210", "type": "PLAYER_DIED"},
+            "must match",
+        ),
+    ],
+)
+def test_response_source_and_trigger_are_complete_and_bound(
+    state: GameState,
+    source_event_id: str | None,
+    trigger_event: dict[str, object] | None,
+    error: str,
+) -> None:
+    _contract_value, registry, request = _response_fixture(state)
+    with pytest.raises(ValueError, match=error):
+        ContextProjector().project(
+            state,
+            request,
+            registry,
+            source_event_id=source_event_id,
+            trigger_event=trigger_event,
+        )
+
+
+def _response_fixture(
+    state: GameState,
+) -> tuple[ActionContract, RegistrySnapshot, IssuedActionRequest]:
+    contract = _contract(
+        "ACTOR", contract_id="wolf-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    registry = RegistrySnapshot(
+        specs={
+            "wolf": RoleSpec(
+                role_id="wolf", camp_id="werewolf", contracts=(contract,),
+                visibility_namespaces=frozenset({"ACTOR"}),
+            )
+        }, digest="response"
+    )
+    return contract, registry, _request(registry, 1, "wolf")
