@@ -148,11 +148,18 @@ class GameDetailResponse(_PublicResponse):
     game_id: str
     phase: PublicGamePhase
     round_number: NonNegativePublicInt
-    players: dict[int, PublicPlayerResponse]
+    players: dict[PositivePublicInt, PublicPlayerResponse]
     sheriff: Optional[PositivePublicInt]
     speeches: list[PublicSpeechResponse]
     death_history: list[PublicDeathResponse]
     win_result: Optional[PublicWinnerResponse]
+
+    @model_validator(mode="after")
+    def require_player_map_keys_to_match_public_seats(self):
+        for seat_number, player in self.players.items():
+            if seat_number != player.seat_number:
+                raise ValueError("player map key must match the embedded seat_number")
+        return self
 
 
 class SetSpeedRequest(BaseModel):

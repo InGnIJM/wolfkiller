@@ -128,6 +128,40 @@ class TestSchemas:
                 death_history=[], win_result=None,
             )
 
+    @pytest.mark.parametrize("invalid_key", [0, -1, "1", True])
+    def test_game_detail_rejects_non_strict_or_non_positive_player_map_keys(self, invalid_key):
+        with pytest.raises(ValidationError):
+            GameDetailResponse(
+                game_id="abc", phase="speech", round_number=2,
+                players={invalid_key: PublicPlayerResponse(
+                    seat_number=1, is_alive=True, is_sheriff=False,
+                )},
+                sheriff=None, speeches=[], death_history=[], win_result=None,
+            )
+
+    def test_game_detail_keeps_valid_player_map_key_in_model_dump(self):
+        response = GameDetailResponse(
+            game_id="abc", phase="speech", round_number=2,
+            players={1: PublicPlayerResponse(
+                seat_number=1, is_alive=True, is_sheriff=False,
+            )},
+            sheriff=None, speeches=[], death_history=[], win_result=None,
+        )
+
+        assert response.model_dump()["players"] == {
+            1: {"seat_number": 1, "is_alive": True, "is_sheriff": False},
+        }
+
+    def test_game_detail_rejects_player_map_key_that_differs_from_embedded_seat(self):
+        with pytest.raises(ValidationError, match="must match"):
+            GameDetailResponse(
+                game_id="abc", phase="speech", round_number=2,
+                players={1: PublicPlayerResponse(
+                    seat_number=2, is_alive=True, is_sheriff=False,
+                )},
+                sheriff=None, speeches=[], death_history=[], win_result=None,
+            )
+
     def test_public_vote_result_replay_event_is_closed(self):
         logs = GameLogsResponse(
             game_id="abc",
