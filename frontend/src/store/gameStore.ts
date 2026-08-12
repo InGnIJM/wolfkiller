@@ -234,7 +234,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setCurrentSpeaker: (seat) => set({ currentSpeaker: seat }),
 
   initPlayersFromDetail: (players) => {
-    const publicPlayers = copyPlayers(players);
+    const publicPlayers = Object.fromEntries(
+      Object.entries(players).map(([seat, player]) => [
+        Number(seat),
+        { seat_number: player.seat_number, is_alive: true, is_sheriff: false },
+      ]),
+    ) as Record<number, PublicPlayerState>;
     set({ players: publicPlayers, initialPlayers: copyPlayers(publicPlayers) });
   },
 
@@ -254,14 +259,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   mergeLogs: (logs) => {
     const timeline = buildTimeline(logs);
-    const { timeline: oldTimeline, timelineIndex, initialPlayers } = get();
+    const { timeline: oldTimeline, timelineIndex, initialPlayers, isPaused } = get();
     if (timeline.length <= oldTimeline.length) return;
 
-    const wasAtEnd = isAtTimelineEnd(oldTimeline, timelineIndex);
+    const shouldFollowTail = isAtTimelineEnd(oldTimeline, timelineIndex) && !isPaused;
     set({ timeline });
-    if (!wasAtEnd) return;
+    if (!shouldFollowTail) return;
 
-    const nextIndex = Math.min(timelineIndex + 1, timeline.length - 1);
+    const nextIndex = timeline.length - 1;
     const derived = deriveState(timeline, nextIndex, initialPlayers);
     set({
       timelineIndex: nextIndex,
