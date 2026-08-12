@@ -1,5 +1,7 @@
 import json
 import os
+from datetime import datetime
+from typing import Any
 from fastapi import APIRouter, HTTPException
 from app.api.schemas import (
     CreateGameRequest, CreateGameResponse,
@@ -79,28 +81,17 @@ async def get_game(game_id: str):
     if state is None:
         raise HTTPException(404, "Game not found")
 
+    public_state = state.get_public_state()
     return GameDetailResponse(
-        game_id=state.game_id,
-        phase=state.phase.value,
-        round_number=state.round_number,
-        players={
-            s: {
-                "seat_number": p.seat_number,
-                "role": p.role,
-                "camp": p.camp,
-                "is_alive": p.is_alive,
-                "has_antidote": p.has_antidote,
-                "has_poison": p.has_poison,
-                "has_gun": p.has_gun,
-                "is_sheriff": p.is_sheriff,
-            }
-            for s, p in state.players.items()
-        },
-        sheriff=state.sheriff,
-        speeches=[s.to_dict() if hasattr(s, "to_dict") else s for s in state.speeches],
-        votes=[v.to_dict() if hasattr(v, "to_dict") else v for v in state.votes],
-        death_history=[d.to_dict() if hasattr(d, "to_dict") else d for d in state.death_history],
-        win_result=state.win_result,
+        game_id=public_state["game_id"],
+        phase=public_state["phase"],
+        round_number=public_state["round_number"],
+        players=public_state["players"],
+        sheriff=public_state["sheriff"],
+        speeches=public_state["speeches"],
+        votes=public_state.get("votes", []),
+        death_history=public_state["death_history"],
+        win_result=public_state["win_result"],
     )
 
 
@@ -119,13 +110,127 @@ def _read_jsonl(path: str) -> list[dict]:
     return records
 
 
+def _timestamp(record: dict[str, Any]) -> datetime | None:
+    value = record.get("timestamp")
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _public_conversation_event(record: dict[str, Any]) -> dict | None:
+    if record.get("scope") != "public" or _timestamp(record) is None:
+        return None
+    seat = record.get("speaker_seat")
+    content = record.get("content")
+    round_number = record.get("round_number")
+    phase = record.get("phase")
+    if not (_is_int(seat) and isinstance(content, str) and _is_int(round_number) and isinstance(phase, str)):
+        return None
+    return {
+        "event_type": "speech",
+        "payload": {"player_seat": seat, "text": content, "round_number": round_number},
+    }
+
+
+def _public_operation_events(record: dict[str, Any]) -> list[dict]:
+    timestamp = _timestamp(record)
+    operation = record.get("operation")
+    round_number = record.get("round")
+    phase = record.get("phase")
+    data = record.get("data")
+    if timestamp is None or not _is_int(round_number) or not isinstance(phase, str) or not isinstance(data, dict):
+        return []
+
+    if operation == "vote":
+        seat = record.get("seat")
+        target = data.get("target")
+        if phase != "vote_casting" or not _is_int(seat) or (target is not None and not _is_int(target)):
+            return []
+        return [{
+            "event_type": "vote",
+            "payload": {"voter_seat": seat, "target_seat": target, "round_number": round_number},
+        }]
+
+    if operation == "night_deaths":
+        if phase != "dawn" or not isinstance(data.get("deaths"), list):
+            return []
+        events = []
+        for death in data["deaths"]:
+            if not isinstance(death, dict) or set(death) != {"player_seat", "cause", "round_number"}:
+                return []
+            if not (_is_int(death["player_seat"]) and isinstance(death["cause"], str) and _is_int(death["round_number"])):
+                return []
+            events.append({
+                "event_type": "death",
+                "payload": {
+                    "player_seat": death["player_seat"],
+                    "cause": death["cause"],
+                    "round_number": death["round_number"],
+                },
+            })
+        return events
+
+    if operation == "phase_change":
+        new_phase = data.get("new_phase")
+        if not isinstance(new_phase, str):
+            return []
+        return [{
+            "event_type": "phase",
+            "payload": {"phase": new_phase, "round_number": round_number},
+        }]
+
+    if operation == "game_over":
+        winner = data.get("winner")
+        reason = data.get("reason")
+        if not isinstance(winner, str) or not isinstance(reason, str):
+            return []
+        return [{
+            "event_type": "winner",
+            "payload": {"winning_camp": winner, "reason": reason},
+        }]
+
+    return []
+
+
+def _public_replay_events(conversations: list[dict], operations: list[dict]) -> list[dict]:
+    ordered_events: list[tuple[datetime, int, dict]] = []
+    order = 0
+    for record in conversations:
+        if not isinstance(record, dict):
+            continue
+        event = _public_conversation_event(record)
+        timestamp = _timestamp(record)
+        if event is not None and timestamp is not None:
+            ordered_events.append((timestamp, order, event))
+            order += 1
+    for record in operations:
+        if not isinstance(record, dict):
+            continue
+        timestamp = _timestamp(record)
+        if timestamp is None:
+            continue
+        for event in _public_operation_events(record):
+            ordered_events.append((timestamp, order, event))
+            order += 1
+    return [event for _, _, event in sorted(ordered_events, key=lambda item: (item[0], item[1]))]
+
+
 @router.get("/{game_id}/logs", response_model=GameLogsResponse)
 async def get_game_logs(game_id: str):
+    service = get_service()
+    if service.get_game_state(game_id) is None:
+        raise HTTPException(404, "Game not found")
     log_dir = os.path.join("data", "games", game_id)
     conversations = _read_jsonl(os.path.join(log_dir, "conversation.log"))
     operations = _read_jsonl(os.path.join(log_dir, "game.log"))
     return GameLogsResponse(
         game_id=game_id,
-        conversations=conversations,
-        operations=operations,
+        events=_public_replay_events(conversations, operations),
     )
