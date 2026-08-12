@@ -10,6 +10,7 @@ from app.core.context_projector import ContextProjector
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
+    ActionContext,
     ActionContract,
     IssuedActionRequest,
     RoleSpec,
@@ -560,6 +561,11 @@ def test_public_facts_are_unconditional_and_revision_comes_from_signed_request(
 
     context = ContextProjector().project(state, request, registry)
     assert context.revision == 23
+    assert context.contract_id == contract.contract_id
+    assert context.contract_version == contract.schema_version
+    restored = ActionContext.from_json(context.to_json())
+    assert restored.contract_id == contract.contract_id
+    assert restored.contract_version == contract.schema_version
     assert context.facts["alive_seats"] == (1, 2, 3, 4, 6)
     assert context.facts["phase"] == "night"
 

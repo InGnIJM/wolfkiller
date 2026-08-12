@@ -117,6 +117,8 @@ class ContextProjector:
             game_id=state.game_id,
             revision=request.context_revision,
             config_version=registry.digest,
+            contract_id=request.contract.contract_id,
+            contract_version=request.contract.schema_version,
             round_number=request.round_number,
             phase=request.phase,
             window_id=request.window_id,
