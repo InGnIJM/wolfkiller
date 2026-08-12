@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isAtTimelineEnd, useGameStore } from '../gameStore';
-import type { GameLogs, PublicGameState, PublicPlayerState } from '../types';
+import type {
+  GameLogs,
+  PublicGameState,
+  PublicPlayerState,
+} from '../types';
+
+const replayEventMeta = { timestamp: '2026-08-13T00:00:00Z' } as const;
 
 const currentPlayers: Record<number, PublicPlayerState> = {
   1: { seat_number: 1, is_alive: true, is_sheriff: false },
@@ -31,8 +37,9 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: 'tail', round_number: 1 },
         },
@@ -55,8 +62,9 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: 'tail', round_number: 1 },
         },
@@ -91,6 +99,7 @@ describe('public replay state', () => {
       game_id: 'game-1',
       events: [
         {
+          ...replayEventMeta,
           event_type: 'winner',
           payload: { winning_camp: 'good', reason: 'all_wolves_dead' },
         },
@@ -106,8 +115,9 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'death',
           payload: { player_seat: 2, cause: 'wolf_kill', round_number: 1 },
         },
@@ -136,8 +146,9 @@ describe('public replay state', () => {
     const originalLogs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: '发言', round_number: 1 },
         },
@@ -148,10 +159,12 @@ describe('public replay state', () => {
       events: [
         ...originalLogs.events,
         {
+          ...replayEventMeta,
           event_type: 'death',
           payload: { player_seat: 2, cause: 'exile', round_number: 1 },
         },
         {
+          ...replayEventMeta,
           event_type: 'winner',
           payload: { winning_camp: 'good', reason: 'all_wolves_dead' },
         },
@@ -183,8 +196,9 @@ describe('public replay state', () => {
     const originalLogs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: '发言', round_number: 1 },
         },
@@ -195,6 +209,7 @@ describe('public replay state', () => {
       events: [
         ...originalLogs.events,
         {
+          ...replayEventMeta,
           event_type: 'death',
           payload: { player_seat: 2, cause: 'exile', round_number: 1 },
         },
@@ -216,14 +231,17 @@ describe('public replay state', () => {
 
   it('replays the complete reordered timeline when following the live tail', () => {
     const phaseEvent = {
+      ...replayEventMeta,
       event_type: 'phase' as const,
       payload: { phase: 'speech' as const, round_number: 1 },
     };
     const deathEvent = {
+      ...replayEventMeta,
       event_type: 'death' as const,
       payload: { player_seat: 2, cause: 'exile' as const, round_number: 1 },
     };
     const winnerEvent = {
+      ...replayEventMeta,
       event_type: 'winner' as const,
       payload: { winning_camp: 'good' as const, reason: 'all_wolves_dead' as const },
     };
@@ -248,18 +266,22 @@ describe('public replay state', () => {
 
   it('keeps the current event as a semantic anchor when earlier logs are inserted', () => {
     const phaseEvent = {
+      ...replayEventMeta,
       event_type: 'phase' as const,
       payload: { phase: 'speech' as const, round_number: 1 },
     };
     const insertedSpeech = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 2, text: 'inserted', round_number: 1 },
     };
     const anchoredSpeech = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 1, text: 'anchor', round_number: 1 },
     };
     const deathEvent = {
+      ...replayEventMeta,
       event_type: 'death' as const,
       payload: { player_seat: 2, cause: 'exile' as const, round_number: 1 },
     };
@@ -287,14 +309,17 @@ describe('public replay state', () => {
 
   it('tracks the same duplicate occurrence when reconciling a historical anchor', () => {
     const phaseEvent = {
+      ...replayEventMeta,
       event_type: 'phase' as const,
       payload: { phase: 'speech' as const, round_number: 1 },
     };
     const repeatedSpeech = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 1, text: 'repeat', round_number: 1 },
     };
     const insertedSpeech = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 2, text: 'inserted', round_number: 1 },
     };
@@ -319,12 +344,38 @@ describe('public replay state', () => {
     ]);
   });
 
+  it('keeps equal payloads at different timestamps as distinct replay events', () => {
+    const earlierSpeech = {
+      timestamp: '2026-08-13T00:00:01Z' as const,
+      event_type: 'speech' as const,
+      payload: { player_seat: 1, text: 'same payload', round_number: 1 },
+    };
+    const anchoredSpeech = {
+      timestamp: '2026-08-13T00:00:02Z' as const,
+      event_type: 'speech' as const,
+      payload: { player_seat: 1, text: 'same payload', round_number: 1 },
+    };
+
+    useGameStore.getState().loadLogs({ game_id: 'game-1', events: [anchoredSpeech] });
+    useGameStore.getState().seekTo(0);
+    useGameStore.getState().setPaused(true);
+    useGameStore.getState().mergeLogs({
+      game_id: 'game-1',
+      events: [earlierSpeech, anchoredSpeech],
+    });
+
+    expect(useGameStore.getState().timeline).toEqual([earlierSpeech, anchoredSpeech]);
+    expect(useGameStore.getState().timelineIndex).toBe(1);
+  });
+
   it('clamps a missing historical anchor and supports replacement with an empty log', () => {
     const phaseEvent = {
+      ...replayEventMeta,
       event_type: 'phase' as const,
       payload: { phase: 'speech' as const, round_number: 1 },
     };
     const speechEvent = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 1, text: 'removed', round_number: 1 },
     };
@@ -350,14 +401,17 @@ describe('public replay state', () => {
 
   it('reconciles same-length replacements and recomputes derived state', () => {
     const phaseEvent = {
+      ...replayEventMeta,
       event_type: 'phase' as const,
       payload: { phase: 'speech' as const, round_number: 1 },
     };
     const oldSpeech = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 1, text: 'old', round_number: 1 },
     };
     const replacementSpeech = {
+      ...replayEventMeta,
       event_type: 'speech' as const,
       payload: { player_seat: 2, text: 'replacement', round_number: 2 },
     };
@@ -385,7 +439,7 @@ describe('public replay state', () => {
   it('keeps state and timeline references stable for identical logs', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
 
     useGameStore.getState().loadLogs(logs);
@@ -403,32 +457,39 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: '发言', round_number: 2 },
         },
         {
+          ...replayEventMeta,
           event_type: 'vote',
           payload: { voter_seat: 1, target_seat: 2, round_number: 3 },
         },
         {
+          ...replayEventMeta,
           event_type: 'vote_result',
           payload: { exiled_seat: null, round_number: 4 },
         },
         {
+          ...replayEventMeta,
           event_type: 'vote_result',
           payload: { exiled_seat: 2, round_number: 5 },
         },
         {
+          ...replayEventMeta,
           event_type: 'vote_result',
           payload: { exiled_seat: 99, round_number: 6 },
         },
         {
+          ...replayEventMeta,
           event_type: 'death',
           payload: { player_seat: 99, cause: 'poison', round_number: 7 },
         },
         {
+          ...replayEventMeta,
           event_type: 'winner',
           payload: { winning_camp: 'werewolf', reason: 'all_gods_dead' },
         },
@@ -498,8 +559,9 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'winner',
           payload: { winning_camp: 'good', reason: 'all_wolves_dead' },
         },
@@ -537,8 +599,9 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: '发言', round_number: 1 },
         },
@@ -571,13 +634,14 @@ describe('public replay state', () => {
   it('does not follow new events when paused at the old tail', () => {
     const originalLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const extendedLogs: GameLogs = {
       ...originalLogs,
       events: [
         ...originalLogs.events,
         {
+          ...replayEventMeta,
           event_type: 'speech',
           payload: { player_seat: 1, text: '新增', round_number: 1 },
         },

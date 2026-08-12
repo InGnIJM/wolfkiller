@@ -9,6 +9,8 @@ import { useGameStore } from '../../../store/gameStore';
 import type { GameLogs, PublicGameState } from '../../../store/types';
 import GameBoard from '../GameBoard';
 
+const replayEventMeta = { timestamp: '2026-08-13T00:00:00Z' } as const;
+
 const { connect, disconnect } = vi.hoisted(() => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
@@ -62,8 +64,9 @@ const detail: PublicGameState = {
 const completedLogs: GameLogs = {
   game_id: 'game-1',
   events: [
-    { event_type: 'phase', payload: { phase: 'game_over', round_number: 1 } },
+    { ...replayEventMeta, event_type: 'phase', payload: { phase: 'game_over', round_number: 1 } },
     {
+      ...replayEventMeta,
       event_type: 'winner',
       payload: { winning_camp: 'good', reason: 'all_wolves_dead' },
     },
@@ -172,9 +175,9 @@ describe('GameBoard public replay', () => {
     vi.mocked(fetchGameLogs).mockResolvedValueOnce({
       game_id: 'game-1',
       events: [
-        { event_type: 'phase', payload: { phase: 'vote_casting', round_number: 1 } },
-        { event_type: 'speech', payload: { player_seat: 2, text: '公开发言', round_number: 1 } },
-        { event_type: 'vote', payload: { voter_seat: 1, target_seat: 2, round_number: 1 } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'vote_casting', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 2, text: '公开发言', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'vote', payload: { voter_seat: 1, target_seat: 2, round_number: 1 } },
       ],
     });
 
@@ -192,7 +195,7 @@ describe('GameBoard public replay', () => {
     vi.useFakeTimers();
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     vi.mocked(fetchGameDetail).mockResolvedValueOnce({
       ...detail,
@@ -236,13 +239,13 @@ describe('GameBoard public replay', () => {
     };
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const refreshedLogs: GameLogs = {
       game_id: 'game-1',
       events: [
         ...activeLogs.events,
-        { event_type: 'speech', payload: { player_seat: 1, text: 'updated', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: 'updated', round_number: 1 } },
       ],
     };
     const initPlayersFromDetail = vi.spyOn(useGameStore.getState(), 'initPlayersFromDetail');
@@ -284,13 +287,13 @@ describe('GameBoard public replay', () => {
     };
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const refreshedLogs: GameLogs = {
       game_id: 'game-1',
       events: [
         ...activeLogs.events,
-        { event_type: 'speech', payload: { player_seat: 1, text: 'new', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: 'new', round_number: 1 } },
       ],
     };
     vi.mocked(fetchGameDetail)
@@ -321,7 +324,7 @@ describe('GameBoard public replay', () => {
     vi.useFakeTimers();
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const pendingPoll = deferred<GameLogs>();
     const mergeLogs = vi.spyOn(useGameStore.getState(), 'mergeLogs');
@@ -353,11 +356,11 @@ describe('GameBoard public replay', () => {
     vi.useFakeTimers();
     const firstLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const secondLogs: GameLogs = {
       game_id: 'game-2',
-      events: [{ event_type: 'phase', payload: { phase: 'dawn', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'dawn', round_number: 1 } }],
     };
     const pendingPoll = deferred<PublicGameState>();
     const mergeLogs = vi.spyOn(useGameStore.getState(), 'mergeLogs');
@@ -394,7 +397,7 @@ describe('GameBoard public replay', () => {
     vi.useFakeTimers();
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const pendingPoll = deferred<GameLogs>();
     vi.mocked(fetchGameDetail).mockResolvedValueOnce({
@@ -431,7 +434,7 @@ describe('GameBoard public replay', () => {
     const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const pendingDetail = deferred<PublicGameState>();
     vi.mocked(fetchGameDetail)
@@ -464,7 +467,7 @@ describe('GameBoard public replay', () => {
     const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
     const activeLogs: GameLogs = {
       game_id: 'game-1',
-      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
     };
     const pendingLogs = deferred<GameLogs>();
     vi.mocked(fetchGameDetail)

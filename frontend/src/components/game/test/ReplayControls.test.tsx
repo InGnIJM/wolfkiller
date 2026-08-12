@@ -9,15 +9,17 @@ import type { PublicReplayEvent } from '../../../store/types';
 import HistoryPanel from '../HistoryPanel';
 import TimelineController from '../TimelineController';
 
+const replayEventMeta = { timestamp: '2026-08-13T00:00:00Z' } as const;
+
 const timeline: PublicReplayEvent[] = [
-  { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
-  { event_type: 'speech', payload: { player_seat: 1, text: '公开发言', round_number: 1 } },
-  { event_type: 'vote', payload: { voter_seat: 1, target_seat: 2, round_number: 1 } },
-  { event_type: 'vote', payload: { voter_seat: 2, target_seat: null, round_number: 1 } },
-  { event_type: 'vote_result', payload: { exiled_seat: 2, round_number: 1 } },
-  { event_type: 'vote_result', payload: { exiled_seat: null, round_number: 2 } },
-  { event_type: 'death', payload: { player_seat: 2, cause: 'wolf_kill', round_number: 1 } },
-  { event_type: 'winner', payload: { winning_camp: 'good', reason: 'all_wolves_dead' } },
+  { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+  { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: '公开发言', round_number: 1 } },
+  { ...replayEventMeta, event_type: 'vote', payload: { voter_seat: 1, target_seat: 2, round_number: 1 } },
+  { ...replayEventMeta, event_type: 'vote', payload: { voter_seat: 2, target_seat: null, round_number: 1 } },
+  { ...replayEventMeta, event_type: 'vote_result', payload: { exiled_seat: 2, round_number: 1 } },
+  { ...replayEventMeta, event_type: 'vote_result', payload: { exiled_seat: null, round_number: 2 } },
+  { ...replayEventMeta, event_type: 'death', payload: { player_seat: 2, cause: 'wolf_kill', round_number: 1 } },
+  { ...replayEventMeta, event_type: 'winner', payload: { winning_camp: 'good', reason: 'all_wolves_dead' } },
 ];
 
 beforeEach(() => {
