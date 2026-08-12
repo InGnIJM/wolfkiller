@@ -35,19 +35,23 @@ export default function GameList({ onJoinGame }: Props) {
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
-    try {
-      const res = await listGames();
-      setGames(res.games);
-    } catch (e) {
-      console.error('Failed to list games:', e);
-    }
-  };
-
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 3000);
-    return () => clearInterval(t);
+    let active = true;
+    const refresh = async () => {
+      try {
+        const res = await listGames();
+        if (active) setGames(res.games);
+      } catch (e) {
+        if (active) console.error('Failed to list games:', e);
+      }
+    };
+
+    void Promise.resolve().then(refresh);
+    const t = setInterval(() => void refresh(), 3000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
   }, []);
 
   const handleCreate = async (config: Record<string, number>) => {
