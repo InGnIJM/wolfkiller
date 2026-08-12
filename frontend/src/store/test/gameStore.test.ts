@@ -14,6 +14,94 @@ afterEach(() => {
 });
 
 describe('public replay state', () => {
+  it('shows the current sheriff snapshot when no replay timeline exists', () => {
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+
+    expect(useGameStore.getState().players).toEqual({
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: true },
+    });
+    expect(useGameStore.getState().initialPlayers).toEqual({
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+    });
+  });
+
+  it('shows the sheriff snapshot only at the current replay tail', () => {
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        {
+          event_type: 'speech',
+          payload: { player_seat: 1, text: 'tail', round_number: 1 },
+        },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().players[2].is_sheriff).toBe(true);
+
+    useGameStore.getState().seekTo(0);
+    expect(useGameStore.getState().players[2].is_sheriff).toBe(false);
+
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().players[2].is_sheriff).toBe(true);
+  });
+
+  it('keeps snapshot updates out of history and applies them at the tail', () => {
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        {
+          event_type: 'speech',
+          payload: { player_seat: 1, text: 'tail', round_number: 1 },
+        },
+      ],
+    };
+    const updatedPlayers: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: true },
+      3: { seat_number: 3, is_alive: true, is_sheriff: false },
+    };
+
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(0);
+    useGameStore.getState().initPlayersFromDetail(updatedPlayers);
+
+    expect(useGameStore.getState().players).toEqual({
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      3: { seat_number: 3, is_alive: true, is_sheriff: false },
+    });
+
+    useGameStore.getState().seekTo(1);
+
+    expect(useGameStore.getState().players).toEqual({
+      1: { seat_number: 1, is_alive: true, is_sheriff: true },
+      3: { seat_number: 3, is_alive: true, is_sheriff: false },
+    });
+  });
+
+  it('shows the current sheriff snapshot at a game-over tail', () => {
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [
+        {
+          event_type: 'winner',
+          payload: { winning_camp: 'good', reason: 'all_wolves_dead' },
+        },
+      ],
+    });
+    useGameStore.getState().seekTo(0);
+
+    expect(useGameStore.getState().phase).toBe('game_over');
+    expect(useGameStore.getState().players[2].is_sheriff).toBe(true);
+  });
+
   it('builds a neutral baseline from detail seats and applies deaths only when replayed', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
@@ -40,7 +128,7 @@ describe('public replay state', () => {
     expect(useGameStore.getState().players[2]).toEqual({
       seat_number: 2,
       is_alive: false,
-      is_sheriff: false,
+      is_sheriff: true,
     });
   });
 

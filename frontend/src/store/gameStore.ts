@@ -34,6 +34,7 @@ interface GameStore extends DerivedState {
   winOverlayDismissed: boolean;
   showHistory: boolean;
   initialPlayers: Record<number, PublicPlayerState>;
+  currentPublicPlayers: Record<number, PublicPlayerState>;
 
   setGameState: (state: PublicGameState) => void;
   setPhase: (phase: GamePhase, roundNumber: number) => void;
@@ -84,6 +85,7 @@ const initialState = {
   winOverlayDismissed: false,
   showHistory: false,
   initialPlayers: {} as Record<number, PublicPlayerState>,
+  currentPublicPlayers: {} as Record<number, PublicPlayerState>,
 };
 
 let playTimer: ReturnType<typeof setInterval> | null = null;
@@ -103,6 +105,27 @@ function copyPlayers(players: Record<number, PublicPlayerState>) {
   return Object.fromEntries(
     Object.entries(players).map(([seat, player]) => [Number(seat), { ...player }]),
   ) as Record<number, PublicPlayerState>;
+}
+
+function buildInitialPlayers(players: Record<number, PublicPlayerState>) {
+  return Object.fromEntries(
+    Object.entries(players).map(([seat, player]) => [
+      Number(seat),
+      { seat_number: player.seat_number, is_alive: true, is_sheriff: false },
+    ]),
+  ) as Record<number, PublicPlayerState>;
+}
+
+function applyCurrentSheriffSnapshot(
+  players: Record<number, PublicPlayerState>,
+  currentPublicPlayers: Record<number, PublicPlayerState>,
+) {
+  for (const [seat, player] of Object.entries(players)) {
+    players[Number(seat)] = {
+      ...player,
+      is_sheriff: currentPublicPlayers[Number(seat)].is_sheriff,
+    };
+  }
 }
 
 function buildTimeline(logs: GameLogs): PublicReplayEvent[] {
@@ -149,6 +172,7 @@ function deriveState(
   timeline: PublicReplayEvent[],
   upToIndex: number,
   initialPlayers: Record<number, PublicPlayerState>,
+  currentPublicPlayers: Record<number, PublicPlayerState>,
 ): DerivedState {
   const players = copyPlayers(initialPlayers);
   const speeches: SpeechRecord[] = [];
@@ -209,6 +233,10 @@ function deriveState(
     }
   }
 
+  if (timeline.length === 0 || upToIndex === timeline.length - 1) {
+    applyCurrentSheriffSnapshot(players, currentPublicPlayers);
+  }
+
   return { players, speeches, votes, deathHistory, phase, roundNumber, winResult, currentSpeaker };
 }
 
@@ -228,17 +256,21 @@ function startTimer(get: () => GameStore) {
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState,
 
-  setGameState: (state) => set({
-    gameId: state.game_id,
-    phase: state.phase,
-    roundNumber: state.round_number,
-    players: copyPlayers(state.players),
-    initialPlayers: copyPlayers(state.players),
-    speeches: state.speeches,
-    deathHistory: state.death_history,
-    winResult: state.win_result,
-    currentSpeaker: null,
-  }),
+  setGameState: (state) => {
+    const currentPublicPlayers = copyPlayers(state.players);
+    set({
+      gameId: state.game_id,
+      phase: state.phase,
+      roundNumber: state.round_number,
+      players: copyPlayers(currentPublicPlayers),
+      initialPlayers: buildInitialPlayers(currentPublicPlayers),
+      currentPublicPlayers,
+      speeches: state.speeches,
+      deathHistory: state.death_history,
+      winResult: state.win_result,
+      currentSpeaker: null,
+    });
+  },
 
   setPhase: (phase, roundNumber) => set({ phase, roundNumber, currentSpeaker: null }),
 
@@ -270,23 +302,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setCurrentSpeaker: (seat) => set({ currentSpeaker: seat }),
 
   initPlayersFromDetail: (players) => {
-    const publicPlayers = Object.fromEntries(
-      Object.entries(players).map(([seat, player]) => [
-        Number(seat),
-        { seat_number: player.seat_number, is_alive: true, is_sheriff: false },
-      ]),
-    ) as Record<number, PublicPlayerState>;
-    set({ players: publicPlayers, initialPlayers: copyPlayers(publicPlayers) });
+    const currentPublicPlayers = copyPlayers(players);
+    const initialPlayers = buildInitialPlayers(currentPublicPlayers);
+    const { timeline, timelineIndex } = get();
+    if (timeline.length === 0) {
+      const publicPlayers = copyPlayers(initialPlayers);
+      applyCurrentSheriffSnapshot(publicPlayers, currentPublicPlayers);
+      set({ players: publicPlayers, initialPlayers, currentPublicPlayers });
+      return;
+    }
+    set({
+      ...deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers),
+      initialPlayers,
+      currentPublicPlayers,
+    });
   },
 
   loadLogs: (logs) => {
     const timeline = buildTimeline(logs);
-    const initialPlayers = get().initialPlayers;
+    const { initialPlayers, currentPublicPlayers } = get();
     set({
       gameId: logs.game_id,
       timeline,
       timelineIndex: -1,
-      ...deriveState(timeline, -1, initialPlayers),
+      ...deriveState(timeline, -1, initialPlayers, currentPublicPlayers),
       isPlaying: false,
       winOverlayDismissed: false,
       showWinOverlay: false,
@@ -299,6 +338,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       timeline: oldTimeline,
       timelineIndex,
       initialPlayers,
+      currentPublicPlayers,
       isPaused,
       winOverlayDismissed,
     } = get();
@@ -308,7 +348,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const nextIndex = shouldFollowTail
       ? timeline.length - 1
       : reconcileHistoricalIndex(oldTimeline, timelineIndex, timeline);
-    const derived = deriveState(timeline, nextIndex, initialPlayers);
+    const derived = deriveState(timeline, nextIndex, initialPlayers, currentPublicPlayers);
     set({
       timeline,
       timelineIndex: nextIndex,
@@ -318,10 +358,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   seekTo: (index) => {
-    const { timeline, initialPlayers, winOverlayDismissed } = get();
+    const { timeline, initialPlayers, currentPublicPlayers, winOverlayDismissed } = get();
     if (timeline.length === 0) return;
     const timelineIndex = Math.max(0, Math.min(index, timeline.length - 1));
-    const derived = deriveState(timeline, timelineIndex, initialPlayers);
+    const derived = deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers);
     set({
       timelineIndex,
       ...derived,
