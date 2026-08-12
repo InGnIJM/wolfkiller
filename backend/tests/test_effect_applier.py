@@ -14,6 +14,7 @@ from app.core.effect_applier import (
     EffectRejected,
     derive_effect_id,
 )
+from app.core.state_transaction import state_transaction_lock
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import EffectKind, GameEffect
 
@@ -396,13 +397,13 @@ def test_concurrent_distinct_actions_serialize_commits(monkeypatch) -> None:
 
     s = state()
     both_entered = Barrier(2)
-    original = module._state_lock
+    original = module.state_transaction_lock
 
     def gated_lock(current):
         both_entered.wait()
         return original(current)
 
-    monkeypatch.setattr(module, "_state_lock", gated_lock)
+    monkeypatch.setattr(module, "state_transaction_lock", gated_lock)
     results, errors = [], []
 
     def apply(action: str) -> None:
@@ -480,11 +481,11 @@ def test_cyclic_existing_runtime_is_rejected() -> None:
 
 
 def test_state_lock_registry_reuses_identity_and_cleans_up() -> None:
-    import app.core.effect_applier as module
+    import app.core.state_transaction as module
 
     s = state()
     key = id(s)
-    assert module._state_lock(s) is module._state_lock(s)
+    assert module.state_transaction_lock(s) is module.state_transaction_lock(s)
     assert key in module._LOCKS
     del s
     gc.collect()
@@ -662,3 +663,17 @@ def test_empty_premounted_private_fact_map_is_valid() -> None:
     s = state(); s._pipeline_runtime = _Runtime(private_facts={})
     EffectApplier().apply(s, batch([]), permission())
     assert s._pipeline_runtime.private_facts == {}
+
+
+def test_shared_state_transaction_lock_is_identity_bound() -> None:
+    import app.core.state_transaction as module
+
+    current = state()
+    assert state_transaction_lock(current) is state_transaction_lock(current)
+    with pytest.raises(TypeError):
+        state_transaction_lock(object())
+    key, reference = id(current), module._LOCKS[id(current)][0]
+    module._drop(key, object())
+    assert key in module._LOCKS
+    module._drop(key, reference)
+    assert key not in module._LOCKS

@@ -3,26 +3,14 @@ import hashlib
 import json
 import math
 import re
-import weakref
 from dataclasses import dataclass, field
-from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Mapping
 from app.models.game import GameState
 from app.models.pipeline import EffectKind, GameEffect
+from app.core.state_transaction import state_transaction_lock
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
-_LOCK_GUARD = Lock()
-_LOCKS: dict[int, tuple[weakref.ReferenceType[GameState], RLock]] = {}
-def _state_lock(state: GameState) -> RLock:
-    key = id(state)
-    with _LOCK_GUARD:
-        entry = _LOCKS.get(key)
-        lock = entry[1] if entry else RLock()
-        if not entry: _LOCKS[key] = (weakref.ref(state, lambda current, k=key: _drop_lock(k, current)), lock)
-        return lock
-def _drop_lock(key: int, reference: weakref.ReferenceType[GameState]) -> None:
-    with _LOCK_GUARD: _LOCKS.pop(key, None)
 class EffectRejected(ValueError): pass
 def _utf8(value: str, name: str, *, token: bool = False) -> str:
     if type(value) is not str: raise TypeError(f"{name} must be a string")
@@ -360,7 +348,7 @@ class EffectApplier:
               permission: EffectPermission) -> CommitResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
         observed_revision = _runtime(state).revision
-        with _state_lock(state):
+        with state_transaction_lock(state):
             return self._apply_locked(state, effects, permission, observed_revision)
 
     def _apply_locked(self, state: GameState, effects: tuple[GameEffect, ...],
