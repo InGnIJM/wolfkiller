@@ -1,47 +1,34 @@
-import { Dialog, DialogContent, Typography, Box } from '@mui/material';
-import { DeathRecord } from '../../store/types';
-import RoleIcon from '../shared/RoleIcon';
+import { Dialog, DialogContent, Typography } from '@mui/material';
+import type { DeathRecord } from '../../store/types';
 
 interface Props {
   deaths: DeathRecord[];
-  playerRoles: Record<number, string | null>;
 }
 
 const CAUSE_LABELS: Record<string, string> = {
-  wolf_kill: '被狼人杀害',
-  poison: '被毒杀',
-  exile: '被放逐',
-  hunter_shot: '被猎人带走',
+  wolf_kill: '夜间死亡',
+  poison: '毒杀',
+  exile: '放逐',
+  hunter_shot: '猎人带走',
 };
 
-export default function DeathAnnouncement({ deaths, playerRoles }: Props) {
+export default function DeathAnnouncement({ deaths }: Props) {
   const latest = deaths[deaths.length - 1];
   if (!latest) return null;
 
-  const role = playerRoles[latest.player_seat];
   const causeLabel = CAUSE_LABELS[latest.cause] || latest.cause;
-  const icon = latest.cause === 'wolf_kill' ? '☠' : '⚰';
+  const icon = latest.cause === 'wolf_kill' ? '☠' : '✦';
 
   return (
-    <Dialog open={true} maxWidth="xs" fullWidth>
+    <Dialog open maxWidth="xs" fullWidth>
       <DialogContent sx={{ textAlign: 'center', py: 4, px: 3 }}>
         <Typography sx={{ fontSize: '2.5rem', lineHeight: 1, mb: 1.5 }}>{icon}</Typography>
-        <Typography variant="h5" fontWeight={400} gutterBottom>
-          {latest.player_seat}号玩家
+        <Typography variant="h5" sx={{ fontWeight: 400 }} gutterBottom>
+          {latest.player_seat}号玩家出局
         </Typography>
-        {role && (
-          <Box sx={{ my: 1.5 }}>
-            <RoleIcon role={role} size={40} />
-          </Box>
-        )}
         <Typography variant="body1" color="text.secondary">
-          因{causeLabel}出局
+          {causeLabel} · 第{latest.round_number}轮
         </Typography>
-        {role && (
-          <Typography variant="body2" sx={{ mt: 1.5, color: 'primary.light', fontWeight: 500 }}>
-            身份：{role}
-          </Typography>
-        )}
       </DialogContent>
     </Dialog>
   );
