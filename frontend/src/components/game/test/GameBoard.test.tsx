@@ -163,7 +163,114 @@ describe('GameBoard public replay', () => {
     expect(fetchGameLogs).toHaveBeenCalledTimes(2);
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(fetchGameLogs).toHaveBeenCalledTimes(3);
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameLogs).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId('seat-map')).toBeInTheDocument();
+  });
+
+  it('does not merge a pending poll after the board unmounts', async () => {
+    vi.useFakeTimers();
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const pendingPoll = deferred<GameLogs>();
+    const mergeLogs = vi.spyOn(useGameStore.getState(), 'mergeLogs');
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({
+      ...detail,
+      phase: 'speech',
+      win_result: null,
+    });
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(activeLogs)
+      .mockReturnValueOnce(pendingPoll.promise);
+
+    const { unmount } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+
+    unmount();
+    await act(async () => pendingPoll.resolve(activeLogs));
+
+    expect(mergeLogs).not.toHaveBeenCalled();
+  });
+
+  it('does not merge a pending poll from the previous game', async () => {
+    vi.useFakeTimers();
+    const firstLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const secondLogs: GameLogs = {
+      game_id: 'game-2',
+      events: [{ event_type: 'phase', payload: { phase: 'dawn', round_number: 1 } }],
+    };
+    const pendingPoll = deferred<GameLogs>();
+    const mergeLogs = vi.spyOn(useGameStore.getState(), 'mergeLogs');
+    vi.mocked(fetchGameDetail).mockResolvedValue({
+      ...detail,
+      phase: 'speech',
+      win_result: null,
+    });
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(firstLogs)
+      .mockReturnValueOnce(pendingPoll.promise)
+      .mockResolvedValueOnce(secondLogs);
+
+    const { rerender } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+
+    rerender(<GameBoard gameId="game-2" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => pendingPoll.resolve(firstLogs));
+
+    expect(mergeLogs).not.toHaveBeenCalled();
+    expect(useGameStore.getState().timeline).toEqual(secondLogs.events);
+  });
+
+  it('waits for a pending poll before starting another request', async () => {
+    vi.useFakeTimers();
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    const pendingPoll = deferred<GameLogs>();
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({
+      ...detail,
+      phase: 'speech',
+      win_result: null,
+    });
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(activeLogs)
+      .mockReturnValueOnce(pendingPoll.promise)
+      .mockResolvedValueOnce(activeLogs);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(fetchGameLogs).toHaveBeenCalledTimes(2);
+
+    await act(async () => pendingPoll.resolve(activeLogs));
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(fetchGameLogs).toHaveBeenCalledTimes(3);
   });
 
   it('does not update game state when unmounted during sequential loading', async () => {

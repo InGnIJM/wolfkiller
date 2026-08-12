@@ -58,16 +58,30 @@ export default function GameBoard({ onBack, gameId }: Props) {
   useEffect(() => {
     if (loading || winResult) return;
 
-    const interval = setInterval(async () => {
+    let active = true;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const logs = await fetchGameLogs(gameId);
-        mergeLogs(logs);
+        if (active) {
+          mergeLogs(logs);
+        }
       } catch {
         // Silently ignore poll errors
+      } finally {
+        inFlight = false;
       }
-    }, 3000);
+    };
 
-    return () => clearInterval(interval);
+    const interval = setInterval(poll, 3000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [gameId, loading, winResult, mergeLogs]);
 
   const aliveCount = Object.values(players).filter((p) => p.is_alive).length;
