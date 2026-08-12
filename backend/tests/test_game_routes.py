@@ -170,6 +170,7 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
     assert not (forbidden & _all_keys(detail))
     assert "wolf-killer-villager" not in repr(detail)
     assert not state.players_read
+    assert "votes" not in detail
     assert detail["players"][1] == {"seat_number": 1, "is_alive": True, "is_sheriff": False}
     assert detail["win_result"] == {"winning_camp": "good", "reason": "all_wolves_dead"}
 
@@ -186,7 +187,10 @@ def test_read_jsonl_handles_missing_valid_and_invalid_records(tmp_path):
     ("record", "expected"),
     [
         ({}, None),
+        ({"timestamp": 123}, None),
         ({"timestamp": "invalid"}, None),
+        ({"timestamp": "2026-01-01T99:00:00"}, None),
+        ({"timestamp": "2026-01-01"}, None),
         ({"timestamp": "2026-01-01T00:00:00Z"}, pytest.approx(0, abs=1)),
     ],
 )
@@ -265,6 +269,56 @@ def test_public_replay_skips_operation_without_valid_timestamp():
     assert game_routes._public_replay_events([], [operation]) == []
 
 
+def test_public_replay_skips_date_only_timestamp_without_changing_other_event_status():
+    operations = [
+        {
+            "timestamp": "2026-01-01", "operation": "phase_change", "round": 1,
+            "phase": "speech", "data": {"new_phase": "speech"},
+        },
+        {
+            "timestamp": "2026-01-01T00:00:01Z", "operation": "phase_change", "round": 1,
+            "phase": "speech", "data": {"new_phase": "speech"},
+        },
+    ]
+
+    assert game_routes._public_replay_events([], operations) == [{
+        "event_type": "phase",
+        "payload": {"phase": "speech", "round_number": 1},
+    }]
+
+
+def test_public_vote_result_projection_omits_tally_and_private_fields():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "vote_result", "round": 2,
+        "phase": "vote_resolution",
+        "data": {"exiled": 3, "tally": {3: 4, 1: 2}, "reasoning": "private"},
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "vote_result",
+        "payload": {"round_number": 2, "exiled_seat": 3},
+    }]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {},
+        {"exiled": 0},
+        {"exiled": -1},
+        {"exiled": True},
+        {"exiled": "3"},
+    ],
+)
+def test_public_vote_result_rejects_invalid_exile_data(data):
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "vote_result", "round": 2,
+        "phase": "vote_resolution", "data": data,
+    }
+
+    assert game_routes._public_operation_events(record) == []
+
+
 def test_public_replay_sorts_naive_and_z_timestamps_as_utc_without_leaking_timestamps():
     conversations = [{
         "timestamp": "2026-01-01T00:00:02", "scope": "public", "speaker_seat": 1,
@@ -328,6 +382,8 @@ async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypat
                  "phase": "game_over", "data": {"winner": "good", "reason": "all_wolves_dead", "roles": ["wolf"]}},
                 {"timestamp": "2026-01-01T00:00:11Z", "operation": "unknown", "round": 2,
                  "phase": "game_over", "data": {"secret": "no"}},
+                {"timestamp": "2026-01-01T00:00:11.500Z", "operation": "vote_result", "round": 2,
+                 "phase": "vote_resolution", "data": {"exiled": None, "tally": {1: 2}, "secret": "no"}},
                 {"timestamp": "2026-01-01T00:00:12Z", "operation": "night_deaths", "round": 1,
                  "phase": "dawn", "data": {"deaths": [{"player_seat": "bad", "cause": "wolf_kill", "round_number": 1}]}},
             ],
@@ -342,9 +398,10 @@ async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypat
         {"event_type": "death", "payload": {"player_seat": 2, "cause": "wolf_kill", "round_number": 1}},
         {"event_type": "phase", "payload": {"phase": "speech", "round_number": 2}},
         {"event_type": "winner", "payload": {"winning_camp": "good", "reason": "all_wolves_dead"}},
+        {"event_type": "vote_result", "payload": {"round_number": 2, "exiled_seat": None}},
     ]
     raw = repr(response.model_dump())
-    for secret in ("role_init", "werewolf", "seer result", "private thought", "reasoning", "roles"):
+    for secret in ("role_init", "werewolf", "seer result", "private thought", "reasoning", "roles", "tally"):
         assert secret not in raw
 
 

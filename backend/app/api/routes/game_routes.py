@@ -89,7 +89,6 @@ async def get_game(game_id: str):
         players=public_state["players"],
         sheriff=public_state["sheriff"],
         speeches=public_state["speeches"],
-        votes=public_state.get("votes", []),
         death_history=public_state["death_history"],
         win_result=public_state["win_result"],
     )
@@ -112,7 +111,7 @@ def _read_jsonl(path: str) -> list[dict]:
 
 def _timestamp(record: dict[str, Any]) -> datetime | None:
     value = record.get("timestamp")
-    if not isinstance(value, str):
+    if not isinstance(value, str) or ("T" not in value and " " not in value):
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -159,6 +158,17 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
         return [{
             "event_type": "vote",
             "payload": {"voter_seat": seat, "target_seat": target, "round_number": round_number},
+        }]
+
+    if operation == "vote_result":
+        if "exiled" not in data:
+            return []
+        exiled = data.get("exiled")
+        if phase != "vote_resolution" or (exiled is not None and (not _is_int(exiled) or exiled <= 0)):
+            return []
+        return [{
+            "event_type": "vote_result",
+            "payload": {"round_number": round_number, "exiled_seat": exiled},
         }]
 
     if operation == "night_deaths":
