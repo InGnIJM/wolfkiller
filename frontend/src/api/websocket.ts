@@ -58,7 +58,10 @@ export function useWebSocket() {
     };
 
     ws.onerror = (err) => console.error('WebSocket error:', err);
-  }, [setGameState, setPhase, addSpeech, addVote, setWinResult, setConnected]);
+  }, [
+    setGameState, setPhase, addSpeech, addVote,
+    setWinResult, setConnected, setNightSubstep, setPaused,
+  ]);
 
   const disconnect = useCallback(() => {
     wsRef.current?.close();
