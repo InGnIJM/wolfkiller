@@ -43,6 +43,10 @@ class ActionValidator:
                 "contract_version_mismatch",
                 "context contract version does not match contract schema version",
             ))
+        if context.contract_digest != contract.stable_digest():
+            violations.append(self._violation(
+                "contract_digest_mismatch", "context contract digest does not match contract"
+            ))
         if context.schedule_point != contract.schedule_point:
             violations.append(self._violation(
                 "schedule_point_mismatch", "context schedule point does not match contract"
@@ -164,7 +168,7 @@ class ActionValidator:
             available = context.resources[name]
             if type(available) is bool:
                 quantity = int(available)
-            elif type(available) is int and available >= 0:
+            elif type(available) is int and 0 <= available <= 2_147_483_647:
                 quantity = available
             else:
                 violations.append(cls._violation(

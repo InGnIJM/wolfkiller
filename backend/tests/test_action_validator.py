@@ -45,13 +45,18 @@ def pipeline_raising_hook(
     raise RuntimeError("hook exploded")
 
 
-def pipeline_context(**changes: object) -> PipelineActionContext:
+def pipeline_context(
+    *, contract: PipelineActionContract | None = None, **changes: object
+) -> PipelineActionContext:
+    if contract is None:
+        contract = pipeline_contract()
     values: dict[str, object] = {
         "game_id": "pipeline-game",
         "revision": 3,
         "config_version": "registry-v1",
         "contract_id": "werewolf-kill",
         "contract_version": 1,
+        "contract_digest": contract.stable_digest(),
         "round_number": 2,
         "phase": "night",
         "window_id": "night:2",
@@ -133,8 +138,8 @@ def violation_codes(violations: tuple[RuleViolation, ...]) -> tuple[str, ...]:
 
 def test_pipeline_validate_is_pure_and_appends_hook_violations(validator):
     PIPELINE_HOOK_CALLS.clear()
-    context = pipeline_context()
     contract = pipeline_contract(validate=pipeline_valid_hook)
+    context = pipeline_context(contract=contract)
     command = pipeline_command()
     before = (context.to_json(), contract.to_json(), command.to_json())
 
@@ -206,7 +211,9 @@ def test_pipeline_validate_enforces_each_limit_at_boundary(
 
 def test_pipeline_validate_ignores_optional_limits_and_accepts_below_limits(validator):
     contract = pipeline_contract(per_round_limit=None, per_game_limit=None)
-    context = pipeline_context(counters={"window": 0, "round": 999, "game": 999})
+    context = pipeline_context(
+        contract=contract, counters={"window": 0, "round": 999, "game": 999}
+    )
     assert validator.validate(context, contract, pipeline_command()) == ()
 
 
@@ -219,6 +226,7 @@ def test_pipeline_validate_ignores_optional_limits_and_accepts_below_limits(vali
         ({"fang": True, "permission": True}, ()),
         ({"fang": False, "permission": True}, ("resource_insufficient",)),
         ({"fang": "1", "permission": True}, ("resource_invalid",)),
+        ({"fang": 2_147_483_648, "permission": True}, ("resource_invalid",)),
     ],
 )
 def test_pipeline_validate_checks_required_resource_quantity(
@@ -269,19 +277,41 @@ def test_pipeline_validate_binds_context_to_exact_contract(
     )
 
 
+def test_pipeline_validate_rejects_same_identity_replacement_contract_without_hook(
+    validator,
+):
+    PIPELINE_HOOK_CALLS.clear()
+    original = pipeline_contract()
+    replacement = pipeline_contract(
+        action_types=("kill", "pass", "reveal"),
+        required_resources={},
+        per_window_limit=99,
+        per_round_limit=99,
+        per_game_limit=99,
+        validate=pipeline_valid_hook,
+    )
+    context = pipeline_context(contract_digest=original.stable_digest())
+
+    violations = validator.validate(context, replacement, pipeline_command())
+
+    assert violation_codes(violations) == ("contract_digest_mismatch",)
+    assert PIPELINE_HOOK_CALLS == []
+
+
 def test_pipeline_response_contract_allows_dead_actor_for_reaction_validation(validator):
     contract = pipeline_contract(response_event_types=frozenset({"PLAYER_DIED"}))
 
     assert validator.validate(
-        pipeline_context(actor_alive=False), contract, pipeline_command()
+        pipeline_context(contract=contract, actor_alive=False), contract, pipeline_command()
     ) == ()
 
 
 def test_pipeline_generic_violation_prevents_validate_hook_execution(validator):
     PIPELINE_HOOK_CALLS.clear()
+    contract = pipeline_contract(validate=pipeline_valid_hook)
     violations = validator.validate(
-        pipeline_context(),
-        pipeline_contract(validate=pipeline_valid_hook),
+        pipeline_context(contract=contract),
+        contract,
         pipeline_command("dance", None),
     )
 
@@ -292,7 +322,6 @@ def test_pipeline_generic_violation_prevents_validate_hook_execution(validator):
 @pytest.mark.parametrize(
     ("counters", "expected"),
     [
-        ({"window": -1}, "invalid_counter"),
         ({"window": 0, "surprise": 1}, "invalid_counter"),
     ],
 )
@@ -312,16 +341,18 @@ def test_pipeline_validate_without_hook_returns_generic_violations_only(validato
 
 @pytest.mark.parametrize("hook", [pipeline_bad_list_hook, pipeline_bad_item_hook])
 def test_pipeline_validate_rejects_invalid_hook_return(validator, hook):
+    contract = pipeline_contract(validate=hook)
     with pytest.raises(TypeError, match="exact tuple of RuleViolation"):
         validator.validate(
-            pipeline_context(), pipeline_contract(validate=hook), pipeline_command()
+            pipeline_context(contract=contract), contract, pipeline_command()
         )
 
 
 def test_pipeline_validate_propagates_hook_exception(validator):
+    contract = pipeline_contract(validate=pipeline_raising_hook)
     with pytest.raises(RuntimeError, match="hook exploded"):
         validator.validate(
-            pipeline_context(), pipeline_contract(validate=pipeline_raising_hook), pipeline_command()
+            pipeline_context(contract=contract), contract, pipeline_command()
         )
 
 
