@@ -1,152 +1,128 @@
-import { Box } from '@mui/material';
-import { useRef, useState, useEffect } from 'react';
-import PlayerCard from './PlayerCard';
-import { PlayerFullState } from '../../store/types';
+import { Box, Typography } from '@mui/material';
+import { useEffect, useRef, useState } from 'react';
+import type { PublicPlayerState } from '../../store/types';
 
 interface Props {
-  players: Record<number, PlayerFullState>;
+  players: Record<number, PublicPlayerState>;
   currentSpeaker?: number | null;
-  highlightedSeats?: number[];
-  wolfKillTarget?: number | null;
   voteTargets?: Record<number, number | null>;
   children?: React.ReactNode;
 }
 
-function getRectPosition(
-  index: number,
-  total: number,
-  rectW: number,
-  rectH: number,
-) {
-  if (total <= 1) {
-    return { x: rectW / 2, y: rectH / 2 };
-  }
+function getRectPosition(index: number, total: number, rectW: number, rectH: number) {
+  if (total <= 1) return { x: rectW / 2, y: rectH / 2 };
 
   const perimeter = 2 * (rectW + rectH);
-  const step = perimeter / total;
-  const dist = index * step;
+  const dist = index * (perimeter / total);
+  if (dist < rectW) return { x: dist, y: 0 };
 
-  // Top edge: left → right
-  if (dist < rectW) {
-    return { x: dist, y: 0 };
-  }
-  // Right edge: top → bottom
   let remaining = dist - rectW;
-  if (remaining < rectH) {
-    return { x: rectW, y: remaining };
-  }
-  // Bottom edge: right → left
+  if (remaining < rectH) return { x: rectW, y: remaining };
   remaining -= rectH;
-  if (remaining < rectW) {
-    return { x: rectW - remaining, y: rectH };
-  }
-  // Left edge: bottom → top
-  remaining -= rectW;
-  return { x: 0, y: rectH - remaining };
+  if (remaining < rectW) return { x: rectW - remaining, y: rectH };
+  return { x: 0, y: rectH - (remaining - rectW) };
 }
 
-export default function SeatMap({
-  players, currentSpeaker, highlightedSeats, wolfKillTarget, voteTargets, children,
-}: Props) {
+function PublicSeat({
+  seat,
+  player,
+  isCurrentSpeaker,
+  voteTarget,
+  cardSize,
+}: {
+  seat: number;
+  player: PublicPlayerState;
+  isCurrentSpeaker: boolean;
+  voteTarget: number | null | undefined;
+  cardSize: number;
+}) {
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        minWidth: cardSize,
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 0.25,
+        p: 0.7,
+        border: '1px solid',
+        borderColor: isCurrentSpeaker ? 'primary.main' : 'divider',
+        borderRadius: 2,
+        bgcolor: player.is_alive ? 'background.paper' : 'action.disabledBackground',
+        opacity: player.is_alive ? 1 : 0.6,
+      }}
+    >
+      <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
+        {seat}号
+      </Typography>
+      <Typography variant="caption" color={player.is_alive ? 'success.light' : 'text.disabled'}>
+        {player.is_alive ? '存活' : '出局'}
+      </Typography>
+      {player.is_sheriff && <Typography variant="caption" color="warning.light">警长</Typography>}
+      {voteTarget !== undefined && (
+        <Typography variant="caption" color={voteTarget === null ? 'text.disabled' : 'warning.light'}>
+          {voteTarget === null ? '弃权' : `→ ${voteTarget}号`}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+export default function SeatMap({ players, currentSpeaker, voteTargets, children }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const w = entry.contentRect.width;
-        const h = entry.contentRect.height;
-        if (Math.abs(w - size.w) > 2 || Math.abs(h - size.h) > 2) {
-          setSize({ w, h });
-        }
-      }
+    const element = containerRef.current;
+    if (!element) return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextSize = { w: entry.contentRect.width, h: entry.contentRect.height };
+      setSize((previous) => (
+        Math.abs(previous.w - nextSize.w) > 2 || Math.abs(previous.h - nextSize.h) > 2
+          ? nextSize
+          : previous
+      ));
     });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [size.w, size.h]);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const seats = Object.entries(players)
-    .map(([s, p]) => ({ seat: parseInt(s), player: p }))
-    .sort((a, b) => a.seat - b.seat);
-
-  const total = seats.length;
-  const cardSize = size.w > 0 ? Math.max(38, Math.min(64, Math.min(size.w, size.h) * 0.08)) : 52;
-
-  // Rectangle layout: padding from container edges
+    .map(([seat, player]) => ({ seat: Number(seat), player }))
+    .sort((left, right) => left.seat - right.seat);
+  const cardSize = size.w > 0 ? Math.max(44, Math.min(72, Math.min(size.w, size.h) * 0.1)) : 52;
   const padX = Math.max(60, size.w * 0.1);
   const padY = Math.max(50, size.h * 0.1);
   const rectW = Math.max(100, size.w - padX * 2);
   const rectH = Math.max(100, size.h - padY * 2);
 
   return (
-    <Box
-      ref={containerRef}
-      sx={{
-        position: 'relative',
-        width: '100%',
-        height: '100%',
-        minHeight: 420,
-        overflow: 'hidden',
-      }}
-    >
-      {/* Subtle rectangle outline */}
+    <Box ref={containerRef} sx={{ position: 'relative', width: '100%', height: '100%', minHeight: 420, overflow: 'hidden' }}>
       {size.w > 0 && (
-        <Box
-          sx={{
-            position: 'absolute',
-            left: padX,
-            top: padY,
-            width: rectW,
-            height: rectH,
-            border: '1px dashed',
-            borderColor: 'divider',
-            borderRadius: 3,
-            pointerEvents: 'none',
-          }}
-        />
+        <Box sx={{ position: 'absolute', left: padX, top: padY, width: rectW, height: rectH, border: '1px dashed', borderColor: 'divider', borderRadius: 3, pointerEvents: 'none' }} />
       )}
 
-      {/* Player cards along the rectangle perimeter */}
-      {size.w > 0 && seats.map(({ seat, player }, i) => {
-        const pos = getRectPosition(i, total, rectW, rectH);
+      {size.w > 0 && seats.map(({ seat, player }, index) => {
+        const position = getRectPosition(index, seats.length, rectW, rectH);
         return (
           <Box
             key={seat}
-            sx={{
-              position: 'absolute',
-              left: padX + pos.x - cardSize / 2,
-              top: padY + pos.y - 48,
-              transition: 'left 0.35s ease, top 0.35s ease',
-            }}
+            sx={{ position: 'absolute', left: padX + position.x - cardSize / 2, top: padY + position.y - 48, transition: 'left 0.35s ease, top 0.35s ease' }}
           >
-            <PlayerCard
+            <PublicSeat
               seat={seat}
               player={player}
               isCurrentSpeaker={currentSpeaker === seat}
-              isHighlighted={highlightedSeats?.includes(seat)}
-              hasWolfClaw={wolfKillTarget === seat}
-              cardSize={cardSize}
               voteTarget={voteTargets?.[seat]}
+              cardSize={cardSize}
             />
           </Box>
         );
       })}
 
-      {/* Center content area */}
       {size.w > 0 && (
-        <Box
-          sx={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: Math.min(rectW * 0.85, 680),
-            maxHeight: rectH * 0.82,
-            overflowY: 'auto',
-          }}
-        >
+        <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: Math.min(rectW * 0.85, 680), maxHeight: rectH * 0.82, overflowY: 'auto' }}>
           {children}
         </Box>
       )}

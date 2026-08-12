@@ -6,7 +6,6 @@ import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
 import HistoryPanel from './HistoryPanel';
-import WinOverlay from './WinOverlay';
 
 interface Props {
   onBack: () => void;
@@ -16,8 +15,7 @@ interface Props {
 export default function GameBoard({ onBack, gameId }: Props) {
   const {
     players, phase, roundNumber, winResult,
-    showWinOverlay, showHistory, currentSpeaker,
-    highlightedSeats, wolfKillTarget,
+    showHistory, currentSpeaker,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
   } = useGameStore();
 
@@ -75,9 +73,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
   const voteTargets: Record<number, number | null> = {};
   if (phase === 'vote_casting' || phase === 'vote_resolution') {
-    for (const entry of timeline.slice(0, timelineIndex + 1)) {
-      if (entry.type === 'operation' && entry.operation === 'vote' && entry.round === roundNumber) {
-        voteTargets[entry.seat!] = entry.data?.target ?? null;
+    for (const event of timeline.slice(0, timelineIndex + 1)) {
+      if (event.event_type === 'vote' && event.payload.round_number === roundNumber) {
+        voteTargets[event.payload.voter_seat] = event.payload.target_seat;
       }
     }
   }
@@ -132,8 +130,6 @@ export default function GameBoard({ onBack, gameId }: Props) {
           <SeatMap
             players={players}
             currentSpeaker={currentSpeaker}
-            highlightedSeats={highlightedSeats}
-            wolfKillTarget={wolfKillTarget}
             voteTargets={voteTargets}
           >
             <CenterDisplay />
@@ -142,10 +138,6 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
         {showHistory && <HistoryPanel onClose={toggleHistory} />}
       </Box>
-
-      {winResult && showWinOverlay && (
-        <WinOverlay winResult={winResult} players={players} />
-      )}
     </Box>
   );
 }
