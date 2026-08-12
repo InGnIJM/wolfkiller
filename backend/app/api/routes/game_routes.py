@@ -141,6 +141,10 @@ def _is_positive_int(value: Any) -> bool:
     return _is_int(value) and value > 0
 
 
+def _is_non_negative_int(value: Any) -> bool:
+    return _is_int(value) and value >= 0
+
+
 def _public_conversation_event(record: dict[str, Any]) -> dict | None:
     if record.get("scope") != "public" or _timestamp(record) is None:
         return None
@@ -151,7 +155,7 @@ def _public_conversation_event(record: dict[str, Any]) -> dict | None:
     if not (
         _is_positive_int(seat)
         and isinstance(content, str)
-        and _is_positive_int(round_number)
+        and _is_non_negative_int(round_number)
         and isinstance(phase, str)
         and phase in _PUBLIC_GAME_PHASES
     ):
@@ -170,7 +174,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     data = record.get("data")
     if (
         timestamp is None
-        or not _is_positive_int(round_number)
+        or not _is_non_negative_int(round_number)
         or not isinstance(phase, str)
         or phase not in _PUBLIC_GAME_PHASES
         or not isinstance(data, dict)
@@ -213,7 +217,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
                 _is_positive_int(death["player_seat"])
                 and isinstance(death["cause"], str)
                 and death["cause"] in _PUBLIC_DEATH_CAUSES
-                and _is_positive_int(death["round_number"])
+                and _is_non_negative_int(death["round_number"])
             ):
                 return []
             events.append({

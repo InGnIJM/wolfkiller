@@ -238,6 +238,50 @@ def test_public_conversation_requires_all_public_speech_fields(record):
 
 
 @pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (
+            {"timestamp": "2026-01-01T00:00:00Z", "scope": "public", "speaker_seat": 1,
+             "content": "initial speech", "round_number": 0, "phase": "waiting"},
+            {"event_type": "speech", "payload": {
+                "player_seat": 1, "text": "initial speech", "round_number": 0,
+            }},
+        ),
+        (
+            {"timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": 0,
+             "phase": "waiting", "data": {"new_phase": "waiting"}},
+            [{"event_type": "phase", "payload": {
+                "phase": "waiting", "round_number": 0,
+            }}],
+        ),
+    ],
+)
+def test_public_projection_accepts_initial_round_zero(record, expected):
+    projector = (
+        game_routes._public_conversation_event
+        if "scope" in record
+        else game_routes._public_operation_events
+    )
+
+    assert projector(record) == expected
+
+
+@pytest.mark.parametrize("invalid_round", [True, "0", -1])
+def test_public_projection_rejects_non_strict_or_negative_initial_round(invalid_round):
+    conversation = {
+        "timestamp": "2026-01-01T00:00:00Z", "scope": "public", "speaker_seat": 1,
+        "content": "bad round", "round_number": invalid_round, "phase": "waiting",
+    }
+    operation = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": invalid_round,
+        "phase": "waiting", "data": {"new_phase": "waiting"},
+    }
+
+    assert game_routes._public_conversation_event(conversation) is None
+    assert game_routes._public_operation_events(operation) == []
+
+
+@pytest.mark.parametrize(
     "record",
     [
         {"timestamp": "invalid", "operation": "vote", "round": 1, "phase": "vote_casting", "data": {}},
