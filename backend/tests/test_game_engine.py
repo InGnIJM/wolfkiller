@@ -490,6 +490,48 @@ class TestGameEngine:
         assert game_over[0]["game_id"] == engine.game_id
 
     @pytest.mark.asyncio
+    async def test_night_hunter_shot_emits_one_public_death_event(self):
+        bus = EventBus()
+        deaths = []
+
+        async def record_death(**kwargs):
+            deaths.append(kwargs)
+
+        bus.subscribe("player_died", record_death)
+        roles = {
+            1: make_mock_role(
+                1,
+                "wolf-killer-werewolf",
+                night_action=NightAction(1, "kill", 2),
+            ),
+            2: make_mock_role(
+                2,
+                "wolf-killer-hunter",
+                night_action=NightAction(2, "shoot", 3),
+            ),
+            3: make_mock_role(3, "wolf-killer-villager"),
+            4: make_mock_role(
+                4,
+                "wolf-killer-seer",
+                night_action=NightAction(4, "check", 1),
+            ),
+        }
+        engine = GameEngine(game_id="night-hunter-once", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine.state.phase = GamePhase.NIGHT
+        engine._sleep_night_step = AsyncMock()
+
+        await engine._execute_night()
+
+        shot_events = [
+            event for event in deaths if event["death"].player_seat == 3
+        ]
+        assert len(shot_events) == 1
+        assert shot_events[0]["game_id"] == engine.game_id
+        assert [event["death"].player_seat for event in deaths].count(2) == 1
+
+    @pytest.mark.asyncio
     async def test_hunter_death_event_is_game_scoped(self):
         bus = EventBus()
         deaths = []

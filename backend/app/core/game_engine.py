@@ -300,7 +300,9 @@ class GameEngine:
         # Hunter death check & shoot
         hunter_seat = self.action_resolver.has_hunter_died(self.state, deaths)
         if hunter_seat is not None:
-            hunter_death = await self.hunter_shoot(hunter_seat)
+            hunter_death = await self.hunter_shoot(
+                hunter_seat, emit_death_event=False,
+            )
             if hunter_death:
                 deaths.append(hunter_death)
 
@@ -667,7 +669,9 @@ class GameEngine:
         """Get all deaths from the current round."""
         return [d for d in self.state.death_history if d.round_number == self.state.round_number]
 
-    async def hunter_shoot(self, hunter_seat: int) -> Optional[DeathReport]:
+    async def hunter_shoot(
+        self, hunter_seat: int, *, emit_death_event: bool = True,
+    ) -> Optional[DeathReport]:
         """Hunter shoots a player on death. Returns DeathReport or None."""
         hunter = self.roles.get(hunter_seat)
         if hunter is None:
@@ -707,9 +711,10 @@ class GameEngine:
             self.state, hunter_seat, accepted
         )
         if death:
-            await self.event_bus.publish(
-                BusEvent.PLAYER_DIED, game_id=self.game_id, death=death,
-            )
+            if emit_death_event:
+                await self.event_bus.publish(
+                    BusEvent.PLAYER_DIED, game_id=self.game_id, death=death,
+                )
             self.game_logger.log_hunter_shoot(
                 self.game_id, self.state.round_number, hunter_seat,
                 accepted.command.target_seat,
