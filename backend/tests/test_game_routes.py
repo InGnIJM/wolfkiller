@@ -175,6 +175,23 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
     assert detail["win_result"] == {"winning_camp": "good", "reason": "all_wolves_dead"}
 
 
+@pytest.mark.asyncio
+async def test_get_game_accepts_initial_real_game_state_without_private_fields(monkeypatch):
+    from app.models.game import GameState
+
+    state = GameState(game_id="initial")
+    service = MagicMock()
+    service.get_game_state.return_value = state
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.get_game("initial")
+
+    assert response.round_number == 0
+    serialized = response.model_dump()
+    assert serialized["phase"] == "waiting"
+    assert not {"role", "camp", "has_antidote", "has_poison", "has_gun"} & _all_keys(serialized)
+
+
 def test_read_jsonl_handles_missing_valid_and_invalid_records(tmp_path):
     path = tmp_path / "records.jsonl"
     assert game_routes._read_jsonl(str(path)) == []
