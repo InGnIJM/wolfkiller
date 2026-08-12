@@ -34,6 +34,29 @@ class TestSchemas:
     @pytest.mark.parametrize(
         "response_factory, kwargs",
         [
+            (GameDetailResponse, {
+                "game_id": "initial", "phase": "waiting", "round_number": 0,
+                "players": {}, "sheriff": None, "speeches": [],
+                "death_history": [], "win_result": None,
+            }),
+            (PublicSpeechResponse, {"player_seat": 1, "text": "public", "round_number": 0}),
+            (PublicDeathResponse, {"player_seat": 1, "cause": "exile", "round_number": 0}),
+            (PublicVoteResponse, {"voter_seat": 1, "target_seat": None, "round_number": 0}),
+            (PublicVoteResultResponse, {"exiled_seat": None, "round_number": 0}),
+            (PublicPhaseResponse, {"phase": "waiting", "round_number": 0}),
+        ],
+    )
+    def test_public_round_numbers_accept_initial_zero(self, response_factory, kwargs):
+        assert response_factory(**kwargs).round_number == 0
+
+    @pytest.mark.parametrize("invalid_round", [True, "0", -1])
+    def test_public_round_numbers_remain_strict_and_non_negative(self, invalid_round):
+        with pytest.raises(ValidationError):
+            PublicPhaseResponse(phase="waiting", round_number=invalid_round)
+
+    @pytest.mark.parametrize(
+        "response_factory, kwargs",
+        [
             (PublicPlayerResponse, {"seat_number": True, "is_alive": "true", "is_sheriff": False}),
             (PublicSpeechResponse, {"player_seat": "1", "text": "public", "round_number": 1}),
             (PublicDeathResponse, {"player_seat": 1, "cause": "secret: seer", "round_number": 1}),
