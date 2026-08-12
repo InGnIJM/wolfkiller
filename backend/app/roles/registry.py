@@ -96,13 +96,19 @@ class RoleRegistry:
         self._pipeline_specs: dict[str, PipelineRoleSpec] = {}
 
     def register(self, spec: LegacyRoleSpec) -> None:
+        if not isinstance(spec, LegacyRoleSpec):
+            raise TypeError(
+                "legacy register requires app.models.contracts.RoleSpec"
+            )
         if spec.role_id in self._specs:
             raise ValueError(f"role already registered: {spec.role_id}")
         self._specs[spec.role_id] = spec
 
     def register_pipeline(self, spec: PipelineRoleSpec) -> None:
         if not isinstance(spec, PipelineRoleSpec):
-            raise TypeError("pipeline spec must be a pipeline RoleSpec")
+            raise TypeError(
+                "pipeline register requires app.models.pipeline.RoleSpec"
+            )
         if spec.role_id in self._pipeline_specs:
             raise ValueError(f"role already registered: {spec.role_id}")
         self._pipeline_specs[spec.role_id] = spec

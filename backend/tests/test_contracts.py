@@ -27,6 +27,10 @@ class StubRole:
     role_name: str
 
 
+class DuckSpec:
+    role_id = "duck-role"
+
+
 def applicable_hook(context: ActionContext) -> bool:
     return context.actor_alive
 
@@ -269,6 +273,19 @@ class TestRoleRegistry:
 
 
 class TestPipelineRoleRegistry:
+    @pytest.mark.parametrize("bad_spec", [_pipeline_spec(), DuckSpec()])
+    def test_legacy_registration_rejects_non_legacy_specs_without_pollution(
+        self, bad_spec
+    ):
+        registry = RoleRegistry()
+
+        with pytest.raises(TypeError, match="legacy register"):
+            registry.register(bad_spec)
+
+        with pytest.raises(ValueError, match="unknown role"):
+            registry.require("pipeline-role" if isinstance(bad_spec, PipelineRoleSpec) else "duck-role")
+        assert dict(registry.freeze().specs) == {}
+
     def test_freeze_returns_deeply_immutable_stable_snapshot(self):
         registry = RoleRegistry()
         registry.register_pipeline(_pipeline_spec())
@@ -313,10 +330,25 @@ class TestPipelineRoleRegistry:
             registry.register_pipeline(_pipeline_spec())
 
     def test_pipeline_registration_requires_pipeline_spec(self):
-        with pytest.raises(TypeError, match="pipeline RoleSpec"):
-            RoleRegistry().register_pipeline(
-                builtin_registry.require("wolf-killer-villager")
-            )
+        registry = RoleRegistry()
+        legacy = builtin_registry.require("wolf-killer-villager")
+
+        with pytest.raises(TypeError, match="pipeline register"):
+            registry.register_pipeline(legacy)
+
+        assert dict(registry.freeze().specs) == {}
+        with pytest.raises(ValueError, match="unknown role"):
+            registry.require(legacy.role_id)
+
+    def test_pipeline_registration_rejects_duck_spec_without_pollution(self):
+        registry = RoleRegistry()
+
+        with pytest.raises(TypeError, match="pipeline register"):
+            registry.register_pipeline(DuckSpec())
+
+        assert dict(registry.freeze().specs) == {}
+        with pytest.raises(ValueError, match="unknown role"):
+            registry.require("duck-role")
 
     def test_snapshot_require_rejects_unknown_role(self):
         snapshot = RoleRegistry().freeze()
