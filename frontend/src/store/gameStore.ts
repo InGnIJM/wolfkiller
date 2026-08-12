@@ -109,6 +109,42 @@ function buildTimeline(logs: GameLogs): PublicReplayEvent[] {
   return logs.events.map((event) => ({ ...event }));
 }
 
+function eventKey(event: PublicReplayEvent): string {
+  return JSON.stringify(event);
+}
+
+function timelinesEqual(
+  left: PublicReplayEvent[],
+  right: PublicReplayEvent[],
+): boolean {
+  return left.length === right.length
+    && left.every((event, index) => eventKey(event) === eventKey(right[index]));
+}
+
+function reconcileHistoricalIndex(
+  oldTimeline: PublicReplayEvent[],
+  oldIndex: number,
+  newTimeline: PublicReplayEvent[],
+): number {
+  if (oldIndex < 0 || newTimeline.length === 0) return -1;
+
+  const clampedOldIndex = Math.min(oldIndex, oldTimeline.length - 1);
+  const anchorKey = eventKey(oldTimeline[clampedOldIndex]);
+  let anchorOccurrence = 0;
+
+  for (let index = 0; index <= clampedOldIndex; index += 1) {
+    if (eventKey(oldTimeline[index]) === anchorKey) anchorOccurrence += 1;
+  }
+
+  for (let index = 0; index < newTimeline.length; index += 1) {
+    if (eventKey(newTimeline[index]) !== anchorKey) continue;
+    anchorOccurrence -= 1;
+    if (anchorOccurrence === 0) return index;
+  }
+
+  return Math.min(oldIndex, newTimeline.length - 1);
+}
+
 function deriveState(
   timeline: PublicReplayEvent[],
   upToIndex: number,
@@ -259,19 +295,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   mergeLogs: (logs) => {
     const timeline = buildTimeline(logs);
-    const { timeline: oldTimeline, timelineIndex, initialPlayers, isPaused } = get();
-    if (timeline.length <= oldTimeline.length) return;
+    const {
+      timeline: oldTimeline,
+      timelineIndex,
+      initialPlayers,
+      isPaused,
+      winOverlayDismissed,
+    } = get();
+    if (timelinesEqual(timeline, oldTimeline)) return;
 
     const shouldFollowTail = isAtTimelineEnd(oldTimeline, timelineIndex) && !isPaused;
-    set({ timeline });
-    if (!shouldFollowTail) return;
-
-    const nextIndex = timeline.length - 1;
+    const nextIndex = shouldFollowTail
+      ? timeline.length - 1
+      : reconcileHistoricalIndex(oldTimeline, timelineIndex, timeline);
     const derived = deriveState(timeline, nextIndex, initialPlayers);
     set({
+      timeline,
       timelineIndex: nextIndex,
       ...derived,
-      showWinOverlay: derived.winResult !== null && !get().winOverlayDismissed,
+      showWinOverlay: derived.winResult !== null && !winOverlayDismissed,
     });
   },
 

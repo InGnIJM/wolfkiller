@@ -126,6 +126,191 @@ describe('public replay state', () => {
     expect(useGameStore.getState().players[2].is_alive).toBe(true);
   });
 
+  it('replays the complete reordered timeline when following the live tail', () => {
+    const phaseEvent = {
+      event_type: 'phase' as const,
+      payload: { phase: 'speech' as const, round_number: 1 },
+    };
+    const deathEvent = {
+      event_type: 'death' as const,
+      payload: { player_seat: 2, cause: 'exile' as const, round_number: 1 },
+    };
+    const winnerEvent = {
+      event_type: 'winner' as const,
+      payload: { winning_camp: 'good' as const, reason: 'all_wolves_dead' as const },
+    };
+
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs({ game_id: 'game-1', events: [phaseEvent, winnerEvent] });
+    useGameStore.getState().seekTo(1);
+    useGameStore.getState().setPaused(false);
+
+    useGameStore.getState().mergeLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, deathEvent, winnerEvent],
+    });
+
+    const state = useGameStore.getState();
+    expect(state.timelineIndex).toBe(2);
+    expect(state.timeline).toEqual([phaseEvent, deathEvent, winnerEvent]);
+    expect(state.players[2].is_alive).toBe(false);
+    expect(state.deathHistory).toEqual([deathEvent.payload]);
+    expect(state.phase).toBe('game_over');
+  });
+
+  it('keeps the current event as a semantic anchor when earlier logs are inserted', () => {
+    const phaseEvent = {
+      event_type: 'phase' as const,
+      payload: { phase: 'speech' as const, round_number: 1 },
+    };
+    const insertedSpeech = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 2, text: 'inserted', round_number: 1 },
+    };
+    const anchoredSpeech = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 1, text: 'anchor', round_number: 1 },
+    };
+    const deathEvent = {
+      event_type: 'death' as const,
+      payload: { player_seat: 2, cause: 'exile' as const, round_number: 1 },
+    };
+
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, anchoredSpeech, deathEvent],
+    });
+    useGameStore.getState().seekTo(1);
+    useGameStore.getState().setPaused(true);
+
+    useGameStore.getState().mergeLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, insertedSpeech, anchoredSpeech, deathEvent],
+    });
+
+    const state = useGameStore.getState();
+    expect(state.timelineIndex).toBe(2);
+    expect(state.timeline[state.timelineIndex]).toEqual(anchoredSpeech);
+    expect(state.speeches).toEqual([insertedSpeech.payload, anchoredSpeech.payload]);
+    expect(state.currentSpeaker).toBe(1);
+    expect(state.players[2].is_alive).toBe(true);
+  });
+
+  it('tracks the same duplicate occurrence when reconciling a historical anchor', () => {
+    const phaseEvent = {
+      event_type: 'phase' as const,
+      payload: { phase: 'speech' as const, round_number: 1 },
+    };
+    const repeatedSpeech = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 1, text: 'repeat', round_number: 1 },
+    };
+    const insertedSpeech = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 2, text: 'inserted', round_number: 1 },
+    };
+
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, repeatedSpeech, repeatedSpeech],
+    });
+    useGameStore.getState().seekTo(2);
+    useGameStore.getState().setPaused(true);
+
+    useGameStore.getState().mergeLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, insertedSpeech, repeatedSpeech, repeatedSpeech],
+    });
+
+    expect(useGameStore.getState().timelineIndex).toBe(3);
+    expect(useGameStore.getState().speeches).toEqual([
+      insertedSpeech.payload,
+      repeatedSpeech.payload,
+      repeatedSpeech.payload,
+    ]);
+  });
+
+  it('clamps a missing historical anchor and supports replacement with an empty log', () => {
+    const phaseEvent = {
+      event_type: 'phase' as const,
+      payload: { phase: 'speech' as const, round_number: 1 },
+    };
+    const speechEvent = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 1, text: 'removed', round_number: 1 },
+    };
+
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, speechEvent],
+    });
+    useGameStore.getState().seekTo(1);
+    useGameStore.getState().setPaused(true);
+    useGameStore.getState().mergeLogs({ game_id: 'game-1', events: [phaseEvent] });
+
+    expect(useGameStore.getState().timelineIndex).toBe(0);
+    expect(useGameStore.getState().speeches).toEqual([]);
+    expect(useGameStore.getState().phase).toBe('speech');
+
+    useGameStore.getState().mergeLogs({ game_id: 'game-1', events: [] });
+
+    expect(useGameStore.getState().timeline).toEqual([]);
+    expect(useGameStore.getState().timelineIndex).toBe(-1);
+    expect(useGameStore.getState().phase).toBe('waiting');
+  });
+
+  it('reconciles same-length replacements and recomputes derived state', () => {
+    const phaseEvent = {
+      event_type: 'phase' as const,
+      payload: { phase: 'speech' as const, round_number: 1 },
+    };
+    const oldSpeech = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 1, text: 'old', round_number: 1 },
+    };
+    const replacementSpeech = {
+      event_type: 'speech' as const,
+      payload: { player_seat: 2, text: 'replacement', round_number: 2 },
+    };
+
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, oldSpeech],
+    });
+    useGameStore.getState().seekTo(1);
+    useGameStore.getState().setPaused(false);
+
+    useGameStore.getState().mergeLogs({
+      game_id: 'game-1',
+      events: [phaseEvent, replacementSpeech],
+    });
+
+    const state = useGameStore.getState();
+    expect(state.timeline).toEqual([phaseEvent, replacementSpeech]);
+    expect(state.timelineIndex).toBe(1);
+    expect(state.speeches).toEqual([replacementSpeech.payload]);
+    expect(state.currentSpeaker).toBe(2);
+    expect(state.roundNumber).toBe(2);
+  });
+
+  it('keeps state and timeline references stable for identical logs', () => {
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(0);
+    const stateBefore = useGameStore.getState();
+    const timelineBefore = stateBefore.timeline;
+
+    useGameStore.getState().mergeLogs(logs);
+
+    expect(useGameStore.getState()).toBe(stateBefore);
+    expect(useGameStore.getState().timeline).toBe(timelineBefore);
+  });
+
   it('derives every public event type without requiring a matching player', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
