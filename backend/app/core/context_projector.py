@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import ActionContext, IssuedActionRequest
@@ -27,10 +28,6 @@ _AGGREGATE_RESULT_FIELDS = frozenset(
 _ACCEPTED_SUMMARY_FIELDS = frozenset(
     {"actor_seat", "contract_id", "action_type", "target_seat"}
 )
-_PUBLIC_TRIGGER_REASONS = frozenset(
-    {"wolf_kill", "poison", "hunter_shot", "exile", "self_explode", "love_death"}
-)
-_PUBLIC_EVENT_TYPES = frozenset({"PLAYER_DIED"})
 _PUBLIC_PHASES = frozenset(
     {
         "waiting", "role_deal", "night", "dawn", "last_words",
@@ -39,6 +36,11 @@ _PUBLIC_PHASES = frozenset(
     }
 )
 _CAMPS = frozenset({"good", "werewolf", "third_party"})
+_STABLE_TOKEN = re.compile(r"^[a-z][a-z0-9_.-]*$")
+_EVENT_TOKEN = re.compile(r"^(?:[a-z][a-z0-9_.-]*|[A-Z][A-Z0-9_]*)$")
+_OPAQUE_EVENT_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,31}:[0-9a-f]{16,64}$")
+_MAX_INT = 2_147_483_647
+_MAX_SUMMARIES = 64
 _RESOURCE_ADAPTERS = {
     "antidote": "has_antidote", "has_antidote": "has_antidote",
     "poison": "has_poison", "has_poison": "has_poison",
@@ -67,6 +69,13 @@ class ContextProjector:
         self._validate_boundaries(state, request, registry)
         spec = registry.require(request.role_id)
         actor = self._validate_request(state, request, spec.camp_id, spec.contracts)
+        self._validate_response_inputs(
+            request,
+            source_event_id,
+            trigger_event,
+            trigger_reason,
+            accepted_command_summaries,
+        )
 
         declared = spec.visibility_namespaces | request.contract.visibility_namespaces
         unknown = declared - _KNOWN_NAMESPACES
@@ -117,8 +126,8 @@ class ContextProjector:
             actor_alive=actor.is_alive,
             resources=resources,
             action_key=request.action_key,
-            counters={} if counters is None else dict(counters),
-            source_event_id=self._optional_text(source_event_id, "source_event_id", 128),
+            counters=self._project_counters(counters),
+            source_event_id=self._optional_event_id(source_event_id, "source_event_id"),
             trigger_event=self._project_trigger_event(trigger_event, request.contract),
             trigger_reason=self._validate_trigger_reason(
                 trigger_reason, request.contract.response_reasons
@@ -149,6 +158,28 @@ class ContextProjector:
             raise TypeError("registry must be a RegistrySnapshot")
 
     @staticmethod
+    def _validate_response_inputs(
+        request: IssuedActionRequest,
+        source_event_id: object,
+        trigger_event: object,
+        trigger_reason: object,
+        summaries: Sequence[object],
+    ) -> None:
+        if trigger_event is not None and type(trigger_event) is not dict:
+            raise TypeError("trigger_event must be an exact dict")
+        declared_events = request.contract.response_event_types
+        if (source_event_id is not None or trigger_event is not None) and not declared_events:
+            raise ValueError("response event payload requires a declared response event")
+        if trigger_reason is not None and not request.contract.response_reasons:
+            raise ValueError("trigger reason requires a declared response reason")
+        try:
+            count = len(summaries)
+        except TypeError as error:
+            raise TypeError("accepted command summaries must be a sized sequence") from error
+        if count > _MAX_SUMMARIES:
+            raise ValueError("accepted command summaries may contain at most 64 items")
+
+    @staticmethod
     def _validate_request(
         state: GameState,
         request: IssuedActionRequest,
@@ -158,6 +189,12 @@ class ContextProjector:
         actor = state.players.get(request.actor_seat)
         if actor is None:
             raise ValueError("actor seat does not exist in state")
+        ContextProjector._positive_int(request.actor_seat, "actor_seat")
+        ContextProjector._positive_int(actor.seat_number, "actor seat number")
+        ContextProjector._nonnegative_int(request.round_number, "request round")
+        ContextProjector._nonnegative_int(
+            request.context_revision, "context revision"
+        )
         if actor.seat_number != request.actor_seat:
             raise ValueError("actor seat number does not match request")
         if actor.role != request.role_id:
@@ -169,14 +206,17 @@ class ContextProjector:
             raise ValueError("request phase does not match state")
         if state.round_number != request.round_number:
             raise ValueError("request round does not match state")
-        if request.context_revision < 0:
-            raise ValueError("context revision must be non-negative")
         if request.contract not in contracts:
             raise ValueError("request contract is not registered for actor role")
         return actor
 
     @classmethod
     def _public_facts(cls, state: GameState) -> dict[str, object]:
+        cls._nonnegative_int(state.round_number, "state round")
+        seats = tuple(state.players)
+        for seat in seats:
+            cls._positive_int(seat, "player seat")
+        sheriff = cls._optional_positive_int(state.sheriff, "sheriff")
         return {
             "alive_seats": tuple(
                 sorted(seat for seat, player in state.players.items() if player.is_alive)
@@ -186,7 +226,7 @@ class ContextProjector:
                     seat for seat, player in state.players.items() if not player.is_alive
                 )
             ),
-            "sheriff": state.sheriff,
+            "sheriff": sheriff,
             "phase": state.phase.value if hasattr(state.phase, "value") else state.phase,
             "round_number": state.round_number,
             "speeches": tuple(
@@ -209,7 +249,7 @@ class ContextProjector:
                 "text": record.text,
                 "round_number": record.round_number,
             }
-        elif isinstance(record, Mapping):
+        elif type(record) is dict:
             raw = record
         else:
             return None
@@ -231,7 +271,7 @@ class ContextProjector:
                 "voter_seat": record.voter_seat,
                 "target_seat": record.target_seat,
             }
-        elif isinstance(record, Mapping):
+        elif type(record) is dict:
             raw = record
         else:
             return None
@@ -285,18 +325,25 @@ class ContextProjector:
                     resources.get("antidote", resources.get("has_antidote", False))
                 )
                 if has_antidote:
-                    facts["wolf_kill_target"] = state.last_wolf_kill_target
+                    facts["wolf_kill_target"] = cls._optional_positive_int(
+                        state.last_wolf_kill_target, "wolf_kill_target"
+                    )
             else:
                 facts[key] = cls._copy_json_value(default)
         return facts
 
     @staticmethod
     def _project_check_result(result: object) -> dict[str, object] | None:
-        if not isinstance(result, Mapping):
+        if type(result) is not dict:
             return None
         target = result.get("target", result.get("target_seat"))
         camp = result.get("camp", result.get("result"))
-        if type(target) is not int or target <= 0 or camp not in _CAMPS:
+        if (
+            type(target) is not int
+            or target <= 0
+            or target > _MAX_INT
+            or camp not in _CAMPS
+        ):
             return None
         return {"target": target, "camp": camp}
 
@@ -306,24 +353,22 @@ class ContextProjector:
     ) -> dict[str, object] | None:
         if value is None:
             return None
-        if not isinstance(value, Mapping):
-            raise TypeError("trigger_event must be a mapping")
+        if type(value) is not dict:
+            raise TypeError("trigger_event must be an exact dict")
         projected: dict[str, object] = {}
         if "event_id" in value:
-            projected["event_id"] = cls._text(value["event_id"], "event_id", 128)
+            projected["event_id"] = cls._event_id(value["event_id"], "event_id")
         if "type" in value:
-            event_type = cls._text(value["type"], "event type", 64)
-            allowed = contract.response_event_types or _PUBLIC_EVENT_TYPES
-            if event_type not in allowed:
+            event_type = cls._event_token(value["type"], "event type", 64)
+            if event_type not in contract.response_event_types:
                 raise ValueError("unknown event type")
             projected["type"] = event_type
         for key in ("source_seat", "target_seat"):
             if key in value:
                 projected[key] = cls._positive_int(value[key], key)
         if "cause" in value:
-            cause = cls._text(value["cause"], "cause", 32)
-            allowed_reasons = contract.response_reasons or _PUBLIC_TRIGGER_REASONS
-            if cause not in allowed_reasons:
+            cause = cls._token(value["cause"], "cause", 32)
+            if cause not in contract.response_reasons:
                 raise ValueError("unknown cause")
             projected["cause"] = cause
         if "round_number" in value:
@@ -338,27 +383,40 @@ class ContextProjector:
         return projected
 
     @classmethod
+    def _project_counters(
+        cls, value: Mapping[str, int] | None
+    ) -> dict[str, int]:
+        if value is None:
+            return {}
+        if type(value) is not dict:
+            raise TypeError("counters must be an exact dict")
+        return {
+            cls._token(key, "counter key", 64): cls._nonnegative_int(item, key)
+            for key, item in value.items()
+        }
+
+    @classmethod
     def _project_command_result(
         cls, value: object, contract: object, name: str, aggregate: bool
     ) -> dict[str, object]:
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{name} must be a mapping")
+        if type(value) is not dict:
+            raise TypeError(f"{name} must be an exact dict")
         allowed = _AGGREGATE_RESULT_FIELDS if aggregate else _ACCEPTED_SUMMARY_FIELDS
         projected: dict[str, object] = {}
         if "actor_seat" in allowed and "actor_seat" in value:
             projected["actor_seat"] = cls._positive_int(
                 value["actor_seat"], "actor_seat"
             )
-        if "contract_id" in value:
-            contract_id = cls._text(value["contract_id"], "contract_id", 128)
-            if contract_id != contract.contract_id:
-                raise ValueError("contract_id does not match request contract")
-            projected["contract_id"] = contract_id
-        if "action_type" in value:
-            action_type = cls._text(value["action_type"], "action_type", 64)
-            if action_type not in contract.action_types:
-                raise ValueError("action_type is not allowed by request contract")
-            projected["action_type"] = action_type
+        if "contract_id" not in value or "action_type" not in value:
+            raise ValueError(f"{name} contract_id and action_type are required")
+        contract_id = cls._token(value["contract_id"], "contract_id", 128)
+        if contract_id != contract.contract_id:
+            raise ValueError("contract_id does not match request contract")
+        projected["contract_id"] = contract_id
+        action_type = cls._token(value["action_type"], "action_type", 64)
+        if action_type not in contract.action_types:
+            raise ValueError("action_type is not allowed by request contract")
+        projected["action_type"] = action_type
         if "target_seat" in value:
             projected["target_seat"] = cls._optional_positive_int(
                 value["target_seat"], "target_seat"
@@ -381,8 +439,8 @@ class ContextProjector:
     ) -> str | None:
         if reason is None:
             return None
-        reason = cls._text(reason, "trigger reason", 32)
-        if reason not in (declared or _PUBLIC_TRIGGER_REASONS):
+        reason = cls._token(reason, "trigger reason", 32)
+        if reason not in declared:
             raise ValueError("unknown public trigger reason")
         return reason
 
@@ -399,13 +457,36 @@ class ContextProjector:
         return value
 
     @classmethod
-    def _optional_text(cls, value: object, name: str, limit: int) -> str | None:
-        return None if value is None else cls._text(value, name, limit)
+    def _token(cls, value: object, name: str, limit: int) -> str:
+        token = cls._text(value, name, limit)
+        if _STABLE_TOKEN.fullmatch(token) is None:
+            raise ValueError(f"{name} must be a stable token")
+        return token
+
+    @classmethod
+    def _event_token(cls, value: object, name: str, limit: int) -> str:
+        token = cls._text(value, name, limit)
+        if _EVENT_TOKEN.fullmatch(token) is None:
+            raise ValueError(f"{name} must be a stable token")
+        return token
+
+    @classmethod
+    def _event_id(cls, value: object, name: str) -> str:
+        event_id = cls._text(value, name, 97)
+        if _OPAQUE_EVENT_ID.fullmatch(event_id) is None:
+            raise ValueError(f"{name} must be an opaque event id")
+        return event_id
+
+    @classmethod
+    def _optional_event_id(cls, value: object, name: str) -> str | None:
+        return None if value is None else cls._event_id(value, name)
 
     @staticmethod
     def _positive_int(value: object, name: str) -> int:
         if type(value) is not int or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
+        if value > _MAX_INT:
+            raise ValueError(f"{name} exceeds the 32-bit integer limit")
         return value
 
     @classmethod
@@ -416,6 +497,8 @@ class ContextProjector:
     def _nonnegative_int(value: object, name: str) -> int:
         if type(value) is not int or value < 0:
             raise ValueError(f"{name} must be a non-negative integer")
+        if value > _MAX_INT:
+            raise ValueError(f"{name} exceeds the 32-bit integer limit")
         return value
 
     @classmethod

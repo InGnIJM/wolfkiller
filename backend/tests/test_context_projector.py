@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 
@@ -17,7 +18,12 @@ from app.models.pipeline import (
 from app.roles.registry import RegistrySnapshot
 
 
-def _contract(*namespaces: str, contract_id: str = "night-action") -> ActionContract:
+def _contract(
+    *namespaces: str,
+    contract_id: str = "night-action",
+    response_event_types: frozenset[str] = frozenset(),
+    response_reasons: frozenset[str] = frozenset(),
+) -> ActionContract:
     return ActionContract(
         contract_id=contract_id,
         schedule_point=SchedulePoint.NIGHT_ACTION,
@@ -26,6 +32,8 @@ def _contract(*namespaces: str, contract_id: str = "night-action") -> ActionCont
         actions_requiring_target=frozenset({"act"}),
         fallback_action_type="pass",
         visibility_namespaces=frozenset(namespaces),
+        response_event_types=response_event_types,
+        response_reasons=response_reasons,
     )
 
 
@@ -257,23 +265,46 @@ def test_contract_visibility_intersects_role_visibility_and_relation_is_empty(
 def test_context_is_deep_frozen_detached_and_contains_no_state_or_callbacks(
     state: GameState, registry: RegistrySnapshot
 ) -> None:
+    contract = _contract(
+        "ACTOR", "CAMP", contract_id="wolf-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    response_registry = RegistrySnapshot(
+        specs={
+            "wolf": RoleSpec(
+                role_id="wolf", camp_id="werewolf", contracts=(contract,),
+                visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
+            )
+        },
+        digest="response-v1",
+    )
     context = ContextProjector().project(
         state,
-        _request(registry, 1, "wolf"),
-        registry,
+        _request(response_registry, 1, "wolf"),
+        response_registry,
         trigger_event={"type": "PLAYER_DIED", "target_seat": 5},
         trigger_reason="wolf_kill",
-        source_event_id="event-1",
-        accepted_command_summaries=({"action_type": "act", "seats": [6]},),
-        aggregate_result={"target_seat": 6, "votes": [1, 2]},
+        source_event_id="player_died:0123456789abcdef",
+        accepted_command_summaries=(
+            {"contract_id": "wolf-response", "action_type": "act", "seats": [6]},
+        ),
+        aggregate_result={
+            "contract_id": "wolf-response", "action_type": "act",
+            "target_seat": 6, "votes": [1, 2],
+        },
         counters={"window": 1},
     )
 
     assert isinstance(context.facts, MappingProxyType)
     assert isinstance(context.trigger_event, MappingProxyType)
     assert context.trigger_event == {"type": "PLAYER_DIED", "target_seat": 5}
-    assert context.accepted_command_summaries == ({"action_type": "act"},)
-    assert context.aggregate_result == {"target_seat": 6}
+    assert context.accepted_command_summaries == (
+        {"contract_id": "wolf-response", "action_type": "act"},
+    )
+    assert context.aggregate_result == {
+        "contract_id": "wolf-response", "action_type": "act", "target_seat": 6
+    }
     with pytest.raises(TypeError):
         context.facts["alive_seats"] = ()  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
@@ -382,12 +413,29 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
     assert plain.accepted_command_summaries == ()
     assert plain.aggregate_result is None
 
+    contract = _contract(
+        "ACTOR", contract_id="seer-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    response_registry = RegistrySnapshot(
+        specs={
+            "seer": RoleSpec(
+                role_id="seer", camp_id="good", contracts=(contract,),
+                visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
+            )
+        }, digest="response-v1"
+    )
+    response_request = IssuedActionRequest(
+        actor_seat=3, role_id="seer", contract=contract, context_revision=17,
+        round_number=2, phase="night", window_id="window-3", action_key="action-3",
+    )
     projected = projector.project(
         state,
-        request,
-        registry,
+        response_request,
+        response_registry,
         trigger_event={
-            "event_id": "event-2",
+            "event_id": "player_died:abcdef0123456789",
             "type": "PLAYER_DIED",
             "source_seat": 3,
             "target_seat": 1,
@@ -407,7 +455,7 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         accepted_command_summaries=(
             {
                 "actor_seat": 3,
-                "contract_id": "seer-action",
+                "contract_id": "seer-response",
                 "action_type": "act",
                 "target_seat": 1,
                 "revealed_role": "wolf",
@@ -415,7 +463,7 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
             },
         ),
         aggregate_result={
-            "contract_id": "seer-action",
+            "contract_id": "seer-response",
             "action_type": "act",
             "target_seat": 1,
             "count": 1,
@@ -426,7 +474,7 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
         },
     )
     assert projected.trigger_event == {
-        "event_id": "event-2",
+        "event_id": "player_died:abcdef0123456789",
         "type": "PLAYER_DIED",
         "source_seat": 3,
         "target_seat": 1,
@@ -437,13 +485,13 @@ def test_optional_response_data_is_explicit_and_sensitive_keys_are_removed(
     assert projected.accepted_command_summaries == (
         {
             "actor_seat": 3,
-            "contract_id": "seer-action",
+            "contract_id": "seer-response",
             "action_type": "act",
             "target_seat": 1,
         },
     )
     assert projected.aggregate_result == {
-        "contract_id": "seer-action",
+        "contract_id": "seer-response",
         "action_type": "act",
         "target_seat": 1,
         "count": 1,
@@ -623,7 +671,7 @@ def test_optional_projection_mappings_reject_non_mapping_values(
     field: str,
 ) -> None:
     kwargs = {field: ["not", "a", "mapping"]}
-    with pytest.raises(TypeError, match="mapping"):
+    with pytest.raises(TypeError, match="exact dict"):
         ContextProjector().project(
             state,
             _request(registry, 1, "wolf"),
@@ -814,12 +862,33 @@ def test_response_projection_rejects_semantically_invalid_values(
     kwargs: dict[str, object],
     error: str,
 ) -> None:
+    contract = _contract(
+        "ACTOR", contract_id="wolf-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    spec = RoleSpec(
+        role_id="wolf", camp_id="werewolf", contracts=(contract,),
+        visibility_namespaces=frozenset({"ACTOR"}),
+    )
+    response_registry = RegistrySnapshot(specs={"wolf": spec}, digest="response")
+    normalized = dict(kwargs)
+    if "accepted_command_summaries" in normalized:
+        summary = dict(normalized["accepted_command_summaries"][0])  # type: ignore[index]
+        summary.setdefault("contract_id", "wolf-response")
+        summary.setdefault("action_type", "act")
+        normalized["accepted_command_summaries"] = (summary,)
+    if "aggregate_result" in normalized and type(normalized["aggregate_result"]) is dict:
+        aggregate = dict(normalized["aggregate_result"])
+        aggregate.setdefault("contract_id", "wolf-response")
+        aggregate.setdefault("action_type", "act")
+        normalized["aggregate_result"] = aggregate
     with pytest.raises((TypeError, ValueError), match=error):
         ContextProjector().project(
             state,
-            _request(registry, 1, "wolf"),
-            registry,
-            **kwargs,  # type: ignore[arg-type]
+            _request(response_registry, 1, "wolf"),
+            response_registry,
+            **normalized,  # type: ignore[arg-type]
         )
 
 
@@ -874,4 +943,255 @@ def test_response_event_and_reason_are_bound_to_contract_declarations(
     with pytest.raises(ValueError, match="trigger reason"):
         ContextProjector().project(
             state, request, registry, trigger_reason="wolf_kill"
+        )
+
+
+def test_response_payload_requires_an_explicit_response_contract(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    request = _request(registry, 1, "wolf")
+    with pytest.raises(ValueError, match="response event"):
+        ContextProjector().project(
+            state, request, registry, trigger_event={"type": "PLAYER_DIED"}
+        )
+    with pytest.raises(ValueError, match="response reason"):
+        ContextProjector().project(
+            state, request, registry, trigger_reason="wolf_kill"
+        )
+    with pytest.raises(ValueError, match="response event"):
+        ContextProjector().project(
+            state, request, registry, source_event_id="event-1"
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs,error",
+    [
+        ({"source_event_id": "the-seer-is-seat-3"}, "opaque event id"),
+        ({"trigger_event": {"event_id": "the-seer-is-seat-3"}}, "opaque event id"),
+        (
+            {"accepted_command_summaries": (
+                {"contract_id": "wolf-response", "action_type": "the seer is seat 3"},
+            )},
+            "stable token",
+        ),
+    ],
+)
+def test_response_identifiers_reject_secret_shaped_text(
+    state: GameState, kwargs: dict[str, object], error: str
+) -> None:
+    contract = _contract(
+        "ACTOR", contract_id="wolf-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    spec = RoleSpec(
+        role_id="wolf", camp_id="werewolf", contracts=(contract,),
+        visibility_namespaces=frozenset({"ACTOR"}),
+    )
+    registry = RegistrySnapshot(specs={"wolf": spec}, digest="response")
+    with pytest.raises(ValueError, match=error):
+        ContextProjector().project(
+            state, _request(registry, 1, "wolf"), registry, **kwargs  # type: ignore[arg-type]
+        )
+
+
+def test_response_summaries_are_bounded_and_require_identity_fields(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    request = _request(registry, 1, "wolf")
+    valid = {"contract_id": "wolf-action", "action_type": "act"}
+    with pytest.raises(ValueError, match="at most 64"):
+        ContextProjector().project(
+            state, request, registry, accepted_command_summaries=(valid,) * 65
+        )
+    for summary in ({"action_type": "act"}, {"contract_id": "wolf-action"}):
+        with pytest.raises(ValueError, match="required"):
+            ContextProjector().project(
+                state, request, registry, accepted_command_summaries=(summary,)
+            )
+    for aggregate in ({"action_type": "act"}, {"contract_id": "wolf-action"}):
+        with pytest.raises(ValueError, match="required"):
+            ContextProjector().project(
+                state, request, registry, aggregate_result=aggregate
+            )
+
+
+def test_projected_integers_have_a_32_bit_bound(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    huge = 10**5000
+    state.speeches.append(
+        {"player_seat": huge, "text": "ignored", "round_number": 2}
+    )
+    state.players[3].check_results.append({"target": huge, "camp": "good"})
+    public = ContextProjector().project(
+        state, _request(registry, 6, "villager"), registry
+    )
+    private = ContextProjector().project(
+        state, _request(registry, 3, "seer"), registry
+    )
+    assert all(item["text"] != "ignored" for item in public.facts["speeches"])
+    assert all(item["target"] != huge for item in private.facts["private_checks"])
+
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(
+            state,
+            _request(registry, 1, "wolf"),
+            registry,
+            accepted_command_summaries=(
+                {"contract_id": "wolf-action", "action_type": "act", "actor_seat": huge},
+            ),
+        )
+
+
+def test_projection_never_executes_custom_mapping_methods(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    class BombMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise AssertionError("custom mapping executed")
+
+        def __iter__(self) -> Iterator[str]:
+            raise AssertionError("custom mapping executed")
+
+        def __len__(self) -> int:
+            raise AssertionError("custom mapping executed")
+
+    bomb = BombMapping()
+    state.speeches.append(bomb)
+    state.votes.append(bomb)
+    state.players[3].check_results.append(bomb)  # type: ignore[arg-type]
+    ContextProjector().project(state, _request(registry, 3, "seer"), registry)
+
+    contract = _contract(
+        "ACTOR", contract_id="wolf-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    response_registry = RegistrySnapshot(
+        specs={
+            "wolf": RoleSpec(
+                role_id="wolf", camp_id="werewolf", contracts=(contract,),
+                visibility_namespaces=frozenset({"ACTOR"}),
+            )
+        }, digest="response"
+    )
+
+    for kwargs, error in (
+        ({"trigger_event": bomb}, "trigger_event"),
+        ({"accepted_command_summaries": (bomb,)}, "accepted command summary"),
+        ({"aggregate_result": bomb}, "aggregate_result"),
+    ):
+        with pytest.raises(TypeError, match=error):
+            ContextProjector().project(
+                state,
+                _request(response_registry, 1, "wolf"),
+                response_registry,
+                **kwargs,  # type: ignore[arg-type]
+            )
+
+
+def test_response_sequence_type_and_remaining_numeric_bounds(
+    state: GameState,
+) -> None:
+    contract = _contract(
+        "ACTOR", contract_id="wolf-response",
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill"}),
+    )
+    registry = RegistrySnapshot(
+        specs={
+            "wolf": RoleSpec(
+                role_id="wolf", camp_id="werewolf", contracts=(contract,),
+                visibility_namespaces=frozenset({"ACTOR"}),
+            )
+        }, digest="response"
+    )
+    request = _request(registry, 1, "wolf")
+    with pytest.raises(TypeError, match="sized sequence"):
+        ContextProjector().project(
+            state, request, registry, accepted_command_summaries=iter(())  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError, match="trigger_event"):
+        ContextProjector._project_trigger_event(object(), contract)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="cause"):
+        ContextProjector().project(
+            state, request, registry, trigger_event={"cause": "exile"}
+        )
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(
+            state,
+            request,
+            registry,
+            aggregate_result={
+                "contract_id": "wolf-response", "action_type": "act",
+                "count": 2_147_483_648,
+            },
+        )
+
+
+def test_identifier_and_integer_helpers_reject_uncovered_invalid_shapes() -> None:
+    with pytest.raises(ValueError, match="stable token"):
+        ContextProjector._token("INVALID", "contract_id", 128)
+    with pytest.raises(ValueError, match="event type"):
+        ContextProjector._event_token("invalid event", "event type", 64)
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector._nonnegative_int(2_147_483_648, "count")
+
+
+def test_remaining_projected_integer_boundaries_are_checked(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    request = _request(registry, 1, "wolf")
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(
+            state, request, registry, counters={"window": 2_147_483_648}
+        )
+    with pytest.raises(TypeError, match="counters"):
+        ContextProjector().project(
+            state, request, registry, counters=MappingProxyType({"window": 1})
+        )
+
+    state.sheriff = 2_147_483_648
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(state, request, registry)
+    state.sheriff = 1
+
+    state.players[1].seat_number = 2_147_483_648
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(state, request, registry)
+    state.players[1].seat_number = 1
+
+    state.players[1].seat_number = 0
+    with pytest.raises(ValueError, match="positive"):
+        ContextProjector().project(state, request, registry)
+    state.players[1].seat_number = 1
+
+    state.round_number = 2_147_483_648
+    huge_round_request = IssuedActionRequest(
+        actor_seat=1, role_id="wolf", contract=request.contract,
+        context_revision=1, round_number=2_147_483_648, phase="night",
+        window_id="w", action_key="a",
+    )
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(state, huge_round_request, registry)
+    state.round_number = 2
+
+    huge_revision_request = IssuedActionRequest(
+        actor_seat=1, role_id="wolf", contract=request.contract,
+        context_revision=2_147_483_648, round_number=2, phase="night",
+        window_id="w", action_key="a",
+    )
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(state, huge_revision_request, registry)
+
+
+def test_witch_target_seat_is_bounded(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    state.last_wolf_kill_target = 2_147_483_648
+    with pytest.raises(ValueError, match="32-bit"):
+        ContextProjector().project(
+            state, _request(registry, 4, "witch"), registry
         )
