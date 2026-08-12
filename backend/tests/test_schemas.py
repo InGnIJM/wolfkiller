@@ -11,7 +11,66 @@ from app.api.schemas import (
 )
 
 
+PUBLIC_TIMESTAMP = "2026-08-12T12:34:56Z"
+
+
+PUBLIC_REPLAY_EVENTS = [
+    {"event_type": "speech", "payload": {
+        "player_seat": 1, "text": "public", "round_number": 2,
+    }},
+    {"event_type": "death", "payload": {
+        "player_seat": 2, "cause": "exile", "round_number": 2,
+    }},
+    {"event_type": "vote", "payload": {
+        "voter_seat": 1, "target_seat": 2, "round_number": 2,
+    }},
+    {"event_type": "vote_result", "payload": {
+        "round_number": 2, "exiled_seat": 2,
+    }},
+    {"event_type": "phase", "payload": {
+        "phase": "speech", "round_number": 2,
+    }},
+    {"event_type": "winner", "payload": {
+        "winning_camp": "good", "reason": "all_wolves_dead",
+    }},
+]
+
+
 class TestSchemas:
+
+    @pytest.mark.parametrize("event", PUBLIC_REPLAY_EVENTS)
+    @pytest.mark.parametrize(
+        "timestamp",
+        [PUBLIC_TIMESTAMP, "2026-08-12T12:34:56.123456Z"],
+    )
+    def test_public_replay_events_accept_canonical_utc_timestamps(self, event, timestamp):
+        response = GameLogsResponse(
+            game_id="abc", events=[{**event, "timestamp": timestamp}],
+        )
+
+        assert response.model_dump()["events"][0]["timestamp"] == timestamp
+
+    @pytest.mark.parametrize("event", PUBLIC_REPLAY_EVENTS)
+    def test_public_replay_events_require_timestamp_on_envelope(self, event):
+        with pytest.raises(ValidationError):
+            GameLogsResponse(game_id="abc", events=[event])
+
+    @pytest.mark.parametrize("event", PUBLIC_REPLAY_EVENTS)
+    @pytest.mark.parametrize(
+        "timestamp",
+        [
+            "", "2026-08-12", "2026-08-12T12:34:56",
+            "2026-08-12T12:34:56+08:00", "2026-08-12T12:34:56.1234567Z",
+            "2026-02-30T12:34:56Z", "02026-08-12T12:34:56Z",
+            "2026-08-12T12:34Z", 1, True,
+        ],
+    )
+    def test_public_replay_events_reject_noncanonical_timestamps(self, event, timestamp):
+        with pytest.raises(ValidationError):
+            GameLogsResponse(
+                game_id="abc",
+                events=[{**event, "timestamp": timestamp}],
+            )
 
     @pytest.mark.parametrize(
         "payload",
@@ -28,7 +87,8 @@ class TestSchemas:
     def test_public_vote_rejects_coerced_or_non_positive_identifiers(self, payload):
         with pytest.raises(ValidationError):
             GameLogsResponse(game_id="abc", events=[{
-                "event_type": "vote", "payload": payload,
+                "event_type": "vote", "timestamp": PUBLIC_TIMESTAMP,
+                "payload": payload,
             }])
 
     @pytest.mark.parametrize(
@@ -167,12 +227,14 @@ class TestSchemas:
             game_id="abc",
             events=[{
                 "event_type": "vote_result",
+                "timestamp": PUBLIC_TIMESTAMP,
                 "payload": {"round_number": 2, "exiled_seat": None},
             }],
         )
 
         assert logs.model_dump()["events"] == [{
             "event_type": "vote_result",
+            "timestamp": PUBLIC_TIMESTAMP,
             "payload": {"round_number": 2, "exiled_seat": None},
         }]
         with pytest.raises(ValidationError):
@@ -213,12 +275,14 @@ class TestSchemas:
             events=[
                 {"event_type": "speech", "payload": {
                     "player_seat": 1, "text": "公开发言", "round_number": 2,
-                }},
-                {"event_type": "phase", "payload": PublicPhaseResponse(
+                }, "timestamp": PUBLIC_TIMESTAMP},
+                {"event_type": "phase", "timestamp": PUBLIC_TIMESTAMP,
+                 "payload": PublicPhaseResponse(
                     phase="speech", round_number=2,
                 )},
                 {
                     "event_type": "vote_result",
+                    "timestamp": PUBLIC_TIMESTAMP,
                     "payload": {"round_number": 2, "exiled_seat": None},
                 },
             ],

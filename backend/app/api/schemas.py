@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 
 class CreateGameRequest(BaseModel):
@@ -62,6 +63,21 @@ PublicWinReason = Literal[
 ]
 
 
+def _validate_public_utc_timestamp(value: str) -> str:
+    try:
+        datetime.fromisoformat(f"{value[:-1]}+00:00")
+    except ValueError as exc:
+        raise ValueError("timestamp must be a valid UTC instant") from exc
+    return value
+
+
+PublicUTCTimestamp = Annotated[
+    str,
+    Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"),
+    AfterValidator(_validate_public_utc_timestamp),
+]
+
+
 class PublicPlayerResponse(_PublicResponse):
     seat_number: PositivePublicInt
     is_alive: bool
@@ -101,32 +117,36 @@ class PublicWinnerResponse(_PublicResponse):
     reason: PublicWinReason
 
 
-class PublicSpeechReplayEvent(_PublicResponse):
+class _PublicReplayEvent(_PublicResponse):
+    timestamp: PublicUTCTimestamp
+
+
+class PublicSpeechReplayEvent(_PublicReplayEvent):
     event_type: Literal["speech"]
     payload: PublicSpeechResponse
 
 
-class PublicDeathReplayEvent(_PublicResponse):
+class PublicDeathReplayEvent(_PublicReplayEvent):
     event_type: Literal["death"]
     payload: PublicDeathResponse
 
 
-class PublicVoteReplayEvent(_PublicResponse):
+class PublicVoteReplayEvent(_PublicReplayEvent):
     event_type: Literal["vote"]
     payload: PublicVoteResponse
 
 
-class PublicVoteResultReplayEvent(_PublicResponse):
+class PublicVoteResultReplayEvent(_PublicReplayEvent):
     event_type: Literal["vote_result"]
     payload: PublicVoteResultResponse
 
 
-class PublicPhaseReplayEvent(_PublicResponse):
+class PublicPhaseReplayEvent(_PublicReplayEvent):
     event_type: Literal["phase"]
     payload: PublicPhaseResponse
 
 
-class PublicWinnerReplayEvent(_PublicResponse):
+class PublicWinnerReplayEvent(_PublicReplayEvent):
     event_type: Literal["winner"]
     payload: PublicWinnerResponse
 
