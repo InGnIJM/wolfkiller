@@ -133,6 +133,11 @@ def _timestamp(record: dict[str, Any]) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _public_timestamp(value: datetime) -> str:
+    timespec = "microseconds" if value.microsecond else "seconds"
+    return value.isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -277,7 +282,10 @@ def _public_replay_events(conversations: list[dict], operations: list[dict]) -> 
         for event in _public_operation_events(record):
             ordered_events.append((timestamp, order, event))
             order += 1
-    return [event for _, _, event in sorted(ordered_events, key=lambda item: (item[0], item[1]))]
+    return [
+        {**event, "timestamp": _public_timestamp(timestamp)}
+        for timestamp, _, event in sorted(ordered_events, key=lambda item: (item[0], item[1]))
+    ]
 
 
 @router.get("/{game_id}/logs", response_model=GameLogsResponse)

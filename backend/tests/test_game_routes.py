@@ -397,6 +397,7 @@ def test_public_replay_skips_unhashable_domain_values_and_keeps_later_events(
 
     assert events == [{
         "event_type": "phase",
+        "timestamp": "2026-01-01T00:00:01Z",
         "payload": {"phase": "speech", "round_number": 1},
     }]
 
@@ -427,6 +428,7 @@ def test_public_replay_skips_date_only_timestamp_without_changing_other_event_st
 
     assert game_routes._public_replay_events([], operations) == [{
         "event_type": "phase",
+        "timestamp": "2026-01-01T00:00:01Z",
         "payload": {"phase": "speech", "round_number": 1},
     }]
 
@@ -463,7 +465,7 @@ def test_public_vote_result_rejects_invalid_exile_data(data):
     assert game_routes._public_operation_events(record) == []
 
 
-def test_public_replay_sorts_naive_and_z_timestamps_as_utc_without_leaking_timestamps():
+def test_public_replay_sorts_naive_and_z_timestamps_as_utc_and_projects_timestamps():
     conversations = [{
         "timestamp": "2026-01-01T00:00:02", "scope": "public", "speaker_seat": 1,
         "content": "naive speech", "round_number": 1, "phase": "speech",
@@ -476,10 +478,69 @@ def test_public_replay_sorts_naive_and_z_timestamps_as_utc_without_leaking_times
     events = game_routes._public_replay_events(conversations, operations)
 
     assert events == [
-        {"event_type": "phase", "payload": {"phase": "speech", "round_number": 1}},
-        {"event_type": "speech", "payload": {"player_seat": 1, "text": "naive speech", "round_number": 1}},
+        {"event_type": "phase", "timestamp": "2026-01-01T00:00:01Z",
+         "payload": {"phase": "speech", "round_number": 1}},
+        {"event_type": "speech", "timestamp": "2026-01-01T00:00:02Z",
+         "payload": {"player_seat": 1, "text": "naive speech", "round_number": 1}},
     ]
-    assert "timestamp" not in repr(events)
+
+
+def test_public_replay_projects_canonical_utc_timestamps_for_all_event_types():
+    conversations = [{
+        "timestamp": "2026-01-01T08:00:00+08:00", "scope": "public", "speaker_seat": 1,
+        "content": "speech", "round_number": 1, "phase": "speech",
+    }]
+    operations = [
+        {"timestamp": "2026-01-01T00:00:01", "operation": "vote", "round": 1,
+         "phase": "vote_casting", "seat": 1, "data": {"target": 2}},
+        {"timestamp": "2026-01-01T00:00:02.5Z", "operation": "vote_result", "round": 1,
+         "phase": "vote_resolution", "data": {"exiled": 2}},
+        {"timestamp": "2026-01-01T01:00:03+01:00", "operation": "night_deaths", "round": 1,
+         "phase": "dawn", "data": {"deaths": [
+             {"player_seat": 2, "cause": "exile", "round_number": 1},
+         ]}},
+        {"timestamp": "2026-01-01T00:00:04Z", "operation": "phase_change", "round": 2,
+         "phase": "speech", "data": {"new_phase": "speech"}},
+        {"timestamp": "2026-01-01T00:00:05.123456Z", "operation": "game_over", "round": 2,
+         "phase": "game_over", "data": {"winner": "good", "reason": "all_wolves_dead"}},
+    ]
+
+    events = game_routes._public_replay_events(conversations, operations)
+
+    assert [event["event_type"] for event in events] == [
+        "speech", "vote", "vote_result", "death", "phase", "winner",
+    ]
+    assert [event["timestamp"] for event in events] == [
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:01Z",
+        "2026-01-01T00:00:02.500000Z",
+        "2026-01-01T00:00:03Z",
+        "2026-01-01T00:00:04Z",
+        "2026-01-01T00:00:05.123456Z",
+    ]
+
+
+def test_public_replay_keeps_stable_order_and_shares_timestamp_for_expanded_deaths():
+    conversations = [{
+        "timestamp": "2026-01-01T00:00:00Z", "scope": "public", "speaker_seat": 1,
+        "content": "first", "round_number": 1, "phase": "speech",
+    }]
+    operations = [
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1,
+         "phase": "dawn", "data": {"deaths": [
+             {"player_seat": 2, "cause": "wolf_kill", "round_number": 1},
+             {"player_seat": 3, "cause": "poison", "round_number": 1},
+         ]}},
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": 1,
+         "phase": "dawn", "data": {"new_phase": "dawn"}},
+    ]
+
+    events = game_routes._public_replay_events(conversations, operations)
+
+    assert [(event["event_type"], event["payload"].get("player_seat")) for event in events] == [
+        ("speech", 1), ("death", 2), ("death", 3), ("phase", None),
+    ]
+    assert {event["timestamp"] for event in events} == {"2026-01-01T00:00:00Z"}
 
 
 @pytest.mark.asyncio
@@ -537,12 +598,18 @@ async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypat
     response = await game_routes.get_game_logs("present")
 
     assert response.model_dump()["events"] == [
-        {"event_type": "speech", "payload": {"player_seat": 1, "text": "day speech", "round_number": 1}},
-        {"event_type": "vote", "payload": {"voter_seat": 1, "target_seat": 2, "round_number": 1}},
-        {"event_type": "death", "payload": {"player_seat": 2, "cause": "wolf_kill", "round_number": 1}},
-        {"event_type": "phase", "payload": {"phase": "speech", "round_number": 2}},
-        {"event_type": "winner", "payload": {"winning_camp": "good", "reason": "all_wolves_dead"}},
-        {"event_type": "vote_result", "payload": {"round_number": 2, "exiled_seat": None}},
+        {"event_type": "speech", "timestamp": "2026-01-01T00:00:02Z",
+         "payload": {"player_seat": 1, "text": "day speech", "round_number": 1}},
+        {"event_type": "vote", "timestamp": "2026-01-01T00:00:07Z",
+         "payload": {"voter_seat": 1, "target_seat": 2, "round_number": 1}},
+        {"event_type": "death", "timestamp": "2026-01-01T00:00:08.500000Z",
+         "payload": {"player_seat": 2, "cause": "wolf_kill", "round_number": 1}},
+        {"event_type": "phase", "timestamp": "2026-01-01T00:00:09Z",
+         "payload": {"phase": "speech", "round_number": 2}},
+        {"event_type": "winner", "timestamp": "2026-01-01T00:00:10Z",
+         "payload": {"winning_camp": "good", "reason": "all_wolves_dead"}},
+        {"event_type": "vote_result", "timestamp": "2026-01-01T00:00:11.500000Z",
+         "payload": {"round_number": 2, "exiled_seat": None}},
     ]
     raw = repr(response.model_dump())
     for secret in ("role_init", "werewolf", "seer result", "private thought", "reasoning", "roles", "tally"):
