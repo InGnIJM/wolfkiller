@@ -1,6 +1,5 @@
 import { Card, CardActionArea, Typography, Chip, Box } from '@mui/material';
 import GroupsIcon from '@mui/icons-material/Groups';
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 
 interface Props {
   gameId: string;
