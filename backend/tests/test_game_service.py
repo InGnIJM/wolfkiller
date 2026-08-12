@@ -774,6 +774,37 @@ class TestGameService:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        "step",
+        [
+            "werewolf_open",
+            "werewolf_vote",
+            "werewolf_target",
+            "werewolf_close",
+            "witch_open",
+            "witch_action",
+            "witch_close",
+            "seer_open",
+            "seer_check",
+            "seer_close",
+        ],
+    )
+    async def test_night_substep_projects_every_engine_public_step(self, step):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_night_substep(
+            game_id="game-a", step=step, round_number=1,
+        )
+
+        ws_manager.broadcast.assert_awaited_once_with(
+            "game-a", "night_substep",
+            phase="night", round_number=1, substep=step,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("game_id", "step", "round_number"),
         [
             (None, "seer_check", 3),
@@ -783,6 +814,11 @@ class TestGameService:
             ("game-a", "seer_check", None),
             ("game-a", "seer_check", "3"),
             ("game-a", "seer_check", True),
+            ("game-a", "", 3),
+            ("game-a", "wolf_secret_target=2", 3),
+            ("game-a", "unrecognized_substep", 3),
+            ("game-a", "seer_check", 0),
+            ("game-a", "seer_check", -1),
         ],
     )
     async def test_night_substep_drops_unknown_or_invalid_envelopes(

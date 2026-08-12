@@ -19,6 +19,19 @@ from app.services.game_manifest import GameManifest
 
 logger = logging.getLogger(__name__)
 
+PUBLIC_NIGHT_SUBSTEPS = frozenset({
+    "werewolf_open",
+    "werewolf_vote",
+    "werewolf_target",
+    "werewolf_close",
+    "witch_open",
+    "witch_action",
+    "witch_close",
+    "seer_open",
+    "seer_check",
+    "seer_close",
+})
+
 
 class GameService:
     """Manages game lifecycle: creation, execution, state access, and event broadcasting.
@@ -313,8 +326,10 @@ class GameService:
         if (
             game_id is None
             or not isinstance(step, str)
+            or step not in PUBLIC_NIGHT_SUBSTEPS
             or not isinstance(round_number, int)
             or isinstance(round_number, bool)
+            or round_number < 1
         ):
             return
         payload = PublicNightSubstep.from_internal(
