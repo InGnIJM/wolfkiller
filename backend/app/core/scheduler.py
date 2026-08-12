@@ -3,13 +3,12 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-import weakref
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from queue import Empty, Queue
-from threading import Lock, RLock, Semaphore, Thread
+from threading import RLock, Semaphore, Thread
 from time import monotonic
 from types import MappingProxyType
 
@@ -17,6 +16,7 @@ from app.core.action_resolver import ActionResolver, RuleExecutionError
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import CommitResult, EffectApplier, EffectPermission
+from app.core.state_transaction import state_transaction_lock
 from app.models.game import GameState
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, IssuedActionRequest,
@@ -27,24 +27,7 @@ from app.roles.registry import RegistrySnapshot
 _EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _INT32 = 2_147_483_647
-_LOCK_GUARD = Lock(); _STATE_LOCKS: dict[int, tuple[weakref.ReferenceType[GameState], RLock]] = {}
 _RULE_SLOTS = Semaphore(32)
-
-
-def _state_lock(state: GameState) -> RLock:
-    key = id(state)
-    with _LOCK_GUARD:
-        entry = _STATE_LOCKS.get(key)
-        if entry is not None and entry[0]() is state: lock = entry[1]
-        else:
-            lock = RLock(); reference = weakref.ref(state, lambda current, k=key: _drop_lock(k, current))
-            _STATE_LOCKS[key] = (reference, lock)
-    return lock
-
-
-def _drop_lock(key: int, reference: weakref.ReferenceType[GameState]) -> None:
-    with _LOCK_GUARD:
-        if (entry := _STATE_LOCKS.get(key)) is not None and entry[0] is reference: _STATE_LOCKS.pop(key, None)
 
 
 class ResponseLimitExceeded(RuntimeError): pass
@@ -232,7 +215,7 @@ class Scheduler:
         if elapsed > self.hook_soft_ms and (faults := self._faults.get()) is not None:
             faults.append({"code": "slow_rule", "label": label, "elapsed_bucket": "soft_exceeded"})
         if successful: return value
-        if isinstance(value, (KeyboardInterrupt, SystemExit)): raise value
+        if not isinstance(value, Exception): raise value
         if isinstance(value, RuleExecutionError): raise value
         raise PipelinePaused(f"{label} rule failed") from None
 
@@ -243,7 +226,7 @@ class Scheduler:
 
     def issue(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
         if type(state) is not GameState or type(point) is not SchedulePoint or type(registry) is not RegistrySnapshot: raise TypeError("invalid issue input")
-        with _state_lock(state): return self._issue_locked(state, point, registry)
+        with state_transaction_lock(state): return self._issue_locked(state, point, registry)
 
     def _issue_locked(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
         for player in state.players.values(): registry.require(player.role)
@@ -314,7 +297,7 @@ class Scheduler:
 
     def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
-        with _state_lock(state):
+        with state_transaction_lock(state):
             faults: list[Mapping[str, object]] = []; token = self._faults.set(faults)
             try: return self._run_point_locked(state, point, faults)
             finally: self._faults.reset(token)

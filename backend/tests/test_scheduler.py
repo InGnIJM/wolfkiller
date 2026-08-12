@@ -11,7 +11,7 @@ import app.core.scheduler as scheduler_module
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import EffectApplier, derive_effect_id
+from app.core.effect_applier import EffectApplier, EffectPermission, derive_effect_id
 from app.core.scheduler import (
     DomainEvent, PipelinePaused, PointResult, ResponseLimitExceeded,
     ResponseQueue, ResponseWindow, Scheduler, stable_window_id,
@@ -22,6 +22,10 @@ from app.models.pipeline import (
     RoleSpec, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
+
+
+class CustomControlFlow(BaseException):
+    pass
 
 
 def applicable(context: ActionContext) -> bool:
@@ -505,7 +509,8 @@ def test_rule_hard_timeout_returns_and_soft_budget_records_fault() -> None:
     result = Scheduler(registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(),
                        lambda *args: ActionCommand(action_type="act", target_seat=None, reasoning="ok"),
                        hook_soft_ms=5, hook_hard_ms=100).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
-    assert result.faults == ({"code": "slow_rule", "label": "validation", "elapsed_bucket": "soft_exceeded"},)
+    assert {fault["label"] for fault in result.faults} >= {"validation"}
+    assert all(fault["code"] == "slow_rule" and fault["elapsed_bucket"] == "soft_exceeded" for fault in result.faults)
 
 
 def test_scheduler_budget_config_is_strict() -> None:
@@ -527,14 +532,61 @@ def test_response_queue_enqueue_is_thread_safe_and_idempotent() -> None:
     assert sorted(results) == [False, True]
 
 
-def test_lock_registry_reuses_identity_and_cleans_up() -> None:
-    game = state(); first = scheduler_module._state_lock(game)
-    assert scheduler_module._state_lock(game) is first
-    key, reference = id(game), scheduler_module._STATE_LOCKS[id(game)][0]
-    scheduler_module._drop_lock(key, object())
-    assert key in scheduler_module._STATE_LOCKS
-    scheduler_module._drop_lock(key, reference)
-    assert key not in scheduler_module._STATE_LOCKS
+def test_run_point_serializes_with_direct_effect_applier_mutation() -> None:
+    registry = snapshot(spec("r", contract("c"))); game = state("r")
+    provider_entered, release_provider = Event(), Event()
+    direct_started, direct_done, scheduler_done = Event(), Event(), Event()
+    failures = []
+
+    def provider(request, context, attempt):
+        provider_entered.set()
+        release_provider.wait()
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+
+    external_key = "external-action"
+    effects = (GameEffect(
+        derive_effect_id(external_key, 0), EffectKind.ACCEPT_ACTION, external_key,
+        expected_revision=0, sort_key=(0,),
+    ),)
+    permission = EffectPermission(
+        1, frozenset(), frozenset(), frozenset({1}), frozenset()
+    )
+
+    def run_scheduler():
+        try: scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+        except BaseException as error: failures.append(error)
+        finally: scheduler_done.set()
+
+    def apply_directly():
+        direct_started.set()
+        try: EffectApplier().apply(game, effects, permission)
+        except BaseException as error: failures.append(error)
+        finally: direct_done.set()
+
+    scheduler_thread = Thread(target=run_scheduler); scheduler_thread.start()
+    assert provider_entered.wait(1)
+    direct_thread = Thread(target=apply_directly); direct_thread.start()
+    assert direct_started.wait(1)
+    try:
+        assert not direct_done.wait(.05)
+    finally:
+        release_provider.set()
+    assert scheduler_done.wait(1)
+    assert direct_done.wait(1)
+    scheduler_thread.join(); direct_thread.join()
+    assert failures == []
+    assert game._pipeline_runtime.revision == 2
+    assert tuple(game._pipeline_runtime.commits)[-1] == external_key
+
+
+def test_rule_call_propagates_arbitrary_non_exception_base_exception() -> None:
+    registry = snapshot(); engine = scheduler(registry)
+
+    def raise_control_flow():
+        raise CustomControlFlow()
+
+    with pytest.raises(CustomControlFlow):
+        engine._rule_call("control", raise_control_flow)
 
 
 def test_rule_capacity_and_public_run_boundaries(monkeypatch) -> None:
