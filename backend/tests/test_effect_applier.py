@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from threading import Barrier, Event, Thread
+import gc
 from types import MappingProxyType
 
 import pytest
@@ -387,3 +389,123 @@ def test_duplicate_add_operations_are_atomic() -> None:
         with pytest.raises(EffectRejected):
             EffectApplier().apply(s, batch([(kind, payload, 1), (kind, payload, 1)]), permission())
         assert not hasattr(s, "_pipeline_runtime")
+
+
+def test_concurrent_distinct_actions_serialize_commits(monkeypatch) -> None:
+    import app.core.effect_applier as module
+
+    s = state()
+    both_entered = Barrier(2)
+    original = module._state_lock
+
+    def gated_lock(current):
+        both_entered.wait()
+        return original(current)
+
+    monkeypatch.setattr(module, "_state_lock", gated_lock)
+    results, errors = [], []
+
+    def apply(action: str) -> None:
+        try:
+            results.append(EffectApplier().apply(s, batch([], action=action), permission()))
+        except Exception as error:  # pragma: no branch - assertion reports it
+            errors.append(error)
+
+    threads = [Thread(target=apply, args=(action,)) for action in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert {result.revision for result in results} == {1, 2}
+    assert s._pipeline_runtime.revision == 2
+    assert set(s._pipeline_runtime.commits) == {"a", "b"}
+
+
+def test_runtime_clone_deeply_isolates_nested_values() -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state()
+    nested = {"items": [{"seat": 2}]}
+    runtime = _Runtime(
+        private_data={1: {"nested": nested}},
+        private_facts={1: [{"namespace": "n", "fact": nested}]},
+        pending_damage=({"target": 2, "meta": nested},),
+        events=({"event_type": "OLD", "payload": nested},),
+    )
+    s._pipeline_runtime = runtime
+    result = EffectApplier().apply(
+        s,
+        batch([(EffectKind.EMIT_EVENT, {"event_type": "NEW", "payload": nested}, None)]),
+        permission(),
+    )
+    nested["items"][0]["seat"] = 99
+    assert s._pipeline_runtime.private_data[1]["nested"]["items"][0]["seat"] == 2
+    assert s._pipeline_runtime.private_facts[1][0]["fact"]["items"][0]["seat"] == 2
+    assert s._pipeline_runtime.pending_damage[0]["meta"]["items"][0]["seat"] == 2
+    assert result.events[0]["payload"]["items"][0]["seat"] == 2
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"x": object()},
+        {"x": float("nan")},
+        {"x": 2_147_483_648},
+        {"x": "\ud800"},
+    ],
+)
+def test_invalid_existing_runtime_is_rejected_without_state_change(bad) -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state()
+    runtime = _Runtime(private_data={1: bad})
+    s._pipeline_runtime = runtime
+    with pytest.raises(EffectRejected):
+        EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime is runtime and runtime.revision == 0
+
+
+def test_cyclic_existing_runtime_is_rejected() -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state()
+    cyclic = {}
+    cyclic["self"] = cyclic
+    runtime = _Runtime(private_data={1: cyclic})
+    s._pipeline_runtime = runtime
+    with pytest.raises(EffectRejected, match="cycle"):
+        EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime is runtime
+
+
+def test_state_lock_registry_reuses_identity_and_cleans_up() -> None:
+    import app.core.effect_applier as module
+
+    s = state()
+    key = id(s)
+    assert module._state_lock(s) is module._state_lock(s)
+    assert key in module._LOCKS
+    del s
+    gc.collect()
+    assert key not in module._LOCKS
+
+
+def test_invalid_runtime_container_shape_is_rejected() -> None:
+    from app.core.effect_applier import _Runtime
+
+    s = state()
+    runtime = _Runtime(role_resources=object())
+    s._pipeline_runtime = runtime
+    with pytest.raises(EffectRejected, match="runtime"):
+        EffectApplier().apply(s, batch([]), permission())
+    assert s._pipeline_runtime is runtime
+
+
+def test_finite_nested_float_is_supported() -> None:
+    result = EffectApplier().apply(
+        state(),
+        batch([(EffectKind.EMIT_EVENT, {"event_type": "FLOAT", "payload": {"value": 1.5}}, None)]),
+        permission(),
+    )
+    assert result.events[0]["payload"]["value"] == 1.5

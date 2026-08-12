@@ -1,16 +1,32 @@
 from __future__ import annotations
 import hashlib
 import json
+import math
 import re
+import weakref
 from dataclasses import dataclass, field
+from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Mapping
 from app.models.game import GameState
 from app.models.pipeline import EffectKind, GameEffect
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
-class EffectRejected(ValueError):
-    """The complete effect batch was rejected without changing game state."""
+_LOCK_GUARD = Lock()
+_LOCKS: dict[int, tuple[weakref.ReferenceType[GameState], RLock]] = {}
+def _state_lock(state: GameState) -> RLock:
+    key = id(state)
+    with _LOCK_GUARD:
+        entry = _LOCKS.get(key)
+        if entry is not None and entry[0]() is state:
+            return entry[1]
+        lock = RLock(); reference = weakref.ref(state, lambda current, k=key: _drop_lock(k, current))
+        _LOCKS[key] = (reference, lock)
+        return lock
+def _drop_lock(key: int, reference: weakref.ReferenceType[GameState]) -> None:
+    with _LOCK_GUARD:
+        _LOCKS.pop(key, None)
+class EffectRejected(ValueError): pass
 def _utf8(value: str, name: str, *, token: bool = False) -> str:
     if type(value) is not str:
         raise TypeError(f"{name} must be a string")
@@ -22,27 +38,20 @@ def _utf8(value: str, name: str, *, token: bool = False) -> str:
         raise ValueError(f"invalid {name}")
     return value
 def _integer(value: object, name: str, *, positive: bool = False) -> int:
-    if type(value) is not int:
-        raise TypeError(f"{name} must be an integer")
-    lower = 1 if positive else 0
-    if not lower <= value <= INT32_MAX:
-        raise ValueError(f"{name} out of range")
+    if type(value) is not int: raise TypeError(f"{name} must be an integer")
+    if not (1 if positive else 0) <= value <= INT32_MAX: raise ValueError(f"{name} out of range")
     return value
 def derive_effect_id(action_key: str, ordinal: int, schema_version: int = 1) -> str:
     """Derive a stable effect identifier from its action and canonical ordinal."""
     _utf8(action_key, "action_key")
     _integer(ordinal, "ordinal")
-    if type(schema_version) is not int:
-        raise TypeError("schema_version must be an integer")
+    if type(schema_version) is not int: raise TypeError("schema_version must be an integer")
     if schema_version != 1:
         raise ValueError("unsupported schema_version")
-    source = f"{schema_version}\0{action_key}\0{ordinal}".encode("utf-8")
-    return hashlib.sha256(source).hexdigest()
+    return hashlib.sha256(f"{schema_version}\0{action_key}\0{ordinal}".encode()).hexdigest()
 def _effect_set(value: object, name: str) -> frozenset[EffectKind]:
-    if type(value) is not frozenset:
-        raise TypeError(f"{name} must be a frozenset")
-    if any(type(item) is not EffectKind for item in value):
-        raise TypeError(f"{name} elements must be EffectKind")
+    if type(value) is not frozenset: raise TypeError(f"{name} must be a frozenset")
+    if any(type(item) is not EffectKind for item in value): raise TypeError(f"{name} elements must be EffectKind")
     return value
 @dataclass(frozen=True)
 class EffectPermission:
@@ -52,23 +61,15 @@ class EffectPermission:
     allowed_targets: frozenset[int]
     allowed_visibility: frozenset[str]
     schema_version: int = 1
-
     def __post_init__(self) -> None:
         _integer(self.actor_seat, "actor_seat", positive=True)
-        if type(self.schema_version) is not int:
-            raise TypeError("schema_version must be an integer")
-        if self.schema_version != 1:
-            raise ValueError("unsupported schema_version")
-        for name in ("role_effects", "contract_effects"):
-            object.__setattr__(self, name, _effect_set(getattr(self, name), name))
-        if type(self.allowed_targets) is not frozenset:
-            raise TypeError("allowed_targets must be a frozenset")
-        for seat in self.allowed_targets:
-            _integer(seat, "allowed target", positive=True)
-        if type(self.allowed_visibility) is not frozenset:
-            raise TypeError("allowed_visibility must be a frozenset")
-        for visibility in self.allowed_visibility:
-            _utf8(visibility, "allowed visibility", token=True)
+        if type(self.schema_version) is not int: raise TypeError("schema_version must be an integer")
+        if self.schema_version != 1: raise ValueError("unsupported schema_version")
+        for name in ("role_effects", "contract_effects"): object.__setattr__(self, name, _effect_set(getattr(self, name), name))
+        if type(self.allowed_targets) is not frozenset: raise TypeError("allowed_targets must be a frozenset")
+        for seat in self.allowed_targets: _integer(seat, "allowed target", positive=True)
+        if type(self.allowed_visibility) is not frozenset: raise TypeError("allowed_visibility must be a frozenset")
+        for visibility in self.allowed_visibility: _utf8(visibility, "allowed visibility", token=True)
     @property
     def allowed_effects(self) -> frozenset[EffectKind]:
         return self.role_effects & self.contract_effects | {EffectKind.ACCEPT_ACTION}
@@ -86,23 +87,16 @@ class CommitResult:
     events: tuple[Mapping[str, object], ...]
     state_digest: str
     schema_version: int = 1
-
     def __post_init__(self) -> None:
         _utf8(self.action_key, "action_key")
-        if type(self.effect_ids) is not tuple:
-            raise TypeError("effect_ids must be a tuple")
-        for effect_id in self.effect_ids:
-            _utf8(effect_id, "effect_id", token=True)
+        if type(self.effect_ids) is not tuple: raise TypeError("effect_ids must be a tuple")
+        for effect_id in self.effect_ids: _utf8(effect_id, "effect_id", token=True)
         _integer(self.revision, "revision")
-        if type(self.events) is not tuple:
-            raise TypeError("events must be a tuple")
-        if any(not isinstance(event, Mapping) for event in self.events):
-            raise TypeError("events must contain mappings")
+        if type(self.events) is not tuple: raise TypeError("events must be a tuple")
+        if any(not isinstance(event, Mapping) for event in self.events): raise TypeError("events must contain mappings")
         _utf8(self.state_digest, "state_digest")
-        if type(self.schema_version) is not int:
-            raise TypeError("schema_version must be an integer")
-        if self.schema_version != 1:
-            raise ValueError("unsupported schema_version")
+        if type(self.schema_version) is not int: raise TypeError("schema_version must be an integer")
+        if self.schema_version != 1: raise ValueError("unsupported schema_version")
         object.__setattr__(self, "events", tuple(_freeze(event) for event in self.events))
 @dataclass
 class _Runtime:
@@ -116,53 +110,55 @@ class _Runtime:
     pending_protection: tuple[dict[str, object], ...] = ()
     events: tuple[Mapping[str, object], ...] = ()
     commits: dict[str, CommitResult] = field(default_factory=dict)
-
     def clone(self) -> "_Runtime":
-        return _Runtime(
-            revision=self.revision,
-            role_resources={seat: dict(values) for seat, values in self.role_resources.items()},
-            private_data={seat: dict(values) for seat, values in self.private_data.items()},
-            statuses={seat: set(values) for seat, values in self.statuses.items()},
-            relations={seat: set(values) for seat, values in self.relations.items()},
-            private_facts={seat: list(values) for seat, values in self.private_facts.items()},
-            pending_damage=self.pending_damage,
-            pending_protection=self.pending_protection,
-            events=self.events,
-            commits=dict(self.commits),
-        )
+        try:
+            resources = {seat: dict(values) for seat, values in self.role_resources.items()}
+            statuses = {seat: set(values) for seat, values in self.statuses.items()}
+            relations = {seat: set(values) for seat, values in self.relations.items()}
+            data = _clone_json(self.private_data, "private_data")
+            facts = _clone_json(self.private_facts, "private_facts")
+            damage = _clone_json(self.pending_damage, "pending_damage")
+            protection = _clone_json(self.pending_protection, "pending_protection")
+            events = _clone_json(self.events, "events")
+        except (AttributeError, TypeError, ValueError) as error:
+            if isinstance(error, EffectRejected):
+                raise
+            raise EffectRejected("invalid pipeline runtime") from error
+        return _Runtime(self.revision, resources, data, statuses, relations, facts,
+                        damage, protection, events, dict(self.commits))
 def _runtime(state: GameState) -> _Runtime:
     value = getattr(state, "_pipeline_runtime", None)
-    if value is None:
-        return _Runtime()
+    if value is None: return _Runtime()
     if type(value) is not _Runtime:
         raise EffectRejected("invalid pipeline runtime")
     return value
 def _exact(mapping: Mapping[str, object], fields: frozenset[str], name: str) -> None:
-    if frozenset(mapping) != fields:
-        raise EffectRejected(f"invalid {name} fields")
-def _validate_json_bounds(value: object, name: str = "payload") -> None:
+    if frozenset(mapping) != fields: raise EffectRejected(f"invalid {name} fields")
+def _clone_json(value: object, name: str = "value", active: set[int] | None = None) -> object:
+    if value is None or type(value) is bool:
+        return value
     if type(value) is int:
-        if not 0 <= value <= INT32_MAX:
-            raise EffectRejected(f"{name} integer out of range")
-        return
+        return _int_field({name: value}, name)
+    if type(value) is float:
+        if math.isfinite(value): return value
+        raise EffectRejected(f"invalid {name} number")
     if type(value) is str:
         try:
-            _utf8(value, name)
+            return _utf8(value, name)
         except (TypeError, ValueError) as error:
             raise EffectRejected(str(error)) from error
-        return
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            _validate_json_bounds(item, f"{name}.{key}")
-        return
-    if isinstance(value, tuple):
-        for index, item in enumerate(value):
-            _validate_json_bounds(item, f"{name}[{index}]")
-        return
+    if not isinstance(value, (Mapping, tuple, list)): raise EffectRejected(f"invalid {name} value")
+    active = set() if active is None else active
+    identity = id(value)
+    if identity in active: raise EffectRejected(f"{name} contains cycle")
+    active.add(identity)
+    items = value.items() if isinstance(value, Mapping) else enumerate(value)
+    cloned = [(key, _clone_json(item, f"{name}.{key}", active)) for key, item in items]
+    active.remove(identity)
+    return {key: item for key, item in cloned} if isinstance(value, Mapping) else tuple(item for _, item in cloned)
 def _payload_target(effect: GameEffect, payload: Mapping[str, object]) -> int:
     target = _integer(payload["target"], "payload target", positive=True)
-    if effect.target_seat != target:
-        raise EffectRejected("payload target does not match target_seat")
+    if effect.target_seat != target: raise EffectRejected("payload target does not match target_seat")
     return target
 def _token_field(payload: Mapping[str, object], name: str) -> str:
     try:
@@ -176,7 +172,7 @@ def _int_field(payload: Mapping[str, object], name: str, *, positive: bool = Fal
         raise EffectRejected(str(error)) from error
 def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
     payload = dict(effect.payload)
-    _validate_json_bounds(effect.payload)
+    _clone_json(effect.payload, "payload")
     kind = effect.kind
     schemas = {
         EffectKind.ACCEPT_ACTION: frozenset(),
@@ -203,8 +199,7 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
             raise EffectRejected("target seat does not exist")
         return payload
     target = _payload_target(effect, payload)
-    if target not in seats:
-        raise EffectRejected("target seat does not exist")
+    if target not in seats: raise EffectRejected("target seat does not exist")
     if kind in {EffectKind.CONSUME_RESOURCE, EffectKind.SET_RESOURCE}:
         _token_field(payload, "resource")
         _int_field(payload, "amount" if kind is EffectKind.CONSUME_RESOURCE else "value", positive=kind is EffectKind.CONSUME_RESOURCE)
@@ -215,8 +210,7 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
     elif kind in {EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION}:
         _token_field(payload, "relation")
         other = _int_field(payload, "other_seat", positive=True)
-        if other not in seats:
-            raise EffectRejected("relation seat does not exist")
+        if other not in seats: raise EffectRejected("relation seat does not exist")
     elif kind is EffectKind.RECORD_PRIVATE_FACT:
         _token_field(payload, "namespace")
         if not isinstance(payload["fact"], Mapping):
@@ -352,6 +346,12 @@ class EffectApplier:
               permission: EffectPermission) -> CommitResult:
         if type(state) is not GameState:
             raise TypeError("state must be GameState")
+        observed_revision = _runtime(state).revision
+        with _state_lock(state):
+            return self._apply_locked(state, effects, permission, observed_revision)
+
+    def _apply_locked(self, state: GameState, effects: tuple[GameEffect, ...],
+                      permission: EffectPermission, observed_revision: int) -> CommitResult:
         if type(effects) is not tuple:
             raise TypeError("effects must be a tuple")
         if type(permission) is not EffectPermission:
@@ -376,7 +376,7 @@ class EffectApplier:
                 raise EffectRejected("effect id does not match canonical ordinal")
             if effect.kind not in permission.allowed_effects:
                 raise EffectRejected("effect permission denied")
-            if effect.expected_revision != current.revision:
+            if effect.expected_revision != observed_revision:
                 raise EffectRejected("revision mismatch")
             if effect.target_seat is not None and effect.target_seat not in permission.allowed_targets:
                 raise EffectRejected("target permission denied")
