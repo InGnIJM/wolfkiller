@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
 import random
+import re
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import get_type_hints
 
-from app.models.contracts import ActionContract, ActionRequest, RoleSpec
+from app.models.contracts import ActionContract, ActionRequest, RoleSpec as LegacyRoleSpec
 from app.models.game import Camp, GamePhase, GameState
+from app.models.pipeline import (
+    ActionCommand as PipelineActionCommand,
+    ActionContext as PipelineActionContext,
+    ActionContract as PipelineActionContract,
+    GameEffect,
+    RoleSpec as PipelineRoleSpec,
+    RuleViolation,
+)
 from app.roles.hunter import Hunter
 from app.roles.seer import Seer
 from app.roles.villager import Villager
@@ -12,16 +26,245 @@ from app.roles.werewolf import Werewolf
 from app.roles.witch import Witch
 
 
+_VISIBLE_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
+_MAX_ORDER = 1_000_000
+_STABLE_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
+
+
+@dataclass(frozen=True)
+class RegistrySnapshot:
+    specs: Mapping[str, PipelineRoleSpec]
+    digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "specs",
+            MappingProxyType(dict(sorted(self.specs.items()))),
+        )
+
+    def require(self, role_id: str) -> PipelineRoleSpec:
+        try:
+            return self.specs[role_id]
+        except KeyError as error:
+            raise ValueError(f"unknown role: {role_id}") from error
+
+    def validate_role_counts(
+        self, role_counts: Mapping[str, int], player_count: int
+    ) -> None:
+        if isinstance(player_count, bool) or not isinstance(player_count, int) or player_count < 0:
+            raise ValueError("player_count must be a non-negative integer")
+        counts = {role_id: 0 for role_id in self.specs}
+        total = 0
+        for role_id, count in role_counts.items():
+            self.require(role_id)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError("role count must be a non-negative integer")
+            counts[role_id] = count
+            total += count
+        if total != player_count:
+            raise ValueError("role count sum must equal player_count")
+        for role_id, spec in self.specs.items():
+            count = counts[role_id]
+            if count < spec.min_count:
+                raise ValueError(f"role minimum not satisfied: {role_id}")
+            if spec.max_count is not None and count > spec.max_count:
+                raise ValueError(f"role maximum exceeded: {role_id}")
+            if count == 0:
+                continue
+            missing = sorted(
+                dependency
+                for dependency in spec.dependencies
+                if counts[dependency] == 0
+            )
+            if missing:
+                raise ValueError(
+                    f"role dependency not satisfied: {role_id} requires {missing[0]}"
+                )
+            conflicts = sorted(
+                exclusion for exclusion in spec.exclusions if counts[exclusion] > 0
+            )
+            if conflicts:
+                raise ValueError(
+                    f"role exclusion violated: {role_id} excludes {conflicts[0]}"
+                )
+
+
 class RoleRegistry:
     def __init__(self) -> None:
-        self._specs: dict[str, RoleSpec] = {}
+        self._specs: dict[str, LegacyRoleSpec] = {}
+        self._pipeline_specs: dict[str, PipelineRoleSpec] = {}
 
-    def register(self, spec: RoleSpec) -> None:
+    def register(self, spec: LegacyRoleSpec) -> None:
         if spec.role_id in self._specs:
             raise ValueError(f"role already registered: {spec.role_id}")
         self._specs[spec.role_id] = spec
 
-    def require(self, role_id: str) -> RoleSpec:
+    def register_pipeline(self, spec: PipelineRoleSpec) -> None:
+        if not isinstance(spec, PipelineRoleSpec):
+            raise TypeError("pipeline spec must be a pipeline RoleSpec")
+        if spec.role_id in self._pipeline_specs:
+            raise ValueError(f"role already registered: {spec.role_id}")
+        self._pipeline_specs[spec.role_id] = spec
+
+    def freeze(self) -> RegistrySnapshot:
+        contract_ids: set[str] = set()
+        known_roles = set(self._pipeline_specs)
+        for spec in dict(sorted(self._pipeline_specs.items())).values():
+            self._validate_pipeline_spec(spec, contract_ids, known_roles)
+        specs = MappingProxyType(dict(sorted(self._pipeline_specs.items())))
+        digest_source = "[" + ",".join(
+            spec.to_json() for spec in specs.values()
+        ) + "]"
+        digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
+        return RegistrySnapshot(specs=specs, digest=digest)
+
+    @staticmethod
+    def _validate_pipeline_spec(
+        spec: PipelineRoleSpec,
+        contract_ids: set[str],
+        known_roles: set[str],
+    ) -> None:
+        if _STABLE_ID.fullmatch(spec.role_id) is None:
+            raise ValueError("role id has an invalid stable format")
+        if spec.min_count < 0:
+            raise ValueError("role minimum must be non-negative")
+        if spec.max_count is not None and spec.max_count < spec.min_count:
+            raise ValueError("role maximum must be at least its minimum")
+        if spec.dependencies & spec.exclusions:
+            raise ValueError("role dependency and exclusion cannot overlap")
+        if spec.role_id in spec.dependencies or spec.role_id in spec.exclusions:
+            raise ValueError("role cannot depend on or exclude itself")
+        unknown_constraints = (spec.dependencies | spec.exclusions) - known_roles
+        if unknown_constraints:
+            raise ValueError(
+                f"unknown role dependency or exclusion: {min(unknown_constraints)}"
+            )
+        if not spec.visibility_namespaces <= _VISIBLE_NAMESPACES:
+            raise ValueError("unknown visibility namespace")
+        for contract in spec.contracts:
+            if contract.contract_id in contract_ids:
+                raise ValueError(f"duplicate contract id: {contract.contract_id}")
+            contract_ids.add(contract.contract_id)
+            RoleRegistry._validate_pipeline_contract(spec, contract)
+
+    @staticmethod
+    def _validate_pipeline_contract(
+        spec: PipelineRoleSpec, contract: PipelineActionContract
+    ) -> None:
+        if _STABLE_ID.fullmatch(contract.contract_id) is None:
+            raise ValueError("contract id has an invalid stable format")
+        if not contract.action_types or any(
+            not action.strip() for action in contract.action_types
+        ):
+            raise ValueError("action types must be non-empty")
+        if len(set(contract.action_types)) != len(contract.action_types):
+            raise ValueError("action types must be unique")
+        actions = set(contract.action_types)
+        if contract.fallback_action_type not in actions:
+            raise ValueError("fallback action must belong to action types")
+        if contract.fallback_action_type in contract.actions_requiring_target:
+            raise ValueError("fallback action cannot require a target")
+        if not contract.actions_requiring_target <= actions:
+            raise ValueError("target rule references an unknown action type")
+        if contract.order < 0 or contract.order > _MAX_ORDER:
+            raise ValueError("contract order is outside the supported range")
+        for limit in (
+            contract.per_window_limit,
+            contract.per_round_limit,
+            contract.per_game_limit,
+        ):
+            if limit is not None and limit <= 0:
+                raise ValueError("contract limit must be positive")
+        if not contract.allowed_effects <= spec.allowed_effects:
+            raise ValueError("effect permission exceeds role declaration")
+        if not contract.visibility_namespaces <= spec.visibility_namespaces:
+            raise ValueError("contract visibility exceeds role declaration")
+        if any(not event_type.strip() for event_type in contract.response_event_types):
+            raise ValueError("response event type must not be empty")
+        if any(not reason.strip() for reason in contract.response_reasons):
+            raise ValueError("response reason must not be empty")
+        if contract.response_reasons and not contract.response_event_types:
+            raise ValueError("response reasons require response event types")
+        if contract.is_applicable is None:
+            raise ValueError("is_applicable hook is required")
+        if (contract.resolve is None) == (contract.aggregate is None):
+            raise ValueError("exactly one resolution hook is required")
+        hooks = {
+            "is_applicable": (
+                contract.is_applicable,
+                (("context", PipelineActionContext),),
+                bool,
+            ),
+            "validate": (
+                contract.validate,
+                (("context", PipelineActionContext), ("command", PipelineActionCommand)),
+                tuple[RuleViolation, ...],
+            ),
+            "resolve": (
+                contract.resolve,
+                (("context", PipelineActionContext), ("command", PipelineActionCommand)),
+                tuple[GameEffect, ...],
+            ),
+            "react": (
+                contract.react,
+                (("context", PipelineActionContext),),
+                tuple[GameEffect, ...],
+            ),
+            "aggregate": (
+                contract.aggregate,
+                (
+                    ("context", PipelineActionContext),
+                    ("commands", tuple[PipelineActionCommand, ...]),
+                ),
+                tuple[GameEffect, ...],
+            ),
+        }
+        for name, (hook, parameters, return_type) in hooks.items():
+            if hook is not None:
+                RoleRegistry._validate_hook_signature(
+                    name, hook, parameters, return_type
+                )
+
+    @staticmethod
+    def _validate_hook_signature(
+        name: str,
+        hook: Callable[..., object],
+        expected_parameters: tuple[tuple[str, object], ...],
+        expected_return: object,
+    ) -> None:
+        signature = inspect.signature(hook)
+        parameters = tuple(signature.parameters.values())
+        try:
+            hints = get_type_hints(hook)
+        except (NameError, TypeError) as error:
+            raise ValueError(f"hook signature mismatch: {name}") from error
+        if len(parameters) != len(expected_parameters):
+            raise ValueError(f"hook signature mismatch: {name}")
+        actual_parameters = tuple(
+            (
+                parameter.name,
+                parameter.kind,
+                parameter.default,
+                hints.get(parameter.name),
+            )
+            for parameter in parameters
+        )
+        required_parameters = tuple(
+            (
+                expected_name,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.empty,
+                expected_type,
+            )
+            for expected_name, expected_type in expected_parameters
+        )
+        if actual_parameters != required_parameters:
+            raise ValueError(f"hook signature mismatch: {name}")
+        if hints.get("return") != expected_return:
+            raise ValueError(f"hook signature mismatch: {name}")
+
+    def require(self, role_id: str) -> LegacyRoleSpec:
         try:
             return self._specs[role_id]
         except KeyError as error:
@@ -114,10 +357,10 @@ def _contract(
 
 builtin_registry = RoleRegistry()
 builtin_registry.register(
-    RoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
+    LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
 builtin_registry.register(
-    RoleSpec(
+    LegacyRoleSpec(
         "wolf-killer-werewolf",
         Camp.WEREWOLF,
         Werewolf,
@@ -133,7 +376,7 @@ builtin_registry.register(
     )
 )
 builtin_registry.register(
-    RoleSpec(
+    LegacyRoleSpec(
         "wolf-killer-seer",
         Camp.GOOD,
         Seer,
@@ -149,7 +392,7 @@ builtin_registry.register(
     )
 )
 builtin_registry.register(
-    RoleSpec(
+    LegacyRoleSpec(
         "wolf-killer-witch",
         Camp.GOOD,
         Witch,
@@ -165,7 +408,7 @@ builtin_registry.register(
     )
 )
 builtin_registry.register(
-    RoleSpec(
+    LegacyRoleSpec(
         "wolf-killer-hunter",
         Camp.GOOD,
         Hunter,

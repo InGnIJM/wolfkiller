@@ -2,18 +2,120 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import pytest
 
 from app.models.contracts import RoleSpec
 from app.models.game import Camp, GamePhase, GameState, PlayerState
-from app.roles.registry import RoleRegistry, builtin_registry
+from app.models.pipeline import (
+    ActionCommand,
+    ActionContext,
+    ActionContract as PipelineActionContract,
+    EffectKind,
+    GameEffect,
+    RoleSpec as PipelineRoleSpec,
+    RuleViolation,
+    SchedulePoint,
+)
+from app.roles.registry import RegistrySnapshot, RoleRegistry, builtin_registry
 
 
 @dataclass
 class StubRole:
     seat: int
     role_name: str
+
+
+def applicable_hook(context: ActionContext) -> bool:
+    return context.actor_alive
+
+
+def validate_hook(
+    context: ActionContext, command: ActionCommand
+) -> tuple[RuleViolation, ...]:
+    del context, command
+    return ()
+
+
+def resolve_hook(
+    context: ActionContext, command: ActionCommand
+) -> tuple[GameEffect, ...]:
+    del context, command
+    return ()
+
+
+def react_hook(context: ActionContext) -> tuple[GameEffect, ...]:
+    del context
+    return ()
+
+
+def aggregate_hook(
+    context: ActionContext, commands: tuple[ActionCommand, ...]
+) -> tuple[GameEffect, ...]:
+    del context, commands
+    return ()
+
+
+def bad_hook(context: ActionContext, extra: object) -> bool:
+    del context, extra
+    return True
+
+
+def wrong_name_hook(value: ActionContext) -> bool:
+    del value
+    return True
+
+
+def defaulted_hook(context: ActionContext | None = None) -> bool:
+    del context
+    return True
+
+
+def wrong_parameter_type_hook(context: object) -> bool:
+    del context
+    return True
+
+
+def wrong_return_hook(context: ActionContext) -> object:
+    del context
+    return True
+
+
+def unresolved_type_hook(context: "MissingContext") -> bool:
+    del context
+    return True
+
+
+def _pipeline_contract(**changes: object) -> PipelineActionContract:
+    values: dict[str, object] = {
+        "contract_id": "night-action",
+        "schedule_point": SchedulePoint.NIGHT_ACTION,
+        "order": 10,
+        "action_types": ("act", "pass"),
+        "actions_requiring_target": frozenset({"act"}),
+        "fallback_action_type": "pass",
+        "allowed_effects": frozenset({EffectKind.SUBMIT_DAMAGE}),
+        "visibility_namespaces": frozenset({"ACTOR"}),
+        "is_applicable": applicable_hook,
+        "validate": validate_hook,
+        "resolve": resolve_hook,
+    }
+    values.update(changes)
+    return PipelineActionContract(**values)
+
+
+def _pipeline_spec(role_id: str = "pipeline-role", **changes: object) -> PipelineRoleSpec:
+    values: dict[str, object] = {
+        "role_id": role_id,
+        "display_name": role_id,
+        "camp_id": "good",
+        "contracts": (_pipeline_contract(),),
+        "visibility_namespaces": frozenset({"ACTOR"}),
+        "allowed_effects": frozenset({EffectKind.SUBMIT_DAMAGE}),
+    }
+    values.update(changes)
+    return PipelineRoleSpec(**values)
 
 
 class TestActionContracts:
@@ -164,3 +266,387 @@ class TestRoleRegistry:
         assert len(contracts) == 1
         assert contracts[0].contract_id == "witch_action"
         assert contracts[0].action_types == ("save", "poison", "pass")
+
+
+class TestPipelineRoleRegistry:
+    def test_freeze_returns_deeply_immutable_stable_snapshot(self):
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec())
+
+        first = registry.freeze()
+        second = registry.freeze()
+
+        assert isinstance(first, RegistrySnapshot)
+        assert isinstance(first.specs, MappingProxyType)
+        assert first.require("pipeline-role").role_id == "pipeline-role"
+        assert first.digest == second.digest
+        with pytest.raises(TypeError):
+            first.specs["other"] = _pipeline_spec("other")
+
+    def test_freeze_without_pipeline_specs_is_valid_and_legacy_api_is_unchanged(self):
+        registry = RoleRegistry()
+        legacy = builtin_registry.require("wolf-killer-villager")
+        registry.register(legacy)
+
+        snapshot = registry.freeze()
+
+        assert dict(snapshot.specs) == {}
+        assert registry.require(legacy.role_id) is legacy
+        assert snapshot.digest == registry.freeze().digest
+
+    def test_legacy_and_pipeline_specs_can_share_role_id_during_migration(self):
+        registry = RoleRegistry()
+        legacy = builtin_registry.require("wolf-killer-villager")
+        pipeline = _pipeline_spec(legacy.role_id)
+
+        registry.register(legacy)
+        registry.register_pipeline(pipeline)
+
+        assert registry.require(legacy.role_id) is legacy
+        assert registry.freeze().require(legacy.role_id) is pipeline
+
+    def test_pipeline_registration_rejects_duplicate_role_id(self):
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec())
+
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register_pipeline(_pipeline_spec())
+
+    def test_pipeline_registration_requires_pipeline_spec(self):
+        with pytest.raises(TypeError, match="pipeline RoleSpec"):
+            RoleRegistry().register_pipeline(
+                builtin_registry.require("wolf-killer-villager")
+            )
+
+    def test_snapshot_require_rejects_unknown_role(self):
+        snapshot = RoleRegistry().freeze()
+        with pytest.raises(ValueError, match="unknown role"):
+            snapshot.require("unknown")
+
+    @pytest.mark.parametrize(
+        ("specs", "message"),
+        [
+            (
+                (
+                    _pipeline_spec("one"),
+                    _pipeline_spec("two"),
+                ),
+                "duplicate contract",
+            ),
+            (
+                (_pipeline_spec(contracts=(_pipeline_contract(action_types=()),)),),
+                "action types",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(action_types=("act", "act", "pass")),
+                        )
+                    ),
+                ),
+                "action types",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(fallback_action_type="unknown"),
+                        )
+                    ),
+                ),
+                "fallback",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(
+                                actions_requiring_target=frozenset({"unknown"})
+                            ),
+                        )
+                    ),
+                ),
+                "target rule",
+            ),
+            (
+                (_pipeline_spec(contracts=(_pipeline_contract(order=-1),)),),
+                "order",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(_pipeline_contract(per_window_limit=0),)
+                    ),
+                ),
+                "limit",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(
+                                response_event_types=frozenset({""}),
+                            ),
+                        )
+                    ),
+                ),
+                "response",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(
+                                response_reasons=frozenset({"poison"}),
+                                response_event_types=frozenset(),
+                                react=react_hook,
+                            ),
+                        )
+                    ),
+                ),
+                "response",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(_pipeline_contract(is_applicable=bad_hook),)
+                    ),
+                ),
+                "hook signature",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(resolve=None, aggregate=None),
+                        )
+                    ),
+                ),
+                "resolution hook",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(aggregate=aggregate_hook),
+                        )
+                    ),
+                ),
+                "resolution hook",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        allowed_effects=frozenset(),
+                    ),
+                ),
+                "effect permission",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        visibility_namespaces=frozenset({"ACTOR"}),
+                        contracts=(
+                            _pipeline_contract(
+                                visibility_namespaces=frozenset({"CAMP"})
+                            ),
+                        ),
+                    ),
+                ),
+                "visibility",
+            ),
+            (
+                (_pipeline_spec(visibility_namespaces=frozenset({"UNKNOWN"})),),
+                "visibility",
+            ),
+            ((_pipeline_spec("Bad Role"),), "role id"),
+            ((_pipeline_spec(min_count=-1),), "minimum"),
+            ((_pipeline_spec(min_count=2, max_count=1),), "maximum"),
+            (
+                (
+                    _pipeline_spec(
+                        dependencies=frozenset({"other"}),
+                        exclusions=frozenset({"other"}),
+                    ),
+                    _pipeline_spec("other", contracts=()),
+                ),
+                "overlap",
+            ),
+            (
+                (_pipeline_spec(dependencies=frozenset({"pipeline-role"})),),
+                "itself",
+            ),
+            (
+                (_pipeline_spec(dependencies=frozenset({"missing"})),),
+                "unknown role",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(_pipeline_contract(contract_id="Bad Contract"),)
+                    ),
+                ),
+                "contract id",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(action_types=("act", " ", "pass")),
+                        )
+                    ),
+                ),
+                "action types",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(
+                                fallback_action_type="act",
+                                actions_requiring_target=frozenset({"act"}),
+                            ),
+                        )
+                    ),
+                ),
+                "fallback",
+            ),
+            (
+                (_pipeline_spec(contracts=(_pipeline_contract(order=1_000_001),)),),
+                "order",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(_pipeline_contract(per_round_limit=0),)
+                    ),
+                ),
+                "limit",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(_pipeline_contract(per_game_limit=0),)
+                    ),
+                ),
+                "limit",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(
+                            _pipeline_contract(
+                                response_event_types=frozenset({"PLAYER_DIED"}),
+                                response_reasons=frozenset({" "}),
+                            ),
+                        )
+                    ),
+                ),
+                "response reason",
+            ),
+            (
+                (
+                    _pipeline_spec(
+                        contracts=(_pipeline_contract(is_applicable=None),)
+                    ),
+                ),
+                "is_applicable",
+            ),
+        ],
+    )
+    def test_freeze_rejects_invalid_static_pipeline_specs(self, specs, message):
+        registry = RoleRegistry()
+        for spec in specs:
+            registry.register_pipeline(spec)
+
+        with pytest.raises(ValueError, match=message):
+            registry.freeze()
+
+    def test_freeze_accepts_complete_hook_shapes_and_response_contract(self):
+        contract = _pipeline_contract(
+            is_applicable=applicable_hook,
+            validate=validate_hook,
+            resolve=None,
+            react=react_hook,
+            aggregate=aggregate_hook,
+            response_event_types=frozenset({"PLAYER_DIED"}),
+            response_reasons=frozenset({"vote", "night"}),
+        )
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec(contracts=(contract,)))
+
+        assert registry.freeze().require("pipeline-role").contracts == (contract,)
+
+    @pytest.mark.parametrize(
+        "hook",
+        [
+            wrong_name_hook,
+            defaulted_hook,
+            wrong_parameter_type_hook,
+            wrong_return_hook,
+            unresolved_type_hook,
+        ],
+    )
+    def test_freeze_rejects_each_exact_hook_signature_mismatch(self, hook):
+        registry = RoleRegistry()
+        registry.register_pipeline(
+            _pipeline_spec(
+                contracts=(_pipeline_contract(is_applicable=hook),)
+            )
+        )
+
+        with pytest.raises(ValueError, match="hook signature"):
+            registry.freeze()
+
+    @pytest.mark.parametrize("count", [-1, 1.5, True])
+    def test_snapshot_rejects_invalid_counts_strictly(self, count):
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec())
+        snapshot = registry.freeze()
+
+        with pytest.raises(ValueError, match="non-negative integer"):
+            snapshot.validate_role_counts({"pipeline-role": count}, 0)
+
+    def test_snapshot_rejects_unknown_role_and_total_mismatch(self):
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec())
+        snapshot = registry.freeze()
+
+        with pytest.raises(ValueError, match="unknown role"):
+            snapshot.validate_role_counts({"unknown": 1}, 1)
+        with pytest.raises(ValueError, match="sum"):
+            snapshot.validate_role_counts({"pipeline-role": 1}, 2)
+
+    @pytest.mark.parametrize("player_count", [-1, 1.5, True])
+    def test_snapshot_rejects_invalid_player_count_strictly(self, player_count):
+        with pytest.raises(ValueError, match="player_count"):
+            RoleRegistry().freeze().validate_role_counts({}, player_count)
+
+    def test_snapshot_enforces_minimum_maximum_dependency_and_exclusion(self):
+        registry = RoleRegistry()
+        registry.register_pipeline(
+            _pipeline_spec(
+                "seer",
+                min_count=1,
+                max_count=2,
+                dependencies=frozenset({"villager"}),
+                exclusions=frozenset({"wolf"}),
+            )
+        )
+        registry.register_pipeline(_pipeline_spec("villager", contracts=()))
+        registry.register_pipeline(_pipeline_spec("wolf", contracts=()))
+        snapshot = registry.freeze()
+
+        with pytest.raises(ValueError, match="minimum"):
+            snapshot.validate_role_counts({"seer": 0, "villager": 2}, 2)
+        with pytest.raises(ValueError, match="maximum"):
+            snapshot.validate_role_counts({"seer": 3, "villager": 1}, 4)
+        with pytest.raises(ValueError, match="dependency"):
+            snapshot.validate_role_counts({"seer": 1, "villager": 0}, 1)
+        with pytest.raises(ValueError, match="exclusion"):
+            snapshot.validate_role_counts(
+                {"seer": 1, "villager": 1, "wolf": 1}, 3
+            )
+
+        snapshot.validate_role_counts({"seer": 1, "villager": 1}, 2)
