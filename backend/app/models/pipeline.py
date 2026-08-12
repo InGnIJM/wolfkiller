@@ -70,6 +70,8 @@ def _freeze_json(value: object, *, path: str = "value") -> JsonValue:
 
 
 def _freeze_int_mapping(value: Mapping[str, int], *, path: str) -> Mapping[str, int]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{path} must be a mapping")
     frozen: dict[str, int] = {}
     for key, item in value.items():
         if not isinstance(key, str):
@@ -82,6 +84,56 @@ def _freeze_int_mapping(value: Mapping[str, int], *, path: str) -> Mapping[str, 
 
 def _callable_name(value: Callable[..., object]) -> str:
     return f"{value.__module__}.{value.__qualname__}"
+
+
+def _contains_callable(value: object) -> bool:
+    if callable(value):
+        return True
+    if isinstance(value, Mapping):
+        return any(_contains_callable(item) for item in value.values())
+    if isinstance(value, (tuple, list, set, frozenset)):
+        return any(_contains_callable(item) for item in value)
+    if is_dataclass(value):
+        return any(_contains_callable(getattr(value, field.name)) for field in fields(value))
+    return False
+
+
+def _require_str(name: str, value: object, *, optional: bool = False) -> None:
+    if optional and value is None:
+        return
+    if type(value) is not str:
+        raise TypeError(f"{name} must be a string")
+
+
+def _require_int(name: str, value: object, *, optional: bool = False) -> None:
+    if optional and value is None:
+        return
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an integer")
+
+
+def _require_bool(name: str, value: object) -> None:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be a boolean")
+
+
+def _require_tuple_of(name: str, value: object, item_type: type) -> None:
+    if type(value) is not tuple:
+        raise TypeError(f"{name} must be a tuple")
+    if any(type(item) is not item_type for item in value):
+        raise TypeError(f"{name} elements must be {item_type.__name__}")
+
+
+def _require_frozenset_of(name: str, value: object, item_type: type) -> None:
+    if type(value) is not frozenset:
+        raise TypeError(f"{name} must be a frozenset")
+    if any(type(item) is not item_type for item in value):
+        raise TypeError(f"{name} elements must be {item_type.__name__}")
+
+
+def _require_hook(name: str, value: object) -> None:
+    if value is not None and not callable(value):
+        raise ValueError(f"Hook {name} must be rebound by the trusted registry")
 
 
 def _json_value(value: object) -> object:
@@ -118,10 +170,12 @@ class _FrozenValue:
     SCHEMA_VERSION: ClassVar[int] = 1
 
     def to_json(self) -> str:
+        if _contains_callable(self):
+            raise TypeError("Hook values require trusted registry rebind before persistence")
         return _stable_json(self)
 
     def stable_digest(self) -> str:
-        return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+        return hashlib.sha256(_stable_json(self).encode("utf-8")).hexdigest()
 
     @classmethod
     def from_json(cls, raw: str) -> Any:
@@ -131,7 +185,11 @@ class _FrozenValue:
             raise ValueError("invalid JSON document") from error
         if not isinstance(value, dict):
             raise ValueError("JSON document must be an object")
-        return cls.from_mapping(value)
+        return cls._from_serialized_mapping(value)
+
+    @classmethod
+    def _from_serialized_mapping(cls, raw: Mapping[str, object]) -> Any:
+        return cls.from_mapping(raw)
 
     @classmethod
     def from_mapping(
@@ -150,6 +208,8 @@ class _FrozenValue:
         return cls(**dict(raw))
 
     def _validate_schema_version(self) -> None:
+        if type(self.schema_version) is not int:
+            raise TypeError("schema_version must be an integer")
         if self.schema_version != self.SCHEMA_VERSION:
             raise ValueError(f"unsupported schema_version: {self.schema_version}")
 
@@ -174,17 +234,28 @@ class ActionContext(_FrozenValue):
     action_key: str = ""
     counters: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     source_event_id: str | None = None
+    trigger_event: Mapping[str, JsonValue] | None = None
+    trigger_reason: str | None = None
+    accepted_command_summaries: tuple[JsonValue, ...] = ()
+    aggregate_result: Mapping[str, JsonValue] | None = None
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
-        if isinstance(self.revision, bool) or not isinstance(self.revision, int):
-            raise TypeError("revision must be an integer")
-        if isinstance(self.round_number, bool) or not isinstance(self.round_number, int):
-            raise TypeError("round_number must be an integer")
-        if isinstance(self.actor_seat, bool) or not isinstance(self.actor_seat, int):
-            raise TypeError("actor_seat must be an integer")
-        if not isinstance(self.actor_alive, bool):
-            raise TypeError("actor_alive must be a boolean")
+        for name in (
+            "game_id",
+            "config_version",
+            "phase",
+            "window_id",
+            "actor_role_id",
+            "action_key",
+        ):
+            _require_str(name, getattr(self, name))
+        _require_str("source_event_id", self.source_event_id, optional=True)
+        _require_str("trigger_reason", self.trigger_reason, optional=True)
+        _require_int("revision", self.revision)
+        _require_int("round_number", self.round_number)
+        _require_int("actor_seat", self.actor_seat)
+        _require_bool("actor_alive", self.actor_alive)
         try:
             point = SchedulePoint(self.schedule_point)
         except (TypeError, ValueError) as error:
@@ -193,6 +264,26 @@ class ActionContext(_FrozenValue):
         object.__setattr__(self, "resources", _freeze_json(self.resources, path="resources"))
         object.__setattr__(self, "facts", _freeze_json(self.facts, path="facts"))
         object.__setattr__(self, "counters", _freeze_int_mapping(self.counters, path="counters"))
+        if self.trigger_event is not None:
+            if not isinstance(self.trigger_event, Mapping):
+                raise TypeError("trigger_event must be a mapping")
+            object.__setattr__(
+                self, "trigger_event", _freeze_json(self.trigger_event, path="trigger_event")
+            )
+        summaries = _freeze_json(
+            self.accepted_command_summaries, path="accepted_command_summaries"
+        )
+        if not isinstance(summaries, tuple):
+            raise TypeError("accepted_command_summaries must be a sequence")
+        object.__setattr__(self, "accepted_command_summaries", summaries)
+        if self.aggregate_result is not None:
+            if not isinstance(self.aggregate_result, Mapping):
+                raise TypeError("aggregate_result must be a mapping")
+            object.__setattr__(
+                self,
+                "aggregate_result",
+                _freeze_json(self.aggregate_result, path="aggregate_result"),
+            )
 
 
 class ActionCommand(BaseModel):
@@ -241,6 +332,23 @@ class ActionContract(_FrozenValue):
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
+        _require_str("contract_id", self.contract_id)
+        _require_int("order", self.order)
+        _require_tuple_of("action_types", self.action_types, str)
+        _require_frozenset_of(
+            "actions_requiring_target", self.actions_requiring_target, str
+        )
+        _require_str("fallback_action_type", self.fallback_action_type)
+        _require_frozenset_of(
+            "visibility_namespaces", self.visibility_namespaces, str
+        )
+        _require_frozenset_of("response_event_types", self.response_event_types, str)
+        _require_frozenset_of("response_reasons", self.response_reasons, str)
+        _require_int("per_window_limit", self.per_window_limit)
+        _require_int("per_round_limit", self.per_round_limit, optional=True)
+        _require_int("per_game_limit", self.per_game_limit, optional=True)
+        for name in ("is_applicable", "validate", "resolve", "react", "aggregate"):
+            _require_hook(name, getattr(self, name))
         try:
             point = SchedulePoint(self.schedule_point)
         except (TypeError, ValueError) as error:
@@ -261,6 +369,28 @@ class ActionContract(_FrozenValue):
         object.__setattr__(self, "visibility_namespaces", frozenset(self.visibility_namespaces))
         object.__setattr__(self, "response_event_types", frozenset(self.response_event_types))
         object.__setattr__(self, "response_reasons", frozenset(self.response_reasons))
+
+    @classmethod
+    def _from_serialized_mapping(cls, raw: Mapping[str, object]) -> "ActionContract":
+        converted = dict(raw)
+        for hook_name in ("is_applicable", "validate", "resolve", "react", "aggregate"):
+            if converted.get(hook_name) is not None:
+                raise ValueError(f"Hook {hook_name} must be rebound by the trusted registry")
+        for name in (
+            "action_types",
+            "visibility_namespaces",
+            "response_event_types",
+            "response_reasons",
+        ):
+            if isinstance(converted.get(name), list):
+                converted[name] = tuple(converted[name]) if name == "action_types" else frozenset(converted[name])
+        if isinstance(converted.get("actions_requiring_target"), list):
+            converted["actions_requiring_target"] = frozenset(
+                converted["actions_requiring_target"]
+            )
+        if isinstance(converted.get("allowed_effects"), list):
+            converted["allowed_effects"] = frozenset(converted["allowed_effects"])
+        return cls.from_mapping(converted)
 
 
 @dataclass(frozen=True)
@@ -287,6 +417,18 @@ class RoleSpec(_FrozenValue):
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
+        for name in ("role_id", "display_name", "camp_id", "instructions"):
+            _require_str(name, getattr(self, name))
+        _require_tuple_of("contracts", self.contracts, ActionContract)
+        for name in (
+            "visibility_namespaces",
+            "tags",
+            "dependencies",
+            "exclusions",
+        ):
+            _require_frozenset_of(name, getattr(self, name), str)
+        _require_int("min_count", self.min_count)
+        _require_int("max_count", self.max_count, optional=True)
         contracts = tuple(
             contract
             if isinstance(contract, ActionContract)
@@ -312,6 +454,29 @@ class RoleSpec(_FrozenValue):
             raise ValueError("unknown allowed effect kind") from error
         object.__setattr__(self, "allowed_effects", effects)
 
+    @classmethod
+    def _from_serialized_mapping(cls, raw: Mapping[str, object]) -> "RoleSpec":
+        converted = dict(raw)
+        contracts = converted.get("contracts", [])
+        if not isinstance(contracts, list):
+            raise TypeError("contracts must be a JSON array")
+        converted["contracts"] = tuple(
+            ActionContract._from_serialized_mapping(contract)
+            if isinstance(contract, Mapping)
+            else contract
+            for contract in contracts
+        )
+        for name in (
+            "visibility_namespaces",
+            "allowed_effects",
+            "tags",
+            "dependencies",
+            "exclusions",
+        ):
+            if isinstance(converted.get(name), list):
+                converted[name] = frozenset(converted[name])
+        return cls.from_mapping(converted)
+
 
 @dataclass(frozen=True)
 class IssuedActionRequest(_FrozenValue):
@@ -327,8 +492,29 @@ class IssuedActionRequest(_FrozenValue):
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
+        _require_int("actor_seat", self.actor_seat)
+        _require_str("role_id", self.role_id)
+        _require_int("context_revision", self.context_revision)
+        _require_int("round_number", self.round_number)
+        _require_str("phase", self.phase)
+        _require_str("window_id", self.window_id)
+        _require_str("action_key", self.action_key)
         if not isinstance(self.contract, ActionContract):
-            object.__setattr__(self, "contract", ActionContract.from_mapping(self.contract))
+            if not isinstance(self.contract, Mapping):
+                raise TypeError("contract must be an ActionContract")
+            object.__setattr__(
+                self, "contract", ActionContract._from_serialized_mapping(self.contract)
+            )
+
+    @classmethod
+    def _from_serialized_mapping(
+        cls, raw: Mapping[str, object]
+    ) -> "IssuedActionRequest":
+        converted = dict(raw)
+        contract = converted.get("contract")
+        if isinstance(contract, Mapping):
+            converted["contract"] = ActionContract._from_serialized_mapping(contract)
+        return cls.from_mapping(converted)
 
 
 @dataclass(frozen=True)
@@ -342,6 +528,8 @@ class RuleViolation(_FrozenValue):
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
+        _require_str("code", self.code)
+        _require_str("message", self.message)
         object.__setattr__(self, "details", _freeze_json(self.details, path="details"))
 
 
@@ -365,6 +553,13 @@ class GameEffect(_FrozenValue):
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
+        _require_str("effect_id", self.effect_id)
+        _require_str("source_action_key", self.source_action_key)
+        _require_tuple_of("visibility", self.visibility, str)
+        _require_int("expected_revision", self.expected_revision)
+        _require_int("target_seat", self.target_seat, optional=True)
+        _require_str("source_event_id", self.source_event_id, optional=True)
+        _require_tuple_of("sort_key", self.sort_key, int)
         try:
             kind = EffectKind(self.kind)
         except (TypeError, ValueError) as error:
@@ -376,3 +571,11 @@ class GameEffect(_FrozenValue):
         )
         object.__setattr__(self, "visibility", tuple(self.visibility))
         object.__setattr__(self, "sort_key", tuple(self.sort_key))
+
+    @classmethod
+    def _from_serialized_mapping(cls, raw: Mapping[str, object]) -> "GameEffect":
+        converted = dict(raw)
+        for name in ("visibility", "sort_key"):
+            if isinstance(converted.get(name), list):
+                converted[name] = tuple(converted[name])
+        return cls.from_mapping(converted)

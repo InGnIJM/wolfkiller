@@ -174,6 +174,68 @@ def test_context_accepts_finite_json_numbers() -> None:
     assert ctx.facts["ratio"] == 1.25
 
 
+def test_context_freezes_trigger_and_aggregation_inputs() -> None:
+    trigger = {"event_type": "PLAYER_DIED", "seats": [2]}
+    summaries = [{"actor": 1, "action": "kill"}]
+    aggregate = {"target": 2, "votes": [1]}
+    ctx = _context(
+        trigger_event=trigger,
+        trigger_reason="night_damage",
+        accepted_command_summaries=summaries,
+        aggregate_result=aggregate,
+    )
+    trigger["seats"].append(3)
+    summaries[0]["action"] = "pass"
+    aggregate["votes"].append(4)
+
+    assert ctx.trigger_event["seats"] == (2,)
+    assert ctx.accepted_command_summaries[0]["action"] == "kill"
+    assert ctx.aggregate_result["votes"] == (1,)
+    assert ActionContext.from_json(ctx.to_json()) == ctx
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("trigger_event", []),
+        ("accepted_command_summaries", object()),
+        ("aggregate_result", []),
+        ("counters", []),
+    ],
+)
+def test_context_rejects_invalid_container_shapes(
+    field: str, bad_value: object
+) -> None:
+    with pytest.raises(TypeError, match=field):
+        _context(**{field: bad_value})
+
+
+def test_context_rejects_non_sequence_command_summaries_after_freeze() -> None:
+    with pytest.raises(TypeError, match="accepted_command_summaries"):
+        _context(accepted_command_summaries={"action": "pass"})
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("schema_version", True),
+        ("schema_version", 1.0),
+        ("schema_version", "1"),
+        ("game_id", 1),
+        ("config_version", 1),
+        ("phase", 1),
+        ("window_id", 1),
+        ("actor_role_id", 1),
+        ("action_key", 1),
+        ("source_event_id", 1),
+        ("trigger_reason", 1),
+    ],
+)
+def test_context_rejects_coercible_scalar_types(field: str, bad_value: object) -> None:
+    with pytest.raises(TypeError, match=field):
+        _context(**{field: bad_value})
+
+
 def test_action_command_is_strict_frozen_and_bounded() -> None:
     command = ActionCommand(
         schema_version=1, action_type="pass", target_seat=None, reasoning="safe"
@@ -294,8 +356,50 @@ def test_contract_serializes_hooks_by_stable_qualified_name() -> None:
         return ()
 
     contract = _contract(resolve=resolve_hook)
-    encoded = json.loads(contract.to_json())
-    assert encoded["resolve"].endswith("resolve_hook")
+    with pytest.raises(TypeError, match="Hook.*registry"):
+        contract.to_json()
+    assert len(contract.stable_digest()) == 64
+
+
+def test_contract_from_json_rejects_hook_references() -> None:
+    raw = json.loads(_contract().to_json())
+    raw["resolve"] = "trusted.module.resolve"
+    with pytest.raises(ValueError, match="Hook.*registry"):
+        ActionContract.from_json(json.dumps(raw))
+
+
+def test_contract_constructor_rejects_non_callable_hook() -> None:
+    with pytest.raises(ValueError, match="Hook.*registry"):
+        _contract(resolve="trusted.module.resolve")
+
+
+def test_contract_from_json_accepts_omitted_optional_collections() -> None:
+    raw = {
+        "schema_version": 1,
+        "contract_id": "passive",
+        "schedule_point": "day_action",
+        "order": 1,
+        "action_types": ["pass"],
+        "actions_requiring_target": [],
+        "fallback_action_type": "pass",
+    }
+    contract = ActionContract.from_json(json.dumps(raw))
+    assert contract.allowed_effects == frozenset()
+    assert contract.response_event_types == frozenset()
+
+
+def test_contract_from_json_rejects_non_array_collection_shape() -> None:
+    raw = json.loads(_contract().to_json())
+    raw["actions_requiring_target"] = "kill"
+    with pytest.raises(TypeError, match="actions_requiring_target"):
+        ActionContract.from_json(json.dumps(raw))
+
+
+def test_contract_from_json_rejects_non_array_allowed_effects() -> None:
+    raw = json.loads(_contract().to_json())
+    raw["allowed_effects"] = "submit_damage"
+    with pytest.raises((TypeError, ValueError), match="effect"):
+        ActionContract.from_json(json.dumps(raw))
 
 
 @pytest.mark.parametrize(
@@ -314,9 +418,97 @@ def test_contract_rejects_invalid_frozen_fields(
         _contract(**changes)
 
 
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("schema_version", True),
+        ("contract_id", 1),
+        ("order", True),
+        ("order", 1.0),
+        ("action_types", ("kill", 1)),
+        ("actions_requiring_target", frozenset({1})),
+        ("visibility_namespaces", ("public",)),
+        ("fallback_action_type", 1),
+        ("visibility_namespaces", frozenset({1})),
+        ("response_event_types", frozenset({1})),
+        ("response_reasons", frozenset({1})),
+        ("per_window_limit", True),
+        ("per_round_limit", 1.0),
+        ("per_game_limit", "1"),
+    ],
+)
+def test_contract_rejects_coercible_scalar_and_sequence_types(
+    field: str, bad_value: object
+) -> None:
+    with pytest.raises(TypeError, match=field):
+        _contract(**{field: bad_value})
+
+
 def test_role_rejects_unknown_effect_kind() -> None:
     with pytest.raises(ValueError, match="effect kind"):
         RoleSpec(role_id="role", allowed_effects=frozenset({"invalid"}))
+
+
+def test_role_from_json_requires_contract_mappings() -> None:
+    raw = json.loads(RoleSpec(role_id="role").to_json())
+    raw["contracts"] = ["not-a-contract"]
+    with pytest.raises(TypeError, match="contracts"):
+        RoleSpec.from_json(json.dumps(raw))
+
+
+def test_role_from_json_requires_contract_array() -> None:
+    raw = json.loads(RoleSpec(role_id="role").to_json())
+    raw["contracts"] = "not-an-array"
+    with pytest.raises(TypeError, match="contracts"):
+        RoleSpec.from_json(json.dumps(raw))
+
+
+def test_role_from_json_restores_embedded_contract_mapping() -> None:
+    role = RoleSpec(role_id="role", contracts=(_contract(),))
+    restored = RoleSpec.from_json(role.to_json())
+    assert restored == role
+
+
+def test_role_from_json_accepts_omitted_optional_collections() -> None:
+    role = RoleSpec.from_json('{"schema_version": 1, "role_id": "role"}')
+    assert role.contracts == ()
+    assert role.allowed_effects == frozenset()
+
+
+def test_role_from_json_rejects_non_array_frozenset_field() -> None:
+    raw = json.loads(RoleSpec(role_id="role").to_json())
+    raw["tags"] = "passive"
+    with pytest.raises(TypeError, match="tags"):
+        RoleSpec.from_json(json.dumps(raw))
+
+
+def test_role_from_mapping_requires_tuple_contracts() -> None:
+    with pytest.raises(TypeError, match="contracts"):
+        RoleSpec.from_mapping({"role_id": "role", "contracts": []})
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("schema_version", 1.0),
+        ("role_id", 1),
+        ("display_name", 1),
+        ("camp_id", 1),
+        ("contracts", ("not-a-contract",)),
+        ("visibility_namespaces", frozenset({1})),
+        ("tags", frozenset({1})),
+        ("dependencies", frozenset({1})),
+        ("exclusions", frozenset({1})),
+        ("min_count", True),
+        ("max_count", 1.0),
+        ("instructions", 1),
+    ],
+)
+def test_role_rejects_coercible_scalar_and_sequence_types(
+    field: str, bad_value: object
+) -> None:
+    with pytest.raises((TypeError, ValueError), match=field):
+        RoleSpec(role_id="role", **{field: bad_value})
 
 
 def test_request_converts_a_serialized_contract_to_frozen_value() -> None:
@@ -334,9 +526,112 @@ def test_request_converts_a_serialized_contract_to_frozen_value() -> None:
     assert request.contract == contract
 
 
+def test_request_rejects_non_contract_container() -> None:
+    with pytest.raises(TypeError, match="contract"):
+        IssuedActionRequest(
+            actor_seat=1,
+            role_id="werewolf",
+            contract="not-a-contract",
+            context_revision=3,
+            round_number=2,
+            phase="night",
+            window_id="window",
+            action_key="action",
+        )
+
+
+def test_request_from_json_requires_contract_mapping() -> None:
+    contract = _contract()
+    raw = {
+        "schema_version": 1,
+        "actor_seat": 1,
+        "role_id": "werewolf",
+        "contract": "not-a-contract",
+        "context_revision": 3,
+        "round_number": 2,
+        "phase": "night",
+        "window_id": "window",
+        "action_key": "action",
+    }
+    with pytest.raises(TypeError, match="contract"):
+        IssuedActionRequest.from_json(json.dumps(raw))
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("schema_version", "1"),
+        ("actor_seat", True),
+        ("role_id", 1),
+        ("context_revision", 1.0),
+        ("round_number", True),
+        ("phase", 1),
+        ("window_id", 1),
+        ("action_key", 1),
+    ],
+)
+def test_request_rejects_coercible_scalar_types(field: str, bad_value: object) -> None:
+    values: dict[str, object] = {
+        "actor_seat": 1,
+        "role_id": "werewolf",
+        "contract": _contract(),
+        "context_revision": 3,
+        "round_number": 2,
+        "phase": "night",
+        "window_id": "window",
+        "action_key": "action",
+    }
+    values[field] = bad_value
+    with pytest.raises(TypeError, match=field):
+        IssuedActionRequest(**values)
+
+
 def test_effect_rejects_unknown_kind() -> None:
     with pytest.raises(ValueError, match="effect kind"):
         GameEffect(effect_id="effect", kind="invalid", source_action_key="action")
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("schema_version", True),
+        ("effect_id", 1),
+        ("source_action_key", 1),
+        ("visibility", ["ACTOR"]),
+        ("visibility", ("ACTOR", 1)),
+        ("expected_revision", True),
+        ("target_seat", 1.0),
+        ("source_event_id", 1),
+        ("sort_key", [1, 2]),
+        ("sort_key", (1, True)),
+    ],
+)
+def test_effect_rejects_coercible_scalar_and_sequence_types(
+    field: str, bad_value: object
+) -> None:
+    with pytest.raises(TypeError, match=field):
+        GameEffect(
+            effect_id="effect",
+            kind=EffectKind.EMIT_EVENT,
+            source_action_key="action",
+            **{field: bad_value},
+        )
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("schema_version", True),
+        ("code", 1),
+        ("message", 1),
+    ],
+)
+def test_violation_rejects_coercible_scalar_types(
+    field: str, bad_value: object
+) -> None:
+    values = {"code": "invalid", "message": "invalid command", field: bad_value}
+    with pytest.raises(TypeError, match=field):
+        RuleViolation(**values)
 
 
 @pytest.mark.parametrize(
@@ -403,6 +698,17 @@ def test_model_from_mapping_rejects_unknown_fields_and_round_trips() -> None:
         )
     with pytest.raises(TypeError, match="mapping"):
         GameEffect.from_mapping(["not", "a", "mapping"])
+
+
+def test_json_restore_does_not_coerce_non_array_sequence_fields() -> None:
+    effect_raw = json.loads(
+        GameEffect(
+            effect_id="e", kind=EffectKind.EMIT_EVENT, source_action_key="a"
+        ).to_json()
+    )
+    effect_raw["visibility"] = "ACTOR"
+    with pytest.raises(TypeError, match="visibility"):
+        GameEffect.from_json(json.dumps(effect_raw))
 
 
 def test_serialization_rejects_unsupported_enum_and_callable_values() -> None:
