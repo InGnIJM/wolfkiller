@@ -664,7 +664,9 @@ class TestGameService:
         assert state is not None
 
         # Simulate phase change event
-        await service._on_phase_changed(phase="night", round_number=1, state=state)
+        await service._on_phase_changed(
+            game_id=game_id, phase="night", round_number=1, state=state,
+        )
         # Should not crash; state is updated
         assert service.get_game_state(game_id) is not None
 
@@ -679,13 +681,16 @@ class TestGameService:
 
         from app.models.actions import WinResult
         win = WinResult(winning_camp="good", reason="all_wolves_dead")
-        await service._on_game_over(win_result=win)
+        await service._on_game_over(game_id=game_id, win_result=win)
         # Should not crash
 
     @pytest.mark.asyncio
     async def test_phase_changed_handler_none_state(self):
         service = GameService(WSManager(), EventBus())
-        await service._on_phase_changed(phase="night", round_number=1)
+        service._games = {"known": MagicMock()}
+        await service._on_phase_changed(
+            game_id="known", phase="night", round_number=1,
+        )
         # Should not crash when state is None
 
     @pytest.mark.asyncio
@@ -697,13 +702,13 @@ class TestGameService:
         game_id = await service.create_game()
         from app.models.actions import SpeechRecord
         speech = SpeechRecord(player_seat=1, text="test speech", round_number=1)
-        await service._on_speech_made(speech=speech)
+        await service._on_speech_made(game_id=game_id, speech=speech)
         # Should not crash
 
     @pytest.mark.asyncio
     async def test_speech_made_handler_none(self):
         service = GameService(WSManager(), EventBus())
-        await service._on_speech_made(speech=None)
+        await service._on_speech_made(game_id="missing", speech=None)
         # Should not crash
 
     @pytest.mark.asyncio
@@ -715,13 +720,13 @@ class TestGameService:
         game_id = await service.create_game()
         from app.models.actions import VoteAction
         vote = VoteAction(voter_seat=1, target_seat=3, reasoning="test")
-        await service._on_vote_cast(vote=vote)
+        await service._on_vote_cast(game_id=game_id, vote=vote)
         # Should not crash
 
     @pytest.mark.asyncio
     async def test_vote_cast_handler_none(self):
         service = GameService(WSManager(), EventBus())
-        await service._on_vote_cast(vote=None)
+        await service._on_vote_cast(game_id="missing", vote=None)
         # Should not crash
 
     @pytest.mark.asyncio
@@ -731,8 +736,8 @@ class TestGameService:
         service = GameService(ws_manager, EventBus())
         service._games = {"game-1": MagicMock()}
 
-        await service._on_player_died(death={"player_seat": 1})
-        await service._on_player_died(death=None)
+        await service._on_player_died(game_id="game-1", death={"player_seat": 1})
+        await service._on_player_died(game_id="game-1", death=None)
 
         ws_manager.broadcast.assert_awaited_once_with(
             "game-1", "player_died", death={"player_seat": 1}
@@ -783,5 +788,69 @@ class TestGameService:
     @pytest.mark.asyncio
     async def test_game_over_handler_none(self):
         service = GameService(WSManager(), EventBus())
-        await service._on_game_over(win_result=None)
+        await service._on_game_over(game_id="missing", win_result=None)
         # Should not crash
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("callback", "payload", "message_type"),
+        [
+            ("_on_player_died", {"death": {"player_seat": 2}}, "player_died"),
+            ("_on_speech_made", {"speech": {"player_seat": 2, "text": "hi"}}, "speech"),
+            ("_on_vote_cast", {"vote": {"voter_seat": 2, "target_seat": 1}}, "vote_cast"),
+            ("_on_game_over", {"win_result": {"winning_camp": "good"}}, "game_over"),
+        ],
+    )
+    async def test_public_event_routes_only_to_its_registered_game(
+        self, callback, payload, message_type,
+    ):
+        manager = WSManager()
+        manager.broadcast = AsyncMock()
+        service = GameService(manager, EventBus())
+        first = MagicMock()
+        first.get_public_state.return_value = {"game_id": "game-a"}
+        second = MagicMock()
+        second.get_public_state.return_value = {"game_id": "game-b"}
+        service._games = {"game-a": first, "game-b": second}
+        service._manifest = MagicMock()
+
+        await getattr(service, callback)(game_id="game-a", **payload)
+
+        assert manager.broadcast.await_count == 1
+        assert manager.broadcast.await_args.args[:2] == ("game-a", message_type)
+        if callback == "_on_game_over":
+            service._manifest.update_game.assert_called_once_with(
+                "game-a", phase="game_over", winner="good",
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("game_id", [None, "not-registered", "", 42])
+    async def test_public_event_with_missing_or_unknown_game_id_is_dropped(
+        self, game_id,
+    ):
+        manager = WSManager()
+        manager.broadcast = AsyncMock()
+        service = GameService(manager, EventBus())
+        service._games = {"game-a": MagicMock(), "game-b": MagicMock()}
+
+        await service._on_player_died(game_id=game_id, death={"player_seat": 2})
+
+        manager.broadcast.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mismatched_phase_event_is_dropped_without_persisting_or_broadcasting(self):
+        manager = WSManager()
+        manager.broadcast = AsyncMock()
+        service = GameService(manager, EventBus())
+        original = MagicMock()
+        mismatched = MagicMock(game_id="game-b")
+        service._games = {"game-a": original, "game-b": MagicMock()}
+        service._persist_game = MagicMock()
+
+        await service._on_phase_changed(
+            game_id="game-a", phase="night", round_number=1, state=mismatched,
+        )
+
+        assert service._games["game-a"] is original
+        service._persist_game.assert_not_called()
+        manager.broadcast.assert_not_awaited()

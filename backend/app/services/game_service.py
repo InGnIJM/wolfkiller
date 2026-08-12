@@ -235,69 +235,75 @@ class GameService:
 
     # ── Event Handlers ─────────────────────────────────────────
 
+    def _known_game_id(self, kwargs: dict) -> Optional[str]:
+        """Return an existing target id, dropping untrusted event envelopes."""
+        game_id = kwargs.get("game_id")
+        if not isinstance(game_id, str) or not game_id or game_id not in self._games:
+            logger.warning(
+                "Dropping public event for missing or unknown game_id: %r", game_id,
+            )
+            return None
+        return game_id
+
     async def _on_phase_changed(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
         state = kwargs.get("state")
-        if state is None:
+        if game_id is None or state is None or state.game_id != game_id:
+            if state is not None and game_id is not None:
+                logger.warning(
+                    "Dropping public phase event with mismatched game_id: %r != %r",
+                    game_id, state.game_id,
+                )
             return
-        self._games[state.game_id] = state
+        self._games[game_id] = state
         self._persist_game(state)
         await self.ws_manager.broadcast(
-            state.game_id, "phase_change",
+            game_id, "phase_change",
             phase=kwargs.get("phase", ""),
             round_number=kwargs.get("round_number", 0),
             state=state.get_public_state(),
         )
 
     async def _on_player_died(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
         death = kwargs.get("death")
-        if death is None:
+        if game_id is None or death is None:
             return
         death_dict = death.to_dict() if hasattr(death, "to_dict") else death
-        for game_id in self._games:
-            await self.ws_manager.broadcast(
-                game_id, "player_died", death=death_dict,
-            )
+        await self.ws_manager.broadcast(game_id, "player_died", death=death_dict)
 
     async def _on_speech_made(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
         speech = kwargs.get("speech")
-        if speech is None:
+        if game_id is None or speech is None:
             return
         speech_dict = speech.to_dict() if hasattr(speech, "to_dict") else speech
-        for game_id in self._games:
-            engine = self._engines.get(game_id)
-            if engine:
-                await self.ws_manager.broadcast(
-                    game_id, "speech", speech=speech_dict,
-                )
+        await self.ws_manager.broadcast(game_id, "speech", speech=speech_dict)
 
     async def _on_vote_cast(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
         vote = kwargs.get("vote")
-        if vote is None:
+        if game_id is None or vote is None:
             return
         vote_dict = vote.to_dict() if hasattr(vote, "to_dict") else vote
-        for game_id in self._games:
-            await self.ws_manager.broadcast(
-                game_id, "vote_cast", vote=vote_dict,
-            )
+        await self.ws_manager.broadcast(game_id, "vote_cast", vote=vote_dict)
 
     async def _on_game_over(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
         win_result = kwargs.get("win_result")
-        if win_result is None:
+        if game_id is None or win_result is None:
             return
         wr_dict = win_result.to_dict() if hasattr(win_result, "to_dict") else win_result
-        for game_id in self._games:
-            state = self._games.get(game_id)
-            if state:
-                # Persist final result
-                self._manifest.update_game(
-                    game_id,
-                    phase="game_over",
-                    winner=wr_dict.get("winning_camp"),
-                )
-                await self.ws_manager.broadcast(
-                    game_id, "game_over", win_result=wr_dict,
-                    state=state.get_public_state(),
-                )
+        state = self._games[game_id]
+        self._manifest.update_game(
+            game_id,
+            phase="game_over",
+            winner=wr_dict.get("winning_camp"),
+        )
+        await self.ws_manager.broadcast(
+            game_id, "game_over", win_result=wr_dict,
+            state=state.get_public_state(),
+        )
 
     async def _on_night_substep(self, **kwargs) -> None:
         game_id = kwargs.get("game_id")
