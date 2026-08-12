@@ -134,6 +134,8 @@ def _freeze_int_mapping(value: Mapping[str, int], *, path: str) -> Mapping[str, 
         _require_utf8(key, path=f"{path} key")
         if isinstance(item, bool) or not isinstance(item, int):
             raise TypeError(f"{path} values must be integers")
+        if not 0 <= item <= 2_147_483_647:
+            raise ValueError(f"{path} values must be between 0 and 2147483647")
         frozen[key] = item
     return MappingProxyType(frozen)
 
@@ -287,6 +289,7 @@ class ActionContext(_FrozenValue):
     config_version: str = ""
     contract_id: str = ""
     contract_version: int = 1
+    contract_digest: str = ""
     round_number: int = 0
     phase: str = ""
     window_id: str = ""
@@ -311,6 +314,7 @@ class ActionContext(_FrozenValue):
             "game_id",
             "config_version",
             "contract_id",
+            "contract_digest",
             "phase",
             "window_id",
             "actor_role_id",

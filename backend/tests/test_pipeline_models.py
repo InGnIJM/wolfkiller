@@ -41,6 +41,7 @@ def _context(**changes: object) -> ActionContext:
         "revision": 3,
         "contract_id": "werewolf-kill",
         "contract_version": 1,
+        "contract_digest": "contract-sha256",
         "config_version": "config-v1",
         "round_number": 2,
         "phase": "night",
@@ -122,6 +123,7 @@ def test_action_context_is_deeply_frozen_and_stable() -> None:
     assert json.loads(encoded)["schedule_point"] == "night_action"
     assert json.loads(encoded)["contract_id"] == "werewolf-kill"
     assert json.loads(encoded)["contract_version"] == 1
+    assert json.loads(encoded)["contract_digest"] == "contract-sha256"
     assert restored.stable_digest() == ctx.stable_digest()
     assert len(ctx.stable_digest()) == 64
 
@@ -134,6 +136,7 @@ def test_action_context_supports_plan_defaults() -> None:
     assert ctx.config_version == ""
     assert ctx.contract_id == ""
     assert ctx.contract_version == 1
+    assert ctx.contract_digest == ""
     assert ctx.round_number == 0
     assert ctx.resources == {}
     assert ctx.counters == {}
@@ -177,6 +180,7 @@ def test_context_rejects_invalid_json_documents(raw: str) -> None:
         ({"round_number": False}, "round_number"),
         ({"contract_id": 1}, "contract_id"),
         ({"contract_version": True}, "contract_version"),
+        ({"contract_digest": 1}, "contract_digest"),
         ({"actor_seat": "1"}, "actor_seat"),
         ({"actor_alive": 1}, "actor_alive"),
         ({"schedule_point": "unknown"}, "schedule_point"),
@@ -197,11 +201,14 @@ def test_context_accepts_finite_json_numbers() -> None:
 
 
 def test_context_contract_binding_round_trips_and_changes_digest() -> None:
-    context = _context(contract_id="seer-check", contract_version=7)
+    context = _context(
+        contract_id="seer-check", contract_version=7, contract_digest="sha256:seer"
+    )
     restored = ActionContext.from_json(context.to_json())
 
     assert restored.contract_id == "seer-check"
     assert restored.contract_version == 7
+    assert restored.contract_digest == "sha256:seer"
     assert restored == context
     assert restored.stable_digest() == context.stable_digest()
     assert restored.stable_digest() != _context().stable_digest()
@@ -210,6 +217,23 @@ def test_context_contract_binding_round_trips_and_changes_digest() -> None:
 def test_context_rejects_invalid_utf8_contract_id() -> None:
     with pytest.raises(ValueError, match="UTF-8"):
         _context(contract_id="\ud800")
+
+
+def test_context_rejects_invalid_utf8_contract_digest() -> None:
+    with pytest.raises(ValueError, match="UTF-8"):
+        _context(contract_digest="\ud800")
+
+
+@pytest.mark.parametrize("value", [-1, 2_147_483_648])
+@pytest.mark.parametrize("field", ["counters", "required_resources"])
+def test_integer_mappings_reject_values_outside_unsigned_32_bit_range(
+    field: str, value: int
+) -> None:
+    with pytest.raises(ValueError, match="0.*2147483647"):
+        if field == "counters":
+            _context(counters={"window": value})
+        else:
+            _contract(required_resources={"charge": value})
 
 
 def test_context_freezes_trigger_and_aggregation_inputs() -> None:
