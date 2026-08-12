@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from functools import partial
 from dataclasses import FrozenInstanceError
 from enum import Enum
 from types import MappingProxyType
@@ -20,6 +21,18 @@ from app.models.pipeline import (
     RuleViolation,
     SchedulePoint,
 )
+
+
+def module_level_hook() -> tuple[()]:
+    return ()
+
+
+class CallableHook:
+    def __call__(self) -> tuple[()]:
+        return ()
+
+    def bound(self) -> tuple[()]:
+        return ()
 
 
 def _context(**changes: object) -> ActionContext:
@@ -362,12 +375,9 @@ def test_all_dataclass_values_round_trip_from_json() -> None:
 
 
 def test_contract_serializes_hooks_by_stable_qualified_name() -> None:
-    def resolve_hook() -> tuple[()]:
-        return ()
-
-    contract = _contract(resolve=resolve_hook)
+    contract = _contract(resolve=module_level_hook)
     encoded = json.loads(contract.to_json())
-    assert encoded["resolve"].endswith("resolve_hook")
+    assert encoded["resolve"] == f"{__name__}.module_level_hook"
     assert contract.stable_digest() == hashlib.sha256(
         contract.to_json().encode("utf-8")
     ).hexdigest()
@@ -381,8 +391,37 @@ def test_contract_from_json_rejects_hook_references() -> None:
 
 
 def test_contract_constructor_rejects_non_callable_hook() -> None:
-    with pytest.raises(ValueError, match="Hook.*registry"):
+    with pytest.raises(TypeError, match="Hook.*top-level"):
         _contract(resolve="trusted.module.resolve")
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        partial(module_level_hook),
+        CallableHook(),
+        CallableHook().bound,
+        len,
+        lambda: (),
+    ],
+)
+def test_contract_rejects_hooks_that_cannot_be_stably_rebound(hook: object) -> None:
+    with pytest.raises((TypeError, ValueError), match="Hook.*top-level"):
+        _contract(resolve=hook)
+
+
+def test_contract_rejects_nested_and_closure_hooks() -> None:
+    captured = "state"
+
+    def closure_hook() -> str:
+        return captured
+
+    def nested_hook() -> tuple[()]:
+        return ()
+
+    for hook in (closure_hook, nested_hook):
+        with pytest.raises(ValueError, match="Hook.*top-level"):
+            _contract(resolve=hook)
 
 
 def test_contract_from_json_accepts_omitted_optional_collections() -> None:
@@ -471,12 +510,9 @@ def test_role_mapping_fields_reject_every_non_mapping_shape(
 
 
 def test_role_with_hook_contract_serializes_descriptor_but_cannot_restore_it() -> None:
-    def resolve_hook() -> tuple[()]:
-        return ()
-
-    role = RoleSpec(role_id="role", contracts=(_contract(resolve=resolve_hook),))
+    role = RoleSpec(role_id="role", contracts=(_contract(resolve=module_level_hook),))
     encoded = json.loads(role.to_json())
-    assert encoded["contracts"][0]["resolve"].endswith("resolve_hook")
+    assert encoded["contracts"][0]["resolve"] == f"{__name__}.module_level_hook"
     assert role.stable_digest() == hashlib.sha256(role.to_json().encode("utf-8")).hexdigest()
     with pytest.raises(ValueError, match="Hook.*registry"):
         RoleSpec.from_json(role.to_json())
@@ -784,3 +820,67 @@ def test_serialization_rejects_unsupported_enum_and_callable_values() -> None:
         _context(facts={"bad": ForeignEnum.VALUE})
     with pytest.raises(TypeError, match="JSON"):
         _context(facts={"bad": lambda: None})
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda value: _context(game_id=value),
+        lambda value: _context(facts={"text": value}),
+        lambda value: _context(facts={value: "bad-key"}),
+        lambda value: _contract(action_types=(value,)),
+        lambda value: RoleSpec(role_id=value),
+        lambda value: RuleViolation(value, "message"),
+        lambda value: GameEffect(
+            effect_id=value,
+            kind=EffectKind.EMIT_EVENT,
+            source_action_key="action",
+        ),
+        lambda value: ActionCommand(
+            action_type=value, target_seat=None, reasoning="reason"
+        ),
+        lambda value: ActionCommand(
+            action_type="pass", target_seat=None, reasoning=value
+        ),
+    ],
+)
+def test_all_string_boundaries_reject_unpaired_surrogates(factory: object) -> None:
+    with pytest.raises((TypeError, ValueError), match="UTF-8|Unicode|unicode"):
+        factory("\ud800")
+
+
+def test_json_freezer_rejects_cycles_with_value_error() -> None:
+    cyclic: dict[str, object] = {}
+    cyclic["self"] = cyclic
+    with pytest.raises(ValueError, match="cycle"):
+        _context(facts=cyclic)
+
+
+def test_json_freezer_rejects_sequence_cycles_with_value_error() -> None:
+    cyclic: list[object] = []
+    cyclic.append(cyclic)
+    with pytest.raises(ValueError, match="cycle"):
+        _context(facts={"cycle": cyclic})
+
+
+def test_json_freezer_rejects_values_deeper_than_limit() -> None:
+    value: object = "leaf"
+    for _ in range(66):
+        value = {"next": value}
+    with pytest.raises(ValueError, match="depth"):
+        _context(facts={"root": value})
+
+
+def test_json_freezer_allows_shared_non_cyclic_subobjects() -> None:
+    shared = {"seat": 1}
+    ctx = _context(facts={"left": shared, "right": shared})
+    assert ctx.facts["left"] == ctx.facts["right"]
+
+
+def test_module_documents_trusted_process_boundary() -> None:
+    import app.models.pipeline as pipeline
+
+    doc = pipeline.__doc__ or ""
+    assert "accidental mutation" in doc
+    assert "trusted" in doc
+    assert "constructor" in doc

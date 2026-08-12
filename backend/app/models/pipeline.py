@@ -1,6 +1,15 @@
+"""Frozen pipeline values for trusted in-process rule code.
+
+Freezing prevents accidental mutation; it is not a sandbox against malicious
+trusted code using ``object.__setattr__`` or Pydantic copying APIs. All external
+data must enter through a constructor or ``from_json`` validation boundary, and
+registry hooks are trusted code reviewed and shipped with the server.
+"""
+
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 from collections.abc import Callable, Mapping
@@ -9,11 +18,12 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, ClassVar, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
 
 JsonScalar: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonScalar | tuple["JsonValue", ...] | Mapping[str, "JsonValue"]
+MAX_JSON_DEPTH = 64
 
 
 class SchedulePoint(str, Enum):
@@ -43,10 +53,30 @@ class EffectKind(str, Enum):
     EMIT_EVENT = "emit_event"
 
 
-def _freeze_json(value: object, *, path: str = "value") -> JsonValue:
+def _require_utf8(value: str, *, path: str) -> None:
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise ValueError(f"{path} must be valid UTF-8 Unicode") from error
+
+
+def _freeze_json(
+    value: object,
+    *,
+    path: str = "value",
+    _depth: int = 0,
+    _active: set[int] | None = None,
+) -> JsonValue:
+    if _depth > MAX_JSON_DEPTH:
+        raise ValueError(f"{path} exceeds maximum JSON depth {MAX_JSON_DEPTH}")
+    if _active is None:
+        _active = set()
     if isinstance(value, Enum):
         raise TypeError(f"{path} must contain only JSON values")
-    if value is None or isinstance(value, (bool, str)):
+    if isinstance(value, str):
+        _require_utf8(value, path=path)
+        return value
+    if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
         return value
@@ -55,17 +85,42 @@ def _freeze_json(value: object, *, path: str = "value") -> JsonValue:
             raise ValueError(f"{path} must contain only finite JSON numbers")
         return value
     if isinstance(value, Mapping):
-        frozen: dict[str, JsonValue] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError(f"{path} JSON object keys must be strings")
-            frozen[key] = _freeze_json(item, path=f"{path}.{key}")
-        return MappingProxyType(frozen)
+        identity = id(value)
+        if identity in _active:
+            raise ValueError(f"{path} contains a JSON container cycle")
+        _active.add(identity)
+        try:
+            frozen: dict[str, JsonValue] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise TypeError(f"{path} JSON object keys must be strings")
+                _require_utf8(key, path=f"{path} key")
+                frozen[key] = _freeze_json(
+                    item,
+                    path=f"{path}.{key}",
+                    _depth=_depth + 1,
+                    _active=_active,
+                )
+            return MappingProxyType(frozen)
+        finally:
+            _active.remove(identity)
     if isinstance(value, (list, tuple)):
-        return tuple(
-            _freeze_json(item, path=f"{path}[{index}]")
-            for index, item in enumerate(value)
-        )
+        identity = id(value)
+        if identity in _active:
+            raise ValueError(f"{path} contains a JSON container cycle")
+        _active.add(identity)
+        try:
+            return tuple(
+                _freeze_json(
+                    item,
+                    path=f"{path}[{index}]",
+                    _depth=_depth + 1,
+                    _active=_active,
+                )
+                for index, item in enumerate(value)
+            )
+        finally:
+            _active.remove(identity)
     raise TypeError(f"{path} must contain only JSON values")
 
 
@@ -76,6 +131,7 @@ def _freeze_int_mapping(value: Mapping[str, int], *, path: str) -> Mapping[str, 
     for key, item in value.items():
         if not isinstance(key, str):
             raise TypeError(f"{path} keys must be strings")
+        _require_utf8(key, path=f"{path} key")
         if isinstance(item, bool) or not isinstance(item, int):
             raise TypeError(f"{path} values must be integers")
         frozen[key] = item
@@ -91,6 +147,7 @@ def _require_str(name: str, value: object, *, optional: bool = False) -> None:
         return
     if type(value) is not str:
         raise TypeError(f"{name} must be a string")
+    _require_utf8(value, path=name)
 
 
 def _require_int(name: str, value: object, *, optional: bool = False) -> None:
@@ -110,18 +167,39 @@ def _require_tuple_of(name: str, value: object, item_type: type) -> None:
         raise TypeError(f"{name} must be a tuple")
     if any(type(item) is not item_type for item in value):
         raise TypeError(f"{name} elements must be {item_type.__name__}")
+    if item_type is str:
+        for index, item in enumerate(value):
+            _require_utf8(item, path=f"{name}[{index}]")
 
 
-def _require_frozenset_of(name: str, value: object, item_type: type) -> None:
+def _require_str_frozenset(name: str, value: object) -> None:
     if type(value) is not frozenset:
         raise TypeError(f"{name} must be a frozenset")
-    if any(type(item) is not item_type for item in value):
-        raise TypeError(f"{name} elements must be {item_type.__name__}")
+    if any(type(item) is not str for item in value):
+        raise TypeError(f"{name} elements must be str")
+    for item in value:
+        _require_utf8(item, path=f"{name} item")
 
 
 def _require_hook(name: str, value: object) -> None:
-    if value is not None and not callable(value):
-        raise ValueError(f"Hook {name} must be rebound by the trusted registry")
+    if value is None:
+        return
+    if not inspect.isfunction(value):
+        raise TypeError(f"Hook {name} must be a module top-level Python function")
+    module = getattr(value, "__module__", None)
+    qualname = getattr(value, "__qualname__", None)
+    if (
+        type(module) is not str
+        or type(qualname) is not str
+        or not module
+        or not qualname
+        or value.__name__ == "<lambda>"
+        or "<locals>" in qualname
+        or value.__closure__ is not None
+    ):
+        raise ValueError(f"Hook {name} must be a stable module top-level Python function")
+    _require_utf8(module, path=f"Hook {name} module")
+    _require_utf8(qualname, path=f"Hook {name} qualname")
 
 
 def _json_value(value: object) -> object:
@@ -284,6 +362,13 @@ class ActionCommand(BaseModel):
     target_seat: StrictInt | None
     reasoning: StrictStr = Field(max_length=500)
 
+    @field_validator("action_type", "reasoning")
+    @classmethod
+    def _validate_utf8_string(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "string")
+        _require_utf8(value, path=field_name)
+        return value
+
     def to_json(self) -> str:
         return _stable_json(self.model_dump(mode="json"))
 
@@ -325,15 +410,11 @@ class ActionContract(_FrozenValue):
         _require_str("contract_id", self.contract_id)
         _require_int("order", self.order)
         _require_tuple_of("action_types", self.action_types, str)
-        _require_frozenset_of(
-            "actions_requiring_target", self.actions_requiring_target, str
-        )
+        _require_str_frozenset("actions_requiring_target", self.actions_requiring_target)
         _require_str("fallback_action_type", self.fallback_action_type)
-        _require_frozenset_of(
-            "visibility_namespaces", self.visibility_namespaces, str
-        )
-        _require_frozenset_of("response_event_types", self.response_event_types, str)
-        _require_frozenset_of("response_reasons", self.response_reasons, str)
+        _require_str_frozenset("visibility_namespaces", self.visibility_namespaces)
+        _require_str_frozenset("response_event_types", self.response_event_types)
+        _require_str_frozenset("response_reasons", self.response_reasons)
         _require_int("per_window_limit", self.per_window_limit)
         _require_int("per_round_limit", self.per_round_limit, optional=True)
         _require_int("per_game_limit", self.per_game_limit, optional=True)
@@ -416,7 +497,7 @@ class RoleSpec(_FrozenValue):
             "dependencies",
             "exclusions",
         ):
-            _require_frozenset_of(name, getattr(self, name), str)
+            _require_str_frozenset(name, getattr(self, name))
         _require_int("min_count", self.min_count)
         _require_int("max_count", self.max_count, optional=True)
         contracts = tuple(
