@@ -73,7 +73,7 @@ class ActionResolver:
         if not contract.response_event_types or context.source_event_id is None or context.trigger_event is None:
             raise ValueError("react hook requires a bound response context")
         return self._execute_hook(
-            context, role_spec, contract, lambda: contract.react(context, contract)
+            context, role_spec, contract, lambda: contract.react(context)
         )
 
     @staticmethod

@@ -79,10 +79,8 @@ def pipeline_aggregate_hook(
     return (_pipeline_effect(context),)
 
 
-def pipeline_react_hook(
-    context: ActionContext, contract: PipelineActionContract
-) -> tuple[GameEffect, ...]:
-    PIPELINE_CALLS.append(contract)
+def pipeline_react_hook(context: ActionContext) -> tuple[GameEffect, ...]:
+    PIPELINE_CALLS.append(context)
     return (_pipeline_effect(context, target=context.actor_seat),)
 
 
@@ -245,6 +243,7 @@ def test_pipeline_react_requires_bound_response_and_allows_dead_actor_effect():
     effects = ActionResolver().react_effects(context, role, contract)
 
     assert effects[1].target_seat == context.actor_seat
+    assert PIPELINE_CALLS == [context]
 
 
 @pytest.mark.parametrize(
