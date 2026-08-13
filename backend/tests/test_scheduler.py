@@ -12,7 +12,7 @@ from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import (
-    EffectApplier, EffectPermission, EffectRejected, derive_effect_id,
+    EffectApplier, EffectPermission, EffectRejected, _Runtime, derive_effect_id,
 )
 from app.core.scheduler import (
     DomainEvent, PipelinePaused, PointResult, ResponseLimitExceeded,
@@ -24,6 +24,7 @@ from app.models.pipeline import (
     RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
+from app.roles.registry import builtin_registry
 
 
 class CustomControlFlow(BaseException):
@@ -375,6 +376,54 @@ def test_run_point_drains_reaction_events_breadth_first() -> None:
     assert [event["event_type"] for event in result.events] == ["DONE", "REACTED"]
     assert [commit.revision for commit in result.commits] == [1, 2]
     assert len(result.requests) == 2
+
+
+def test_night_commit_only_settles_pending_in_stable_order_and_is_idempotent() -> None:
+    forbidden = contract("forbidden", point=SchedulePoint.NIGHT_COMMIT)
+    registry = snapshot(spec("r", forbidden)); game = state("r", "r", "r")
+    game._pipeline_runtime = _Runtime(
+        pending_damage=(
+            {"target": 3, "amount": 2, "cause": "wolf_kill"},
+            {"target": 1, "amount": 1, "cause": "poison"},
+            {"target": 2, "amount": 1, "cause": "wolf_kill"},
+        ),
+        pending_protection=({"target": 2, "amount": 1},),
+    )
+    calls = []
+    engine = scheduler(registry, lambda *args: calls.append(args))
+    first = engine.run_point(game, SchedulePoint.NIGHT_COMMIT)
+    revision = game._pipeline_runtime.revision
+    second = engine.run_point(game, SchedulePoint.NIGHT_COMMIT)
+    assert calls == [] and first.requests == second.requests == ()
+    assert [event["payload"]["seat"] for event in first.events] == [1, 3]
+    assert [report.player_seat for report in game.death_history] == [1, 3]
+    assert len(first.commits) == 1 and second.commits == ()
+    assert game._pipeline_runtime.revision == revision == 1
+    assert game.players[2].is_alive and game._pipeline_runtime.pending_damage == ()
+
+
+@pytest.mark.parametrize("cause,reacts", [("poison", False), ("wolf_kill", True)])
+def test_night_commit_routes_public_deaths_through_response_queue(cause, reacts) -> None:
+    registry = builtin_registry.freeze()
+    game = GameState("night-commit", phase=GamePhase.NIGHT, round_number=1, players={
+        1: PlayerState(1, "wolf-killer-hunter", "good"),
+        2: PlayerState(2, "wolf-killer-villager", "good"),
+    })
+    game._pipeline_runtime = _Runtime(
+        role_resources={1: {"gun": 1}},
+        pending_damage=({"target": 1, "amount": 1, "cause": cause},),
+    )
+    calls = []
+    def provider(request, context, attempt):
+        calls.append((request.actor_seat, context.revision))
+        return ActionCommand(action_type="shoot", target_seat=2, reasoning="ok")
+    result = scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_COMMIT)
+    assert bool(calls) is reacts
+    assert len(result.commits) == (2 if reacts else 1)
+    assert calls in ([], [(1, 1)])
+    expected = ({"target": 2, "amount": 1, "cause": "hunter_shot"},) if reacts else ()
+    assert game._pipeline_runtime.pending_damage == expected
+    assert result.state_digest == result.commits[-1].state_digest
 
 
 def test_point_result_validates_elements_and_bounded_json() -> None:

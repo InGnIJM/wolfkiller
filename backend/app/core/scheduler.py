@@ -334,8 +334,14 @@ class Scheduler:
 
     def _run_point_locked(self, state: GameState, point: SchedulePoint,
                           faults: list[Mapping[str, object]]) -> PointResult:
-        issued = self.issue(state, point, self.registry); actual = []; commits = []; events = []
+        issued = () if point is SchedulePoint.NIGHT_COMMIT else self.issue(state, point, self.registry)
+        actual = []; commits = []; events = []
         queue = ResponseQueue(self.registry); groups: dict[tuple[str, str], list[IssuedActionRequest]] = {}
+        if point is SchedulePoint.NIGHT_COMMIT:
+            revision = self._revision(state); settlement = self.applier.settle_pending(state, round_number=state.round_number)
+            if settlement is not None and settlement.revision > revision:
+                commits.append(settlement); events.extend(settlement.events)
+                for ordinal, raw in enumerate(settlement.events): queue.enqueue(self._domain(settlement, ordinal, raw), depth=0)
         for request in issued: groups.setdefault((request.role_id, request.contract.contract_id), []).append(request)
         for members in groups.values():
             contract = members[0].contract; role = self.registry.require(members[0].role_id)
