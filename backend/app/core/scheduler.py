@@ -15,7 +15,9 @@ from types import MappingProxyType
 from app.core.action_resolver import ActionResolver, RuleExecutionError
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import CommitResult, EffectApplier, EffectPermission
+from app.core.effect_applier import (
+    CommitResult, EffectApplier, EffectPermission, initialize_role_resources,
+)
 from app.core.state_transaction import state_transaction_lock
 from app.models.game import GameState
 from app.models.pipeline import (
@@ -230,6 +232,7 @@ class Scheduler:
 
     def _issue_locked(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
         for player in state.players.values(): registry.require(player.role)
+        initialize_role_resources(state, registry.specs, registry.digest)
         revision = self._revision(state); phase = state.phase.value if hasattr(state.phase, "value") else state.phase
         requests = []
         for role_id, role in registry.specs.items():

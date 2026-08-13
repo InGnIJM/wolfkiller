@@ -11,7 +11,9 @@ import app.core.scheduler as scheduler_module
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import EffectApplier, EffectPermission, derive_effect_id
+from app.core.effect_applier import (
+    EffectApplier, EffectPermission, EffectRejected, derive_effect_id,
+)
 from app.core.scheduler import (
     DomainEvent, PipelinePaused, PointResult, ResponseLimitExceeded,
     ResponseQueue, ResponseWindow, Scheduler, stable_window_id,
@@ -606,3 +608,57 @@ def test_queue_locked_branches_remain_bounded() -> None:
     with pytest.raises(ResponseLimitExceeded): full.enqueue(event, depth=0)
     full._seen.add("occupied")
     with pytest.raises(ResponseLimitExceeded): full.open(state(), event, depth=0)
+
+
+def test_issue_initializes_role_resources_before_context_and_is_idempotent() -> None:
+    c = contract("c")
+    role = spec("r", c)
+    object.__setattr__(role, "initial_resources", {"charge": 1})
+    registry = snapshot(role); game = state("r"); engine = scheduler(registry)
+    first = engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    second = engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    assert first[0].context_revision == second[0].context_revision == 1
+    assert engine._revision(game) == 1
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert result.commits[0].revision == 2
+
+
+def test_issue_without_declared_resources_remains_revision_zero() -> None:
+    registry = snapshot(spec("r", contract("c"))); game = state("r")
+    assert scheduler(registry).issue(game, SchedulePoint.NIGHT_ACTION, registry)[0].context_revision == 0
+    assert not hasattr(game, "_pipeline_runtime")
+
+
+def test_issue_propagates_invalid_initial_resource_without_runtime() -> None:
+    role = spec("r", contract("c"))
+    object.__setattr__(role, "initial_resources", {"charge": "invalid"})
+    registry = snapshot(role); game = state("r")
+    with pytest.raises(EffectRejected, match="invalid initial resource"):
+        scheduler(registry).issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    assert not hasattr(game, "_pipeline_runtime")
+
+
+def test_concurrent_issue_initializes_resources_once() -> None:
+    role = spec("r", contract("c"))
+    object.__setattr__(role, "initial_resources", {"charge": 1})
+    registry = snapshot(role); game = state("r"); engine = scheduler(registry)
+    barrier = Barrier(3); revisions = []; failures = []
+
+    def issue() -> None:
+        barrier.wait()
+        try:
+            revisions.append(
+                engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)[0].context_revision
+            )
+        except Exception as error:
+            failures.append(error)
+
+    threads = (Thread(target=issue), Thread(target=issue))
+    for thread in threads: thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+    assert failures == []
+    assert revisions == [1, 1]
+    assert engine._revision(game) == 1
