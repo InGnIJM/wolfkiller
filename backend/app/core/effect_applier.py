@@ -9,6 +9,7 @@ from typing import Mapping
 from app.models.game import GameState
 from app.models.pipeline import EffectKind, GameEffect
 from app.core.state_transaction import state_transaction_lock
+from app.core.role_runtime import initialize_role_resources, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 class EffectRejected(ValueError): pass
@@ -110,6 +111,7 @@ class _Runtime:
     pending_protection: tuple[dict[str, object], ...] = ()
     events: tuple[Mapping[str, object], ...] = ()
     commits: dict[str, CommitResult] = field(default_factory=dict)
+    resource_setup_digest: str | None = None
     def clone(self) -> "_Runtime":
         try:
             revision = _integer(self.revision, "runtime revision")
@@ -124,8 +126,12 @@ class _Runtime:
             commits = _commit_map(self.commits)
         except (AttributeError, TypeError, ValueError) as error:
             raise EffectRejected("invalid pipeline runtime") from error
+        marker = self.resource_setup_digest
+        if marker is not None:
+            try: _utf8(marker, "resource setup digest", token=True)
+            except (TypeError, ValueError) as error: raise EffectRejected("invalid pipeline runtime") from error
         return _Runtime(revision, resources, data, statuses, relations, facts,
-                        damage, protection, events, commits)
+                        damage, protection, events, commits, marker)
 def _seat(seat: object) -> int:
     try: return _integer(seat, "runtime seat", positive=True)
     except (TypeError, ValueError) as error: raise EffectRejected(str(error)) from error
@@ -341,6 +347,7 @@ def _digest(state: GameState, runtime: _Runtime, alive: dict[int, bool]) -> str:
         "pending_damage": runtime.pending_damage,
         "pending_protection": runtime.pending_protection,
         "events": runtime.events,
+        "resource_setup_digest": runtime.resource_setup_digest,
     }
     return hashlib.sha256(json.dumps(_jsonable(document), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 class EffectApplier:

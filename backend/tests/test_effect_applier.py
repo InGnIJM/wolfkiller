@@ -13,7 +13,10 @@ from app.core.effect_applier import (
     EffectPermission,
     EffectRejected,
     derive_effect_id,
+    initialize_role_resources,
+    role_resource_view,
 )
+from app.models.pipeline import RoleSpec
 from app.core.state_transaction import state_transaction_lock
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import EffectKind, GameEffect
@@ -677,3 +680,67 @@ def test_shared_state_transaction_lock_is_identity_bound() -> None:
     assert key in module._LOCKS
     module._drop(key, reference)
     assert key not in module._LOCKS
+
+
+def test_initialize_role_resources_is_stable_idempotent_and_immutable() -> None:
+    s = state(); specs = {
+        "witch": RoleSpec("witch", initial_resources={"poison": 1, "antidote": 1}),
+        "wolf": RoleSpec("wolf"), "villager": RoleSpec("villager"),
+    }
+    first = initialize_role_resources(s, specs, "a" * 64)
+    assert first is not None and first.revision == 1
+    assert role_resource_view(s, 1) == {"antidote": 1, "poison": 1}
+    with pytest.raises(TypeError): role_resource_view(s, 1)["poison"] = 0
+    assert initialize_role_resources(s, specs, "a" * 64) is first
+    assert s._pipeline_runtime.revision == 1
+
+
+def test_resource_initialization_never_resets_consumed_or_changes_config() -> None:
+    s = state(); specs = {role: RoleSpec(role, initial_resources={"r": 1} if role == "witch" else {}) for role in ("witch", "wolf", "villager")}
+    initialize_role_resources(s, specs, "a" * 64)
+    EffectApplier().apply(s, batch([(EffectKind.CONSUME_RESOURCE, {"target": 1, "resource": "r", "amount": 1}, 1)], revision=1, action="consume"), permission())
+    assert role_resource_view(s, 1)["r"] == 0
+    assert initialize_role_resources(s, specs, "a" * 64).revision == 1
+    with pytest.raises(EffectRejected): initialize_role_resources(s, specs, "b" * 64)
+
+
+def test_resource_setup_marker_survives_runtime_clone_and_keys_match_specs() -> None:
+    s = state(); specs = {role: RoleSpec(role, initial_resources={"r": 1} if role == "witch" else {}) for role in ("witch", "wolf", "villager")}
+    initialize_role_resources(s, specs, "a" * 64)
+    EffectApplier().apply(s, batch([], revision=1, action="clone-runtime"), permission())
+    with pytest.raises(EffectRejected): initialize_role_resources(s, specs, "b" * 64)
+    forged = dict(specs); forged["witch"] = RoleSpec("different", initial_resources={"r": 1})
+    with pytest.raises(ValueError): initialize_role_resources(state(), forged, "a" * 64)
+    s._pipeline_runtime.resource_setup_digest = "bad marker"
+    with pytest.raises(EffectRejected): role_resource_view(s, 1)
+
+
+def test_resource_initialization_validates_inputs_and_empty_specs() -> None:
+    empty = state(); specs = {role: RoleSpec(role) for role in ("witch", "wolf", "villager")}
+    assert initialize_role_resources(empty, specs, "a" * 64) is None
+    assert not hasattr(empty, "_pipeline_runtime") and role_resource_view(empty, 1) == {}
+    for bad in (object(), {"witch": object()}):
+        with pytest.raises(TypeError): initialize_role_resources(state(), bad, "a" * 64)
+    with pytest.raises(ValueError): initialize_role_resources(state(), {"witch": RoleSpec("witch")}, "a" * 64)
+    boolean = {role: RoleSpec(role, initial_resources={"r": True} if role == "witch" else {}) for role in ("witch", "wolf", "villager")}
+    boolean_state = state(); initialize_role_resources(boolean_state, boolean, "a" * 64)
+    assert role_resource_view(boolean_state, 1)["r"] == 1
+    with pytest.raises((TypeError, ValueError)): initialize_role_resources(state(), specs, "bad config")
+    with pytest.raises(TypeError): initialize_role_resources(object(), specs, "a" * 64)
+    with pytest.raises(TypeError): role_resource_view(object(), 1)
+    with pytest.raises(ValueError): role_resource_view(state(), 0)
+    invalid = state(); invalid._pipeline_runtime = object()
+    with pytest.raises(EffectRejected): role_resource_view(invalid, 1)
+    oversized = {role: RoleSpec(role, initial_resources={"r": 2_147_483_648} if role == "witch" else {}) for role in ("witch", "wolf", "villager")}
+    with pytest.raises(EffectRejected): initialize_role_resources(state(), oversized, "a" * 64)
+
+
+def test_resource_initialization_is_concurrently_idempotent() -> None:
+    s = state(); specs = {role: RoleSpec(role, initial_resources={"r": 1}) for role in ("witch", "wolf", "villager")}
+    barrier = Barrier(3); results = []
+    def initialize(): barrier.wait(); results.append(initialize_role_resources(s, specs, "a" * 64))
+    threads = [Thread(target=initialize), Thread(target=initialize)]
+    for thread in threads: thread.start()
+    barrier.wait()
+    for thread in threads: thread.join()
+    assert results[0] is results[1] and s._pipeline_runtime.revision == 1
