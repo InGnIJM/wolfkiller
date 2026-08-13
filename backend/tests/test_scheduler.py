@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 import traceback
 from threading import Barrier, Event, Lock, Thread
-from time import monotonic
+from time import monotonic, sleep
 
 import pytest
 import app.core.scheduler as scheduler_module
@@ -12,7 +12,7 @@ from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import (
-    EffectApplier, EffectPermission, EffectRejected, _Runtime, derive_effect_id,
+    CommitResult, EffectApplier, EffectPermission, EffectRejected, _Runtime, derive_effect_id,
 )
 from app.core.scheduler import (
     DomainEvent, PipelinePaused, PointResult, ResponseLimitExceeded,
@@ -80,6 +80,19 @@ def react_event(context: ActionContext) -> tuple[GameEffect, ...]:
         context.action_key, payload={"event_type": "REACTED", "payload": {"target_seat": context.actor_seat}},
         expected_revision=context.revision, source_event_id=context.source_event_id, sort_key=(1,),
     ),)
+
+
+def react_final(context: ActionContext) -> tuple[GameEffect, ...]:
+    return (GameEffect(
+        derive_effect_id(context.action_key, 1), EffectKind.EMIT_EVENT,
+        context.action_key, payload={"event_type": "FINAL", "payload": {"target_seat": context.actor_seat}},
+        expected_revision=context.revision, source_event_id=context.source_event_id, sort_key=(1,),
+    ),)
+
+
+def slow_react_event(context: ActionContext) -> tuple[GameEffect, ...]:
+    sleep(.02)
+    return react_event(context)
 
 
 def aggregate_event(context: ActionContext, commands: tuple[ActionCommand, ...]) -> tuple[GameEffect, ...]:
@@ -287,6 +300,80 @@ def test_point_journal_key_isolates_round_and_registry() -> None:
     scheduler(first_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
     scheduler(second_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
     assert len(calls) == 3
+
+
+def test_response_journal_resumes_after_committed_event_domain_failure(monkeypatch) -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "react", react_event)
+    registry = snapshot(spec("r", contract("primary"), response)); game = state("r")
+    engine = scheduler(registry); calls = []; original_react = engine.resolver.react_effects
+    def counted(*args): calls.append(args[2].contract_id); return original_react(*args)
+    engine.resolver.react_effects = counted
+    original_domain = engine._domain; failed = [False]
+    def fail_new_event(commit, ordinal, raw):
+        if raw["event_type"] == "REACTED" and not failed[0]: failed[0] = True; raise PipelinePaused("response domain")
+        return original_domain(commit, ordinal, raw)
+    monkeypatch.setattr(engine, "_domain", fail_new_event)
+    with pytest.raises(PipelinePaused, match="response domain"): engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert calls == ["response"] and [event["event_type"] for event in result.events] == ["DONE", "REACTED"]
+    assert [commit.revision for commit in result.commits] == [1, 2]
+
+
+def test_response_journal_resumes_second_layer_without_repeating_hooks(monkeypatch) -> None:
+    first = contract("first", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    second = contract("second", point=SchedulePoint.DAY_ACTION, responses=frozenset({"REACTED"}))
+    object.__setattr__(first, "react", react_event); object.__setattr__(second, "react", react_final)
+    registry = snapshot(spec("r", contract("primary"), first, second)); game = state("r")
+    engine = scheduler(registry); calls = []; original_react = engine.resolver.react_effects
+    def counted(*args): calls.append(args[2].contract_id); return original_react(*args)
+    engine.resolver.react_effects = counted
+    original_domain = engine._domain; failed = [False]
+    def fail_final(commit, ordinal, raw):
+        if raw["event_type"] == "FINAL" and not failed[0]: failed[0] = True; raise PipelinePaused("second layer")
+        return original_domain(commit, ordinal, raw)
+    monkeypatch.setattr(engine, "_domain", fail_final)
+    with pytest.raises(PipelinePaused): engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert calls == ["first", "second"]
+    assert [event["event_type"] for event in result.events] == ["DONE", "REACTED", "FINAL"]
+
+
+def test_response_journal_checkpoints_skipped_window_before_later_failure(monkeypatch) -> None:
+    skipped = contract("skip", 1, point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    active = contract("active", 2, point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(skipped, "react", react_event); object.__setattr__(active, "react", react_event)
+    registry = snapshot(spec("r", contract("primary"), skipped, active)); game = state("r")
+    engine = scheduler(registry); limits = []; original_limit = engine._limit_reached
+    def limit(context, contract):
+        limits.append(contract.contract_id)
+        return contract.contract_id == "skip" or original_limit(context, contract)
+    monkeypatch.setattr(engine, "_limit_reached", limit)
+    original_domain = engine._domain; failed = [False]
+    def fail_reacted(commit, ordinal, raw):
+        if raw["event_type"] == "REACTED" and not failed[0]: failed[0] = True; raise PipelinePaused("later")
+        return original_domain(commit, ordinal, raw)
+    monkeypatch.setattr(engine, "_domain", fail_reacted)
+    with pytest.raises(PipelinePaused): engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert limits.count("skip") == 1 and limits.count("active") == 1
+
+
+def test_response_journal_preserves_slow_fault_across_retry(monkeypatch) -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "react", slow_react_event)
+    registry = snapshot(spec("r", contract("primary"), response)); game = state("r")
+    engine = Scheduler(registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(),
+                       lambda *args: ActionCommand(action_type="act", target_seat=None, reasoning="ok"),
+                       hook_soft_ms=1, hook_hard_ms=100)
+    original_domain = engine._domain; failed = [False]
+    def fail_reacted(commit, ordinal, raw):
+        if raw["event_type"] == "REACTED" and not failed[0]: failed[0] = True; raise PipelinePaused("slow retry")
+        return original_domain(commit, ordinal, raw)
+    monkeypatch.setattr(engine, "_domain", fail_reacted)
+    with pytest.raises(PipelinePaused): engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert [fault["label"] for fault in result.faults].count("react") == 1
 
 
 def test_journal_empty_settlement_and_gated_aggregate_continue_are_covered() -> None:
@@ -599,10 +686,18 @@ def test_defensive_response_boundaries(monkeypatch) -> None:
     assert queue._open_new(game, event, 0) == ()
     with pytest.raises(PipelinePaused): Scheduler._domain(object(), 0, {})
 
+    emitted = CommitResult("manual", (), 0, ({"event_type": "E", "payload": {"target_seat": 1}, "visibility": ("PUBLIC",)},), "d")
+    game._pipeline_runtime = _Runtime(revision=0, events=emitted.events, commits={"manual": emitted})
+    game.accepted_action_keys.add("manual")
     bad_window = ResponseWindow("w", event.event_id, "missing", 1, 0)
-    calls = iter([(event, 0, (bad_window,)), None])
-    monkeypatch.setattr(ResponseQueue, "pop", lambda self, state: next(calls))
-    with pytest.raises(PipelinePaused): scheduler(registry).run_point(game, SchedulePoint.DAY_ACTION)
+    monkeypatch.setattr(ResponseQueue, "open", lambda self, state, raw, depth: (bad_window,))
+    engine = scheduler(registry)
+    point_key = scheduler_module.PointKey("g", 1, "night", SchedulePoint.DAY_ACTION, registry.digest)
+    scheduler_module.point_journal(game).put(point_key, scheduler_module.PointCheckpoint(
+        (), (), (emitted,), emitted.events, (), (scheduler_module.PendingEvent(0, 0, 0),),
+        scheduler_module.WorkCursor("response", 0, 0), work_count=0,
+    ))
+    with pytest.raises(PipelinePaused): engine.run_point(game, SchedulePoint.DAY_ACTION)
 
 
 def test_response_projector_failure_is_sanitized() -> None:
@@ -974,8 +1069,7 @@ def test_response_limit_gate_skips_react_hook(monkeypatch) -> None:
     registry = snapshot(spec("r", primary, response)); game = state("r")
     event = DomainEvent("event:" + "a" * 16, "DONE", {"target_seat": 1})
     window = ResponseWindow("response-window", event.event_id, "response", 1, 0)
-    calls = iter([(event, 0, (window,)), None])
-    monkeypatch.setattr(ResponseQueue, "pop", lambda self, state: next(calls))
+    monkeypatch.setattr(ResponseQueue, "open", lambda self, state, raw, depth: (window,))
     from app.core.effect_applier import _Runtime
     game._pipeline_runtime = _Runtime(action_counts={
         "window": {"1\0response\0response-window": 1},
