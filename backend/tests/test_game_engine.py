@@ -149,6 +149,48 @@ async def test_execute_night_prepares_once_and_legacy_runs_once(mode) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [PipelineMode.V1, PipelineMode.V2])
+async def test_execute_night_is_single_flight_for_concurrent_callers(mode) -> None:
+    entered, release = asyncio.Event(), asyncio.Event(); calls = []
+    scheduler = None
+    engine = GameEngine("single", pipeline_mode=mode, pipeline_scheduler=object() if mode is PipelineMode.V2 else None)
+    if mode is PipelineMode.V1:
+        async def legacy(): calls.append("legacy"); entered.set(); await release.wait()
+        engine._execute_night_legacy = legacy
+    else:
+        async def batch(points, legacy): calls.append("batch"); entered.set(); await release.wait(); return PipelineResult((), (), "d", (), PipelineMode.V2)
+        engine.run_schedule_points = batch; engine._resume_pipeline_night = AsyncMock()
+    first = asyncio.create_task(engine._execute_night()); second = asyncio.create_task(engine._execute_night())
+    await entered.wait(); release.set(); await asyncio.gather(first, second)
+    assert calls == (["legacy"] if mode is PipelineMode.V1 else ["batch"])
+    assert engine.state.round_number == 1 and engine._night_task is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_night_waiter_does_not_cancel_owner() -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    engine = GameEngine("cancel", pipeline_mode=PipelineMode.V1)
+    async def legacy(): entered.set(); await release.wait(); engine.state.accepted_action_keys.add("done")
+    engine._execute_night_legacy = legacy
+    waiter = asyncio.create_task(engine._execute_night()); await entered.wait(); waiter.cancel()
+    with pytest.raises(asyncio.CancelledError): await waiter
+    assert engine._night_task is not None and not engine._night_task.done()
+    release.set(); await engine._night_task
+    assert engine.state.accepted_action_keys == {"done"} and engine._night_task is None
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() -> None:
+    release = asyncio.Event(); engine = GameEngine("lifecycle", pipeline_mode=PipelineMode.V1)
+    async def legacy(): await release.wait()
+    engine._execute_night_legacy = legacy
+    waiter = asyncio.create_task(engine._execute_night()); await asyncio.sleep(0)
+    with pytest.raises(ValueError, match="night execution is active"): await engine.start()
+    original = engine.state; await engine.stop(); assert engine.state is original
+    release.set(); await waiter
+
+
+@pytest.mark.asyncio
 async def test_execute_night_v2_publishes_public_deaths_and_advances() -> None:
     death_event = {
         "event_type": "PLAYER_DIED",
@@ -184,7 +226,7 @@ async def test_execute_night_v2_publishes_public_deaths_and_advances() -> None:
     engine.game_logger.log_deaths.assert_called_once()
     memory.save_memories.assert_called_once_with(engine.state)
     assert engine.sm.get_state() is GamePhase.DAWN
-    engine._broadcast_phase_change.assert_awaited_once()
+    engine._broadcast_phase_change.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -208,6 +250,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
     class RecoveringBus:
         def __init__(self): self.attempts, self.delivered = [], []
         async def publish(self, event, **kwargs):
+            if event is BusEvent.PHASE_CHANGED: return
             seat = kwargs["death"].player_seat; self.attempts.append(seat)
             if seat == 2 and self.attempts.count(2) == 1: raise RuntimeError("transport")
             self.delivered.append(seat)
@@ -225,7 +268,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
     assert engine.state.round_number == 1 and bus.attempts == [1, 2, 2]
     assert bus.delivered == [1, 2] and engine.game_logger.log_deaths.call_count == 2
     engine.memory_service.save_memories.assert_called_once_with(engine.state)
-    engine.rule_engine.check_win.assert_called_once_with(engine.state); engine._broadcast_phase_change.assert_awaited_once()
+    engine.rule_engine.check_win.assert_called_once_with(engine.state); engine._broadcast_phase_change.assert_not_awaited()
     assert engine._pending_night_completion is None and engine.sm.get_state() is GamePhase.DAWN
 
 
@@ -294,6 +337,7 @@ async def test_pipeline_terminal_completion_resumes_log_and_publish_without_rech
     class TerminalBus:
         def __init__(self): self.calls = 0
         async def publish(self, event, **kwargs):
+            if event is BusEvent.PHASE_CHANGED: return
             assert event is BusEvent.GAME_OVER; self.calls += 1
             if self.calls == 1: raise RuntimeError("publish")
     engine = GameEngine("terminal", event_bus=TerminalBus(), pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
@@ -309,7 +353,7 @@ async def test_pipeline_terminal_completion_resumes_log_and_publish_without_rech
     await engine._execute_night()
     engine.rule_engine.check_win.assert_called_once_with(engine.state)
     assert engine.game_logger.log_game_over.call_count == 2 and engine.event_bus.calls == 2
-    engine._broadcast_phase_change.assert_awaited_once()
+    engine._broadcast_phase_change.assert_not_awaited()
     assert engine._pending_night_completion is None
 
 
@@ -329,7 +373,27 @@ async def test_pipeline_transition_hook_failure_resumes_without_retransition() -
     assert engine.state.phase is GamePhase.DAWN
     await engine._execute_night()
     assert calls == ["hook"] and engine.rule_engine.check_win.call_count == 1
-    engine._broadcast_phase_change.assert_awaited_once()
+    engine._broadcast_phase_change.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_phase_publish_failure_does_not_repeat_phase_log() -> None:
+    class PhaseBus:
+        def __init__(self): self.calls = 0
+        async def publish(self, event, **kwargs):
+            assert event is BusEvent.PHASE_CHANGED; self.calls += 1
+            if self.calls == 1: raise RuntimeError("phase publish")
+    engine = GameEngine("phase", event_bus=PhaseBus(), pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine.state.round_number = 1; engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(
+        result, deaths=(), stage=7, win_checked=True,
+    )
+    engine.sm.set_state(GamePhase.DAWN); engine.game_logger.log_phase_change = MagicMock()
+    with pytest.raises(RuntimeError, match="phase publish"): await engine._execute_night()
+    await engine._execute_night()
+    engine.game_logger.log_phase_change.assert_called_once_with("phase", "dawn", 1)
+    assert engine.event_bus.calls == 2 and engine._pending_night_completion is None
 
 
 @pytest.mark.asyncio
@@ -344,6 +408,7 @@ async def test_pending_snapshots_are_frozen_from_external_mutation() -> None:
     seen = []
     class MutatingBus:
         async def publish(self, kind, **kwargs):
+            if kind is BusEvent.PHASE_CHANGED: return
             death = kwargs["death"]; seen.append((death.player_seat, death.cause, death.round_number))
             death.cause = "tampered"
     engine.event_bus = MutatingBus(); engine.rule_engine.check_win = MagicMock(return_value=None)
@@ -379,7 +444,7 @@ def test_pending_snapshots_validate_exact_types_and_ranges() -> None:
         lambda: game_engine_module._PendingNightCompletion(object()),
         lambda: game_engine_module._PendingNightCompletion(result, (object(),)),
         lambda: game_engine_module._PendingNightCompletion(result, (), 1, 0),
-        lambda: game_engine_module._PendingNightCompletion(result, (), 0, 8),
+        lambda: game_engine_module._PendingNightCompletion(result, (), 0, 10),
     ):
         with pytest.raises((TypeError, ValueError)): call()
 

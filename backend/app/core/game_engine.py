@@ -80,7 +80,7 @@ class _PendingNightCompletion:
         if type(self.result) is not PipelineResult: raise TypeError("result must be exact PipelineResult")
         if self.deaths is not None and (type(self.deaths) is not tuple or any(type(item) is not _PendingDeath for item in self.deaths)): raise TypeError("invalid pending deaths")
         if type(self.event_cursor) is not int or self.event_cursor < 0 or self.deaths is None and self.event_cursor or self.deaths is not None and self.event_cursor > len(self.deaths): raise ValueError("invalid event cursor")
-        if type(self.stage) is not int or not 0 <= self.stage <= 7: raise ValueError("invalid completion stage")
+        if type(self.stage) is not int or not 0 <= self.stage <= 9: raise ValueError("invalid completion stage")
         if self.win_result is not None and type(self.win_result) is not _PendingWin: raise TypeError("invalid pending win")
         if type(self.win_checked) is not bool or type(self.win_invalid) is not bool: raise TypeError("invalid win flags")
 
@@ -121,6 +121,7 @@ class GameEngine:
         self._pipeline_mode = pipeline_mode_from_env() if pipeline_mode is None else pipeline_mode
         self._pipeline_scheduler = pipeline_scheduler
         self._pending_night_completion: _PendingNightCompletion | None = None
+        self._night_task: asyncio.Task | None = None
 
     @property
     def pipeline_mode(self) -> PipelineMode:
@@ -171,6 +172,9 @@ class GameEngine:
     # =================================================================
 
     async def start(self) -> None:
+        if self._night_task is not None and not self._night_task.done():
+            raise ValueError("night execution is active")
+        self._night_task = None
         self._running = True
         self.sm.reset()
         self.state = GameState(game_id=self.game_id, config=self.config)
@@ -264,6 +268,19 @@ class GameEngine:
         self.state.last_wolf_kill_target = None
 
     async def _execute_night(self) -> None:
+        task = self._night_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._night_owner())
+            self._night_task = task
+        await asyncio.shield(task)
+
+    async def _night_owner(self) -> None:
+        try: await self._execute_night_owned()
+        finally:
+            task = asyncio.current_task()
+            if self._night_task is task: self._night_task = None
+
+    async def _execute_night_owned(self) -> None:
         if self._pending_night_completion is not None:
             await self._resume_pipeline_night(); return
         self._prepare_night()
@@ -357,7 +374,14 @@ class GameEngine:
                     raise
             pending = replace(pending, stage=7); self._pending_night_completion = pending
         if pending.stage == 7:
-            await self._broadcast_phase_change()
+            self.state.phase = self.sm.get_state()
+            pending = replace(pending, stage=8); self._pending_night_completion = pending
+        if pending.stage == 8:
+            self.game_logger.log_phase_change(self.game_id, self.state.phase.value, self.state.round_number)
+            pending = replace(pending, stage=9); self._pending_night_completion = pending
+        if pending.stage == 9:
+            await self.event_bus.publish(BusEvent.PHASE_CHANGED, game_id=self.game_id,
+                phase=self.state.phase.value, round_number=self.state.round_number, state=self.state)
             self._pending_night_completion = None
 
     async def _execute_night_legacy(self) -> None:
