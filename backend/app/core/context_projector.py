@@ -8,7 +8,7 @@ from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import ActionContext, IssuedActionRequest
 from app.roles.registry import RegistrySnapshot
-from app.core.role_runtime import role_resource_view
+from app.core.role_runtime import role_action_counters, role_resource_view
 
 
 _KNOWN_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
@@ -130,7 +130,10 @@ class ContextProjector:
             actor_alive=actor.is_alive,
             resources=resources,
             action_key=request.action_key,
-            counters=self._project_counters(counters),
+            counters=self._project_counters(dict(role_action_counters(
+                state, request.actor_seat, request.contract.contract_id,
+                request.window_id, request.round_number,
+            )) if counters is None else counters),
             source_event_id=self._optional_event_id(source_event_id, "source_event_id"),
             trigger_event=self._project_trigger_event(trigger_event, request.contract),
             trigger_reason=self._validate_trigger_reason(

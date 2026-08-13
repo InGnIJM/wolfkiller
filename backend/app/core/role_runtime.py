@@ -121,5 +121,28 @@ def role_resource_view(state: GameState, seat: int) -> Mapping[str, int]:
         return MappingProxyType(dict(resources))
 
 
+def role_action_counters(state: GameState, actor_seat: int, contract_id: str,
+                         window_id: str, round_number: int) -> Mapping[str, int]:
+    from app.core.effect_applier import EffectRejected
+    if type(state) is not GameState: raise TypeError("state must be GameState")
+    if type(actor_seat) is not int or actor_seat <= 0: raise ValueError("invalid actor_seat")
+    for value, name in ((contract_id, "contract_id"), (window_id, "window_id")):
+        if type(value) is not str: raise TypeError(f"{name} must be a string")
+        if not value or len(value) > 256: raise ValueError(f"invalid {name}")
+        try: value.encode("utf-8", errors="strict")
+        except UnicodeEncodeError: raise ValueError(f"invalid {name}") from None
+    if type(round_number) is not int or not 0 <= round_number <= _INT32: raise ValueError("invalid round_number")
+    with state_transaction_lock(state):
+        runtime = getattr(state, "_pipeline_runtime", None)
+        if runtime is None: counts = {scope: {} for scope in _COUNT_SCOPES}
+        else:
+            try: counts = clone_action_counts(runtime.clone().action_counts)
+            except (AttributeError, TypeError, ValueError) as error: raise EffectRejected("invalid pipeline runtime") from error
+        keys = {"window": f"{actor_seat}\0{contract_id}\0{window_id}",
+                "round": f"{actor_seat}\0{contract_id}\0{round_number}",
+                "game": f"{actor_seat}\0{contract_id}"}
+        return MappingProxyType({scope: counts[scope].get(key, 0) for scope, key in keys.items()})
+
+
 def _setup_key(game_id: str) -> str:
     return hashlib.sha256(f"role-resource-setup\0{game_id}".encode()).hexdigest()

@@ -8,6 +8,7 @@ import pytest
 
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import initialize_role_resources
+from app.core.role_runtime import role_action_counters
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
@@ -780,6 +781,37 @@ def test_canonical_runtime_resources_override_legacy_even_when_zero(
     assert projected.resources == {"antidote": 0, "poison": 1, "future": 7}
     state._pipeline_runtime.role_resources[4]["antidote"] = 9
     assert projected.resources["antidote"] == 0
+
+
+def test_action_counts_are_projected_by_exact_actor_contract_window_and_round(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    from app.core.effect_applier import _Runtime
+
+    request = _request(registry, 1, "wolf")
+    state._pipeline_runtime = _Runtime(action_counts={
+        "window": {f"1\0wolf-action\0{request.window_id}": 2, "2\0wolf-action\0x": 9},
+        "round": {f"1\0wolf-action\0{request.round_number}": 3},
+        "game": {"1\0wolf-action": 4},
+    })
+    projected = ContextProjector().project(state, request, registry)
+    assert projected.counters == {"window": 2, "round": 3, "game": 4}
+    explicit = ContextProjector().project(state, request, registry, counters={"window": 8})
+    assert explicit.counters == {"window": 8}
+
+
+def test_action_counter_view_is_zeroed_strict_immutable_and_validates_runtime(
+    state: GameState,
+) -> None:
+    empty = role_action_counters(state, 1, "c", "w", 0)
+    assert empty == {"window": 0, "round": 0, "game": 0}
+    with pytest.raises(TypeError): empty["game"] = 1
+    for arguments in ((object(), 1, "c", "w", 0), (state, True, "c", "w", 0), (state, 1, 1, "w", 0), (state, 1, "", "w", 0), (state, 1, "c", "w", -1)):
+        with pytest.raises((TypeError, ValueError)): role_action_counters(*arguments)
+    state._pipeline_runtime = object()
+    with pytest.raises(Exception): role_action_counters(state, 1, "c", "w", 0)
+    with pytest.raises(ValueError): role_action_counters(GameState("g"), 1, "c", "\ud800", 0)
+    assert ContextProjector._project_counters(None) == {}
 
 
 def test_camp_identity_knowledge_includes_dead_members(
