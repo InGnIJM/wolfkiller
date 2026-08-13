@@ -52,7 +52,7 @@ def resolve_hunter_action(
         GameEffect(
             derive_effect_id(context.action_key, 2), EffectKind.SUBMIT_DAMAGE,
             context.action_key, target_seat=command.target_seat,
-            payload={"target": command.target_seat, "amount": 1},
+            payload={"target": command.target_seat, "amount": 1, "cause": "hunter_shot"},
             sort_key=(2,), **common,
         ),
     )

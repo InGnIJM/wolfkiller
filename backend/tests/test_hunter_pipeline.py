@@ -84,7 +84,7 @@ def test_validate_and_resolve_shoot_or_pass() -> None:
     ]
     assert effects[0].payload == {"target": 1, "resource": "gun", "amount": 1}
     assert effects[0].preconditions == {"resource_equals": {"resource": "gun", "value": 1}}
-    assert effects[1].payload == {"target": 2, "amount": 1}
+    assert effects[1].payload == {"target": 2, "amount": 1, "cause": "hunter_shot"}
     assert [effect.target_seat for effect in effects] == [1, 2]
     assert [effect.sort_key for effect in effects] == [(1,), (2,)]
     assert all(effect.source_event_id == context().source_event_id for effect in effects)
@@ -174,7 +174,7 @@ def test_scheduler_dead_hunter_shoots_once_and_consumes_gun() -> None:
     assert hunter_calls[0].trigger_reason == "wolf_kill"
     assert game.players[1].is_alive is False
     assert role_resource_view(game, 1) == {"gun": 0}
-    assert game._pipeline_runtime.pending_damage == ({"target": 2, "amount": 1},)
+    assert game._pipeline_runtime.pending_damage == ({"target": 2, "amount": 1, "cause": "hunter_shot"},)
     assert [commit.revision for commit in result.commits] == [2, 3]
 
     engine.run_point(game, SchedulePoint.NIGHT_ACTION)
