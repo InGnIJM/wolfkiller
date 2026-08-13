@@ -119,6 +119,29 @@ def role_resource_view(state: GameState, seat: int) -> Mapping[str, int]:
         return MappingProxyType(dict(resources))
 
 
+def role_private_facts_view(
+    state: GameState, seat: int, namespace: str,
+) -> tuple[Mapping[str, object], ...]:
+    from app.core.effect_applier import EffectRejected
+    if type(state) is not GameState: raise TypeError("state must be GameState")
+    if type(seat) is not int or seat <= 0: raise ValueError("invalid seat")
+    if type(namespace) is not str: raise TypeError("namespace must be a string")
+    try: namespace.encode("utf-8", errors="strict")
+    except UnicodeEncodeError: raise ValueError("invalid namespace") from None
+    if not namespace or len(namespace) > 128 or any(
+        not (char.isalnum() or char in "_.:-") for char in namespace
+    ): raise ValueError("invalid namespace")
+    with state_transaction_lock(state):
+        runtime = getattr(state, "_pipeline_runtime", None)
+        if runtime is None:
+            return ()
+        try: records = runtime.clone().private_facts.get(seat, [])
+        except (AttributeError, TypeError, ValueError) as error:
+            raise EffectRejected("invalid pipeline runtime") from error
+        return tuple(MappingProxyType(dict(record["fact"])) for record in records
+                     if record["namespace"] == namespace)[-20:]
+
+
 def role_action_counters(state: GameState, actor_seat: int, contract_id: str,
                          window_id: str, round_number: int) -> Mapping[str, int]:
     from app.core.effect_applier import EffectRejected

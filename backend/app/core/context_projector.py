@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import re
+from types import MappingProxyType
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import ActionCommand, ActionContext, IssuedActionRequest
 from app.roles.registry import RegistrySnapshot
-from app.core.role_runtime import role_action_counters, role_resource_view
+from app.core.role_runtime import (
+    role_action_counters, role_private_facts_view, role_resource_view,
+)
 
 
 _KNOWN_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
@@ -383,9 +386,12 @@ class ContextProjector:
         facts: dict[str, object] = {}
         for key, default in declarations.items():
             if key in {"private_checks", "check_results"}:
+                canonical = role_private_facts_view(
+                    state, actor.seat_number, "private_checks"
+                )
                 facts["private_checks"] = tuple(
                     projected
-                    for result in actor.check_results[-20:]
+                    for result in (canonical or actor.check_results)[-20:]
                     if (projected := cls._project_check_result(result)) is not None
                 )
             elif key in {"wolf_kill_target", "last_wolf_kill_target"}:
@@ -402,7 +408,7 @@ class ContextProjector:
 
     @staticmethod
     def _project_check_result(result: object) -> dict[str, object] | None:
-        if type(result) is not dict:
+        if type(result) not in (dict, MappingProxyType):
             return None
         target = result.get("target", result.get("target_seat"))
         camp = result.get("camp", result.get("result"))

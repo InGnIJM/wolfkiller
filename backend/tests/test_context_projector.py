@@ -7,8 +7,8 @@ from types import MappingProxyType
 import pytest
 
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import initialize_role_resources
-from app.core.role_runtime import role_action_counters
+from app.core.effect_applier import EffectRejected, _Runtime, initialize_role_resources
+from app.core.role_runtime import role_action_counters, role_private_facts_view
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
@@ -799,6 +799,69 @@ def test_defensive_projection_handles_malformed_public_and_private_records(
     assert context.facts["private_checks"] == (
         {"target": 2, "camp": "good"},
     )
+
+
+def test_runtime_private_checks_override_legacy_and_are_actor_namespace_isolated(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    state._pipeline_runtime = _Runtime(private_facts={
+        3: [
+            {"namespace": "other", "fact": {"target": 1, "camp": "werewolf"}},
+            {"namespace": "private_checks", "fact": {"target": 2, "camp": "good"}},
+        ],
+        4: [{"namespace": "private_checks", "fact": {"target": 1, "camp": "werewolf"}}],
+    })
+    view = role_private_facts_view(state, 3, "private_checks")
+    projected = ContextProjector().project(state, _request(registry, 3, "seer"), registry)
+    assert view == ({"target": 2, "camp": "good"},)
+    assert projected.facts["private_checks"] == view
+    assert role_private_facts_view(state, 3, "missing") == ()
+    assert role_private_facts_view(state, 4, "private_checks") == (
+        {"target": 1, "camp": "werewolf"},
+    )
+    with pytest.raises(TypeError): view[0]["camp"] = "werewolf"
+
+
+def test_runtime_private_fact_view_is_bounded_detached_and_legacy_falls_back(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    assert role_private_facts_view(state, 3, "private_checks") == ()
+    assert ContextProjector().project(
+        state, _request(registry, 3, "seer"), registry,
+    ).facts["private_checks"] == ({"target": 1, "camp": "werewolf"},)
+    records = [
+        {"namespace": "private_checks", "fact": {"target": index + 1, "camp": "good"}}
+        for index in range(25)
+    ]
+    state._pipeline_runtime = _Runtime(private_facts={3: records})
+    view = role_private_facts_view(state, 3, "private_checks")
+    records[-1]["fact"]["camp"] = "werewolf"
+    assert len(view) == 20 and view[0]["target"] == 6 and view[-1]["camp"] == "good"
+
+
+@pytest.mark.parametrize("seat,namespace", [
+    (True, "private_checks"), (0, "private_checks"), (3, 1),
+    (3, "bad space"), (3, ""), (3, "x" * 129), (3, "\ud800"),
+])
+def test_runtime_private_fact_view_validates_boundaries(
+    state: GameState, seat, namespace,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        role_private_facts_view(state, seat, namespace)
+
+
+def test_runtime_private_fact_view_rejects_malformed_runtime(
+    state: GameState,
+) -> None:
+    state._pipeline_runtime = _Runtime(private_facts={3: object()})
+    with pytest.raises(EffectRejected, match="invalid pipeline runtime"):
+        role_private_facts_view(state, 3, "private_checks")
+
+
+def test_runtime_private_fact_view_requires_exact_state_and_accepts_token_punctuation() -> None:
+    with pytest.raises(TypeError):
+        role_private_facts_view(object(), 1, "private_checks")
+    assert role_private_facts_view(GameState("g"), 1, "private.check:-1") == ()
 
 
 @pytest.mark.parametrize("field", ["trigger_event", "aggregate_result"])
