@@ -16,7 +16,7 @@ from app.services.game_service import PUBLIC_NIGHT_SUBSTEPS
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineObservation, PipelineResult
 from app.core.effect_applier import CommitResult
-from app.core.scheduler import PointResult
+from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
 
 
@@ -185,6 +185,108 @@ async def test_execute_night_v2_publishes_public_deaths_and_advances() -> None:
     memory.save_memories.assert_called_once_with(engine.state)
     assert engine.sm.get_state() is GamePhase.DAWN
     engine._broadcast_phase_change.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages() -> None:
+    events = tuple({
+        "event_type": "PLAYER_DIED",
+        "payload": {"seat": seat, "cause": "wolf_kill", "round_number": 1},
+        "visibility": ("PUBLIC",),
+    } for seat in (1, 2))
+    class RecoveringScheduler:
+        def __init__(self): self.calls = []
+        def run_point(inner, state, point):
+            inner.calls.append(point)
+            if point is SchedulePoint.NIGHT_COMMIT:
+                for seat in (1, 2):
+                    state.players[seat].is_alive = False
+                    state.death_history.append(DeathReport(seat, "wolf_kill", 1))
+                commit = CommitResult("settle", ("effect",), 1, events, "final")
+                return PointResult((), (commit,), events, "final")
+            return PointResult((), (), (), "action")
+    class RecoveringBus:
+        def __init__(self): self.attempts, self.delivered = [], []
+        async def publish(self, event, **kwargs):
+            seat = kwargs["death"].player_seat; self.attempts.append(seat)
+            if seat == 2 and self.attempts.count(2) == 1: raise RuntimeError("transport")
+            self.delivered.append(seat)
+    scheduler, bus = RecoveringScheduler(), RecoveringBus()
+    engine = GameEngine("recover", event_bus=bus, pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    engine.state.players = {seat: PlayerState(seat, "r", "good") for seat in (1, 2, 3)}
+    engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
+    engine.game_logger.log_deaths = MagicMock(side_effect=[RuntimeError("disk"), None])
+    engine.memory_service = MagicMock(); engine._check_game_over = AsyncMock(return_value=False)
+    engine._broadcast_phase_change = AsyncMock()
+    with pytest.raises(RuntimeError, match="transport"): await engine._execute_night()
+    with pytest.raises(RuntimeError, match="disk"): await engine._execute_night()
+    await engine._execute_night()
+    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert engine.state.round_number == 1 and bus.attempts == [1, 2, 2]
+    assert bus.delivered == [1, 2] and engine.game_logger.log_deaths.call_count == 2
+    engine.memory_service.save_memories.assert_called_once_with(engine.state)
+    engine._check_game_over.assert_awaited_once(); engine._broadcast_phase_change.assert_awaited_once()
+    assert engine._pending_night_completion is None and engine.sm.get_state() is GamePhase.DAWN
+
+
+@pytest.mark.asyncio
+async def test_malformed_pipeline_event_is_persisted_and_never_reruns_batch() -> None:
+    malformed = {
+        "event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill"},
+        "visibility": ("PUBLIC",),
+    }
+    class MalformedScheduler:
+        def __init__(self): self.calls = []
+        def run_point(inner, state, point):
+            inner.calls.append(point)
+            if point is SchedulePoint.NIGHT_COMMIT:
+                state.players[1].is_alive = False
+                state.death_history.append(DeathReport(1, "wolf_kill", 1))
+                commit = CommitResult("settle", ("effect",), 1, (malformed,), "final")
+                return PointResult((), (commit,), commit.events, "final")
+            return PointResult((), (), (), "action")
+    scheduler = MalformedScheduler(); engine = GameEngine(
+        "malformed", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler,
+    )
+    engine.state.players = {1: PlayerState(1, "r", "good")}
+    engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
+    engine.event_bus.publish = AsyncMock(); engine.game_logger.log_deaths = MagicMock()
+    for _ in range(2):
+        with pytest.raises(PipelinePaused, match="invalid pipeline night event"):
+            await engine._execute_night()
+    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert engine.state.round_number == 1 and engine._pending_night_completion is not None
+    engine.event_bus.publish.assert_not_awaited(); engine.game_logger.log_deaths.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", [
+    {"event_type": "NOTICE", "payload": {}, "visibility": ("PUBLIC",)},
+    {"event_type": "PLAYER_DIED", "payload": {"seat": True, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",)},
+    {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "bad cause", "round_number": 1}, "visibility": ("PUBLIC",)},
+    {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 2}, "visibility": ("PUBLIC",)},
+])
+async def test_pipeline_public_event_validation_is_closed_before_side_effects(event) -> None:
+    result = PipelineResult((), (), "digest", (event,), PipelineMode.V2)
+    engine = GameEngine("validate", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine.state.round_number = 1
+    engine.state.players = {1: PlayerState(1, "r", "good", is_alive=False)}
+    engine.state.death_history = [DeathReport(1, "wolf_kill", 1)]
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(result)
+    if event["event_type"] == "NOTICE":
+        await engine._execute_night(); assert engine._pending_night_completion is None
+    else:
+        with pytest.raises(PipelinePaused): await engine._execute_night()
+        assert engine._pending_night_completion is not None
+
+
+@pytest.mark.asyncio
+async def test_start_resets_pending_night_completion() -> None:
+    engine = GameEngine("reset"); engine._pending_night_completion = object()
+    engine._game_loop = AsyncMock(); engine._broadcast_phase_change = AsyncMock()
+    engine._assign_roles = MagicMock()
+    await engine.start()
+    assert engine._pending_night_completion is None
 
 
 def make_mock_role(seat: int, role_name: str,

@@ -4,7 +4,10 @@ import hashlib
 import json
 import logging
 import random
+import re
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
@@ -20,6 +23,7 @@ from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 from app.config import PipelineMode, pipeline_mode_from_env
 from app.core.role_pipeline import PipelineObservation, PipelineResult, RolePipeline
+from app.core.scheduler import PipelinePaused
 from app.models.pipeline import SchedulePoint
 
 logger = logging.getLogger(__name__)
@@ -32,6 +36,17 @@ VOTE_CONTRACT = ActionContract(
     resolution_priority=0,
     fallback_action_type="abstain",
 )
+
+_EVENT_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
+
+
+@dataclass(frozen=True)
+class _PendingNightCompletion:
+    result: PipelineResult
+    deaths: tuple[DeathReport, ...] | None = None
+    event_cursor: int = 0
+    stage: int = 0
+    game_over: bool | None = None
 
 
 class GameEngine:
@@ -69,6 +84,7 @@ class GameEngine:
         self._accepted_action_results: dict[str, AcceptedAction] = {}
         self._pipeline_mode = pipeline_mode_from_env() if pipeline_mode is None else pipeline_mode
         self._pipeline_scheduler = pipeline_scheduler
+        self._pending_night_completion: _PendingNightCompletion | None = None
 
     @property
     def pipeline_mode(self) -> PipelineMode:
@@ -124,6 +140,7 @@ class GameEngine:
         self.state = GameState(game_id=self.game_id, config=self.config)
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self._accepted_action_results.clear()
+        self._pending_night_completion = None
 
         self.sm.transition(SM_Event.START)
         await self._broadcast_phase_change()
@@ -211,6 +228,8 @@ class GameEngine:
         self.state.last_wolf_kill_target = None
 
     async def _execute_night(self) -> None:
+        if self._pending_night_completion is not None:
+            await self._resume_pipeline_night(); return
         self._prepare_night()
         if self._pipeline_mode is PipelineMode.V1:
             await self._execute_night_legacy()
@@ -220,22 +239,58 @@ class GameEngine:
             self._execute_night_legacy,
         )
         if self._pipeline_mode is PipelineMode.SHADOW: return
-        await self._complete_pipeline_night(result)
+        self._pending_night_completion = _PendingNightCompletion(result)
+        await self._resume_pipeline_night()
 
-    async def _complete_pipeline_night(self, result: PipelineResult) -> None:
-        deaths = []
-        for event in result.public_events:
-            if event.get("event_type") != "PLAYER_DIED": continue
-            payload = event.get("payload", {})
-            death = DeathReport(payload["seat"], payload["cause"], payload["round_number"])
-            deaths.append(death)
+    def _pipeline_night_deaths(self, result: PipelineResult) -> tuple[DeathReport, ...]:
+        deaths, seen = [], set()
+        try:
+            for event in result.public_events:
+                if not isinstance(event, Mapping) or set(event) != {"event_type", "payload", "visibility"}:
+                    raise ValueError
+                event_type, payload, visibility = event["event_type"], event["payload"], event["visibility"]
+                if type(event_type) is not str or not event_type or not isinstance(payload, Mapping): raise ValueError
+                event_type.encode("utf-8", errors="strict")
+                if type(visibility) is not tuple or "PUBLIC" not in visibility or any(type(item) is not str for item in visibility): raise ValueError
+                if event_type != "PLAYER_DIED": continue
+                if set(payload) != {"seat", "cause", "round_number"}: raise ValueError
+                seat, cause, round_number = payload["seat"], payload["cause"], payload["round_number"]
+                if type(seat) is not int or not 1 <= seat <= 2_147_483_647 or seat in seen: raise ValueError
+                if type(cause) is not str or _EVENT_TOKEN.fullmatch(cause) is None: raise ValueError
+                cause.encode("utf-8", errors="strict")
+                if type(round_number) is not int or round_number != self.state.round_number: raise ValueError
+                player = self.state.players.get(seat)
+                matches = [item for item in self.state.death_history if type(item) is DeathReport and
+                    (item.player_seat, item.cause, item.round_number) == (seat, cause, round_number)]
+                if player is None or player.is_alive or len(matches) != 1: raise ValueError
+                seen.add(seat); deaths.append(DeathReport(seat, cause, round_number))
+        except (KeyError, TypeError, UnicodeError, ValueError):
+            raise PipelinePaused("invalid pipeline night event") from None
+        return tuple(deaths)
+
+    async def _resume_pipeline_night(self) -> None:
+        pending = self._pending_night_completion
+        if pending.deaths is None:
+            pending = replace(pending, deaths=self._pipeline_night_deaths(pending.result))
+            self._pending_night_completion = pending
+        while pending.event_cursor < len(pending.deaths):
+            death = pending.deaths[pending.event_cursor]
             await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
-        self.game_logger.log_deaths(self.game_id, self.state.round_number, [death.to_dict() for death in deaths])
-        if self.memory_service: self.memory_service.save_memories(self.state)
-        if await self._check_game_over():
-            await self._broadcast_phase_change(); return
-        self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
-        await self._broadcast_phase_change()
+            pending = replace(pending, event_cursor=pending.event_cursor + 1); self._pending_night_completion = pending
+        if pending.stage == 0:
+            self.game_logger.log_deaths(self.game_id, self.state.round_number, [death.to_dict() for death in pending.deaths])
+            pending = replace(pending, stage=1); self._pending_night_completion = pending
+        if pending.stage == 1:
+            if self.memory_service: self.memory_service.save_memories(self.state)
+            pending = replace(pending, stage=2); self._pending_night_completion = pending
+        if pending.stage == 2:
+            pending = replace(pending, stage=3, game_over=await self._check_game_over()); self._pending_night_completion = pending
+        if pending.stage == 3:
+            if not pending.game_over: self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
+            pending = replace(pending, stage=4); self._pending_night_completion = pending
+        if pending.stage == 4:
+            await self._broadcast_phase_change()
+            self._pending_night_completion = None
 
     async def _execute_night_legacy(self) -> None:
 
