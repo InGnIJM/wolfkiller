@@ -162,3 +162,59 @@ def test_public_filter_handles_event_without_visibility() -> None:
     assert RolePipeline(PipelineMode.V2, None, scheduler).run_point(
         GameState("g"), SchedulePoint.NIGHT_ACTION
     ).public_events == ()
+
+
+@pytest.mark.parametrize("visibility", ["NOTPUBLIC", ["PUBLIC"], {"PUBLIC": True}, ("PUBLIC", 1), ("x" * 257,)])
+def test_public_filter_drops_malformed_visibility(visibility) -> None:
+    commit = CommitResult("a", (), 1, (), "d")
+    object.__setattr__(commit, "events", ({"event_type": "X", "payload": {}, "visibility": visibility},))
+    scheduler = FakeScheduler(PointResult((), (commit,), (), "d"))
+    assert RolePipeline(PipelineMode.V2, None, scheduler).run_point(
+        GameState("g"), SchedulePoint.NIGHT_ACTION
+    ).public_events == ()
+
+
+def test_observation_identifiers_and_diff_mismatches_are_closed_and_bounded() -> None:
+    for values in (("",), ("x" * 257,), ("\ud800",), tuple("x" for _ in range(4097))):
+        with pytest.raises(ValueError): observation(accepted_actions=values)
+    with pytest.raises(ValueError): observation(effects=("x" * 256,) * 257)
+    for digest in ("", "x" * 257, "\ud800"):
+        with pytest.raises(ValueError): observation(state_digest=digest)
+    for mismatches in (("unknown",), ("effects", "accepted_actions"), ("effects", "effects")):
+        with pytest.raises(ValueError): PipelineDiff(False, mismatches)
+    assert PipelineDiff(False, ("accepted_actions", "public_events")).mismatches == (
+        "accepted_actions", "public_events",
+    )
+
+
+def test_v2_requires_exact_point_result_and_commit_values() -> None:
+    for result in (object(), type("SubPoint", (PointResult,), {})((), (), (), "d")):
+        with pytest.raises(TypeError, match="PointResult"):
+            RolePipeline(PipelineMode.V2, None, FakeScheduler(result)).run_point(
+                GameState("g"), SchedulePoint.NIGHT_ACTION
+            )
+    result = point(); object.__setattr__(result, "commits", (object(),))
+    with pytest.raises(TypeError, match="commit"):
+        RolePipeline(PipelineMode.V2, None, FakeScheduler(result)).run_point(
+            GameState("g"), SchedulePoint.NIGHT_ACTION
+        )
+
+
+def test_public_filter_defensively_drops_invalid_utf8_visibility() -> None:
+    commit = CommitResult("a", (), 1, (), "d")
+    object.__setattr__(commit, "events", ({"event_type": "X", "payload": {}, "visibility": ("PUBLIC\ud800",)},))
+    scheduler = FakeScheduler(PointResult((), (commit,), (), "d"))
+    assert RolePipeline(PipelineMode.V2, None, scheduler).run_point(
+        GameState("g"), SchedulePoint.NIGHT_ACTION
+    ).public_events == ()
+
+
+def test_public_filter_accepts_multiple_valid_labels_and_nonmapping_is_dropped() -> None:
+    commit = CommitResult("a", (), 1, (), "d")
+    object.__setattr__(commit, "events", (
+        object(), {"event_type": "X", "payload": {}, "visibility": ("ACTOR", "PUBLIC")},
+    ))
+    scheduler = FakeScheduler(PointResult((), (commit,), (), "d"))
+    assert len(RolePipeline(PipelineMode.V2, None, scheduler).run_point(
+        GameState("g"), SchedulePoint.NIGHT_ACTION
+    ).public_events) == 1

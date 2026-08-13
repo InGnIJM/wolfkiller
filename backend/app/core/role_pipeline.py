@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from app.config import PipelineMode
+from app.core.effect_applier import CommitResult
+from app.core.scheduler import PointResult
 from app.models.game import GameState
 from app.models.pipeline import SchedulePoint
 
@@ -45,6 +47,22 @@ def _freeze(value: object, depth: int = 0, active: set[int] | None = None,
 def _strings(value: object, name: str) -> tuple[str, ...]:
     if type(value) is not tuple or any(type(item) is not str for item in value):
         raise TypeError(f"{name} must be a tuple of strings")
+    if len(value) > 4096: raise ValueError(f"{name} has too many items")
+    size = 0
+    for item in value:
+        try: encoded = item.encode("utf-8", errors="strict")
+        except UnicodeEncodeError: raise ValueError(f"{name} must be UTF-8") from None
+        if not item or len(encoded) > 256: raise ValueError(f"invalid {name} item")
+        size += len(encoded)
+    if size > 65_536: raise ValueError(f"{name} is too large")
+    return value
+
+
+def _text(value: object, name: str) -> str:
+    if type(value) is not str: raise TypeError(f"{name} must be a string")
+    try: encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError: raise ValueError(f"{name} must be UTF-8") from None
+    if not value or len(encoded) > 256: raise ValueError(f"invalid {name}")
     return value
 
 
@@ -57,7 +75,7 @@ class PipelineObservation:
 
     def __post_init__(self) -> None:
         _strings(self.accepted_actions, "accepted_actions"); _strings(self.effects, "effects")
-        if type(self.state_digest) is not str: raise TypeError("state_digest must be a string")
+        _text(self.state_digest, "state_digest")
         if type(self.public_events) is not tuple or any(not isinstance(item, Mapping) for item in self.public_events):
             raise TypeError("public_events must contain mappings")
         object.__setattr__(self, "public_events", tuple(_freeze(item) for item in self.public_events))
@@ -71,6 +89,9 @@ class PipelineDiff:
     def __post_init__(self) -> None:
         if type(self.matched) is not bool: raise TypeError("matched must be a bool")
         _strings(self.mismatches, "mismatches")
+        order = ("accepted_actions", "effects", "state_digest", "public_events")
+        if self.mismatches != tuple(name for name in order if name in self.mismatches):
+            raise ValueError("invalid mismatches")
 
 
 @dataclass(frozen=True)
@@ -113,14 +134,26 @@ class RolePipeline:
 
     def _v2(self, state: GameState, point: SchedulePoint) -> PipelineObservation:
         result = self.scheduler.run_point(state, point)
+        if type(result) is not PointResult: raise TypeError("scheduler must return exact PointResult")
         commits = result.commits
-        events = tuple(event for commit in commits for event in commit.events
-                       if "PUBLIC" in event.get("visibility", ()))
+        if type(commits) is not tuple or any(type(commit) is not CommitResult for commit in commits):
+            raise TypeError("PointResult must contain exact commits")
+        events = tuple(event for commit in commits for event in commit.events if self._public(event))
         return PipelineObservation(
             tuple(commit.action_key for commit in commits),
             tuple(effect for commit in commits for effect in commit.effect_ids),
             result.state_digest, events,
         )
+
+    @staticmethod
+    def _public(event: object) -> bool:
+        if not isinstance(event, Mapping): return False
+        visibility = event.get("visibility")
+        if type(visibility) is not tuple or any(type(item) is not str for item in visibility): return False
+        try:
+            if any(not item or len(item.encode("utf-8", errors="strict")) > 256 for item in visibility): return False
+        except UnicodeEncodeError: return False
+        return "PUBLIC" in visibility
 
     def _result(self, value: PipelineObservation, diff: PipelineDiff | None) -> PipelineResult:
         return PipelineResult(value.accepted_actions, value.effects, value.state_digest,
