@@ -83,7 +83,9 @@ class GameEngine:
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
     async def run_schedule_point(self, point: SchedulePoint, legacy_runner) -> PipelineResult:
-        if type(point) is not SchedulePoint: raise TypeError("point must be SchedulePoint")
+        return await self.run_schedule_points((point,), legacy_runner)
+
+    async def run_schedule_points(self, points: tuple[SchedulePoint, ...], legacy_runner) -> PipelineResult:
         if not callable(legacy_runner): raise TypeError("legacy_runner must be callable")
         if self._pipeline_mode is not PipelineMode.V1 and self._pipeline_scheduler is None:
             raise ValueError("pipeline scheduler is required")
@@ -100,7 +102,7 @@ class GameEngine:
 
         runner = None if self._pipeline_mode is PipelineMode.V2 else v1_runner
         pipeline = RolePipeline(self._pipeline_mode, runner, self._pipeline_scheduler)
-        result = await asyncio.to_thread(pipeline.run_point, self.state, point)
+        result = await asyncio.to_thread(pipeline.run_points, self.state, points)
         if type(result) is not PipelineResult: raise TypeError("pipeline must return exact PipelineResult")
         return result
 
@@ -203,10 +205,39 @@ class GameEngine:
     # Night Phase
     # =================================================================
 
-    async def _execute_night(self) -> None:
+    def _prepare_night(self) -> None:
         self.state.round_number += 1
         self.state.night_actions.clear()
         self.state.last_wolf_kill_target = None
+
+    async def _execute_night(self) -> None:
+        self._prepare_night()
+        if self._pipeline_mode is PipelineMode.V1:
+            await self._execute_night_legacy()
+            return
+        result = await self.run_schedule_points(
+            (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT),
+            self._execute_night_legacy,
+        )
+        if self._pipeline_mode is PipelineMode.SHADOW: return
+        await self._complete_pipeline_night(result)
+
+    async def _complete_pipeline_night(self, result: PipelineResult) -> None:
+        deaths = []
+        for event in result.public_events:
+            if event.get("event_type") != "PLAYER_DIED": continue
+            payload = event.get("payload", {})
+            death = DeathReport(payload["seat"], payload["cause"], payload["round_number"])
+            deaths.append(death)
+            await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
+        self.game_logger.log_deaths(self.game_id, self.state.round_number, [death.to_dict() for death in deaths])
+        if self.memory_service: self.memory_service.save_memories(self.state)
+        if await self._check_game_over():
+            await self._broadcast_phase_change(); return
+        self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
+        await self._broadcast_phase_change()
+
+    async def _execute_night_legacy(self) -> None:
 
         all_actions: list[NightAction] = []
         wolf_seats = self._get_role_seats("werewolf")
