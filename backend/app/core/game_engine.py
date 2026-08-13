@@ -1,5 +1,7 @@
 from __future__ import annotations
 import asyncio
+import hashlib
+import json
 import logging
 import random
 import uuid
@@ -16,6 +18,9 @@ from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
+from app.config import PipelineMode, pipeline_mode_from_env
+from app.core.role_pipeline import PipelineObservation, PipelineResult, RolePipeline
+from app.models.pipeline import SchedulePoint
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +45,11 @@ class GameEngine:
         roles: dict[int, object] | None = None,
         memory_service: object | None = None,
         data_dir: str = "data",
+        pipeline_mode: PipelineMode | None = None,
+        pipeline_scheduler: object | None = None,
     ):
+        if pipeline_mode is not None and type(pipeline_mode) is not PipelineMode:
+            raise TypeError("pipeline_mode must be a PipelineMode")
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
         self.sm = GameStateMachine()
@@ -58,6 +67,42 @@ class GameEngine:
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
         self._accepted_action_results: dict[str, AcceptedAction] = {}
+        self._pipeline_mode = pipeline_mode_from_env() if pipeline_mode is None else pipeline_mode
+        self._pipeline_scheduler = pipeline_scheduler
+
+    @property
+    def pipeline_mode(self) -> PipelineMode:
+        return self._pipeline_mode
+
+    @staticmethod
+    def _public_state_digest(state: GameState) -> str:
+        document = json.dumps(
+            state.get_public_state(), ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        )
+        return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+    async def run_schedule_point(self, point: SchedulePoint, legacy_runner) -> PipelineResult:
+        if type(point) is not SchedulePoint: raise TypeError("point must be SchedulePoint")
+        if not callable(legacy_runner): raise TypeError("legacy_runner must be callable")
+        if self._pipeline_mode is not PipelineMode.V1 and self._pipeline_scheduler is None:
+            raise ValueError("pipeline scheduler is required")
+        loop = asyncio.get_running_loop()
+
+        def v1_runner(state: GameState, ignored: SchedulePoint) -> PipelineObservation:
+            before = set(state.accepted_action_keys)
+            future = asyncio.run_coroutine_threadsafe(legacy_runner(), loop)
+            future.result()
+            accepted = tuple(sorted(state.accepted_action_keys - before))
+            return PipelineObservation(
+                accepted, (), self._public_state_digest(state), (),
+            )
+
+        runner = None if self._pipeline_mode is PipelineMode.V2 else v1_runner
+        pipeline = RolePipeline(self._pipeline_mode, runner, self._pipeline_scheduler)
+        result = await asyncio.to_thread(pipeline.run_point, self.state, point)
+        if type(result) is not PipelineResult: raise TypeError("pipeline must return exact PipelineResult")
+        return result
 
     @property
     def phase_delay(self) -> float:

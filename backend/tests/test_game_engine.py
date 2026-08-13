@@ -3,6 +3,7 @@ import asyncio
 import inspect
 
 import pytest
+import app.core.game_engine as game_engine_module
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
@@ -12,6 +13,10 @@ from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.action_validator import ActionValidationError
 from app.agents.prompt_builder import PromptBuilder
 from app.services.game_service import PUBLIC_NIGHT_SUBSTEPS
+from app.config import PipelineMode
+from app.core.role_pipeline import PipelineObservation, PipelineResult
+from app.core.scheduler import PointResult
+from app.models.pipeline import SchedulePoint
 
 
 def _night_substeps_emitted_by_engine_source() -> set[str]:
@@ -34,6 +39,76 @@ def _night_substeps_emitted_by_engine_source() -> set[str]:
         )
         steps.add(step.value)
     return steps
+
+
+class ScheduleStub:
+    def __init__(self, result, mutate=None):
+        self.result, self.mutate, self.calls = result, mutate, []
+
+    def run_point(self, state, point):
+        self.calls.append((state, point))
+        if self.mutate is not None: self.mutate(state)
+        return self.result
+
+
+@pytest.mark.asyncio
+async def test_schedule_point_freezes_mode_and_bridges_v1_once(monkeypatch) -> None:
+    monkeypatch.setenv("ROLE_PIPELINE_V2", "v1")
+    engine = GameEngine("bridge")
+    monkeypatch.setenv("ROLE_PIPELINE_V2", "v2")
+    calls = []
+    async def legacy():
+        calls.append("legacy"); engine.state.accepted_action_keys.add("accepted")
+    result = await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, legacy)
+    assert type(result) is PipelineResult and result.mode is PipelineMode.V1
+    assert result.accepted_actions == ("accepted",) and result.effects == result.public_events == ()
+    assert calls == ["legacy"] and engine.pipeline_mode is PipelineMode.V1
+
+
+@pytest.mark.asyncio
+async def test_schedule_point_v2_skips_legacy_and_shadow_isolates_state() -> None:
+    point_result = PointResult((), (), (), "v2-digest")
+    v2_scheduler = ScheduleStub(point_result, lambda state: setattr(state, "round_number", 7))
+    v2 = GameEngine("v2", pipeline_mode=PipelineMode.V2, pipeline_scheduler=v2_scheduler)
+    async def forbidden(): raise AssertionError("legacy called")
+    result = await v2.run_schedule_point(SchedulePoint.NIGHT_ACTION, forbidden)
+    assert result.mode is PipelineMode.V2 and v2.state.round_number == 7
+
+    shadow_scheduler = ScheduleStub(point_result, lambda state: setattr(state, "round_number", 99))
+    shadow = GameEngine("shadow", pipeline_mode=PipelineMode.SHADOW, pipeline_scheduler=shadow_scheduler)
+    async def legacy(): shadow.state.round_number = 2
+    result = await shadow.run_schedule_point(SchedulePoint.NIGHT_ACTION, legacy)
+    assert result.mode is PipelineMode.SHADOW and shadow.state.round_number == 2
+    assert shadow_scheduler.calls[0][0] is not shadow.state
+
+
+@pytest.mark.asyncio
+async def test_schedule_point_propagates_errors_validates_types_and_does_not_block_loop() -> None:
+    with pytest.raises(TypeError): GameEngine("bad", pipeline_mode="v1")
+    engine = GameEngine("missing", pipeline_mode=PipelineMode.V2)
+    with pytest.raises(ValueError):
+        await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, AsyncMock())
+    engine = GameEngine("error", pipeline_mode=PipelineMode.V1)
+    async def explode(): raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, explode)
+    with pytest.raises(TypeError): await engine.run_schedule_point("night", AsyncMock())
+    with pytest.raises(TypeError): await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, object())
+
+    class BadPipeline:
+        def __init__(self, *args): pass
+        def run_point(self, *args): return object()
+    monkeypatch = pytest.MonkeyPatch(); monkeypatch.setattr(game_engine_module, "RolePipeline", BadPipeline)
+    try:
+        with pytest.raises(TypeError, match="exact PipelineResult"):
+            await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, AsyncMock())
+    finally: monkeypatch.undo()
+
+    started, release = asyncio.Event(), asyncio.Event()
+    async def waiting(): started.set(); await release.wait()
+    task = asyncio.create_task(engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, waiting))
+    await started.wait(); await asyncio.sleep(0); assert not task.done()
+    release.set(); assert type(await task) is PipelineResult
 
 
 def make_mock_role(seat: int, role_name: str,
