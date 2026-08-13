@@ -95,6 +95,55 @@ def test_v2_converts_commits_and_filters_nonpublic_events() -> None:
     assert "hidden" not in repr(result) and game.round_number == 10
 
 
+def test_execute_v2_point_returns_raw_exact_result_for_v2_and_shadow() -> None:
+    raw = point()
+    for mode in (PipelineMode.V2, PipelineMode.SHADOW):
+        scheduler = FakeScheduler(raw)
+        runner = None if mode is PipelineMode.V2 else lambda *_: observation()
+        pipeline = RolePipeline(mode, runner, scheduler)
+        game = GameState(mode.value)
+        assert pipeline.execute_v2_point(game, SchedulePoint.NIGHT_ACTION) is raw
+        assert scheduler.calls == [(game, SchedulePoint.NIGHT_ACTION)]
+    v1 = RolePipeline(PipelineMode.V1, lambda *_: observation(), None)
+    with pytest.raises(ValueError, match="V2 execution"):
+        v1.execute_v2_point(GameState("v1"), SchedulePoint.NIGHT_ACTION)
+
+
+def test_execute_v2_point_is_exact_and_does_not_observe() -> None:
+    subclass = type("SubPoint", (PointResult,), {})
+    for raw in (object(), subclass((), (), (), "d")):
+        scheduler = FakeScheduler(raw)
+        pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+        with pytest.raises(TypeError, match="exact PointResult"):
+            pipeline.execute_v2_point(GameState("g"), SchedulePoint.NIGHT_ACTION)
+        assert len(scheduler.calls) == 1
+    pipeline = RolePipeline(PipelineMode.V2, None, FakeScheduler(point()))
+    with pytest.raises(TypeError): pipeline.execute_v2_point(object(), SchedulePoint.NIGHT_ACTION)
+    with pytest.raises(TypeError): pipeline.execute_v2_point(GameState("g"), "night")
+
+
+def test_observe_v2_is_pure_repeatable_and_never_executes_scheduler() -> None:
+    scheduler = FakeScheduler(point())
+    pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+    raw = point()
+    first = pipeline.observe_v2(raw); second = RolePipeline.observe_v2(raw)
+    assert first == second and type(first) is PipelineObservation
+    assert first.accepted_actions == ("a2", "a1") and scheduler.calls == []
+    malformed = point(); object.__setattr__(malformed, "commits", (object(),))
+    with pytest.raises(TypeError, match="commit"):
+        pipeline.observe_v2(malformed)
+    assert scheduler.calls == []
+
+
+def test_observe_v2_rejects_nonexact_point_without_scheduler_access() -> None:
+    subclass = type("SubPoint", (PointResult,), {})
+    scheduler = FakeScheduler(point()); pipeline = RolePipeline(PipelineMode.SHADOW, lambda *_: observation(), scheduler)
+    for raw in (object(), subclass((), (), (), "d")):
+        with pytest.raises(TypeError, match="exact PointResult"):
+            pipeline.observe_v2(raw)
+    assert scheduler.calls == []
+
+
 def test_shadow_mutates_live_state_only_with_v1_and_deepcopies_runtime() -> None:
     game = GameState("g"); game._pipeline_runtime = {"nested": [{"seat": 1}]}
     seen = []

@@ -147,12 +147,23 @@ class RolePipeline:
         )
 
     def _v2(self, state: GameState, point: SchedulePoint) -> PipelineObservation:
+        return self.observe_v2(self.execute_v2_point(state, point))
+
+    def execute_v2_point(self, state: GameState, point: SchedulePoint) -> PointResult:
+        if self.mode is PipelineMode.V1: raise ValueError("V2 execution is unavailable in V1 mode")
+        if type(state) is not GameState: raise TypeError("state must be GameState")
+        if type(point) is not SchedulePoint: raise TypeError("point must be SchedulePoint")
         result = self.scheduler.run_point(state, point)
         if type(result) is not PointResult: raise TypeError("scheduler must return exact PointResult")
+        return result
+
+    @staticmethod
+    def observe_v2(result: PointResult) -> PipelineObservation:
+        if type(result) is not PointResult: raise TypeError("result must be exact PointResult")
         commits = result.commits
         if type(commits) is not tuple or any(type(commit) is not CommitResult for commit in commits):
             raise TypeError("PointResult must contain exact commits")
-        events = tuple(event for commit in commits for event in commit.events if self._public(event))
+        events = tuple(event for commit in commits for event in commit.events if RolePipeline._public(event))
         return PipelineObservation(
             tuple(commit.action_key for commit in commits),
             tuple(effect for commit in commits for effect in commit.effect_ids),
