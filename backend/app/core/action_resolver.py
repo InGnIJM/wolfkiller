@@ -151,7 +151,10 @@ class ActionResolver:
                 raise ValueError("effect id is not canonical")
         accept = GameEffect(
             effect_id=derive_effect_id(context.action_key, 0), kind=EffectKind.ACCEPT_ACTION,
-            source_action_key=context.action_key, expected_revision=context.revision,
+            source_action_key=context.action_key,
+            payload={"actor_seat": context.actor_seat, "contract_id": context.contract_id,
+                     "window_id": context.window_id, "round_number": context.round_number},
+            expected_revision=context.revision,
             source_event_id=context.source_event_id, sort_key=(0,),
         )
         return (accept, *raw)

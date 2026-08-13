@@ -200,6 +200,10 @@ def test_pipeline_resolve_is_pure_adds_accept_and_is_deterministic():
         EffectKind.ACCEPT_ACTION,
         EffectKind.SUBMIT_DAMAGE,
     )
+    assert first[0].payload == {
+        "actor_seat": 1, "contract_id": "pipeline-action",
+        "window_id": "window", "round_number": 2,
+    }
     assert tuple(effect.to_json() for effect in first) == tuple(
         effect.to_json() for effect in second
     )
@@ -217,9 +221,13 @@ def test_pipeline_aggregate_sorts_commands_stably_and_allows_self_target():
         pipeline_command("kill", 2),
     )
 
-    ActionResolver().aggregate_effects(context, role, contract, commands)
+    effects = ActionResolver().aggregate_effects(context, role, contract, commands)
 
     observed = PIPELINE_CALLS[0]
+    assert effects[0].payload == {
+        "actor_seat": context.actor_seat, "contract_id": contract.contract_id,
+        "window_id": context.window_id, "round_number": context.round_number,
+    }
     assert type(observed) is tuple
     assert [(item.action_type, item.target_seat) for item in observed] == [
         ("kill", 1), ("kill", 2), ("kill", 3), ("pass", None)
@@ -244,6 +252,10 @@ def test_pipeline_react_requires_bound_response_and_allows_dead_actor_effect():
 
     effects = ActionResolver().react_effects(context, role, contract)
 
+    assert effects[0].payload == {
+        "actor_seat": context.actor_seat, "contract_id": contract.contract_id,
+        "window_id": context.window_id, "round_number": context.round_number,
+    }
     assert effects[1].target_seat == context.actor_seat
     assert PIPELINE_CALLS == [context]
 
