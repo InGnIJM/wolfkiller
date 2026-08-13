@@ -8,6 +8,7 @@ from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
 from app.models.pipeline import ActionContext, IssuedActionRequest
 from app.roles.registry import RegistrySnapshot
+from app.core.role_runtime import role_resource_view
 
 
 _KNOWN_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
@@ -91,7 +92,7 @@ class ContextProjector:
                 "role_id": request.role_id,
                 "camp_id": spec.camp_id,
             }
-            resources = self._actor_resources(actor, spec.initial_resources)
+            resources = self._actor_resources(state, actor, spec.initial_resources)
             facts.update(
                 self._actor_private_facts(
                     state,
@@ -307,10 +308,14 @@ class ContextProjector:
 
     @staticmethod
     def _actor_resources(
-        actor: PlayerState, declarations: Mapping[str, object]
+        state: GameState, actor: PlayerState, declarations: Mapping[str, object]
     ) -> dict[str, object]:
+        canonical = role_resource_view(state, actor.seat_number)
         resources: dict[str, object] = {}
         for key, default in declarations.items():
+            if key in canonical:
+                resources[key] = canonical[key]
+                continue
             attribute = _RESOURCE_ADAPTERS.get(key)
             resources[key] = (
                 getattr(actor, attribute)

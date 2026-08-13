@@ -7,6 +7,7 @@ from types import MappingProxyType
 import pytest
 
 from app.core.context_projector import ContextProjector
+from app.core.effect_applier import initialize_role_resources
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
@@ -762,6 +763,23 @@ def test_legacy_resource_aliases_are_the_only_player_attribute_reads(
         "gun": True,
         "role": "default-role",
     }
+
+
+def test_canonical_runtime_resources_override_legacy_even_when_zero(
+    state: GameState,
+) -> None:
+    contract = _contract("ACTOR", contract_id="runtime-action")
+    spec = RoleSpec("witch", camp_id="good", contracts=(contract,),
+                    visibility_namespaces=frozenset({"ACTOR"}),
+                    initial_resources={"antidote": 0, "poison": 1, "future": 7})
+    registry = RegistrySnapshot({"witch": spec}, "a" * 64)
+    state.players = {4: state.players[4]}; state.players[4].has_antidote = True
+    initialize_role_resources(state, registry.specs, registry.digest)
+    state._pipeline_runtime.role_resources[4].pop("future")
+    projected = ContextProjector().project(state, _request(registry, 4, "witch", revision=1), registry)
+    assert projected.resources == {"antidote": 0, "poison": 1, "future": 7}
+    state._pipeline_runtime.role_resources[4]["antidote"] = 9
+    assert projected.resources["antidote"] == 0
 
 
 def test_camp_identity_knowledge_includes_dead_members(
