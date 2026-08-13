@@ -24,7 +24,7 @@ from app.roles.hunter import Hunter
 from app.roles.seer import Seer
 from app.roles.villager import Villager
 from app.roles.werewolf import WEREWOLF_SPEC, Werewolf
-from app.roles.witch import Witch
+from app.roles.witch import WITCH_SPEC, Witch
 
 
 _VISIBLE_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
@@ -370,6 +370,7 @@ def _contract(
 
 builtin_registry = RoleRegistry()
 builtin_registry.register_pipeline(WEREWOLF_SPEC)
+builtin_registry.register_pipeline(WITCH_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )

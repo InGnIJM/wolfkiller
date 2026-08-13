@@ -4,8 +4,66 @@ from app.models.game import GameState
 from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
+from app.core.effect_applier import derive_effect_id
+from app.models.pipeline import (
+    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
+    RuleViolation, SchedulePoint,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def witch_applicable(context: ActionContext) -> bool:
+    return context.actor_alive and any(context.resources.get(name, 0) for name in ("antidote", "poison"))
+
+
+def validate_witch_action(
+    context: ActionContext, command: ActionCommand,
+) -> tuple[RuleViolation, ...]:
+    if command.action_type == "save" and context.resources.get("antidote", 0) <= 0:
+        return (RuleViolation("antidote_unavailable", "antidote is unavailable"),)
+    if command.action_type == "save" and command.target_seat != context.facts.get("wolf_kill_target"):
+        return (RuleViolation("invalid_save_target", "save target must be the wolf kill target"),)
+    if command.action_type == "poison" and context.resources.get("poison", 0) <= 0:
+        return (RuleViolation("poison_unavailable", "poison is unavailable"),)
+    return ()
+
+
+def resolve_witch_action(
+    context: ActionContext, command: ActionCommand,
+) -> tuple[GameEffect, ...]:
+    if command.action_type == "pass":
+        return ()
+    resource = "antidote" if command.action_type == "save" else "poison"
+    outcome = EffectKind.SUBMIT_PROTECTION if command.action_type == "save" else EffectKind.SUBMIT_DAMAGE
+    target = command.target_seat
+    common = {"expected_revision": context.revision, "source_event_id": context.source_event_id}
+    return (
+        GameEffect(derive_effect_id(context.action_key, 1), EffectKind.CONSUME_RESOURCE,
+            context.action_key, target_seat=context.actor_seat,
+            payload={"target": context.actor_seat, "resource": resource, "amount": 1},
+            preconditions={"resource_equals": {"target": context.actor_seat, "resource": resource, "value": 1}},
+            sort_key=(1,), **common),
+        GameEffect(derive_effect_id(context.action_key, 2), outcome, context.action_key,
+            target_seat=target, payload={"target": target, "amount": 1}, sort_key=(2,), **common),
+    )
+
+
+WITCH_SPEC = RoleSpec(
+    role_id="wolf-killer-witch", display_name="Witch", camp_id="good",
+    contracts=(ActionContract(
+        contract_id="witch_action", schedule_point=SchedulePoint.NIGHT_ACTION, order=20,
+        action_types=("save", "poison", "pass"),
+        actions_requiring_target=frozenset({"save", "poison"}), fallback_action_type="pass",
+        allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE}),
+        visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}), per_window_limit=1, per_round_limit=1,
+        is_applicable=witch_applicable, validate=validate_witch_action, resolve=resolve_witch_action,
+    ),),
+    initial_resources={"antidote": 1, "poison": 1},
+    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE}),
+    visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
+    instructions="Use at most one available potion during the night action window.",
+)
 
 
 class Witch(BaseRole):
