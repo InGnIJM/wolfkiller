@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from app.models.game import GamePhase
+from app.models.game import GamePhase, SnapshotVersionError
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,69 @@ _LEGACY_ROLE_COUNT_KEYS = frozenset({
     "num_witches",
     "num_hunters",
 })
+
+_VALID_PIPELINE_VERSIONS = frozenset({"v1", "v2"})
+_CURRENT_EFFECT_SCHEMA = 1
+
+
+def restore_snapshot(
+    snapshot: Mapping, *, registry, pipeline_mode: str = "v2",
+) -> dict:
+    """Validate a persisted game snapshot against the running registry.
+
+    Raises SnapshotVersionError for unknown pipeline versions, role specs the
+    running registry cannot serve, effect schemas without a migrator, and any
+    attempt to downgrade a V2 game with committed effects back to V1.
+    """
+    if not isinstance(snapshot, Mapping):
+        raise SnapshotVersionError("invalid snapshot")
+    if pipeline_mode not in _VALID_PIPELINE_VERSIONS:
+        raise SnapshotVersionError("unknown pipeline version")
+    pipeline = snapshot.get("pipeline_version")
+    if pipeline not in (None, "", "v1", "v2"):
+        raise SnapshotVersionError("unknown pipeline version")
+    state_revision = snapshot.get("state_revision", 0)
+    if (
+        pipeline_mode == "v1"
+        and pipeline == "v2"
+        and isinstance(state_revision, int)
+        and not isinstance(state_revision, bool)
+        and state_revision > 0
+    ):
+        raise SnapshotVersionError("cannot downgrade v2 game to v1")
+    spec_versions = snapshot.get("spec_versions") or {}
+    if not isinstance(spec_versions, Mapping):
+        raise SnapshotVersionError("invalid spec versions")
+    for role_id, version in spec_versions.items():
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version < 1
+        ):
+            raise SnapshotVersionError("missing role spec")
+        try:
+            current = registry.require(role_id).schema_version
+        except ValueError:
+            raise SnapshotVersionError("missing role spec") from None
+        if version > current:
+            raise SnapshotVersionError("missing role spec")
+    effect_schema = snapshot.get("effect_schema_version")
+    if effect_schema not in (None, 0, _CURRENT_EFFECT_SCHEMA):
+        raise SnapshotVersionError("missing effect schema migrator")
+    return dict(snapshot)
+
+
+def migrate_legacy_entry(entry: dict, *, registry) -> dict:
+    """Explicit v1 -> v2 migrator for archives written before pipeline versioning."""
+    entry["pipeline_version"] = "v2"
+    entry["registry_digest"] = registry.digest
+    entry["spec_versions"] = {
+        role_id: spec.schema_version for role_id, spec in registry.specs.items()
+    }
+    entry["effect_schema_version"] = _CURRENT_EFFECT_SCHEMA
+    entry["state_revision"] = 0
+    entry["last_consistent_checkpoint"] = None
+    return entry
 
 
 def _is_valid_role_counts(role_counts: object) -> bool:
@@ -64,11 +127,14 @@ class GameManifest:
 
     # ── Public API ─────────────────────────────────────────────────
 
-    def load_or_rebuild(self) -> dict[str, dict]:
+    def load_or_rebuild(self, registry=None) -> dict[str, dict]:
         """Return {game_id: metadata} for every game on disk.
 
         Prefer index.json; if missing or corrupt, rebuild by scanning
-        game directories and reading their game.log.
+        game directories and reading their game.log. When a registry is
+        supplied, entries are validated against it and legacy archives are
+        migrated through the explicit v1 -> v2 migrator; incompatible
+        entries are skipped with a warning.
         """
         self._entries = {}
         try:
@@ -108,6 +174,23 @@ class GameManifest:
                         self._entries[gid]["player_count"] = meta["player_count"]
                         logger.info(f"Recovered role config from disk: {gid}")
 
+        # Version-validate every entry against the running registry and
+        # migrate archives written before pipeline versioning.
+        if registry is not None:
+            for gid in list(self._entries):
+                entry = self._entries[gid]
+                if entry.get("pipeline_version") in (None, ""):
+                    migrate_legacy_entry(entry, registry=registry)
+                    logger.info(f"Migrated legacy game archive to v2: {gid}")
+                try:
+                    restore_snapshot(entry, registry=registry)
+                except SnapshotVersionError as error:
+                    logger.warning(
+                        "Skipping game archive incompatible with the running "
+                        "pipeline: %s (%s)", gid, error,
+                    )
+                    self._entries.pop(gid)
+
         # Persist rebuilt index
         if self._entries:
             self._persist()
@@ -141,6 +224,12 @@ class GameManifest:
         player_count: Optional[int] = None,
         alive_count: Optional[int] = None,
         winner: Optional[str] = None,
+        pipeline_version: Optional[str] = None,
+        registry_digest: Optional[str] = None,
+        spec_versions: Optional[dict] = None,
+        effect_schema_version: Optional[int] = None,
+        state_revision: Optional[int] = None,
+        last_consistent_checkpoint: Optional[str] = None,
     ) -> None:
         entry = self._entries.get(game_id)
         if entry is None:
@@ -156,6 +245,18 @@ class GameManifest:
         if winner is not None:
             entry["winner"] = winner
             entry["finished_at"] = datetime.now(timezone.utc).isoformat()
+        if pipeline_version is not None:
+            entry["pipeline_version"] = pipeline_version
+        if registry_digest is not None:
+            entry["registry_digest"] = registry_digest
+        if spec_versions is not None:
+            entry["spec_versions"] = spec_versions
+        if effect_schema_version is not None:
+            entry["effect_schema_version"] = effect_schema_version
+        if state_revision is not None:
+            entry["state_revision"] = state_revision
+        if last_consistent_checkpoint is not None:
+            entry["last_consistent_checkpoint"] = last_consistent_checkpoint
         self._persist()
 
     # ── Internals ──────────────────────────────────────────────────

@@ -1038,3 +1038,113 @@ class TestGameService:
         assert service._games["game-a"] is original
         service._persist_game.assert_not_called()
         manager.broadcast.assert_not_awaited()
+
+
+class TestPipelineSnapshotVersioning:
+    def _registry(self):
+        return builtin_registry.freeze()
+
+    def test_manifest_persists_pipeline_registry_and_schema_versions(self, tmp_path):
+        manifest = GameManifest(str(tmp_path))
+        manifest.add_game("v2-game", {"role_counts": {"wolf-killer-villager": 1}})
+        manifest.update_game(
+            "v2-game",
+            phase="night",
+            round_number=2,
+            pipeline_version="v2",
+            registry_digest="abc",
+            spec_versions={"wolf-killer-seer": 2},
+            effect_schema_version=1,
+            state_revision=5,
+            last_consistent_checkpoint="checkpoint-id",
+        )
+
+        saved = GameManifest(str(tmp_path)).load_or_rebuild()["v2-game"]
+        assert saved["pipeline_version"] == "v2"
+        assert saved["registry_digest"] == "abc"
+        assert saved["spec_versions"] == {"wolf-killer-seer": 2}
+        assert saved["effect_schema_version"] == 1
+        assert saved["state_revision"] == 5
+
+    def test_restore_rejects_missing_spec_or_effect_migrator(self):
+        from app.models.game import SnapshotVersionError
+        from app.services.game_manifest import restore_snapshot
+        registry = self._registry()
+        with pytest.raises(SnapshotVersionError, match="missing role spec"):
+            restore_snapshot(
+                {"pipeline_version": "v2", "spec_versions": {"wolf-killer-guard": 9}},
+                registry=registry,
+            )
+        with pytest.raises(SnapshotVersionError, match="missing role spec"):
+            restore_snapshot(
+                {"pipeline_version": "v2", "spec_versions": {"wolf-killer-unknown": 1}},
+                registry=registry,
+            )
+        with pytest.raises(SnapshotVersionError, match="missing effect schema migrator"):
+            restore_snapshot(
+                {"pipeline_version": "v2", "effect_schema_version": 7},
+                registry=registry,
+            )
+
+    def test_v2_game_never_rolls_back_to_v1_after_effect_commit(self):
+        from app.models.game import SnapshotVersionError
+        from app.services.game_manifest import restore_snapshot
+        registry = self._registry()
+        with pytest.raises(SnapshotVersionError, match="cannot downgrade"):
+            restore_snapshot(
+                {"pipeline_version": "v2", "state_revision": 3},
+                registry=registry,
+                pipeline_mode="v1",
+            )
+        # A V2 archive with no committed effects may still be replayed.
+        assert restore_snapshot(
+            {"pipeline_version": "v2", "state_revision": 0},
+            registry=registry,
+            pipeline_mode="v1",
+        )["state_revision"] == 0
+
+    def test_restore_rejects_unknown_pipeline_versions(self):
+        from app.models.game import SnapshotVersionError
+        from app.services.game_manifest import restore_snapshot
+        registry = self._registry()
+        with pytest.raises(SnapshotVersionError, match="unknown pipeline version"):
+            restore_snapshot({"pipeline_version": "v3"}, registry=registry)
+        with pytest.raises(SnapshotVersionError, match="unknown pipeline version"):
+            restore_snapshot({}, registry=registry, pipeline_mode="v9")
+
+    def test_legacy_manifest_entry_is_migrated_to_v2(self, tmp_path):
+        manifest = GameManifest(str(tmp_path))
+        manifest.add_game("legacy", {"role_counts": {"wolf-killer-villager": 1}})
+        # Simulate an archive written before pipeline versioning.
+        manifest._entries["legacy"].pop("pipeline_version", None)
+
+        entries = GameManifest(str(tmp_path)).load_or_rebuild(registry=self._registry())
+        migrated = entries["legacy"]
+        assert migrated["pipeline_version"] == "v2"
+        assert migrated["effect_schema_version"] == 1
+        assert migrated["state_revision"] == 0
+        assert set(migrated["spec_versions"]) == set(self._registry().specs)
+
+    def test_incompatible_archive_is_skipped_with_warning(self, tmp_path, caplog):
+        manifest = GameManifest(str(tmp_path))
+        manifest.add_game("bad", {"role_counts": {"wolf-killer-villager": 1}})
+        manifest._entries["bad"]["pipeline_version"] = "v2"
+        manifest._entries["bad"]["spec_versions"] = {"wolf-killer-guard": 99}
+        manifest._persist()
+
+        entries = GameManifest(str(tmp_path)).load_or_rebuild(registry=self._registry())
+        assert "bad" not in entries
+        assert "incompatible" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_create_game_stamps_pipeline_snapshot_versions(self, monkeypatch):
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        game_id = await service.create_game(num_werewolves=1, num_villagers=3)
+        state = service.get_game_state(game_id)
+        assert state.pipeline_version == "v2"
+        assert state.effect_schema_version == 1
+        assert state.registry_digest
+        assert set(state.spec_versions) == set(builtin_registry.freeze().specs)

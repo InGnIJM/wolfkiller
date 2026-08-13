@@ -4,6 +4,10 @@ from enum import Enum
 from typing import Optional
 
 
+class SnapshotVersionError(RuntimeError):
+    """Raised when a persisted game snapshot is incompatible with the running registry or pipeline version."""
+
+
 class GamePhase(str, Enum):
     WAITING = "waiting"
     ROLE_DEAL = "role_deal"
@@ -123,6 +127,13 @@ class GameState:
     sheriff_election_complete: bool = False
     speaking_order: list[int] = field(default_factory=list)  # 本轮发言顺序
     current_speaker: Optional[int] = None  # 当前正在发言的玩家
+    # ── Pipeline snapshot versioning ─────────────────────────────
+    state_revision: int = 0
+    pipeline_version: str = ""
+    registry_digest: str = ""
+    spec_versions: dict[str, int] = field(default_factory=dict)
+    effect_schema_version: int = 0
+    last_consistent_checkpoint: Optional[str] = None
 
     def alive_players(self) -> dict[int, PlayerState]:
         return {s: p for s, p in self.players.items() if p.is_alive}

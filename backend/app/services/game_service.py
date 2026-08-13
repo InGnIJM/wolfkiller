@@ -84,7 +84,7 @@ class GameService:
 
     def _load_persisted_games(self) -> None:
         """Reconstruct lightweight GameState for every completed game on disk."""
-        entries = self._manifest.load_or_rebuild()
+        entries = self._manifest.load_or_rebuild(registry=builtin_registry.freeze())
         for game_id, meta in entries.items():
             # Skip games still running (engine will re-register them)
             if meta.get("phase") == "game_over" or meta.get("winner"):
@@ -192,11 +192,21 @@ class GameService:
 
     def _persist_game(self, state: GameState) -> None:
         """Write current game metadata to the manifest."""
+        runtime = getattr(state, "_pipeline_runtime", None)
+        state_revision = (
+            state.state_revision if runtime is None else runtime.revision
+        )
         self._manifest.update_game(
             state.game_id,
             phase=state.phase.value,
             round_number=state.round_number,
             alive_count=len(state.alive_players()),
+            pipeline_version=state.pipeline_version or None,
+            registry_digest=state.registry_digest or None,
+            spec_versions=dict(state.spec_versions) if state.spec_versions else None,
+            effect_schema_version=state.effect_schema_version or None,
+            state_revision=state_revision,
+            last_consistent_checkpoint=state.last_consistent_checkpoint,
         )
 
     async def create_game(
@@ -246,6 +256,14 @@ class GameService:
             memory_service=self.memory_service,
             pipeline_scheduler=scheduler,
         )
+        # Stamp the pipeline snapshot version so archives can be validated
+        # and migrated against the exact registry that ran the game.
+        engine.state.pipeline_version = "v2"
+        engine.state.registry_digest = snapshot.digest
+        engine.state.spec_versions = {
+            role_id: spec.schema_version for role_id, spec in snapshot.specs.items()
+        }
+        engine.state.effect_schema_version = 1
 
         self._engines[game_id] = engine
         self._games[game_id] = engine.state
