@@ -214,6 +214,94 @@ def test_run_point_uses_aggregate_group_key_once() -> None:
     assert result.commits[0].action_key not in {request.action_key for request in result.requests}
 
 
+def test_main_journal_resumes_normal_commit_before_domain_without_provider_repeat(monkeypatch) -> None:
+    calls = []
+    registry = snapshot(spec("r", contract("c"))); game = state("r")
+    engine = scheduler(registry, lambda *args: (calls.append(args), ActionCommand(action_type="act", target_seat=None, reasoning="ok"))[1])
+    original = engine._domain; failed = [False]
+    def once(*args):
+        if not failed[0]: failed[0] = True; raise PipelinePaused("after commit")
+        return original(*args)
+    monkeypatch.setattr(engine, "_domain", once)
+    with pytest.raises(PipelinePaused, match="after commit"): engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert len(calls) == 1 and len(result.commits) == 1 and result.events[0]["event_type"] == "DONE"
+    assert game._pipeline_runtime.revision == 1
+
+
+def test_main_journal_resumes_aggregate_and_settlement_before_domain(monkeypatch) -> None:
+    aggregate_registry = snapshot(spec("r", contract("group", aggregate=True)))
+    aggregate_game = state("r", "r"); aggregate_engine = scheduler(aggregate_registry)
+    aggregate_calls = []; original_aggregate = aggregate_engine.resolver.aggregate_effects
+    def counted(*args): aggregate_calls.append(1); return original_aggregate(*args)
+    aggregate_engine.resolver.aggregate_effects = counted
+    original_domain = aggregate_engine._domain; failed = [False]
+    def aggregate_domain(*args):
+        if not failed[0]: failed[0] = True; raise PipelinePaused("aggregate domain")
+        return original_domain(*args)
+    monkeypatch.setattr(aggregate_engine, "_domain", aggregate_domain)
+    with pytest.raises(PipelinePaused): aggregate_engine.run_point(aggregate_game, SchedulePoint.NIGHT_ACTION)
+    aggregate = aggregate_engine.run_point(aggregate_game, SchedulePoint.NIGHT_ACTION)
+    assert len(aggregate_calls) == 1 and len(aggregate.commits) == 1
+
+    settlement_registry = snapshot(spec("r")); settlement_game = state("r")
+    settlement_game._pipeline_runtime = _Runtime(pending_damage=({"target": 1, "amount": 1, "cause": "poison"},))
+    settlement_engine = scheduler(settlement_registry); settle_calls = []
+    original_settle = settlement_engine.applier.settle_pending
+    def settle(*args, **kwargs): settle_calls.append(1); return original_settle(*args, **kwargs)
+    settlement_engine.applier.settle_pending = settle
+    original_domain = settlement_engine._domain; failed = [False]
+    def settlement_domain(*args):
+        if not failed[0]: failed[0] = True; raise PipelinePaused("settlement domain")
+        return original_domain(*args)
+    monkeypatch.setattr(settlement_engine, "_domain", settlement_domain)
+    with pytest.raises(PipelinePaused): settlement_engine.run_point(settlement_game, SchedulePoint.NIGHT_COMMIT)
+    settled = settlement_engine.run_point(settlement_game, SchedulePoint.NIGHT_COMMIT)
+    assert len(settle_calls) == 1 and len(settled.commits) == 1
+
+
+def test_main_journal_completion_replays_and_conversion_failure_skips_main(monkeypatch) -> None:
+    calls = []; registry = snapshot(spec("r", contract("c"))); game = state("r")
+    engine = scheduler(registry, lambda *args: (calls.append(args), ActionCommand(action_type="act", target_seat=None, reasoning="ok"))[1])
+    real_result = scheduler_module.PointResult; attempts = []
+    def fail_once(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1: raise RuntimeError("result conversion")
+        return real_result(*args, **kwargs)
+    monkeypatch.setattr(scheduler_module, "PointResult", fail_once)
+    with pytest.raises(RuntimeError, match="result conversion"): engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    first = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    second = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert len(calls) == 1 and first == second and len(first.commits) == 1
+    assert len(attempts) == 3
+
+
+def test_point_journal_key_isolates_round_and_registry() -> None:
+    calls = []
+    first_registry = snapshot(spec("r", contract("c")))
+    second_registry = RegistrySnapshot(first_registry.specs, "b" * 64)
+    game = state("r")
+    provider = lambda *args: (calls.append(args), ActionCommand(action_type="act", target_seat=None, reasoning="ok"))[1]
+    scheduler(first_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    game.round_number = 2
+    scheduler(first_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    scheduler(second_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert len(calls) == 3
+
+
+def test_journal_empty_settlement_and_gated_aggregate_continue_are_covered() -> None:
+    empty = scheduler(snapshot(spec("passive"))).run_point(state("passive"), SchedulePoint.NIGHT_COMMIT)
+    assert empty.commits == ()
+    grouped = contract("group", aggregate=True); object.__setattr__(grouped, "per_round_limit", 1)
+    later = contract("later", order=2)
+    registry = snapshot(spec("r", grouped, later)); game = state("r")
+    game._pipeline_runtime = _Runtime(action_counts={
+        "window": {}, "round": {"1\0group\0" + "1": 1}, "game": {},
+    })
+    issued = scheduler(registry).issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    assert [item.contract.contract_id for item in issued] == ["later"]
+
+
 def test_provider_wrong_type_and_invalid_fallback_pause() -> None:
     registry = snapshot(spec("r", contract("c")))
     with pytest.raises(TypeError):
@@ -397,7 +485,7 @@ def test_night_commit_only_settles_pending_in_stable_order_and_is_idempotent() -
     assert calls == [] and first.requests == second.requests == ()
     assert [event["payload"]["seat"] for event in first.events] == [1, 3]
     assert [report.player_seat for report in game.death_history] == [1, 3]
-    assert len(first.commits) == 1 and second.commits == ()
+    assert len(first.commits) == 1 and second == first
     assert game._pipeline_runtime.revision == revision == 1
     assert game.players[2].is_alive and game._pipeline_runtime.pending_damage == ()
 
@@ -440,7 +528,7 @@ def test_aggregate_rerun_is_idempotent() -> None:
     first = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
     second = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
     assert len(first.commits) == 1
-    assert second.requests == second.commits == ()
+    assert second == first
     assert engine._revision(game) == 1
 
 
@@ -776,7 +864,7 @@ def test_accepted_action_limits_gate_before_provider_and_applicability() -> None
     before = (calls["provider"], APPLICABILITY_CALLS)
     assert engine.issue(game, SchedulePoint.NIGHT_ACTION, registry) == ()
     result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
-    assert result.requests == result.commits == ()
+    assert result.requests and result.commits
     assert (calls["provider"], APPLICABILITY_CALLS) == before
 
 

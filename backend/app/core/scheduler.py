@@ -19,6 +19,7 @@ from app.core.effect_applier import (
     CommitResult, EffectApplier, EffectPermission, initialize_role_resources,
 )
 from app.core.state_transaction import state_transaction_lock
+from app.core.point_journal import PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, IssuedActionRequest,
@@ -328,36 +329,53 @@ class Scheduler:
     def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
         with state_transaction_lock(state):
-            faults: list[Mapping[str, object]] = []; token = self._faults.set(faults)
-            try: return self._run_point_locked(state, point, faults)
+            phase = state.phase.value if hasattr(state.phase, "value") else state.phase
+            key = PointKey(state.game_id, state.round_number, phase, point, self.registry.digest)
+            journal = point_journal(state); saved = journal.get(key)
+            faults = list(saved.faults) if saved is not None else []
+            token = self._faults.set(faults)
+            try:
+                result = self._point_result(saved) if saved is not None and saved.complete_result is not None else \
+                    self._run_point_locked(state, point, faults, key, saved, journal)
+                return result
             finally: self._faults.reset(token)
 
     def _run_point_locked(self, state: GameState, point: SchedulePoint,
-                          faults: list[Mapping[str, object]]) -> PointResult:
-        issued = () if point is SchedulePoint.NIGHT_COMMIT else self.issue(state, point, self.registry)
-        actual = []; commits = []; events = []
-        queue = ResponseQueue(self.registry); groups: dict[tuple[str, str], list[IssuedActionRequest]] = {}
-        if point is SchedulePoint.NIGHT_COMMIT:
-            revision = self._revision(state); settlement = self.applier.settle_pending(state, round_number=state.round_number)
-            if settlement is not None and settlement.revision > revision:
-                commits.append(settlement); events.extend(settlement.events)
-                for ordinal, raw in enumerate(settlement.events): queue.enqueue(self._domain(settlement, ordinal, raw), depth=0)
+                          faults: list[Mapping[str, object]], key: PointKey,
+                          saved: PointCheckpoint | None, journal) -> PointResult:
+        if saved is None:
+            issued = () if point is SchedulePoint.NIGHT_COMMIT else self.issue(state, point, self.registry)
+            saved = PointCheckpoint(issued, (), (), (), tuple(faults), (), WorkCursor("main", 0, 0))
+            journal.put(key, saved)
+        issued = saved.issued; actual = list(saved.actual); commits = list(saved.commits); events = list(saved.events)
+        groups: dict[tuple[str, str], list[IssuedActionRequest]] = {}
         for request in issued: groups.setdefault((request.role_id, request.contract.contract_id), []).append(request)
+        work = [(("settlement"), ())] if point is SchedulePoint.NIGHT_COMMIT else []
         for members in groups.values():
             contract = members[0].contract; role = self.registry.require(members[0].role_id)
             if contract.aggregate is None:
-                for member in members:
-                    request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
-                    command, rule_context = self._command(state, request, context)
-                    effects = self._resolve_with_fallback(state, request, rule_context, role, command)
-                    actual.append(request); commit = self._apply(state, rule_context, role, contract, effects, commits, events)
-                    for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=0)
+                work.extend(("normal", (member,)) for member in members)
+            else: work.append(("aggregate", tuple(members)))
+        pending = list(saved.pending)
+        for index in range(saved.cursor.index if saved.cursor.kind == "main" else len(work), len(work)):
+            kind, members = work[index]; before = len(commits)
+            if kind == "settlement":
+                revision = self._revision(state); settlement = self.applier.settle_pending(state, round_number=state.round_number)
+                if settlement is not None and settlement.revision > revision:
+                    commits.append(settlement); events.extend(settlement.events)
+            elif kind == "normal":
+                member = members[0]; contract = member.contract; role = self.registry.require(member.role_id)
+                request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
+                command, rule_context = self._command(state, request, context)
+                effects = self._resolve_with_fallback(state, request, rule_context, role, command)
+                actual.append(request); self._apply(state, rule_context, role, contract, effects, commits, events)
             else:
+                contract = members[0].contract; role = self.registry.require(members[0].role_id)
                 bound = tuple(self._bind(member, state) for member in members)
                 contexts = tuple(self.projector.project(state, request, self.registry) for request in bound)
                 commands = tuple(self._command(state, request, context)[0] for request, context in zip(bound, contexts))
-                key = _digest(*(sorted(request.action_key for request in bound)))
-                group_request = self._bind(bound[0], state, action_key=key)
+                group_key = _digest(*(sorted(request.action_key for request in bound)))
+                group_request = self._bind(bound[0], state, action_key=group_key)
                 group_context = self.projector.project(state, group_request, self.registry)
                 try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, commands))
                 except RuleExecutionError:
@@ -365,8 +383,19 @@ class Scheduler:
                     fallbacks = tuple(self._fallback(state, request, context)[0] for request, context in zip(bound, contexts))
                     try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, fallbacks))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
-                actual.extend(bound); commit = self._apply(state, group_context, role, contract, effects, commits, events)
-                for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=0)
+                actual.extend(bound); self._apply(state, group_context, role, contract, effects, commits, events)
+            for commit_index in range(before, len(commits)):
+                pending.extend({"commit_index": commit_index, "ordinal": ordinal, "depth": 0}
+                               for ordinal, _ in enumerate(commits[commit_index].events))
+            saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
+                                    tuple(pending), WorkCursor("main", index + 1, 0))
+            journal.put(key, saved)
+        saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
+                                tuple(pending), WorkCursor("response", 0, 0))
+        journal.put(key, saved); queue = ResponseQueue(self.registry)
+        for item in pending:
+            commit = commits[item["commit_index"]]; ordinal = item["ordinal"]
+            queue.enqueue(self._domain(commit, ordinal, commit.events[ordinal]), depth=item["depth"])
         while (entry := queue.pop(state)) is not None:
             event, depth, windows = entry
             for window in windows:
@@ -375,7 +404,7 @@ class Scheduler:
                 if contract is None: raise PipelinePaused("invalid response window")
                 base = IssuedActionRequest(window.actor_seat, role.role_id, contract, self._revision(state), state.round_number,
                     state.phase.value if hasattr(state.phase, "value") else state.phase, window.window_id, window.window_id)
-                trigger = {"event_id": event.event_id, "type": event.event_type, **{key: event.payload[key] for key in ("source_seat", "target_seat", "cause", "round_number", "phase") if key in event.payload}}
+                trigger = {"event_id": event.event_id, "type": event.event_type, **{name: event.payload[name] for name in ("source_seat", "target_seat", "cause", "round_number", "phase") if name in event.payload}}
                 try: context = self.projector.project(state, base, self.registry, source_event_id=event.event_id, trigger_event=trigger, trigger_reason=event.reason)
                 except Exception: raise PipelinePaused("invalid response context") from None
                 if self._limit_reached(context, contract): continue
@@ -384,12 +413,21 @@ class Scheduler:
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
                 else:
                     command, rule_context = self._command(state, base, context)
-                    effects = self._resolve_with_fallback(state, base, rule_context, role, command)
-                    context = rule_context
+                    effects = self._resolve_with_fallback(state, base, rule_context, role, command); context = rule_context
                 actual.append(base); commit = self._apply(state, context, role, contract, effects, commits, events)
                 for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=depth + 1)
         digest = commits[-1].state_digest if commits else _digest(state.game_id, self._revision(state))
-        return PointResult(tuple(actual), tuple(commits), tuple(events), digest, tuple(faults))
+        done = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults), (),
+                               WorkCursor("done", 0, 0))
+        journal.put(key, done); result = self._point_result(done, digest)
+        journal.put(key, PointCheckpoint(done.issued, done.actual, done.commits, done.events, done.faults,
+                                         (), done.cursor, {"state_digest": digest}))
+        return result
+
+    @staticmethod
+    def _point_result(saved: PointCheckpoint, digest: str | None = None) -> PointResult:
+        if digest is None: digest = saved.complete_result["state_digest"]
+        return PointResult(saved.actual, saved.commits, saved.events, digest, saved.faults)
 
     @staticmethod
     def can_advance(*, pending_requests: int, pending_effects: int, queued_events: int) -> bool:
