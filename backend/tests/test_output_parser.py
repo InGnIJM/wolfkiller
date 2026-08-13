@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 from app.agents.output_parser import OutputParser, ToolCallError, ToolCallResult
+from app.core.action_validator import ActionValidationError
 from app.roles.registry import builtin_registry
 
 
@@ -394,3 +395,24 @@ class TestOutputParser:
         raw = '{"target_seat":4,"reasoning":"suspicious"}'
         vote = parser.parse_vote_action(raw, voter_seat=1)
         assert vote.thinking == ""
+
+    def test_parse_strict_action_response_requires_exactly_one_tool_call(self, werewolf_contract):
+        parser = OutputParser()
+        two_calls = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "werewolf_kill", "args": {"action_type": "kill", "target_seat": 2, "reasoning": "x"}, "id": "c1"},
+                {"name": "werewolf_kill", "args": {"action_type": "kill", "target_seat": 3, "reasoning": "x"}, "id": "c2"},
+            ],
+        )
+        with pytest.raises(ActionValidationError, match="one tool call"):
+            parser.parse_strict_action_response(two_calls, werewolf_contract)
+
+    def test_parse_strict_action_response_rejects_tool_call_name_mismatch(self, werewolf_contract):
+        parser = OutputParser()
+        wrong_name = AIMessage(
+            content="",
+            tool_calls=[{"name": "seer_check", "args": {"action_type": "check", "target_seat": 2, "reasoning": "x"}, "id": "c1"}],
+        )
+        with pytest.raises(ActionValidationError, match="does not match issued contract"):
+            parser.parse_strict_action_response(wrong_name, werewolf_contract)

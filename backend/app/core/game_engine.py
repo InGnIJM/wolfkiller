@@ -50,7 +50,7 @@ class _PendingDeath:
         if type(self.round_number) is not int or not 0 <= self.round_number <= 2_147_483_647: raise ValueError("invalid pending death round")
         if type(self.cause) is not str or _EVENT_TOKEN.fullmatch(self.cause) is None: raise ValueError("invalid pending death cause")
         try: self.cause.encode("utf-8", errors="strict")
-        except UnicodeError: raise ValueError("invalid pending death cause") from None
+        except UnicodeError: raise ValueError("invalid pending death cause") from None  # pragma: no cover - token regex guarantees ASCII
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ class _PendingWin:
         for value, name in ((self.winning_camp, "camp"), (self.reason, "reason")):
             if type(value) is not str or _EVENT_TOKEN.fullmatch(value) is None: raise ValueError(f"invalid pending win {name}")
             try: value.encode("utf-8", errors="strict")
-            except UnicodeError: raise ValueError(f"invalid pending win {name}") from None
+            except UnicodeError: raise ValueError(f"invalid pending win {name}") from None  # pragma: no cover - token regex guarantees ASCII
 
 
 @dataclass(frozen=True)
@@ -232,8 +232,6 @@ class GameEngine:
                 await self._execute_vote_casting()
             elif phase == GamePhase.VOTE_RESOLUTION:
                 await self._execute_vote_resolution()
-            elif phase == GamePhase.GAME_OVER:
-                break
 
     async def _wait_if_paused(self) -> None:
         while self._paused and self._running:
@@ -383,7 +381,7 @@ class GameEngine:
         if pending.stage == 8:
             self.game_logger.log_phase_change(self.game_id, self.state.phase.value, self.state.round_number)
             pending = replace(pending, stage=9); self._pending_night_completion = pending
-        if pending.stage == 9:
+        if pending.stage == 9:  # pragma: no branch - stages advance sequentially to 9
             await self.event_bus.publish(BusEvent.PHASE_CHANGED, game_id=self.game_id,
                 phase=self.state.phase.value, round_number=self.state.round_number, state=self.state)
             self._pending_night_completion = None

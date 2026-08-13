@@ -172,3 +172,59 @@ class TestPromptBuilder:
     def test_vote_contract_is_still_used_by_engine_transport(self):
         assert VOTE_CONTRACT.contract_id == "exile_vote"
         assert VOTE_CONTRACT.fallback_action_type == "abstain"
+
+
+class TestPromptBuilderHelpers:
+    def test_speech_tools_and_system_prompt_are_static(self):
+        assert len(PromptBuilder.get_speech_tools()) == 2
+        assert PromptBuilder.get_system_prompt()
+
+    def test_identity_block_falls_back_for_unknown_role(self):
+        builder = PromptBuilder()
+        block = builder._identity_block(1, {
+            "facts": {"actor_identity": {"role_id": "unknown-role", "camp_id": "good"}},
+        })
+        assert "unknown-role" in block and "good" in block
+
+    def test_speaking_progress_for_outsider_and_empty_order(self):
+        state = make_state()
+        state.speaking_order = [1, 2, 3]
+        outsider = PromptBuilder._format_speaking_progress(state, 9)
+        assert "发言顺序：1号 → 2号 → 3号" in outsider
+        assert "当前发言者" not in outsider
+
+        state.speaking_order = []
+        assert PromptBuilder._format_speaking_progress(state, 1) == "（当前不是发言阶段）"
+
+    def test_private_facts_block_minimal_and_with_facts(self):
+        assert PromptBuilder._private_facts_block({"facts": {"actor_identity": {}}}) == "- 无额外私有事实。"
+        block = PromptBuilder._private_facts_block({
+            "resources": {"gun": 1},
+            "facts": {"actor_identity": {}, "alive_seats": [1, 2], "dead_seats": []},
+        })
+        assert "可用资源：gun=1" in block
+        assert "alive_seats" in block
+        assert "dead_seats" not in block  # empty sequences are skipped
+
+    def test_conversations_render_scopes_and_empty_state(self):
+        from app.models.conversation import Conversation, ConversationScope
+        log = ConversationLog()
+        assert PromptBuilder()._format_conversations(log, 1, 1, "wolf-killer-werewolf") == "（尚无对话记录）"
+        log.records.append(Conversation(
+            ConversationScope.WEREWOLF, "夜间交流", 1, speaker_seat=2, speaker_role="wolf-killer-werewolf",
+        ))
+        log.records.append(Conversation(
+            ConversationScope.PUBLIC, "系统提示", 1, phase="system",
+        ))
+        out = PromptBuilder()._format_conversations(log, 1, 1, "wolf-killer-werewolf")
+        assert "[狼队频道]" in out and "[系统]" in out and "【本轮】" in out
+
+    def test_thoughts_render_and_empty_state(self):
+        log = ConversationLog()
+        assert PromptBuilder._format_thoughts(log, 1, 1) == "（尚无思考记录）"
+        log.add_thought(1, "wolf-killer-werewolf", "思考内容", 1, "night")
+        out = PromptBuilder._format_thoughts(log, 1, 1)
+        assert "思考内容" in out and "第1轮" in out
+
+    def test_task_instruction_default_context(self):
+        assert PromptBuilder._task_instruction("unknown_context", make_state()) == "请根据你的身份和当前局势做出合理决策。"

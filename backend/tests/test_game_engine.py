@@ -505,12 +505,14 @@ def test_pending_snapshots_validate_exact_types_and_ranges() -> None:
     game_engine_module._PendingNightCompletion(result, (death,), 1, 7, win, True, False)
     for call in (
         lambda: game_engine_module._PendingDeath(True, "x", 1),
+        lambda: game_engine_module._PendingDeath(1, "wolf_kill", -1),
         lambda: game_engine_module._PendingDeath(1, "bad cause", 1),
         lambda: game_engine_module._PendingWin("good", "bad reason"),
         lambda: game_engine_module._PendingNightCompletion(object()),
         lambda: game_engine_module._PendingNightCompletion(result, (object(),)),
         lambda: game_engine_module._PendingNightCompletion(result, (), 1, 0),
         lambda: game_engine_module._PendingNightCompletion(result, (), 0, 10),
+        lambda: game_engine_module._PendingNightCompletion(result, win_result=object()),
     ):
         with pytest.raises((TypeError, ValueError)): call()
 
@@ -1233,3 +1235,365 @@ class TestGameEngine:
             conv_path = os.path.join(tmpdir, "games", "test", "conversation.log")
             assert os.path.exists(log_path)
             assert os.path.exists(conv_path)
+
+    @pytest.mark.asyncio
+    async def test_game_loop_visits_phases_then_terminates(self):
+        engine = GameEngine(game_id="loop-test")
+        engine._running = True
+        calls = []
+
+        async def step(next_phase=None, terminal=False):
+            calls.append(engine.sm.get_state())
+            if terminal:
+                engine.sm.set_state(GamePhase.GAME_OVER)
+            elif next_phase is not None:
+                engine.sm.set_state(next_phase)
+
+        async def night_step():
+            if len([c for c in calls if c is GamePhase.NIGHT]) == 0:
+                await step(GamePhase.DAWN)
+            else:
+                await step(GamePhase.GAME_OVER, terminal=True)
+        async def dawn_step(): await step(GamePhase.LAST_WORDS)
+        async def last_words_step(): await step(GamePhase.SPEECH)
+        async def speech_step(): await step(GamePhase.VOTE_CASTING)
+        async def casting_step(): await step(GamePhase.VOTE_RESOLUTION)
+        async def resolution_step(): await step(GamePhase.NIGHT)
+
+        engine._execute_night = AsyncMock(side_effect=night_step)
+        engine._execute_dawn = AsyncMock(side_effect=dawn_step)
+        engine._execute_last_words = AsyncMock(side_effect=last_words_step)
+        engine._execute_speech_round = AsyncMock(side_effect=speech_step)
+        engine._execute_vote_casting = AsyncMock(side_effect=casting_step)
+        engine._execute_vote_resolution = AsyncMock(side_effect=resolution_step)
+        engine.sm.set_state(GamePhase.NIGHT)
+
+        await engine._game_loop()
+
+        assert calls == [
+            GamePhase.NIGHT, GamePhase.DAWN, GamePhase.LAST_WORDS,
+            GamePhase.SPEECH, GamePhase.VOTE_CASTING, GamePhase.VOTE_RESOLUTION,
+            GamePhase.NIGHT,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_game_loop_falls_through_unhandled_phases(self):
+        engine = GameEngine(game_id="loop-fallthrough")
+        engine._running = True
+        seen = []
+
+        async def wait():
+            seen.append(engine.sm.get_state())
+            if len(seen) == 2:
+                engine.sm.set_state(GamePhase.GAME_OVER)
+
+        engine._wait_if_paused = AsyncMock(side_effect=wait)
+        engine.sm.set_state(GamePhase.SHERIFF_ELECTION)
+
+        await engine._game_loop()
+
+        assert seen == [GamePhase.SHERIFF_ELECTION, GamePhase.SHERIFF_ELECTION]
+        assert engine.sm.is_terminal()
+
+    @pytest.mark.asyncio
+    async def test_night_without_scheduler_raises(self):
+        engine = GameEngine(game_id="no-scheduler")
+        with pytest.raises(ValueError, match="scheduler"):
+            await engine._execute_night()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("event", [
+        {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",), "extra": 1},
+        {"event_type": "", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",)},
+        {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": "PUBLIC"},
+        {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC", 1)},
+        {"event_type": "PLAYER_DIED", "payload": {"seat": 99, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",)},
+        {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",)},
+    ])
+    async def test_pipeline_night_deaths_rejects_more_malformed_events(self, event):
+        result = PipelineResult((), (), "digest", (event,), PipelineMode.V2)
+        engine = GameEngine("malformed-more", pipeline_scheduler=object())
+        engine.state.round_number = 1
+        engine.state.players = {1: PlayerState(1, "r", "good", is_alive=False)}
+        engine.state.death_history = [DeathReport(1, "wolf_kill", 1)]
+        if event.get("payload", {}).get("seat") == 1 and len(event) == 3:
+            engine.state.players[1].is_alive = True  # alive player with a death record
+        engine._pending_night_completion = game_engine_module._PendingNightCompletion(result)
+        with pytest.raises(PipelinePaused, match="invalid pipeline night event"):
+            await engine._execute_night()
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_night_skips_recheck_when_win_checked(self):
+        engine = GameEngine("win-cached", pipeline_scheduler=object())
+        engine.state.round_number = 1
+        engine.sm.set_state(GamePhase.NIGHT)
+        result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+        win = game_engine_module._PendingWin("good", "all_wolves_dead")
+        engine._pending_night_completion = game_engine_module._PendingNightCompletion(
+            result, deaths=(), stage=2, win_checked=True, win_result=win,
+        )
+        engine.rule_engine.check_win = MagicMock(side_effect=AssertionError("must not recheck"))
+        engine.event_bus = MagicMock()
+        engine.event_bus.publish = AsyncMock()
+        engine.game_logger.log_game_over = MagicMock()
+        await engine._execute_night()
+        assert engine.sm.get_state() is GamePhase.GAME_OVER
+        engine.game_logger.log_game_over.assert_called_once()
+        assert engine._pending_night_completion is None
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_night_transition_raise_marks_phase(self):
+        engine = GameEngine("transition-raise", pipeline_scheduler=object())
+        engine.state.round_number = 1
+        engine.sm.set_state(GamePhase.NIGHT)
+        result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+        engine._pending_night_completion = game_engine_module._PendingNightCompletion(
+            result, deaths=(), stage=2, win_checked=True,
+        )
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+        original_transition = engine.sm.transition
+        def explode(event):
+            engine.sm.set_state(GamePhase.DAWN)
+            raise RuntimeError("transition exploded")
+        engine.sm.transition = explode
+        with pytest.raises(RuntimeError, match="transition exploded"):
+            await engine._execute_night()
+        assert engine.state.phase is GamePhase.DAWN
+        assert engine._pending_night_completion.stage == 7
+        engine.sm.transition = original_transition
+        engine.event_bus.publish = AsyncMock()
+        await engine._execute_night()
+        assert engine._pending_night_completion is None
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_night_transition_raise_without_dawn_keeps_stage(self):
+        engine = GameEngine("transition-raise-no-dawn", pipeline_scheduler=object())
+        engine.state.round_number = 1
+        engine.sm.set_state(GamePhase.NIGHT)
+        engine.state.phase = GamePhase.NIGHT
+        result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+        engine._pending_night_completion = game_engine_module._PendingNightCompletion(
+            result, deaths=(), stage=2, win_checked=True,
+        )
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+        original_transition = engine.sm.transition
+        def explode(event): raise RuntimeError("transition exploded")
+        engine.sm.transition = explode
+        with pytest.raises(RuntimeError, match="transition exploded"):
+            await engine._execute_night()
+        assert engine.state.phase is GamePhase.NIGHT
+        assert engine._pending_night_completion.stage == 6
+        engine.sm.transition = original_transition
+        engine.event_bus.publish = AsyncMock()
+        await engine._execute_night()
+        assert engine._pending_night_completion is None
+
+    @pytest.mark.asyncio
+    async def test_speech_round_warns_when_player_has_no_role(self):
+        roles = {1: make_mock_role(1, "wolf-killer-villager")}
+        engine = GameEngine(game_id="speech-missing", roles=roles, event_bus=EventBus())
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.sm.set_state(GamePhase.SPEECH)
+        engine.state.phase = GamePhase.SPEECH
+
+        await engine._execute_speech_round()
+
+        assert len(engine.state.speeches) == 1
+        assert engine.sm.get_state() is GamePhase.VOTE_CASTING
+
+    @pytest.mark.asyncio
+    async def test_vote_casting_skips_none_votes(self):
+        roles = {seat: make_mock_role(seat, "wolf-killer-villager", vote=VoteAction(seat, 2))
+                 for seat in (1, 2)}
+        engine = GameEngine(game_id="vote-none", roles=roles, event_bus=EventBus())
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        engine.vote = AsyncMock(side_effect=[VoteAction(1, 2), None])
+
+        await engine._execute_vote_casting()
+
+        assert len(engine.state.votes) == 1
+        assert engine.sm.get_state() is GamePhase.VOTE_RESOLUTION
+
+    @pytest.mark.asyncio
+    async def test_tiebreak_skips_completed_speech_and_vote_steps(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="tiebreak-done", roles=roles, event_bus=EventBus(),
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.is_tiebreak = True
+        engine.state.vote_round = 2
+        engine.state.tiebreak_candidates = {1, 2}
+        engine.state.supplemental_speakers = {1, 2}
+        engine.state.voted_seats = {1, 2}
+        engine.state.votes = []
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+        engine.speak = AsyncMock(side_effect=AssertionError("no supplemental speech expected"))
+
+        await engine._execute_vote_resolution()
+
+        assert engine.state.is_tiebreak is False
+        assert engine.sm.get_state() is GamePhase.NIGHT
+
+    @pytest.mark.asyncio
+    async def test_tiebreak_ignores_exile_of_missing_player(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="tiebreak-missing", roles=roles, event_bus=EventBus(),
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.is_tiebreak = True
+        engine.state.vote_round = 2
+        engine.state.tiebreak_candidates = {1, 2}
+        engine.state.supplemental_speakers = {1, 2}
+        engine.state.voted_seats = {1, 2}
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=99),
+            VoteAction(voter_seat=2, target_seat=99),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+
+        await engine._execute_vote_resolution()
+
+        assert engine.sm.get_state() is GamePhase.NIGHT
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_announces_tie_final_when_resolution_returns_none(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="resolve-none", roles=roles, event_bus=EventBus(),
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=1),
+            VoteAction(voter_seat=2, target_seat=1),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+        engine.resolve_votes = MagicMock(return_value=None)
+
+        await engine._execute_vote_resolution()
+
+        assert any("无人被放逐" in record.content for record in engine.conversation_log.get_all())
+        assert engine.sm.get_state() is GamePhase.NIGHT
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_ignores_exile_of_missing_player(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="exile-missing", roles=roles, event_bus=EventBus(),
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=99),
+            VoteAction(voter_seat=2, target_seat=99),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+
+        await engine._execute_vote_resolution()
+
+        assert engine.sm.get_state() is GamePhase.NIGHT
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_game_over_skips_transition(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+            3: make_mock_role(3, "wolf-killer-seer"),
+        }
+        engine = GameEngine(game_id="vote-win", roles=roles, event_bus=EventBus(),
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+            3: PlayerState(3, "wolf-killer-seer", "good"),
+        }
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=1),
+            VoteAction(voter_seat=2, target_seat=1),
+            VoteAction(voter_seat=3, target_seat=1),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+
+        await engine._execute_vote_resolution()
+
+        assert engine.sm.is_terminal()
+        assert engine.state.win_result is not None
+        assert engine.state.win_result["winning_camp"] == "good"
+
+    def test_emergency_speech_variants(self):
+        engine = GameEngine(game_id="emergency")
+        engine.state.players = {1: PlayerState(1, "unknown-role", "good")}
+        last_words = engine._emergency_speech(1, "last_words")
+        assert "1号" in last_words and "玩家" in last_words  # unknown role falls back
+
+        engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good", is_alive=False)}
+        villager_words = engine._emergency_speech(1, "last_words")
+        assert "出局" in villager_words
+
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        with_others = engine._emergency_speech(1, "day_speech")
+        assert "我目前比较关注2号玩家的发言" in with_others
+
+        engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good")}
+        alone = engine._emergency_speech(1, "day_speech")
+        assert "人数很少" in alone
+
+    @pytest.mark.asyncio
+    async def test_check_game_over_returns_false_without_win(self):
+        engine = GameEngine(game_id="no-win")
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+        assert await engine._check_game_over() is False
+        assert engine.state.win_result is None
+
+    @pytest.mark.asyncio
+    async def test_vote_request_exception_returns_none(self):
+        role = MagicMock()
+        role.request_action = AsyncMock(side_effect=RuntimeError("llm down"))
+        engine = GameEngine(game_id="vote-error", roles={1: role})
+        engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good")}
+        engine.state.phase = GamePhase.VOTE_CASTING
+
+        assert await engine.vote(1) is None
+
+    @pytest.mark.asyncio
+    async def test_give_last_words_without_role_returns_none(self):
+        engine = GameEngine(game_id="no-role-words", roles={})
+        engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good", is_alive=False)}
+        assert await engine.give_last_words(1, "exile", 1) is None
+        assert await engine.give_last_words(99, "exile", 1) is None
+

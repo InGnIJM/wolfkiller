@@ -1550,3 +1550,88 @@ def _response_fixture(
         }, digest="response"
     )
     return contract, registry, _request(registry, 1, "wolf")
+
+
+def test_project_view_requires_exact_types(state: GameState, registry: RegistrySnapshot) -> None:
+    projector = ContextProjector()
+    with pytest.raises(TypeError, match="state"):
+        projector.project_view(object(), registry, 1)
+    with pytest.raises(TypeError, match="registry"):
+        projector.project_view(state, object(), 1)
+
+
+def test_project_view_rejects_invalid_and_missing_seats(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    projector = ContextProjector()
+    with pytest.raises(ValueError, match="view seat"):
+        projector.project_view(state, registry, 0)
+    with pytest.raises(ValueError, match="view seat"):
+        projector.project_view(state, registry, "1")
+    with pytest.raises(ValueError, match="does not exist"):
+        projector.project_view(state, registry, 99)
+
+
+def test_project_view_rejects_camp_disagreement(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    state.players[1].camp = "good"
+    with pytest.raises(ValueError, match="camp"):
+        ContextProjector().project_view(state, registry, 1)
+
+
+def test_project_view_builds_frozen_observation_context(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    context = ContextProjector().project_view(state, registry, 3)
+    assert context.contract_id == "observation"
+    assert context.schedule_point is SchedulePoint.DAY_ACTION
+    assert context.actor_seat == 3
+    assert context.actor_role_id == "seer"
+    assert context.facts["alive_seats"] == (1, 2, 3, 4, 6)
+    assert context.facts["actor_identity"] == {"seat": 3, "role_id": "seer", "camp_id": "good"}
+    assert context.config_version == "registry-v1"
+    with pytest.raises(FrozenInstanceError):
+        context.facts = {}
+
+
+def test_project_view_includes_camp_members_only_for_camp_roles(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    projector = ContextProjector()
+    wolf_view = projector.project_view(state, registry, 1)
+    villager_view = projector.project_view(state, registry, 6)
+    assert wolf_view.facts["camp_members"] == (1, 2)
+    assert "camp_members" not in villager_view.facts
+
+
+def test_role_private_facts_view_rejects_corrupt_runtime() -> None:
+    state = GameState(game_id="corrupt", phase=GamePhase.NIGHT, round_number=1)
+    state.players = {1: PlayerState(1, "seer", "good")}
+    state._pipeline_runtime = _Runtime(private_facts={1: [{"namespace": "private_checks", "fact": "not-a-mapping"}]})
+    with pytest.raises(EffectRejected, match="invalid pipeline runtime"):
+        role_private_facts_view(state, 1, "private_checks")
+
+
+def test_role_private_data_view_boundaries_and_runtime_values() -> None:
+    from app.core.role_runtime import role_private_data_view
+    state = GameState(game_id="data-view", phase=GamePhase.NIGHT, round_number=1)
+    state.players = {1: PlayerState(1, "guard", "good")}
+    with pytest.raises(TypeError, match="state"):
+        role_private_data_view(object(), 1)
+    with pytest.raises(ValueError, match="seat"):
+        role_private_data_view(state, 0)
+
+    assert dict(role_private_data_view(state, 1)) == {}
+
+    state._pipeline_runtime = _Runtime(private_data={1: {"last_guarded": 3}})
+    assert dict(role_private_data_view(state, 1)) == {"last_guarded": 3}
+
+    state._pipeline_runtime = _Runtime(private_data={1: {"last_guarded": "bad"}})
+    assert dict(role_private_data_view(state, 1)) == {"last_guarded": "bad"}
+
+    corrupt = _Runtime()
+    corrupt.private_data = {0: {}}  # seat 0 fails runtime validation on clone
+    state._pipeline_runtime = corrupt
+    with pytest.raises(EffectRejected, match="invalid pipeline runtime"):
+        role_private_data_view(state, 1)

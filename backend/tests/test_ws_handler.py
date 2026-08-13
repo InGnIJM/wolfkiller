@@ -156,3 +156,93 @@ class TestWSHandler:
         assert handler.ws_manager is mgr
         assert handler.event_bus is bus
         assert handler._game_speeds == {}
+
+    @pytest.mark.asyncio
+    async def test_handle_message_pause_and_resume(self):
+        mgr = WSManager()
+        mgr.broadcast = AsyncMock()
+        handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
+        mock_engine = MagicMock()
+        mock_engine.pause = MagicMock()
+        mock_engine.resume = MagicMock()
+        mock_service = MagicMock()
+        mock_service._engines = {"test-game": mock_engine}
+        with patch.dict("sys.modules", {"app.main": MagicMock()}):
+            import sys
+            sys.modules["app.main"].game_service = mock_service
+            await handler._handle_message("test-game", MagicMock(), '{"type": "pause"}')
+            await handler._handle_message("test-game", MagicMock(), '{"type": "resume"}')
+        mock_engine.pause.assert_called_once()
+        mock_engine.resume.assert_called_once()
+        assert mgr.broadcast.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_handle_message_control_without_engine(self):
+        mgr = WSManager()
+        mgr.broadcast = AsyncMock()
+        handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
+        mock_service = MagicMock()
+        mock_service._engines = {}
+        with patch.dict("sys.modules", {"app.main": MagicMock()}):
+            import sys
+            sys.modules["app.main"].game_service = mock_service
+            await handler._handle_message("missing", MagicMock(), '{"type": "set_speed", "delay_seconds": 0.5}')
+            await handler._handle_message("missing", MagicMock(), '{"type": "skip_phase"}')
+            await handler._handle_message("missing", MagicMock(), '{"type": "pause"}')
+            await handler._handle_message("missing", MagicMock(), '{"type": "resume"}')
+        assert handler._game_speeds == {"missing": 0.5}
+
+    @pytest.mark.asyncio
+    async def test_handle_connection_sends_state_and_routes_messages(self):
+        mgr = WSManager()
+        mgr.connect = AsyncMock()
+        mgr.send_to = AsyncMock()
+        handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
+        mock_ws = MagicMock()
+        mock_state = MagicMock()
+        mock_state.get_public_state.return_value = {"phase": "night"}
+        mock_service = MagicMock()
+        mock_service.get_game_state.return_value = mock_state
+        mock_service._engines = {}
+        received = []
+
+        async def iter_text():
+            for item in ('{"type": "set_speed", "delay_seconds": 1.0}',):
+                yield item
+
+        mock_ws.iter_text = iter_text
+        with patch.dict("sys.modules", {"app.main": MagicMock()}):
+            import sys
+            sys.modules["app.main"].game_service = mock_service
+            await handler.handle_connection(mock_ws, "game-1")
+        mgr.connect.assert_called_once_with("game-1", mock_ws)
+        mgr.send_to.assert_called_once()
+        assert mgr.send_to.call_args.args[2] == "game_state"
+        assert handler._game_speeds == {"game-1": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_handle_connection_without_state_and_disconnect(self):
+        mgr = WSManager()
+        mgr.connect = AsyncMock()
+        mgr.send_to = AsyncMock()
+        mgr.disconnect = AsyncMock()
+        handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
+        mock_ws = MagicMock()
+        mock_service = MagicMock()
+        mock_service.get_game_state.return_value = None
+        mock_service._engines = {}
+
+        from fastapi import WebSocketDisconnect
+
+        async def iter_text():
+            if False:
+                yield ""
+            raise WebSocketDisconnect(code=1000)
+
+        mock_ws.iter_text = iter_text
+        with patch.dict("sys.modules", {"app.main": MagicMock()}):
+            import sys
+            sys.modules["app.main"].game_service = mock_service
+            await handler.handle_connection(mock_ws, "game-x")
+        mgr.send_to.assert_not_awaited()
+        mgr.disconnect.assert_called_once_with("game-x", mock_ws)

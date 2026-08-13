@@ -1,6 +1,67 @@
 import pytest
+from unittest.mock import MagicMock
 from app.core.conversation_log import ConversationLog
-from app.models.conversation import ConversationScope
+from app.models.conversation import Conversation, ConversationScope
+
+
+class TestConversationLogLifecycle:
+    def test_set_persistence_enables_writes_to_logger(self):
+        logger = MagicMock()
+        log = ConversationLog()
+        log.set_persistence(logger, "game-x")
+
+        record = log.add_public_speech(1, "wolf-killer-villager", "大家好", 1, "speech")
+
+        logger.log_conversation.assert_called_once_with("game-x", record.to_dict())
+
+    def test_death_announcement_with_and_without_deaths(self):
+        from app.models.actions import DeathReport
+        log = ConversationLog()
+        peaceful = log.add_death_announcement([], 1)
+        assert "平安夜" in peaceful.content
+
+        with_deaths = log.add_death_announcement(
+            [DeathReport(1, "wolf_kill", 1), DeathReport(2, "poison", 1)], 1,
+        )
+        assert "1" in with_deaths.content and "2" in with_deaths.content
+
+    def test_vote_result_with_and_without_exile(self):
+        log = ConversationLog()
+        exiled = log.add_vote_result([], 3, 1)
+        assert "3号玩家被放逐" in exiled.content
+        tied = log.add_vote_result([], None, 1)
+        assert "平票" in tied.content
+
+    def test_system_message_scopes(self):
+        log = ConversationLog()
+        public = log.add_system_message("公开提示", 1, "public")
+        assert public.scope is ConversationScope.PUBLIC
+        camp = log.add_system_message("阵营提示", 1, "werewolf")
+        assert camp.scope is ConversationScope.WEREWOLF
+
+    def test_get_all_get_public_and_get_by_round(self):
+        log = ConversationLog()
+        log.add_public_speech(1, "wolf-killer-villager", "第一轮", 1, "speech")
+        log.add_public_speech(1, "wolf-killer-villager", "第二轮", 2, "speech")
+        log.add_thought(1, "wolf-killer-villager", "思考", 2, "speech")
+
+        assert len(log.get_all()) == 3
+        assert len(log.get_public()) == 2
+        assert len(log.get_by_round(2)) == 2
+
+    def test_conversations_for_role_filters_night_intel_by_visible_to(self):
+        log = ConversationLog()
+        log.records.append(Conversation(
+            ConversationScope.NIGHT_INTEL, "只给2号看的情报", 1, phase="night", visible_to=[2],
+        ))
+        log.records.append(Conversation(
+            ConversationScope.NIGHT_INTEL, "只给3号看的情报", 1, phase="night", visible_to=[3],
+        ))
+
+        visible_to_2 = log.get_conversations_for_role(2, "wolf-killer-witch")
+        assert [record.content for record in visible_to_2] == ["只给2号看的情报"]
+        visible_to_1 = log.get_conversations_for_role(1, "wolf-killer-villager")
+        assert visible_to_1 == []
 
 
 class TestConversationLogThoughts:

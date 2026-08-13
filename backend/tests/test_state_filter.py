@@ -1,6 +1,6 @@
 import pytest
 
-from app.agents.state_filter import StateFilter
+from app.agents.state_filter import StateFilter, _plain
 from app.models.game import GameState, GamePhase, PlayerState
 from app.roles.registry import builtin_registry
 
@@ -79,3 +79,28 @@ class TestStateFilter:
         state.players[3].role = "wolf-killer-unknown"
         with pytest.raises(ValueError, match="unknown role"):
             StateFilter().filter_for_role(state, 3, "wolf-killer-unknown")
+
+
+class TestPlainConverter:
+    def test_rejects_unsupported_values(self):
+        with pytest.raises(TypeError, match="unsupported"):
+            _plain(object())
+
+    def test_rejects_nested_depth(self):
+        nested: object = 0
+        for _ in range(70):
+            nested = [nested]
+        with pytest.raises(ValueError, match="depth"):
+            _plain(nested)
+
+    def test_rejects_cycles(self):
+        cycle: list = []
+        cycle.append(cycle)
+        with pytest.raises(ValueError, match="cycle"):
+            _plain(cycle)
+
+    def test_plain_passthrough_and_mappings(self):
+        assert _plain(1) == 1
+        assert _plain("text") == "text"
+        assert _plain(None) is None
+        assert _plain({"a": [1, (2,)]}) == {"a": [1, [2]]}

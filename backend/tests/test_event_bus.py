@@ -101,3 +101,13 @@ class TestEventBus:
 
         assert len(received) == 1
         assert received[0]["data"] == 42
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_unknown_event_is_noop(self):
+        bus = EventBus()
+
+        async def handler(**kwargs):
+            pass
+
+        bus.unsubscribe("never_subscribed", handler)  # Should not raise
+        bus.unsubscribe(GameEvent.PHASE_CHANGED, handler)  # Unknown key for enum too

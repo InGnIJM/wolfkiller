@@ -36,35 +36,6 @@ class ConversationLog:
         self._persist(record)
         return record
 
-    def add_werewolf_chat(
-        self, seat: int, role: str, content: str, round_num: int
-    ) -> Conversation:
-        record = Conversation(
-            scope=ConversationScope.WEREWOLF,
-            speaker_seat=seat,
-            speaker_role=role,
-            content=content,
-            round_number=round_num,
-            phase="night",
-        )
-        self.records.append(record)
-        self._persist(record)
-        return record
-
-    def add_night_intel(
-        self, content: str, round_num: int, phase: str, visible_to: list[int]
-    ) -> Conversation:
-        record = Conversation(
-            scope=ConversationScope.NIGHT_INTEL,
-            content=content,
-            round_number=round_num,
-            phase=phase,
-            visible_to=visible_to,
-        )
-        self.records.append(record)
-        self._persist(record)
-        return record
-
     def add_death_announcement(
         self, deaths: list, round_num: int
     ) -> Conversation:

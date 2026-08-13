@@ -1148,3 +1148,223 @@ class TestPipelineSnapshotVersioning:
         assert state.effect_schema_version == 1
         assert state.registry_digest
         assert set(state.spec_versions) == set(builtin_registry.freeze().specs)
+
+
+class TestCommandProvider:
+    def _request(self):
+        from app.models.pipeline import IssuedActionRequest
+        contract = builtin_registry.freeze().require("wolf-killer-werewolf").contracts[0]
+        return IssuedActionRequest(1, "wolf-killer-werewolf", contract, 0, 1, "night", "w", "k")
+
+    def _provider(self, service, response_content="kill-ok"):
+        from unittest.mock import MagicMock
+        snapshot = builtin_registry.freeze()
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        llm = MagicMock()
+        if isinstance(response_content, Exception):
+            llm.get_model.return_value.invoke.side_effect = response_content
+        else:
+            response = MagicMock()
+            response.content = response_content
+            llm.get_model.return_value.invoke.return_value = response
+        return service._command_provider(snapshot, renderer, llm), renderer
+
+    def test_provider_returns_parsed_command(self):
+        service = GameService(WSManager(), EventBus())
+        provider, _ = self._provider(
+            service, '{"action_type":"kill","target_seat":2,"reasoning":"x"}'
+        )
+        from unittest.mock import MagicMock
+        context = MagicMock(game_id="g")
+        command = provider(self._request(), context, 0)
+        assert command.action_type == "kill"
+        assert command.target_seat == 2
+
+    def test_provider_falls_back_on_bad_json_or_network_error(self):
+        service = GameService(WSManager(), EventBus())
+        from unittest.mock import MagicMock
+        for content in ("not json", "[]", Exception("network")):
+            provider, _ = self._provider(service, content)
+            command = provider(self._request(), MagicMock(game_id="g"), 0)
+            assert command.action_type == "pass"
+            assert command.target_seat is None
+
+    def test_provider_falls_back_on_non_text_or_disallowed_action(self):
+        service = GameService(WSManager(), EventBus())
+        from unittest.mock import MagicMock
+        provider, _ = self._provider(service, object())
+        assert provider(self._request(), MagicMock(game_id="g"), 0).action_type == "pass"
+
+        provider, _ = self._provider(
+            service, '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+        )
+        assert provider(self._request(), MagicMock(game_id="g"), 0).action_type == "pass"
+
+    def test_provider_renders_game_history_when_engine_exists(self):
+        service = GameService(WSManager(), EventBus())
+        from unittest.mock import MagicMock
+        record = MagicMock(round_number=1, phase="speech", speaker_seat=2, content="大家好")
+        engine = MagicMock()
+        engine.conversation_log.get_conversations_for_role.return_value = [record]
+        service._engines = {"g": engine}
+        provider, renderer = self._provider(
+            service, '{"action_type":"kill","target_seat":2,"reasoning":"x"}'
+        )
+        from unittest.mock import MagicMock
+        context = MagicMock(game_id="g")
+        provider(self._request(), context, 0)
+        renderer.render.assert_called_once()
+        history = renderer.render.call_args.args[3]
+        assert "大家好" in history
+
+    def test_provider_renders_empty_history_without_engine(self):
+        service = GameService(WSManager(), EventBus())
+        provider, renderer = self._provider(
+            service, '{"action_type":"kill","target_seat":2,"reasoning":"x"}'
+        )
+        from unittest.mock import MagicMock
+        provider(self._request(), MagicMock(game_id="g"), 0)
+        assert renderer.render.call_args.args[3] == ""
+
+
+class TestReconstruction:
+    def _write_log(self, tmp_path, game_id, lines):
+        import os
+        games_dir = os.path.join(str(tmp_path), "data", "games", game_id)
+        os.makedirs(games_dir, exist_ok=True)
+        with open(os.path.join(games_dir, "game.log"), "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+    def test_reconstruct_state_reads_full_log(self, tmp_path, monkeypatch):
+        self._write_log(tmp_path, "full-log", [
+            {"operation": "role_init", "data": {"players": {
+                "1": {"role": "wolf-killer-werewolf", "camp": "werewolf", "is_alive": True},
+                "2": {"role": "wolf-killer-villager", "camp": "good", "is_alive": True},
+            }}},
+            {"operation": "night_deaths", "data": {"deaths": [
+                {"player_seat": 1, "cause": "wolf_kill", "round_number": 1},
+                {"player_seat": 99, "cause": "wolf_kill", "round_number": 1},
+            ]}},
+            {"operation": "vote_result", "data": {"exiled": 2, "tally": {"2": 1}}},
+            {"operation": "vote_result", "data": {"exiled": 99, "tally": {}}},
+            {"operation": "game_over", "data": {"winner": "good", "reason": "all_wolves_dead"}},
+        ])
+        monkeypatch.chdir(str(tmp_path))
+        service = GameService(WSManager(), EventBus())
+        state = service._reconstruct_state("full-log", {
+            "phase": "game_over", "winner": "good", "round_number": 2,
+            "player_count": 3,
+            "config": {"role_counts": {"wolf-killer-werewolf": 1, "wolf-killer-villager": 2}},
+        })
+        assert state is not None
+        assert state.players[1].is_alive is False
+        assert state.players[2].is_alive is False
+        assert state.players[3].role == "?"
+        assert state.win_result == {"winning_camp": "good", "reason": "all_wolves_dead"}
+
+    def test_reconstruct_state_falls_back_to_seat_events_without_role_init(self, tmp_path, monkeypatch):
+        self._write_log(tmp_path, "fallback-log", [
+            {"operation": "werewolf_kill", "data": {"votes": [
+                {"player_seat": 3}, {"player_seat": None}, {"player_seat": 4},
+            ]}, "seat": 5},
+        ])
+        monkeypatch.chdir(str(tmp_path))
+        service = GameService(WSManager(), EventBus())
+        state = service._reconstruct_state("fallback-log", {
+            "phase": "game_over", "round_number": 1, "player_count": 0,
+            "config": {"role_counts": {"wolf-killer-villager": 0}},
+        })
+        assert state is not None
+        assert set(state.players) == {3, 4, 5}
+        assert all(player.role == "?" for player in state.players.values())
+
+    def test_load_persisted_games_skips_running_games(self, monkeypatch):
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        service._manifest.load_or_rebuild.return_value = {
+            "running": {"phase": "night"},
+            "finished": {"phase": "game_over", "winner": "good"},
+        }
+        service._reconstruct_state = MagicMock(return_value=MagicMock())
+        service._load_persisted_games()
+        service._reconstruct_state.assert_called_once_with("finished", {"phase": "game_over", "winner": "good"})
+
+    def test_load_persisted_games_skips_unreconstructable_finished_games(self, monkeypatch):
+        service = GameService(WSManager(), EventBus())
+        service._games = {}
+        service._manifest = MagicMock()
+        service._manifest.load_or_rebuild.return_value = {
+            "finished": {"phase": "game_over", "winner": "good"},
+        }
+        service._reconstruct_state = MagicMock(return_value=None)
+        service._load_persisted_games()
+        assert service._games == {}
+
+
+class TestManifestVersionEdgeCases:
+    def _registry(self):
+        return builtin_registry.freeze()
+
+    def test_restore_snapshot_rejects_invalid_shapes(self):
+        from app.models.game import SnapshotVersionError
+        from app.services.game_manifest import restore_snapshot
+        registry = self._registry()
+        with pytest.raises(SnapshotVersionError, match="invalid snapshot"):
+            restore_snapshot(["not", "a", "mapping"], registry=registry)
+        with pytest.raises(SnapshotVersionError, match="invalid spec versions"):
+            restore_snapshot({"spec_versions": ["guard"]}, registry=registry)
+        for bad_version in (0, True, "1"):
+            with pytest.raises(SnapshotVersionError, match="missing role spec"):
+                restore_snapshot(
+                    {"spec_versions": {"wolf-killer-guard": bad_version}},
+                    registry=registry,
+                )
+
+    def test_load_ignores_non_list_index_and_entries_without_game_id(self, tmp_path):
+        import os
+        manifest = GameManifest(str(tmp_path))
+        manifest._dir.mkdir(parents=True, exist_ok=True)
+        with open(manifest._path, "w", encoding="utf-8") as f:
+            json.dump({"not": "a-list"}, f)
+        assert GameManifest(str(tmp_path)).load_or_rebuild() == {}
+
+        with open(manifest._path, "w", encoding="utf-8") as f:
+            json.dump([{"no-game-id": 1}, {"game_id": "valid"}], f)
+        entries = GameManifest(str(tmp_path)).load_or_rebuild()
+        assert list(entries) == ["valid"]
+
+    def test_load_without_games_dir_returns_empty(self, tmp_path):
+        assert GameManifest(str(tmp_path)).load_or_rebuild() == {}
+
+    def test_update_game_unknown_id_is_noop(self, tmp_path):
+        manifest = GameManifest(str(tmp_path))
+        manifest.update_game("missing", phase="night")  # Should not raise
+
+    def test_update_game_skips_none_fields_for_existing_entry(self, tmp_path):
+        manifest = GameManifest(str(tmp_path))
+        manifest.add_game("g", {"role_counts": {"wolf-killer-villager": 1}})
+        manifest.update_game("g", round_number=3, alive_count=1)
+        entry = GameManifest(str(tmp_path)).load_or_rebuild()["g"]
+        assert entry["round_number"] == 3
+        assert entry["alive_count"] == 1
+        assert entry["phase"] == "waiting"
+
+    def test_rebuild_skips_meta_without_config_when_index_config_invalid(self, tmp_path):
+        import os
+        manifest = GameManifest(str(tmp_path))
+        manifest._entries = {"bare": {
+            "game_id": "bare", "phase": "waiting", "round_number": 0,
+            "player_count": 0, "config": "invalid-config", "winner": None,
+        }}
+        manifest._persist()
+        games_dir = os.path.join(str(tmp_path), "games", "bare")
+        os.makedirs(games_dir)
+        with open(os.path.join(games_dir, "game.log"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"operation": "phase_change", "data": {"new_phase": "night"}, "round": 1}) + "\n")
+        entries = GameManifest(str(tmp_path)).load_or_rebuild()
+        # The extraction backfills only config/player_count when the index
+        # config is invalid; an empty extracted config leaves it unchanged.
+        assert entries["bare"]["phase"] == "waiting"
+        assert entries["bare"]["config"] == "invalid-config"

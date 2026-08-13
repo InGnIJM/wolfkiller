@@ -204,7 +204,9 @@ class BaseRole:
         """Generate a minimal but valid speech when the LLM fails to produce one.
         Ensures the player never silently disappears from the conversation.
         """
-        cn_name = self.prompt_builder._cn_name(self.role_name)
+        from app.roles.registry import builtin_registry
+        try: cn_name = builtin_registry.freeze().specs[self.role_name].display_name
+        except KeyError: cn_name = "玩家"
         alive_others = [s for s in state.alive_players() if s != self.seat]
 
         if context == "last_words":
@@ -375,7 +377,7 @@ class BaseRole:
                         )
                     ),
                 ]
-        raise AssertionError("unreachable")
+        raise AssertionError("unreachable")  # pragma: no cover - transport always returns or re-raises within two attempts
 
     def _accept_command(self, state: GameState, request: ActionRequest,
                         command: ActionCommand) -> AcceptedAction:

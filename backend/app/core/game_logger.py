@@ -44,42 +44,6 @@ class GameLogger:
         self.log_operation(game_id, "phase_change", round_num, phase,
                            data={"new_phase": phase})
 
-    def log_werewolf_kill(
-        self, game_id: str, round_num: int, wolf_seats: list[int],
-        target: Optional[int], votes: list[dict],
-    ) -> None:
-        self.log_operation(game_id, "werewolf_kill", round_num, "night",
-                           data={"wolf_seats": wolf_seats, "target": target, "votes": votes})
-
-    def log_witch_save(
-        self, game_id: str, round_num: int, seat: int, wolf_target: int, used: bool,
-    ) -> None:
-        self.log_operation(game_id, "witch_save", round_num, "night",
-                           seat=seat,
-                           data={"wolf_target": wolf_target, "used_antidote": used})
-
-    def log_witch_poison(
-        self, game_id: str, round_num: int, seat: int, poison_target: Optional[int],
-    ) -> None:
-        self.log_operation(game_id, "witch_poison", round_num, "night",
-                           seat=seat,
-                           data={"poison_target": poison_target})
-
-    def log_seer_check(
-        self, game_id: str, round_num: int, seat: int,
-        check_target: int, result: str,
-    ) -> None:
-        self.log_operation(game_id, "seer_check", round_num, "night",
-                           seat=seat,
-                           data={"check_target": check_target, "result": result})
-
-    def log_hunter_shoot(
-        self, game_id: str, round_num: int, seat: int, shoot_target: Optional[int],
-    ) -> None:
-        self.log_operation(game_id, "hunter_shoot", round_num, "night",
-                           seat=seat,
-                           data={"target": shoot_target})
-
     def log_deaths(
         self, game_id: str, round_num: int, deaths: list[dict],
     ) -> None:
