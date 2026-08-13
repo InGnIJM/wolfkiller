@@ -1,7 +1,24 @@
 import os
+from enum import StrEnum
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+class PipelineMode(StrEnum):
+    V1 = "v1"
+    SHADOW = "shadow"
+    V2 = "v2"
+
+
+def pipeline_mode_from_env(value: str | None = None) -> PipelineMode:
+    raw = os.getenv("ROLE_PIPELINE_V2", "v1") if value is None else value
+    if type(raw) is not str:
+        raise TypeError("pipeline mode must be a string")
+    try:
+        return PipelineMode(raw)
+    except ValueError:
+        raise ValueError("pipeline mode must be v1, shadow, or v2") from None
 
 
 class LLMConfig:

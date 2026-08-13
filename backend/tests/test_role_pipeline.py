@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
+from types import MappingProxyType
+
+import pytest
+
+from app.config import LLMConfig, PipelineMode, pipeline_mode_from_env
+from app.core.effect_applier import CommitResult
+from app.core.role_pipeline import (
+    PipelineDiff, PipelineObservation, PipelineResult, RolePipeline,
+)
+from app.core.scheduler import PointResult
+from app.models.game import GameState
+from app.models.pipeline import SchedulePoint
+
+
+def observation(**changes) -> PipelineObservation:
+    values = {
+        "accepted_actions": ("legacy",), "effects": ("old-effect",),
+        "state_digest": "v1-digest",
+        "public_events": ({"event_type": "OLD", "payload": {"seat": 1}},),
+    }
+    values.update(changes)
+    return PipelineObservation(**values)
+
+
+def point() -> PointResult:
+    commits = (
+        CommitResult("a2", ("e2",), 1, (
+            {"event_type": "PRIVATE", "payload": {"secret": "hidden"}, "visibility": ("ACTOR",)},
+            {"event_type": "PUBLIC", "payload": {"seat": 2}, "visibility": ("PUBLIC",)},
+        ), "digest-1"),
+        CommitResult("a1", ("e1", "e3"), 2, (), "digest-2"),
+    )
+    return PointResult((), commits, commits[0].events, "v2-digest")
+
+
+class FakeScheduler:
+    def __init__(self, result: PointResult) -> None:
+        self.result = result; self.calls = []
+
+    def run_point(self, state, schedule_point):
+        self.calls.append((state, schedule_point)); state.round_number += 10
+        return self.result
+
+
+def test_pipeline_mode_from_env_is_strict_and_reads_at_call_time(monkeypatch) -> None:
+    monkeypatch.delenv("ROLE_PIPELINE_V2", raising=False)
+    assert pipeline_mode_from_env() == PipelineMode.V1
+    monkeypatch.setenv("ROLE_PIPELINE_V2", "shadow")
+    assert pipeline_mode_from_env() == PipelineMode.SHADOW
+    assert pipeline_mode_from_env("v2") == PipelineMode.V2
+    for invalid in ("V2", " v2 ", "", "unknown", 1):
+        with pytest.raises((TypeError, ValueError)): pipeline_mode_from_env(invalid)
+
+
+def test_existing_llm_model_environment_branches_remain_stable(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_MODELS", " a, ,b "); assert LLMConfig().models == ["a", "b"]
+    monkeypatch.delenv("LLM_MODELS"); monkeypatch.setenv("LLM_MODEL", "single")
+    assert LLMConfig().models == ["single"]
+    monkeypatch.delenv("LLM_MODEL"); assert LLMConfig().models == ["deepseek-v4-pro"]
+
+
+def test_v1_only_calls_runner_and_mode_is_frozen() -> None:
+    calls = []
+    def runner(state, point): calls.append((state, point)); state.round_number += 1; return observation()
+    game = GameState("g"); adapter = RolePipeline(PipelineMode.V1, runner, None)
+    result = adapter.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert result.mode is PipelineMode.V1 and result.accepted_actions == ("legacy",)
+    assert result.diff is None and game.round_number == 1 and len(calls) == 1
+    with pytest.raises(FrozenInstanceError): adapter.mode = PipelineMode.V2
+
+
+def test_v2_converts_commits_and_filters_nonpublic_events() -> None:
+    scheduler = FakeScheduler(point()); game = GameState("g")
+    result = RolePipeline(PipelineMode.V2, None, scheduler).run_point(
+        game, SchedulePoint.NIGHT_ACTION
+    )
+    assert result.accepted_actions == ("a2", "a1")
+    assert result.effects == ("e2", "e1", "e3")
+    assert result.state_digest == "v2-digest"
+    assert result.public_events == ({"event_type": "PUBLIC", "payload": {"seat": 2}, "visibility": ("PUBLIC",)},)
+    assert "hidden" not in repr(result) and game.round_number == 10
+
+
+def test_shadow_mutates_live_state_only_with_v1_and_deepcopies_runtime() -> None:
+    game = GameState("g"); game._pipeline_runtime = {"nested": [{"seat": 1}]}
+    seen = []
+    def runner(state, point): state.round_number = 3; state._pipeline_runtime["nested"][0]["seat"] = 2; return observation()
+    scheduler = FakeScheduler(point())
+    original = scheduler.run_point
+    def shadow_run(state, schedule_point):
+        seen.append(state); state._pipeline_runtime["nested"][0]["seat"] = 99
+        return original(state, schedule_point)
+    scheduler.run_point = shadow_run
+    result = RolePipeline(PipelineMode.SHADOW, runner, scheduler).run_point(
+        game, SchedulePoint.NIGHT_ACTION
+    )
+    assert result.mode is PipelineMode.SHADOW and result.state_digest == "v1-digest"
+    assert result.diff is not None and result.diff.matched is False
+    assert game.round_number == 3 and game._pipeline_runtime["nested"][0]["seat"] == 2
+    assert seen[0] is not game
+
+
+def test_shadow_diff_is_deterministic_and_matches_equal_observations() -> None:
+    same = observation(accepted_actions=(), effects=(), public_events=())
+    scheduler = FakeScheduler(PointResult((), (), (), same.state_digest))
+    result = RolePipeline(PipelineMode.SHADOW, lambda *_: same, scheduler).run_point(
+        GameState("g"), SchedulePoint.NIGHT_ACTION
+    )
+    assert result.diff == PipelineDiff(True, ())
+
+
+def test_dependencies_boundaries_and_exceptions_do_not_compensate() -> None:
+    with pytest.raises(TypeError): RolePipeline("v1", lambda *_: observation(), None)
+    with pytest.raises(ValueError): RolePipeline(PipelineMode.V1, None, FakeScheduler(point()))
+    with pytest.raises(ValueError): RolePipeline(PipelineMode.V2, lambda *_: observation(), None)
+    with pytest.raises(TypeError): RolePipeline(PipelineMode.V1, object(), None)
+    adapter = RolePipeline(PipelineMode.V1, lambda *_: (_ for _ in ()).throw(RuntimeError("boom")), None)
+    game = GameState("g")
+    with pytest.raises(RuntimeError, match="boom"): adapter.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert game.round_number == 0
+    with pytest.raises(TypeError): RolePipeline(PipelineMode.V1, lambda *_: observation(), None).run_point(object(), SchedulePoint.NIGHT_ACTION)
+    with pytest.raises(TypeError): RolePipeline(PipelineMode.V1, lambda *_: observation(), None).run_point(GameState("g"), "night_action")
+    with pytest.raises(TypeError): RolePipeline(PipelineMode.V1, lambda *_: object(), None).run_point(GameState("g"), SchedulePoint.NIGHT_ACTION)
+
+
+def test_dtos_are_strict_deep_frozen_and_bounded() -> None:
+    raw = {"event_type": "E", "payload": {"items": [1]}}
+    value = observation(public_events=(raw,)); raw["payload"]["items"].append(2)
+    assert value.public_events[0]["payload"]["items"] == (1,)
+    with pytest.raises(TypeError): value.public_events[0]["payload"]["items"] += (2,)
+    with pytest.raises(TypeError): PipelineObservation(["a"], (), "d", ())
+    with pytest.raises(TypeError): PipelineObservation((), (1,), "d", ())
+    with pytest.raises(TypeError): PipelineObservation((), (), 1, ())
+    with pytest.raises(TypeError): PipelineObservation((), (), "d", [])
+    with pytest.raises(TypeError): PipelineObservation((), (), "d", (object(),))
+    with pytest.raises(TypeError): PipelineDiff(1, ())
+    with pytest.raises(TypeError): PipelineDiff(True, (1,))
+    with pytest.raises(TypeError): PipelineResult((), (), "d", (), "v1")
+    with pytest.raises(TypeError): PipelineResult((), (), "d", (), PipelineMode.V1, object())
+    cycle = {}; cycle["self"] = cycle
+    with pytest.raises(ValueError): observation(public_events=(cycle,))
+    with pytest.raises(ValueError): observation(public_events=({"n": float("nan")},))
+    assert observation(public_events=({"n": 1.5},)).public_events[0]["n"] == 1.5
+    with pytest.raises(TypeError): observation(public_events=(MappingProxyType({1: "bad"}),))
+    with pytest.raises(TypeError): observation(public_events=({"value": object()},))
+    for value in (-1, 2_147_483_648):
+        with pytest.raises(ValueError): observation(public_events=({"value": value},))
+    with pytest.raises(ValueError): observation(public_events=({"text": "\ud800"},))
+    with pytest.raises(ValueError): observation(public_events=({"text": "x" * 65_537},))
+    nested = {}; current = nested
+    for _ in range(65): current["next"] = {}; current = current["next"]
+    with pytest.raises(ValueError): observation(public_events=(nested,))
+    with pytest.raises(ValueError): observation(public_events=({"items": [None] * 10_001},))
+
+
+def test_public_filter_handles_event_without_visibility() -> None:
+    commit = CommitResult("a", (), 1, ({"event_type": "X", "payload": {}},), "d")
+    scheduler = FakeScheduler(PointResult((), (commit,), commit.events, "d"))
+    assert RolePipeline(PipelineMode.V2, None, scheduler).run_point(
+        GameState("g"), SchedulePoint.NIGHT_ACTION
+    ).public_events == ()
