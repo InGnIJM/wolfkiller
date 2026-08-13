@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 from threading import Event, Thread
 from types import MappingProxyType
+import json
 
 import pytest
 
@@ -148,6 +149,26 @@ class TestActionContracts:
         assert schema["properties"]["action_type"]["enum"] == ["kill", "pass"]
         assert schema["properties"]["target_seat"]["type"] == ["integer", "null"]
         assert schema["properties"]["reasoning"]["maxLength"] == 500
+
+    def test_selected_target_fact_namespaces_are_strict_and_stable(self):
+        first = _pipeline_contract(selected_target_fact_namespaces=frozenset({"camp_label"}))
+        second = _pipeline_contract()
+        assert first.selected_target_fact_namespaces == frozenset({"camp_label"})
+        assert first.stable_digest() != second.stable_digest()
+        raw = first.to_json(); document = json.loads(raw)
+        for hook in ("is_applicable", "validate", "resolve", "react", "aggregate"): document[hook] = None
+        assert PipelineActionContract.from_json(json.dumps(document)).selected_target_fact_namespaces == frozenset({"camp_label"})
+        with pytest.raises(TypeError): _pipeline_contract(selected_target_fact_namespaces=("camp_label",))
+        with pytest.raises(ValueError): _pipeline_contract(selected_target_fact_namespaces=frozenset({"bad token"}))
+
+    @pytest.mark.parametrize("changes", [
+        {"selected_target_fact_namespaces": frozenset({"unknown"})},
+        {"selected_target_fact_namespaces": frozenset({"camp_label"}), "resolve": None, "aggregate": aggregate_hook},
+    ])
+    def test_registry_rejects_invalid_selected_target_fact_declarations(self, changes):
+        registry = RoleRegistry(); registry.register_pipeline(_pipeline_spec(contracts=(_pipeline_contract(**changes),)))
+        with pytest.raises(ValueError, match="selected target"):
+            registry.freeze()
 
 
 class TestRoleRegistry:

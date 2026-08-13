@@ -192,6 +192,10 @@ class RoleRegistry:
             raise ValueError("effect permission exceeds role declaration")
         if not contract.visibility_namespaces <= spec.visibility_namespaces:
             raise ValueError("contract visibility exceeds role declaration")
+        if not contract.selected_target_fact_namespaces <= {"camp_label"}:
+            raise ValueError("unknown selected target fact namespace")
+        if contract.selected_target_fact_namespaces and contract.aggregate is not None:
+            raise ValueError("selected target facts cannot be used by aggregate contracts")
         if any(not event_type.strip() for event_type in contract.response_event_types):
             raise ValueError("response event type must not be empty")
         if any(not reason.strip() for reason in contract.response_reasons):

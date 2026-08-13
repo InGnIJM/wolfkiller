@@ -402,6 +402,7 @@ class ActionContract(_FrozenValue):
         default_factory=lambda: MappingProxyType({})
     )
     visibility_namespaces: frozenset[str] = frozenset()
+    selected_target_fact_namespaces: frozenset[str] = frozenset()
     response_event_types: frozenset[str] = frozenset()
     response_reasons: frozenset[str] = frozenset()
     per_window_limit: int = 1
@@ -421,6 +422,10 @@ class ActionContract(_FrozenValue):
         _require_str_frozenset("actions_requiring_target", self.actions_requiring_target)
         _require_str("fallback_action_type", self.fallback_action_type)
         _require_str_frozenset("visibility_namespaces", self.visibility_namespaces)
+        _require_str_frozenset("selected_target_fact_namespaces", self.selected_target_fact_namespaces)
+        if any(not item or len(item) > 128 or not all(char.isalnum() or char in "_.:-" for char in item)
+               for item in self.selected_target_fact_namespaces):
+            raise ValueError("invalid selected target fact namespace")
         _require_str_frozenset("response_event_types", self.response_event_types)
         _require_str_frozenset("response_reasons", self.response_reasons)
         _require_int("per_window_limit", self.per_window_limit)
@@ -446,6 +451,7 @@ class ActionContract(_FrozenValue):
             self, "required_resources", _freeze_int_mapping(self.required_resources, path="required_resources")
         )
         object.__setattr__(self, "visibility_namespaces", frozenset(self.visibility_namespaces))
+        object.__setattr__(self, "selected_target_fact_namespaces", frozenset(self.selected_target_fact_namespaces))
         object.__setattr__(self, "response_event_types", frozenset(self.response_event_types))
         object.__setattr__(self, "response_reasons", frozenset(self.response_reasons))
 
@@ -458,6 +464,7 @@ class ActionContract(_FrozenValue):
         for name in (
             "action_types",
             "visibility_namespaces",
+            "selected_target_fact_namespaces",
             "response_event_types",
             "response_reasons",
         ):
