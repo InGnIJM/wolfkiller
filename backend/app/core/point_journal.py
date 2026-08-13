@@ -87,15 +87,36 @@ class WorkCursor:
 
 
 @dataclass(frozen=True)
+class PendingEvent(Mapping[str, int]):
+    commit_index: int
+    ordinal: int
+    depth: int
+
+    def __post_init__(self) -> None:
+        _integer(self.commit_index, "commit_index"); _integer(self.ordinal, "ordinal")
+        _integer(self.depth, "depth")
+        if self.depth > 8: raise ValueError("pending event depth exceeds maximum")
+
+    def __getitem__(self, key: str) -> int:
+        if key not in ("commit_index", "ordinal", "depth"): raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self): return iter(("commit_index", "ordinal", "depth"))
+    def __len__(self) -> int:
+        return 3
+
+
+@dataclass(frozen=True)
 class PointCheckpoint:
     issued: tuple[IssuedActionRequest, ...]
     actual: tuple[IssuedActionRequest, ...]
     commits: tuple[CommitResult, ...]
     events: tuple[Mapping[str, object], ...]
     faults: tuple[Mapping[str, object], ...]
-    pending: tuple[Mapping[str, object], ...]
+    pending: tuple[PendingEvent, ...]
     cursor: WorkCursor
     complete_result: Mapping[str, object] | None = None
+    work_count: int = _INT32
 
     def __post_init__(self) -> None:
         for name in ("issued", "actual"):
@@ -105,9 +126,29 @@ class PointCheckpoint:
         if type(self.commits) is not tuple or any(type(item) is not CommitResult for item in self.commits):
             raise TypeError("invalid commits")
         if type(self.cursor) is not WorkCursor: raise TypeError("invalid cursor")
+        _integer(self.work_count, "work_count")
         nodes = [0]
-        for name in ("events", "faults", "pending"):
+        for name in ("events", "faults"):
             object.__setattr__(self, name, _mapping_tuple(getattr(self, name), name, nodes))
+        if type(self.pending) is not tuple: raise TypeError("pending must be a tuple")
+        converted = []
+        for item in self.pending:
+            if type(item) is not PendingEvent and isinstance(item, Mapping) and set(item) == {"commit_index", "ordinal", "depth"}:
+                item = PendingEvent(item["commit_index"], item["ordinal"], item["depth"])
+            if type(item) is not PendingEvent: raise TypeError("invalid pending event")
+            if item.commit_index >= len(self.commits) or item.ordinal >= len(self.commits[item.commit_index].events):
+                raise ValueError("pending event is out of range")
+            converted.append(item)
+        object.__setattr__(self, "pending", tuple(converted))
+        if self.cursor.kind == "main" and (self.cursor.index > self.work_count or self.cursor.subindex):
+            raise ValueError("invalid main cursor")
+        if self.cursor.kind == "response" and (self.cursor.index > len(self.pending) or
+                self.cursor.index == len(self.pending) and self.cursor.subindex):
+            raise ValueError("invalid response cursor")
+        if self.cursor.kind == "done" and (self.cursor.index or self.cursor.subindex or self.pending):
+            raise ValueError("invalid done cursor")
+        if self.complete_result is not None and self.cursor.kind != "done":
+            raise ValueError("complete result requires done cursor")
         if self.complete_result is not None:
             if not isinstance(self.complete_result, Mapping): raise TypeError("complete_result must be a mapping")
             object.__setattr__(self, "complete_result", _freeze(self.complete_result, nodes=nodes))

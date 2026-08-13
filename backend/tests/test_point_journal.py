@@ -8,7 +8,7 @@ import pytest
 
 import app.core.point_journal as journal_module
 from app.core.effect_applier import CommitResult
-from app.core.point_journal import PointCheckpoint, PointKey, WorkCursor, point_journal
+from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
 from app.models.pipeline import ActionContract, EffectKind, IssuedActionRequest, SchedulePoint
 
@@ -33,7 +33,7 @@ def checkpoint(**changes) -> PointCheckpoint:
     values = dict(
         issued=(request(),), actual=(request(),), commits=(commit,),
         events=({"event_type": "E", "payload": {"items": [1]}},),
-        faults=({"code": "slow_rule"},), pending=({"event": "event:1", "depth": 0},),
+        faults=({"code": "slow_rule"},), pending=(), work_count=1,
         cursor=WorkCursor("main", 1, 0), complete_result=None,
     )
     values.update(changes); return PointCheckpoint(**values)
@@ -53,9 +53,20 @@ def test_point_key_and_cursor_are_exact_frozen_and_bounded() -> None:
     assert WorkCursor("response", 2, 3) == WorkCursor("response", 2, 3)
 
 
+def test_pending_event_is_exact_frozen_and_bounded() -> None:
+    event = PendingEvent(0, 1, 8); assert event.depth == 8
+    assert len(event) == 3
+    assert dict(event) == {"commit_index": 0, "ordinal": 1, "depth": 8}
+    with pytest.raises(KeyError): event["unknown"]
+    with pytest.raises(FrozenInstanceError): event.depth = 2
+    for values in ((True, 0, 0), (0, -1, 0), (0, 0, 9)):
+        with pytest.raises((TypeError, ValueError)): PendingEvent(*values)
+
+
 def test_checkpoint_is_exact_deep_frozen_and_old_snapshot_is_stable() -> None:
     raw = {"event_type": "E", "payload": {"items": [1]}}
-    value = checkpoint(events=(raw,), complete_result={"state_digest": "done", "events": [raw]})
+    value = checkpoint(cursor=WorkCursor("done", 0, 0), pending=(),
+                       events=(raw,), complete_result={"state_digest": "done", "events": [raw]})
     raw["payload"]["items"].append(2)
     assert value.events[0]["payload"]["items"] == (1,)
     assert value.complete_result["events"][0]["payload"]["items"] == (1,)
@@ -78,7 +89,8 @@ def test_checkpoint_rejects_subclasses_bad_dtos_and_closed_json() -> None:
         lambda: checkpoint(cursor=object()), lambda: checkpoint(complete_result=[]),
         lambda: checkpoint(events=[]), lambda: checkpoint(events=({1: "bad"},)),
         lambda: checkpoint(events=({"value": object()},)), lambda: checkpoint(faults=({"n": -1},)),
-        lambda: checkpoint(pending=({"n": 2_147_483_648},)),
+        lambda: checkpoint(pending=(object(),)), lambda: checkpoint(work_count=True),
+        lambda: checkpoint(pending=[]),
         lambda: checkpoint(events=({"number": float("nan")},)),
         lambda: checkpoint(events=({"text": "\ud800"},)),
     ):
@@ -92,12 +104,37 @@ def test_checkpoint_rejects_subclasses_bad_dtos_and_closed_json() -> None:
     assert checkpoint(events=({"number": 1.5},)).events[0]["number"] == 1.5
 
 
+def test_checkpoint_validates_cursor_pending_and_commit_references() -> None:
+    commit = CommitResult("a", (), 1, ({"event_type": "E"},), "d")
+    valid = checkpoint(commits=(commit,), pending=(PendingEvent(0, 0, 0),),
+                       cursor=WorkCursor("response", 0, 0))
+    assert valid.pending == (PendingEvent(0, 0, 0),)
+    converted = checkpoint(commits=(commit,), pending=({"commit_index": 0, "ordinal": 0, "depth": 0},),
+                           cursor=WorkCursor("response", 0, 0))
+    assert type(converted.pending[0]) is PendingEvent
+    for call in (
+        lambda: checkpoint(cursor=WorkCursor("main", 2, 0)),
+        lambda: checkpoint(cursor=WorkCursor("main", 1, 1)),
+        lambda: checkpoint(commits=(commit,), pending=(PendingEvent(1, 0, 0),)),
+        lambda: checkpoint(commits=(commit,), pending=(PendingEvent(0, 1, 0),)),
+        lambda: checkpoint(commits=(commit,), pending=(PendingEvent(0, 0, 0),),
+                           cursor=WorkCursor("response", 2, 0)),
+        lambda: checkpoint(commits=(commit,), pending=(PendingEvent(0, 0, 0),),
+                           cursor=WorkCursor("response", 1, 1)),
+        lambda: checkpoint(cursor=WorkCursor("done", 1, 0), pending=()),
+        lambda: checkpoint(cursor=WorkCursor("done", 0, 0), pending=(PendingEvent(0, 0, 0),)),
+        lambda: checkpoint(complete_result={"state_digest": "d"}),
+        lambda: checkpoint(cursor=WorkCursor("done", 0, 0), complete_result=[]),
+    ):
+        with pytest.raises((TypeError, ValueError)): call()
+
+
 def test_identity_journal_put_get_clear_and_key_isolation() -> None:
     state = GameState("game-1"); store = point_journal(state)
     first, second = key(), key(round_number=2)
     old = checkpoint(); store.put(first, old)
     assert store.get(first) is old and store.get(second) is None
-    replacement = checkpoint(cursor=WorkCursor("done", 0, 0), complete_result={"state_digest": "done"})
+    replacement = checkpoint(cursor=WorkCursor("done", 0, 0), pending=(), complete_result={"state_digest": "done"})
     store.put(first, replacement); assert store.get(first) is replacement
     assert store.clear(second) is False and store.clear(first) is True and store.get(first) is None
     store.put(first, old); store.clear(); assert store.get(first) is None
