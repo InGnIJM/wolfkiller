@@ -22,7 +22,7 @@ from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 from app.config import PipelineMode, pipeline_mode_from_env
-from app.core.role_pipeline import PipelineObservation, PipelineResult, RolePipeline
+from app.core.role_pipeline import PipelineDiff, PipelineObservation, PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused
 from app.models.pipeline import SchedulePoint
 
@@ -85,6 +85,33 @@ class _PendingNightCompletion:
         if type(self.win_checked) is not bool or type(self.win_invalid) is not bool: raise TypeError("invalid win flags")
 
 
+@dataclass(frozen=True)
+class _PendingNightBatch:
+    round_number: int
+    next_point: int
+    observations: tuple[PipelineResult, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
+            raise ValueError("invalid batch round")
+        if type(self.next_point) is not int or not 0 <= self.next_point <= 2: raise ValueError("invalid batch cursor")
+        if type(self.observations) is not tuple or any(type(item) is not PipelineResult for item in self.observations):
+            raise TypeError("invalid batch observations")
+        if len(self.observations) != self.next_point or any(item.mode is not PipelineMode.V2 for item in self.observations):
+            raise ValueError("invalid batch observations")
+
+
+@dataclass(frozen=True)
+class _ShadowFault:
+    round_number: int
+    code: str
+
+    def __post_init__(self) -> None:
+        if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
+            raise ValueError("invalid shadow fault round")
+        if self.code != "shadow_pipeline_failed": raise ValueError("invalid shadow fault code")
+
+
 class GameEngine:
     """Central orchestrator for a Werewolf game. All operations are encapsulated as methods."""
 
@@ -121,6 +148,8 @@ class GameEngine:
         self._pipeline_mode = pipeline_mode_from_env() if pipeline_mode is None else pipeline_mode
         self._pipeline_scheduler = pipeline_scheduler
         self._pending_night_completion: _PendingNightCompletion | None = None
+        self._pending_night_batch: _PendingNightBatch | None = None
+        self._shadow_fault: _ShadowFault | None = None
         self._night_task: asyncio.Task | None = None
 
     @property
@@ -143,19 +172,31 @@ class GameEngine:
         if self._pipeline_mode is not PipelineMode.V1 and self._pipeline_scheduler is None:
             raise ValueError("pipeline scheduler is required")
         loop = asyncio.get_running_loop()
+        holder: list[PipelineObservation] = []
 
         def v1_runner(state: GameState, ignored: SchedulePoint) -> PipelineObservation:
             before = set(state.accepted_action_keys)
             future = asyncio.run_coroutine_threadsafe(legacy_runner(), loop)
             future.result()
             accepted = tuple(sorted(state.accepted_action_keys - before))
-            return PipelineObservation(
+            observation = PipelineObservation(
                 accepted, (), self._public_state_digest(state), (),
             )
+            holder.append(observation)
+            return observation
 
         runner = None if self._pipeline_mode is PipelineMode.V2 else v1_runner
         pipeline = RolePipeline(self._pipeline_mode, runner, self._pipeline_scheduler)
-        result = await asyncio.to_thread(pipeline.run_points, self.state, points)
+        try: result = await asyncio.to_thread(pipeline.run_points, self.state, points)
+        except Exception:
+            if self._pipeline_mode is not PipelineMode.SHADOW or not holder: raise
+            observation = holder[-1]
+            self._shadow_fault = _ShadowFault(self.state.round_number, "shadow_pipeline_failed")
+            result = PipelineResult(
+                observation.accepted_actions, observation.effects, observation.state_digest,
+                observation.public_events, PipelineMode.SHADOW,
+                PipelineDiff(False, ("accepted_actions", "effects", "state_digest", "public_events")),
+            )
         if type(result) is not PipelineResult: raise TypeError("pipeline must return exact PipelineResult")
         return result
 
@@ -181,6 +222,8 @@ class GameEngine:
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self._accepted_action_results.clear()
         self._pending_night_completion = None
+        self._pending_night_batch = None
+        self._shadow_fault = None
 
         self.sm.transition(SM_Event.START)
         await self._broadcast_phase_change()
@@ -283,16 +326,42 @@ class GameEngine:
     async def _execute_night_owned(self) -> None:
         if self._pending_night_completion is not None:
             await self._resume_pipeline_night(); return
+        if self._pipeline_mode is PipelineMode.V2:
+            if self._pending_night_batch is None:
+                self._prepare_night()
+                self._pending_night_batch = _PendingNightBatch(self.state.round_number, 0, ())
+            await self._execute_v2_night_batch()
+            return
         self._prepare_night()
         if self._pipeline_mode is PipelineMode.V1:
             await self._execute_night_legacy()
             return
-        result = await self.run_schedule_points(
+        await self.run_schedule_points(
             (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT),
             self._execute_night_legacy,
         )
-        if self._pipeline_mode is PipelineMode.SHADOW: return
+
+    async def _execute_v2_night_batch(self) -> None:
+        points = (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT)
+        pending = self._pending_night_batch
+        while pending.next_point < len(points):
+            result = await self.run_schedule_point(points[pending.next_point], self._execute_night_legacy)
+            if type(result) is not PipelineResult or result.mode is not PipelineMode.V2:
+                raise TypeError("schedule point must return exact V2 PipelineResult")
+            pending = _PendingNightBatch(
+                pending.round_number, pending.next_point + 1, pending.observations + (result,),
+            )
+            self._pending_night_batch = pending
+        observations = pending.observations
+        result = PipelineResult(
+            tuple(item for value in observations for item in value.accepted_actions),
+            tuple(item for value in observations for item in value.effects),
+            observations[-1].state_digest,
+            tuple(item for value in observations for item in value.public_events),
+            PipelineMode.V2,
+        )
         self._pending_night_completion = _PendingNightCompletion(result)
+        self._pending_night_batch = None
         await self._resume_pipeline_night()
 
     def _pipeline_night_deaths(self, result: PipelineResult) -> tuple[_PendingDeath, ...]:

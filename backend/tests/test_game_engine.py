@@ -14,7 +14,7 @@ from app.core.action_validator import ActionValidationError
 from app.agents.prompt_builder import PromptBuilder
 from app.services.game_service import PUBLIC_NIGHT_SUBSTEPS
 from app.config import PipelineMode
-from app.core.role_pipeline import PipelineObservation, PipelineResult
+from app.core.role_pipeline import PipelineDiff, PipelineObservation, PipelineResult
 from app.core.effect_applier import CommitResult
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
@@ -158,11 +158,14 @@ async def test_execute_night_is_single_flight_for_concurrent_callers(mode) -> No
         async def legacy(): calls.append("legacy"); entered.set(); await release.wait()
         engine._execute_night_legacy = legacy
     else:
-        async def batch(points, legacy): calls.append("batch"); entered.set(); await release.wait(); return PipelineResult((), (), "d", (), PipelineMode.V2)
-        engine.run_schedule_points = batch; engine._resume_pipeline_night = AsyncMock()
+        async def point(value, legacy):
+            calls.append(value)
+            if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
+            return PipelineResult((), (), value.value, (), PipelineMode.V2)
+        engine.run_schedule_point = point; engine._resume_pipeline_night = AsyncMock()
     first = asyncio.create_task(engine._execute_night()); second = asyncio.create_task(engine._execute_night())
     await entered.wait(); release.set(); await asyncio.gather(first, second)
-    assert calls == (["legacy"] if mode is PipelineMode.V1 else ["batch"])
+    assert calls == (["legacy"] if mode is PipelineMode.V1 else [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT])
     assert engine.state.round_number == 1 and engine._night_task is None
 
 
@@ -188,6 +191,112 @@ async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() 
     with pytest.raises(ValueError, match="night execution is active"): await engine.start()
     original = engine.state; await engine.stop(); assert engine.state is original
     release.set(); await waiter
+
+
+@pytest.mark.asyncio
+async def test_v2_night_batch_resumes_only_failed_point_and_aggregates_exactly() -> None:
+    calls = []
+    engine = GameEngine("checkpoint", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    first_event = {"event_type": "FIRST", "payload": {}, "visibility": ("PUBLIC",)}
+    second_event = {"event_type": "SECOND", "payload": {}, "visibility": ("PUBLIC",)}
+    first = PipelineResult(("a",), ("e1",), "action", (first_event,), PipelineMode.V2)
+    second = PipelineResult(("b",), ("e2",), "commit", (second_event,), PipelineMode.V2)
+    async def point(point, legacy):
+        calls.append(point)
+        if point is SchedulePoint.NIGHT_COMMIT and calls.count(point) == 1: raise RuntimeError("commit failed")
+        return first if point is SchedulePoint.NIGHT_ACTION else second
+    engine.run_schedule_point = point; engine._resume_pipeline_night = AsyncMock()
+    with pytest.raises(RuntimeError, match="commit failed"): await engine._execute_night()
+    assert engine.state.round_number == 1 and engine._pending_night_batch.next_point == 1
+    await engine._execute_night()
+    assert calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT, SchedulePoint.NIGHT_COMMIT]
+    pending = engine._pending_night_completion
+    assert pending.result.accepted_actions == ("a", "b") and pending.result.effects == ("e1", "e2")
+    assert tuple(event["event_type"] for event in pending.result.public_events) == ("FIRST", "SECOND")
+    assert pending.result.state_digest == "commit" and pending.result.mode is PipelineMode.V2
+    assert pending.result.diff is None and type(pending.result) is PipelineResult
+    assert engine._pending_night_batch is None
+
+
+@pytest.mark.asyncio
+async def test_v2_point_that_commits_then_raises_is_retried_without_reprepare() -> None:
+    engine = GameEngine("commit-boundary", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    calls = []
+    async def point(value, legacy):
+        calls.append(value)
+        if value is SchedulePoint.NIGHT_ACTION and calls.count(value) == 1:
+            engine.state.accepted_action_keys.add("stable-action"); raise RuntimeError("after commit")
+        return PipelineResult((), (), value.value, (), PipelineMode.V2)
+    engine.run_schedule_point = point; engine._resume_pipeline_night = AsyncMock()
+    with pytest.raises(RuntimeError, match="after commit"): await engine._execute_night()
+    await engine._execute_night()
+    assert engine.state.round_number == 1
+    assert calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+
+
+@pytest.mark.asyncio
+async def test_shadow_failure_after_legacy_degrades_once_without_secret() -> None:
+    class BrokenScheduler:
+        def __init__(self): self.calls = []
+        def run_point(self, state, point):
+            self.calls.append(point)
+            if point is SchedulePoint.NIGHT_COMMIT: raise RuntimeError("SECRET shadow hook")
+            return PointResult((), (), (), "action")
+    scheduler = BrokenScheduler()
+    live = GameEngine("shadow-fault", pipeline_mode=PipelineMode.SHADOW, pipeline_scheduler=scheduler)
+    calls, captured = [], []
+    async def legacy():
+        calls.append("legacy"); live.state.accepted_action_keys.add("accepted"); live.state.phase = GamePhase.DAWN
+    live._execute_night_legacy = legacy
+    original = live.run_schedule_points
+    async def recording(points, runner):
+        result = await original(points, runner); captured.append(result); return result
+    live.run_schedule_points = recording
+    await live._execute_night()
+    assert calls == ["legacy"] and live.state.round_number == 1 and live.state.phase is GamePhase.DAWN
+    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert type(captured[0]) is PipelineResult and captured[0].mode is PipelineMode.SHADOW
+    assert captured[0].accepted_actions == ("accepted",)
+    assert captured[0].diff == PipelineDiff(False, ("accepted_actions", "effects", "state_digest", "public_events"))
+    assert live._shadow_fault == game_engine_module._ShadowFault(1, "shadow_pipeline_failed")
+    assert "SECRET" not in repr(live._shadow_fault)
+
+
+@pytest.mark.asyncio
+async def test_shadow_failure_before_legacy_completion_propagates() -> None:
+    engine = GameEngine("shadow-before", pipeline_mode=PipelineMode.SHADOW,
+                        pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+    async def legacy(): raise RuntimeError("legacy failed")
+    with pytest.raises(RuntimeError, match="legacy failed"):
+        await engine.run_schedule_points((SchedulePoint.NIGHT_ACTION,), legacy)
+    assert engine._shadow_fault is None
+
+
+def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
+    result = PipelineResult((), (), "d", (), PipelineMode.V2)
+    batch = game_engine_module._PendingNightBatch(1, 1, (result,))
+    assert batch.next_point == 1
+    for call in (
+        lambda: game_engine_module._PendingNightBatch(True, 0, ()),
+        lambda: game_engine_module._PendingNightBatch(1, 3, ()),
+        lambda: game_engine_module._PendingNightBatch(1, 0, []),
+        lambda: game_engine_module._PendingNightBatch(1, 1, (object(),)),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (result,)),
+        lambda: game_engine_module._PendingNightBatch(1, 1, (PipelineResult((), (), "d", (), PipelineMode.V1),)),
+        lambda: game_engine_module._ShadowFault(0, "shadow_pipeline_failed"),
+        lambda: game_engine_module._ShadowFault(1, "SECRET"),
+    ):
+        with pytest.raises((TypeError, ValueError)): call()
+
+
+@pytest.mark.asyncio
+async def test_v2_batch_rejects_non_v2_point_result_without_checkpoint() -> None:
+    engine = GameEngine("wrong-mode", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    async def point(value, legacy): return PipelineResult((), (), "d", (), PipelineMode.V1)
+    engine.run_schedule_point = point
+    with pytest.raises(TypeError, match="exact V2"):
+        await engine._execute_night()
+    assert engine._pending_night_batch == game_engine_module._PendingNightBatch(1, 0, ())
 
 
 @pytest.mark.asyncio
@@ -326,10 +435,11 @@ async def test_pipeline_public_event_validation_is_closed_before_side_effects(ev
 @pytest.mark.asyncio
 async def test_start_resets_pending_night_completion() -> None:
     engine = GameEngine("reset"); engine._pending_night_completion = object()
+    engine._pending_night_batch = object(); engine._shadow_fault = object()
     engine._game_loop = AsyncMock(); engine._broadcast_phase_change = AsyncMock()
     engine._assign_roles = MagicMock()
     await engine.start()
-    assert engine._pending_night_completion is None
+    assert engine._pending_night_completion is engine._pending_night_batch is engine._shadow_fault is None
 
 
 @pytest.mark.asyncio
