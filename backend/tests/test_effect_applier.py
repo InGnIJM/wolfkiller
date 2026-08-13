@@ -112,7 +112,7 @@ def test_applies_all_effect_kinds_and_deep_freezes_result() -> None:
             (EffectKind.ADD_RELATION, {"target": 1, "relation": "known", "other_seat": 2}, 1),
             (EffectKind.REMOVE_RELATION, {"target": 1, "relation": "known", "other_seat": 2}, 1),
             (EffectKind.RECORD_PRIVATE_FACT, {"target": 1, "namespace": "seer", "fact": {"wolf": 2}}, 1),
-            (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1}, 2),
+            (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "attack"}, 2),
             (EffectKind.SUBMIT_PROTECTION, {"target": 3, "amount": 1}, 3),
             (EffectKind.MARK_DEATH, {"target": 2, "cause": "attack"}, 2),
             (EffectKind.EMIT_EVENT, {"event_type": "ACTION_DONE", "payload": {"seat": 1}}, None),
@@ -126,7 +126,7 @@ def test_applies_all_effect_kinds_and_deep_freezes_result() -> None:
     assert runtime.private_data[1]["vision"] == {"seat": 2}
     assert runtime.statuses[2] == set() and runtime.relations[1] == set()
     assert runtime.private_facts[1][0]["namespace"] == "seer"
-    assert runtime.pending_damage == ({"target": 2, "amount": 1},)
+    assert runtime.pending_damage == ({"target": 2, "amount": 1, "cause": "attack"},)
     assert runtime.pending_protection == ({"target": 3, "amount": 1},)
     assert [event["event_type"] for event in result.events] == ["PLAYER_DIED", "ACTION_DONE"]
     assert isinstance(result.events[0], MappingProxyType)
@@ -898,7 +898,7 @@ def test_settle_pending_empty_is_noop_and_protection_only_commits() -> None:
     assert all(player.is_alive for player in protected.players.values())
 
 
-def test_damage_payload_cause_is_closed_and_legacy_is_migration_only() -> None:
+def test_damage_payload_requires_closed_cause() -> None:
     valid = state()
     EffectApplier().apply(valid, batch([
         (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "future.cause"}, 2),
@@ -917,13 +917,11 @@ def test_damage_payload_cause_is_closed_and_legacy_is_migration_only() -> None:
             ]), permission())
 
     legacy = state()
-    EffectApplier().apply(legacy, batch([
-        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1}, 2),
-    ]), permission())
-    runtime = legacy._pipeline_runtime
-    with pytest.raises(EffectRejected, match="pending damage"):
-        EffectApplier().settle_pending(legacy, round_number=1)
-    assert legacy._pipeline_runtime is runtime and legacy.players[2].is_alive
+    with pytest.raises(EffectRejected, match="invalid payload fields"):
+        EffectApplier().apply(legacy, batch([
+            (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1}, 2),
+        ]), permission())
+    assert not hasattr(legacy, "_pipeline_runtime") and legacy.players[2].is_alive
 
 
 @pytest.mark.parametrize("round_number", [True, -1, 2_147_483_648])
