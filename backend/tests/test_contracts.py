@@ -8,6 +8,11 @@ import json
 
 import pytest
 
+from app.core.action_resolver import ActionResolver
+from app.core.action_validator import ActionValidator
+from app.core.context_projector import ContextProjector
+from app.core.effect_applier import EffectApplier
+from app.core.scheduler import Scheduler
 from app.models.contracts import RoleSpec
 from app.models.game import Camp, GamePhase, GameState, PlayerState
 from app.models.pipeline import (
@@ -21,6 +26,7 @@ from app.models.pipeline import (
     SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot, RoleRegistry, builtin_registry
+from app.roles.villager import VILLAGER_SPEC, Villager
 
 
 @dataclass
@@ -308,6 +314,44 @@ class TestRoleRegistry:
 
 
 class TestPipelineRoleRegistry:
+    def test_builtin_passive_villager_spec_preserves_legacy_factory(self):
+        snapshot = builtin_registry.freeze()
+
+        assert snapshot.require(VILLAGER_SPEC.role_id) is VILLAGER_SPEC
+        assert VILLAGER_SPEC.role_id == "wolf-killer-villager"
+        assert VILLAGER_SPEC.contracts == ()
+        assert VILLAGER_SPEC.allowed_effects == frozenset()
+        assert VILLAGER_SPEC.visibility_namespaces == frozenset({"PUBLIC", "ACTOR"})
+        assert builtin_registry.require(VILLAGER_SPEC.role_id).role_factory is Villager
+
+    def test_passive_villager_never_issues_or_blocks_any_schedule_point(self):
+        registry = RoleRegistry(); registry.register_pipeline(VILLAGER_SPEC)
+        snapshot = registry.freeze()
+        state = GameState("passive", players={
+            1: PlayerState(1, VILLAGER_SPEC.role_id, Camp.GOOD.value),
+        })
+        calls = []
+        scheduler = Scheduler(
+            snapshot, ContextProjector(), ActionValidator(), ActionResolver(),
+            EffectApplier(), lambda *args: calls.append(args),
+        )
+
+        for point in SchedulePoint:
+            assert scheduler.issue(state, point, snapshot) == ()
+            result = scheduler.run_point(state, point)
+            assert result.requests == result.commits == result.events == ()
+        assert calls == []
+        assert not hasattr(state, "_pipeline_runtime")
+
+    def test_passive_snapshot_accepts_valid_counts_and_rejects_unknown_role(self):
+        registry = RoleRegistry(); registry.register_pipeline(VILLAGER_SPEC)
+        snapshot = registry.freeze()
+
+        snapshot.validate_role_counts({VILLAGER_SPEC.role_id: 3}, 3)
+        snapshot.validate_role_counts({}, 0)
+        with pytest.raises(ValueError, match="unknown role"):
+            snapshot.validate_role_counts({"unknown": 1}, 1)
+
     @pytest.mark.parametrize("bad_spec", [_pipeline_spec(), DuckSpec()])
     def test_legacy_registration_rejects_non_legacy_specs_without_pollution(
         self, bad_spec
