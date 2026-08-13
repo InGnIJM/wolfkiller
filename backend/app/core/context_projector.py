@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 import re
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
-from app.models.pipeline import ActionContext, IssuedActionRequest
+from app.models.pipeline import ActionCommand, ActionContext, IssuedActionRequest
 from app.roles.registry import RegistrySnapshot
 from app.core.role_runtime import role_action_counters, role_resource_view
 
@@ -53,6 +53,51 @@ _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
 
 class ContextProjector:
     """Create the only state snapshot that pipeline hooks and prompts may read."""
+
+    def project_selected_target(
+        self, state: GameState, request: IssuedActionRequest,
+        context: ActionContext, command: ActionCommand,
+        registry: RegistrySnapshot,
+    ) -> ActionContext:
+        self._validate_boundaries(state, request, registry)
+        if type(context) is not ActionContext:
+            raise TypeError("context must be an ActionContext")
+        if type(command) is not ActionCommand:
+            raise TypeError("command must be an ActionCommand")
+        spec = registry.require(request.role_id)
+        self._validate_request(state, request, spec.camp_id, spec.contracts)
+        expected = (
+            (context.game_id, state.game_id),
+            (context.revision, request.context_revision),
+            (context.actor_seat, request.actor_seat),
+            (context.actor_role_id, request.role_id),
+            (context.contract_id, request.contract.contract_id),
+            (context.contract_version, request.contract.schema_version),
+            (context.contract_digest, request.contract.stable_digest()),
+            (context.action_key, request.action_key),
+            (context.window_id, request.window_id),
+            (context.round_number, request.round_number),
+            (context.phase, request.phase),
+            (context.schedule_point, request.contract.schedule_point),
+            (context.config_version, registry.digest),
+        )
+        if any(actual != bound for actual, bound in expected):
+            raise ValueError("context does not match request and registry")
+        namespaces = request.contract.selected_target_fact_namespaces
+        if not namespaces or command.target_seat is None:
+            return context
+        if namespaces != frozenset({"camp_label"}):
+            raise ValueError("unknown selected target fact namespace")
+        target = state.players.get(command.target_seat)
+        if target is None or not target.is_alive:
+            return context
+        camp = self._token(target.camp, "selected target camp", 128)
+        facts = dict(context.facts)
+        facts["selected_target"] = {"seat": command.target_seat, "camp_label": camp}
+        return ActionContext.from_mapping({
+            field: getattr(context, field)
+            for field in context.__dataclass_fields__
+        } | {"facts": facts})
 
     def project(
         self,

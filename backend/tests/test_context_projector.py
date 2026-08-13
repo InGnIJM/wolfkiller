@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from types import MappingProxyType
 
 import pytest
@@ -12,6 +12,7 @@ from app.core.role_runtime import role_action_counters
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
+    ActionCommand,
     ActionContext,
     ActionContract,
     IssuedActionRequest,
@@ -148,6 +149,123 @@ def _request(
         window_id=f"window-{seat}",
         action_key=f"action-{seat}",
     )
+
+
+def _selected_target_fixture(
+    state: GameState, registry: RegistrySnapshot,
+) -> tuple[RegistrySnapshot, IssuedActionRequest, ActionContext]:
+    original = registry.require("seer")
+    declared = replace(
+        original.contracts[0],
+        selected_target_fact_namespaces=frozenset({"camp_label"}),
+    )
+    selected_registry = RegistrySnapshot(
+        specs={**registry.specs, "seer": replace(original, contracts=(declared,))},
+        digest=registry.digest,
+    )
+    request = _request(selected_registry, 3, "seer")
+    context = ContextProjector().project(state, request, selected_registry)
+    return selected_registry, request, context
+
+
+def test_selected_target_projects_only_one_alive_target_camp(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    selected_registry, request, context = _selected_target_fixture(state, registry)
+    command = ActionCommand(action_type="act", target_seat=1, reasoning="check")
+    first = ContextProjector().project_selected_target(
+        state, request, context, command, selected_registry
+    )
+    second = ContextProjector().project_selected_target(
+        state, request, context, command, selected_registry
+    )
+    assert first is not context and first.to_json() == second.to_json()
+    assert first.facts["selected_target"] == {"seat": 1, "camp_label": "werewolf"}
+    assert "camp_members" not in first.facts
+    assert "role_id" not in first.facts["selected_target"]
+    assert "selected_target" not in context.facts
+    with pytest.raises(TypeError):
+        first.facts["selected_target"]["camp_label"] = "good"
+
+
+def test_selected_target_returns_original_for_no_declaration_target_dead_or_missing(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    projector = ContextProjector()
+    request = _request(registry, 3, "seer")
+    context = projector.project(state, request, registry)
+    assert projector.project_selected_target(
+        state, request, context,
+        ActionCommand(action_type="act", target_seat=1, reasoning="check"), registry,
+    ) is context
+    selected_registry, selected_request, selected_context = _selected_target_fixture(state, registry)
+    for target in (None, 5, 99):
+        assert projector.project_selected_target(
+            state, selected_request, selected_context,
+            ActionCommand(action_type="pass" if target is None else "act", target_seat=target, reasoning="check"),
+            selected_registry,
+        ) is selected_context
+
+
+@pytest.mark.parametrize(
+    "field,value,match",
+    [
+        ("state", object(), "state"), ("request", object(), "request"),
+        ("context", object(), "context"), ("command", object(), "command"),
+        ("registry", object(), "registry"),
+    ],
+)
+def test_selected_target_requires_exact_boundary_types(
+    state: GameState, registry: RegistrySnapshot, field, value, match,
+) -> None:
+    selected_registry, request, context = _selected_target_fixture(state, registry)
+    values = {
+        "state": state, "request": request, "context": context,
+        "command": ActionCommand(action_type="act", target_seat=1, reasoning="check"),
+        "registry": selected_registry,
+    }
+    values[field] = value
+    with pytest.raises(TypeError, match=match):
+        ContextProjector().project_selected_target(**values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"game_id": "other"}, {"revision": 18}, {"actor_seat": 4},
+        {"actor_role_id": "witch"}, {"contract_id": "other"},
+        {"contract_version": 2}, {"contract_digest": "bad"},
+        {"action_key": "other"}, {"window_id": "other"},
+        {"round_number": 3}, {"phase": "day"},
+        {"schedule_point": SchedulePoint.DAY_ACTION}, {"config_version": "other"},
+    ],
+)
+def test_selected_target_rejects_context_binding_mismatch(
+    state: GameState, registry: RegistrySnapshot, changes,
+) -> None:
+    selected_registry, request, context = _selected_target_fixture(state, registry)
+    with pytest.raises(ValueError, match="context"):
+        ContextProjector().project_selected_target(
+            state, request, replace(context, **changes),
+            ActionCommand(action_type="act", target_seat=1, reasoning="check"),
+            selected_registry,
+        )
+
+
+def test_selected_target_rejects_unknown_namespace_and_invalid_camp_token(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    selected_registry, request, context = _selected_target_fixture(state, registry)
+    command = ActionCommand(action_type="act", target_seat=1, reasoning="check")
+    object.__setattr__(request.contract, "selected_target_fact_namespaces", frozenset({"unknown"}))
+    object.__setattr__(context, "contract_digest", request.contract.stable_digest())
+    with pytest.raises(ValueError, match="namespace"):
+        ContextProjector().project_selected_target(state, request, context, command, selected_registry)
+    object.__setattr__(request.contract, "selected_target_fact_namespaces", frozenset({"camp_label"}))
+    object.__setattr__(context, "contract_digest", request.contract.stable_digest())
+    object.__setattr__(state.players[1], "camp", "bad camp")
+    with pytest.raises(ValueError, match="camp"):
+        ContextProjector().project_selected_target(state, request, context, command, selected_registry)
 
 
 def test_projects_public_and_only_declared_actor_and_camp_namespaces(
