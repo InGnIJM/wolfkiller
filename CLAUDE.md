@@ -16,6 +16,7 @@ pip install -r requirements.txt            # 安装依赖
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动后端（开发模式）
 python -m pytest tests/ -q                 # 运行所有测试
 python -m pytest tests/test_xxx.py -q      # 运行单个测试文件
+python -m pytest tests --cov=app --cov-branch --cov-fail-under=100 -q   # 全量覆盖率门禁（当前 100%）
 ```
 
 ### 前端
@@ -25,6 +26,7 @@ cd frontend
 npm install                           # 安装依赖
 npm run dev                           # 启动前端 (localhost:5173)
 npm run build                         # 类型检查 + 生产构建
+npm test                              # Vitest（57 个测试）
 npm run lint                          # ESLint 检查
 ```
 
@@ -32,46 +34,66 @@ npm run lint                          # ESLint 检查
 
 ### 后端游戏流程
 
-入口 `backend/app/main.py`，启动时创建单例 EventBus、WSManager、GameService。所有游戏操作通过 REST API 和 WebSocket 暴露。
+入口 `backend/app/main.py`，启动时创建单例 EventBus、WSManager、MemoryService、GameService。所有游戏操作通过 REST API 和 WebSocket 暴露。
 
-**游戏引擎 (`backend/app/core/game_engine.py`)** 是整个系统的核心编排器（最大源文件 ~32KB），通过 asyncio 事件循环驱动游戏：
+**游戏引擎 (`backend/app/core/game_engine.py`)** 是白天的编排器，通过 asyncio 事件循环驱动游戏：
 
-1. `GameService.create_game()` 实例化角色对象和 GameEngine，在 asyncio 任务中启动引擎
+1. `GameService.create_game()` 冻结 `builtin_registry` 快照、构建 `Scheduler`（LLM 命令提供者）并实例化 GameEngine，在 asyncio 任务中启动引擎
 2. `GameEngine.start()` 运行完整游戏循环（发放身份 → 夜晚/白天循环 → 游戏结束）
-3. 所有事件通过 `EventBus` 异步发布/订阅，WebSocket 推送给前端
+3. 夜晚行动完全交给**通用角色流水线**（见下）；白天发言、投票、平票复投、遗言是引擎内与角色无关的生命周期行为
+4. 所有事件通过 `EventBus` 异步发布/订阅，WebSocket 推送给前端
 
-**状态机 (`backend/app/core/state_machine.py`)** 管理阶段转换，使用 `(current_phase, event, next_phase)` 三元组表：
+### 通用角色流水线（核心重构成果）
+
+角色规则以**冻结声明 + 纯 Hook + 类型化 Effect + 唯一原子写入口**表达，新增角色无需改动任何核心模块（守卫样例 `roles/guard.py` 是验收证明）：
+
+| 模块 | 唯一职责 |
+| --- | --- |
+| `models/pipeline.py` | 冻结核心值类型、Effect 代数、ActionContext/ActionContract/RoleSpec |
+| `roles/registry.py` | 角色/契约发现、静态验证、`freeze()` 不可变注册快照 |
+| `core/context_projector.py` | 从 GameState 按可见性标签（PUBLIC/ACTOR/CAMP）生成最小冻结 ActionContext；`project_view()` 提供无契约观测投影 |
+| `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
+| `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
+| `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
+| `core/scheduler.py` | 调度点（NIGHT_ACTION/NIGHT_COMMIT/DAWN_REACTION 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`point_journal.py` 提供断点续跑检查点 |
+| `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
+| `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
+| `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
+
+- **夜晚流程**：`GameEngine._execute_v2_night_batch()` 依次运行 `NIGHT_ACTION`（各角色发出命令）与 `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段
+- **放逐反应**：引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应
+- **白天发言/投票**：引擎内角色无关路径，经 `BaseRole`（`roles/base.py`）调用 LLM；投票通过纯校验器验证并以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）
+- **断点续跑**：调度点、夜晚批次、死亡发布、阶段推进均有持久检查点，失败后精确续跑不重放
+
+### 白天阶段与规则
+
+**状态机 (`core/state_machine.py`)** 管理阶段转换，使用 `(current_phase, event, next_phase)` 三元组表：
 
 ```
 WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CASTING → VOTE_RESOLUTION
                                                                     ↑              ↓
                                                               NIGHT ←──────────────┘
 ```
-平票时进入 TIEBREAK_SPEECH → TIEBREAK_VOTE，达到平票上限则无人被放逐。
 
-**规则引擎 (`backend/app/core/rule_engine.py`)** 实现屠边规则，关键语义：「狼刀在先」——若双方同时满足胜利条件，狼人阵营优先获胜。
+平票时进入补充发言 + 复投（`vote_round=2`），再次平票则无人被放逐。
 
-**角色系统**：每个角色类（Werewolf、Villager、Seer、Witch、Hunter）继承 `BaseRole`。BaseRole 定义了标准的游戏阶段生命周期方法（`on_night()` / `on_dawn()` / `on_speech()` / `on_vote()` 等），子类重写特定行为。所有角色通过 LLMClient（langchain-openai ChatOpenAI 封装）与 DeepSeek 通信。
+**规则引擎 (`core/rule_engine.py`)** 实现屠边规则，关键语义：「狼刀在先」——若双方同时满足胜利条件，狼人阵营优先获胜。
 
-**提示词 (`backend/app/agents/prompt_builder.py`)** 是代码库最大文件（~42KB），包含所有角色的系统提示模板和阶段级提示。提示词使用结构化 JSON 输出格式约束 LLM 行为。
+### 角色 LLM 交互（白天路径）
 
-**发言系统** 是有多层防线的关键流程（位于 `base.py` 和 `game_engine.py`）：
-1. 玩家发言通过 `BaseRole._speak_with_tools()` 调用 LLM 的 function calling（speak/last_words），失败时重试一次
-2. `_validate_tool_result()` 校验 LLM 输出（函数名匹配、非空文本、≥15 字），任何失败触发 fallback
-3. `GameEngine.speak()` 作为最后防线，若 role 层返回空则调用 `_emergency_speech()` 生成兜底发言
-4. Prompt 与代码一致性：发言字数下限统一为 **15 字**（prompt 和 `MIN_SPEECH_LENGTH` 必须同步，否则 LLM 被门槛吓住导致 tool call 失败）
+- `roles/base.py` 的 `BaseRole` 处理发言（tool calling 两层防线 + ≥15 字校验 + 兜底）与投票（strict tool → JSON 降级 → 安全 fallback）
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）
+- `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
-**女巫毒药系统** 有两层防线（`witch.py` + `action_resolver.py`）：
-1. `Witch._validate_poison_target()` 校验目标存活，给死人投毒自动转为 pass（保留毒药），失败时重试
-2. `ActionResolver._process_witch_poison()` 作为兜底，再次检查目标存活状态
+### 持久化与存档
 
-**输出解析 (`backend/app/agents/output_parser.py`)** 处理 LLM 返回的 JSON 和 tool call 解析。`parse_tool_call()` 优先使用原生 function calling 结果，失败时回退到正则匹配文本中的函数调用模式。
-
-**事件总线 (`backend/app/core/event_bus.py`)** 提供异步发布/订阅，所有游戏事件（阶段变更、发言、投票、死亡等）通过它分发，最终推送到 WebSocket。
+- **游戏日志**：`GameLogger` 以 JSONL 写 `backend/data/games/<id>/game.log`；`GameManifest` 维护 `index.json`（重启后可恢复游戏列表）
+- **记忆系统**：`MemoryService` 每个角色一个 JSON 文件（`memories/seat_N_<role>.json`）
+- **快照版本化**：`GameState` 携带 `pipeline_version / registry_digest / spec_versions / effect_schema_version / state_revision / last_consistent_checkpoint`；`game_manifest.restore_snapshot()` 校验兼容性（缺规范/迁移器、V2 回滚到 V1 均抛 `SnapshotVersionError`），旧档经显式 v1→v2 迁移器读取
 
 ### 前端架构
 
-**状态管理 (`frontend/src/store/gameStore.ts`)** 是前端的核心（~20KB），使用 Zustand 5。它同时处理：
+**状态管理 (`frontend/src/store/gameStore.ts`)** 是前端的核心，使用 Zustand 5。它同时处理：
 - 直播模式：通过 WebSocket 实时接收游戏事件并更新状态
 - 回放模式：从 HTTP 加载完整游戏日志，支持播放/暂停、逐帧步进、0.5x~8x 速度调节、按事件类型筛选
 
@@ -81,11 +103,10 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 ### 关键设计细节
 
-- **记忆系统**：`MemoryService` 以 JSON 文件格式持久化每个角色的记忆状态（在 `backend/data/games/<id>/` 目录下），跨游戏保留上下文
-- **输出解析**：LLM 返回的 JSON 输出由 `output_parser.py` 解析，通过正则表达式提取、校验、容错处理
-- **状态过滤**：`state_filter.py` 根据角色身份筛选游戏状态信息，确保狼人看不到好人专属信息（反之亦然）
-- **夜间行动顺序**：狼人刀人 → 女巫获知刀口 → 女巫可救/可毒 → 预言家查验 → 猎人死亡开枪 → 结算死亡。`action_resolver.py` 处理行动优先级和冲突解决
+- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等），有隐私扫描测试保障；角色 Hook 函数体零状态访问
+- **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
 - **发言顺序**：从死亡玩家左手边开始逆时针发言，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
+- **测试门禁**：后端 1331 个测试 + statement/branch 100% 覆盖（`--cov-fail-under=100`）；守卫样例证明五个核心模块 blob 不变即可扩展新角色
 
 ## 注意事项
 
@@ -95,3 +116,4 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - 前端使用 TypeScript，ESLint 平面配置格式
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断
 - LLM 配置在 `backend/.env`（含 API key、model、temperature 等），游戏参数在 `backend/app/config.py`
+- 修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新 `tests/test_guard_extension.py` 中的 `CORE_BLOBS_BEFORE_GUARD` 与对应源码门禁测试
