@@ -1,11 +1,84 @@
 from __future__ import annotations
 import logging
+from collections.abc import Mapping
 from app.models.game import GameState
 from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
+from app.core.effect_applier import derive_effect_id
+from app.models.pipeline import (
+    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
+    RuleViolation, SchedulePoint,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def seer_applicable(context: ActionContext) -> bool:
+    return context.actor_alive
+
+
+def validate_seer_action(
+    context: ActionContext, command: ActionCommand,
+) -> tuple[RuleViolation, ...]:
+    if command.action_type == "check" and command.target_seat == context.actor_seat:
+        return (RuleViolation("self_check_forbidden", "seer cannot check self"),)
+    return ()
+
+
+def resolve_seer_action(
+    context: ActionContext, command: ActionCommand,
+) -> tuple[GameEffect, ...]:
+    if command.action_type == "pass":
+        return ()
+    selected = context.facts.get("selected_target")
+    if not isinstance(selected, Mapping) or selected.get("seat") != command.target_seat:
+        raise ValueError("selected target fact is missing or mismatched")
+    camp = selected.get("camp_label")
+    if type(camp) is not str:
+        raise TypeError("selected target camp label must be a string")
+    return (GameEffect(
+        derive_effect_id(context.action_key, 1),
+        EffectKind.RECORD_PRIVATE_FACT,
+        context.action_key,
+        payload={
+            "target": context.actor_seat,
+            "namespace": "private_checks",
+            "fact": {"target": command.target_seat, "camp": camp},
+        },
+        visibility=("ACTOR",),
+        expected_revision=context.revision,
+        target_seat=context.actor_seat,
+        source_event_id=context.source_event_id,
+        sort_key=(1,),
+    ),)
+
+
+SEER_SPEC = RoleSpec(
+    role_id="wolf-killer-seer",
+    display_name="Seer",
+    camp_id="good",
+    contracts=(ActionContract(
+        contract_id="seer_check",
+        schedule_point=SchedulePoint.NIGHT_ACTION,
+        order=30,
+        action_types=("check", "pass"),
+        actions_requiring_target=frozenset({"check"}),
+        fallback_action_type="pass",
+        allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT}),
+        visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
+        selected_target_fact_namespaces=frozenset({"camp_label"}),
+        per_window_limit=1,
+        per_round_limit=1,
+        is_applicable=seer_applicable,
+        validate=validate_seer_action,
+        resolve=resolve_seer_action,
+    ),),
+    initial_private_data={"private_checks": ()},
+    allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT}),
+    visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
+    instructions="Check one other living player's camp during the night action window.",
+)
 
 
 class Seer(BaseRole):
