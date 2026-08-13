@@ -21,7 +21,7 @@ from app.core.scheduler import (
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect,
-    RoleSpec, SchedulePoint,
+    RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
 
@@ -107,6 +107,30 @@ def response_event(context: ActionContext, command: ActionCommand) -> tuple[Game
     ),)
 
 
+SELECTED_CONTEXTS = []
+
+
+def validate_selected(context: ActionContext, command: ActionCommand) -> tuple:
+    SELECTED_CONTEXTS.append(("validate", command.target_seat, context))
+    return ()
+
+
+def validate_selected_retry(context: ActionContext, command: ActionCommand) -> tuple:
+    SELECTED_CONTEXTS.append(("validate", command.target_seat, context))
+    return () if command.target_seat == 2 else (RuleViolation("retry", "retry"),)
+
+
+def resolve_selected(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
+    SELECTED_CONTEXTS.append(("resolve", command.target_seat, context))
+    return ()
+
+
+def resolve_selected_fail(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
+    SELECTED_CONTEXTS.append(("resolve", command.target_seat, context))
+    if command.action_type != "pass": raise RuntimeError("retry fallback")
+    return ()
+
+
 def contract(cid: str, order: int = 1, *, point=SchedulePoint.NIGHT_ACTION,
              applies=applicable, aggregate=False, responses=frozenset()) -> ActionContract:
     return ActionContract(
@@ -116,6 +140,16 @@ def contract(cid: str, order: int = 1, *, point=SchedulePoint.NIGHT_ACTION,
         visibility_namespaces=frozenset({"PUBLIC"}), response_event_types=responses,
         is_applicable=applies, aggregate=aggregate_event if aggregate else None,
         resolve=None if aggregate else resolve_event,
+    )
+
+
+def selected_contract(*, validate=validate_selected, resolve=resolve_selected) -> ActionContract:
+    return ActionContract(
+        contract_id="selected", schedule_point=SchedulePoint.NIGHT_ACTION, order=1,
+        action_types=("act", "pass"), actions_requiring_target=frozenset({"act"}),
+        fallback_action_type="pass", visibility_namespaces=frozenset({"PUBLIC"}),
+        selected_target_fact_namespaces=frozenset({"camp_label"}),
+        is_applicable=applicable, validate=validate, resolve=resolve,
     )
 
 
@@ -695,6 +729,69 @@ def test_accepted_action_limits_gate_before_provider_and_applicability() -> None
     result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
     assert result.requests == result.commits == ()
     assert (calls["provider"], APPLICABILITY_CALLS) == before
+
+
+def test_provider_sees_base_context_while_validation_and_resolve_see_selected_target() -> None:
+    SELECTED_CONTEXTS.clear(); c = selected_contract()
+    registry = snapshot(spec("r", c), spec("other")); game = state("r", "other")
+    game.players[2].camp = "werewolf"
+    provider_contexts = []
+    def provider(request, context, attempt):
+        provider_contexts.append(context)
+        return ActionCommand(action_type="act", target_seat=2, reasoning="check")
+    scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert "selected_target" not in provider_contexts[0].facts
+    assert [(kind, target) for kind, target, _ in SELECTED_CONTEXTS] == [
+        ("validate", 2), ("resolve", 2),
+    ]
+    assert all(item.facts["selected_target"] == {
+        "seat": 2, "camp_label": "werewolf",
+    } for _, _, item in SELECTED_CONTEXTS)
+
+
+def test_retry_reprojects_each_target_without_leaking_previous_selection() -> None:
+    SELECTED_CONTEXTS.clear(); c = selected_contract(validate=validate_selected_retry)
+    registry = snapshot(spec("r", c), spec("other")); game = state("r", "other", "other")
+    game.players[2].camp = "werewolf"
+    targets = iter((3, 2))
+    def provider(request, context, attempt):
+        assert "selected_target" not in context.facts
+        return ActionCommand(action_type="act", target_seat=next(targets), reasoning="check")
+    scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    projected = [item.facts["selected_target"] for kind, _, item in SELECTED_CONTEXTS if kind == "validate"]
+    assert projected == [
+        {"seat": 3, "camp_label": "good"},
+        {"seat": 2, "camp_label": "werewolf"},
+    ]
+    assert SELECTED_CONTEXTS[-1][2].facts["selected_target"]["seat"] == 2
+
+
+def test_resolver_fallback_reprojects_pass_without_selected_target() -> None:
+    SELECTED_CONTEXTS.clear(); c = selected_contract(resolve=resolve_selected_fail)
+    registry = snapshot(spec("r", c), spec("other")); game = state("r", "other")
+    scheduler(registry, lambda *args: ActionCommand(
+        action_type="act", target_seat=2, reasoning="check"
+    )).run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert [(kind, target) for kind, target, _ in SELECTED_CONTEXTS] == [
+        ("validate", 2), ("resolve", 2), ("validate", None), ("resolve", None),
+    ]
+    assert "selected_target" not in SELECTED_CONTEXTS[-1][2].facts
+
+
+def test_contract_without_selected_declaration_preserves_context_identity() -> None:
+    registry = snapshot(spec("r", contract("c"))); game = state("r")
+    identities = []
+    original = scheduler(registry)
+    validate = original.validator.validate
+    def capture(context, contract, command):
+        identities.append(context)
+        return validate(context, contract, command)
+    original.validator.validate = capture
+    original.command_provider = lambda request, context, attempt: (
+        identities.append(context) or ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+    )
+    original.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert identities[0] is identities[1]
 
 
 @pytest.mark.parametrize("scope", ["window", "round", "game"])

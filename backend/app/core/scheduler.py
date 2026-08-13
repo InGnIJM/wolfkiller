@@ -268,28 +268,40 @@ class Scheduler:
                                    request.round_number, request.phase, request.window_id,
                                    request.action_key if action_key is None else action_key)
 
-    def _command(self, request: IssuedActionRequest, context: ActionContext) -> ActionCommand:
+    def _command(self, state: GameState, request: IssuedActionRequest,
+                 context: ActionContext) -> tuple[ActionCommand, ActionContext]:
         for attempt in (0, 1):
             try: command = self.command_provider(request, context, attempt)
             except Exception: raise PipelinePaused("command provider failed") from None
             if type(command) is not ActionCommand: raise TypeError("provider must return ActionCommand")
-            violations = self._rule_call("validation", lambda: self.validator.validate(context, request.contract, command))
-            if not violations: return command
-        return self._fallback(context, request.contract)
+            rule_context = self.projector.project_selected_target(
+                state, request, context, command, self.registry
+            )
+            violations = self._rule_call("validation", lambda: self.validator.validate(rule_context, request.contract, command))
+            if not violations: return command, rule_context
+        return self._fallback(state, request, context)
 
-    def _fallback(self, context: ActionContext, contract: ActionContract) -> ActionCommand:
+    def _fallback(self, state: GameState, request: IssuedActionRequest,
+                  context: ActionContext) -> tuple[ActionCommand, ActionContext]:
+        contract = request.contract
         command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="safe fallback")
-        violations = self._rule_call("validation", lambda: self.validator.validate(context, contract, command))
+        rule_context = self.projector.project_selected_target(
+            state, request, context, command, self.registry
+        )
+        violations = self._rule_call("validation", lambda: self.validator.validate(rule_context, contract, command))
         if violations: raise PipelinePaused("fallback command invalid")
-        return command
+        return command, rule_context
 
-    def _resolve_with_fallback(self, context: ActionContext, role: RoleSpec,
-                               contract: ActionContract, command: ActionCommand):
+    def _resolve_with_fallback(self, state: GameState, request: IssuedActionRequest,
+                               context: ActionContext, role: RoleSpec,
+                               command: ActionCommand):
+        contract = request.contract
         try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(context, role, contract, command))
         except RuleExecutionError:
             if command.action_type == contract.fallback_action_type: raise PipelinePaused("rule execution failed") from None
-            fallback = self._fallback(context, contract)
-            try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(context, role, contract, fallback))
+            base_context = self.projector.project(state, request, self.registry)
+            fallback, fallback_context = self._fallback(state, request, base_context)
+            try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(fallback_context, role, contract, fallback))
             except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
 
     @staticmethod
@@ -330,20 +342,21 @@ class Scheduler:
             if contract.aggregate is None:
                 for member in members:
                     request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
-                    command = self._command(request, context); effects = self._resolve_with_fallback(context, role, contract, command)
-                    actual.append(request); commit = self._apply(state, context, role, contract, effects, commits, events)
+                    command, rule_context = self._command(state, request, context)
+                    effects = self._resolve_with_fallback(state, request, rule_context, role, command)
+                    actual.append(request); commit = self._apply(state, rule_context, role, contract, effects, commits, events)
                     for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=0)
             else:
                 bound = tuple(self._bind(member, state) for member in members)
                 contexts = tuple(self.projector.project(state, request, self.registry) for request in bound)
-                commands = tuple(self._command(request, context) for request, context in zip(bound, contexts))
+                commands = tuple(self._command(state, request, context)[0] for request, context in zip(bound, contexts))
                 key = _digest(*(sorted(request.action_key for request in bound)))
                 group_request = self._bind(bound[0], state, action_key=key)
                 group_context = self.projector.project(state, group_request, self.registry)
                 try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, commands))
                 except RuleExecutionError:
                     if all(command.action_type == contract.fallback_action_type for command in commands): raise PipelinePaused("rule execution failed") from None
-                    fallbacks = tuple(self._fallback(context, contract) for context in contexts)
+                    fallbacks = tuple(self._fallback(state, request, context)[0] for request, context in zip(bound, contexts))
                     try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, fallbacks))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
                 actual.extend(bound); commit = self._apply(state, group_context, role, contract, effects, commits, events)
@@ -364,7 +377,9 @@ class Scheduler:
                     try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
                 else:
-                    command = self._command(base, context); effects = self._resolve_with_fallback(context, role, contract, command)
+                    command, rule_context = self._command(state, base, context)
+                    effects = self._resolve_with_fallback(state, base, rule_context, role, command)
+                    context = rule_context
                 actual.append(base); commit = self._apply(state, context, role, contract, effects, commits, events)
                 for ordinal, raw in enumerate(commit.events): queue.enqueue(self._domain(commit, ordinal, raw), depth=depth + 1)
         digest = commits[-1].state_digest if commits else _digest(state.game_id, self._revision(state))
