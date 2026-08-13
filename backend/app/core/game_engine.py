@@ -3,7 +3,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import random
 import re
 import uuid
 from collections.abc import Mapping
@@ -11,18 +10,18 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
-from app.models.actions import NightAction, VoteAction, SpeechRecord, DeathReport, WinResult
-from app.models.contracts import AcceptedAction, ActionContract, ActionRequest
+from app.models.actions import VoteAction, SpeechRecord, DeathReport, WinResult
+from app.models.contracts import ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
-from app.core.action_resolver import ActionResolver
-from app.core.action_validator import ActionValidationError, ActionValidator
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
-from app.config import PipelineMode, pipeline_mode_from_env
-from app.core.role_pipeline import PipelineDiff, PipelineObservation, PipelineResult, RolePipeline
+from app.config import PipelineMode
+from app.core.effect_applier import CommitResult
+from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
+from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
 
@@ -100,17 +99,6 @@ class _PendingNightBatch:
         if len(self.raw_results) != self.next_point: raise ValueError("invalid batch results")
 
 
-@dataclass(frozen=True)
-class _ShadowFault:
-    round_number: int
-    code: str
-
-    def __post_init__(self) -> None:
-        if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
-            raise ValueError("invalid shadow fault round")
-        if self.code != "shadow_pipeline_failed": raise ValueError("invalid shadow fault code")
-
-
 class GameEngine:
     """Central orchestrator for a Werewolf game. All operations are encapsulated as methods."""
 
@@ -122,17 +110,12 @@ class GameEngine:
         roles: dict[int, object] | None = None,
         memory_service: object | None = None,
         data_dir: str = "data",
-        pipeline_mode: PipelineMode | None = None,
         pipeline_scheduler: object | None = None,
     ):
-        if pipeline_mode is not None and type(pipeline_mode) is not PipelineMode:
-            raise TypeError("pipeline_mode must be a PipelineMode")
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
         self.sm = GameStateMachine()
         self.rule_engine = RuleEngine()
-        self.action_resolver = ActionResolver()
-        self.action_validator = ActionValidator()
         self.event_bus = event_bus or EventBus()
         self.roles = roles or {}
         self.memory_service = memory_service
@@ -143,17 +126,10 @@ class GameEngine:
         self._running = False
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
-        self._accepted_action_results: dict[str, AcceptedAction] = {}
-        self._pipeline_mode = pipeline_mode_from_env() if pipeline_mode is None else pipeline_mode
         self._pipeline_scheduler = pipeline_scheduler
         self._pending_night_completion: _PendingNightCompletion | None = None
         self._pending_night_batch: _PendingNightBatch | None = None
-        self._shadow_fault: _ShadowFault | None = None
         self._night_task: asyncio.Task | None = None
-
-    @property
-    def pipeline_mode(self) -> PipelineMode:
-        return self._pipeline_mode
 
     @staticmethod
     def _public_state_digest(state: GameState) -> str:
@@ -163,39 +139,13 @@ class GameEngine:
         )
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
-    async def run_schedule_point(self, point: SchedulePoint, legacy_runner) -> PipelineResult:
-        return await self.run_schedule_points((point,), legacy_runner)
+    async def run_schedule_point(self, point: SchedulePoint) -> PipelineResult:
+        return await self.run_schedule_points((point,))
 
-    async def run_schedule_points(self, points: tuple[SchedulePoint, ...], legacy_runner) -> PipelineResult:
-        if not callable(legacy_runner): raise TypeError("legacy_runner must be callable")
-        if self._pipeline_mode is not PipelineMode.V1 and self._pipeline_scheduler is None:
-            raise ValueError("pipeline scheduler is required")
-        loop = asyncio.get_running_loop()
-        holder: list[PipelineObservation] = []
-
-        def v1_runner(state: GameState, ignored: SchedulePoint) -> PipelineObservation:
-            before = set(state.accepted_action_keys)
-            future = asyncio.run_coroutine_threadsafe(legacy_runner(), loop)
-            future.result()
-            accepted = tuple(sorted(state.accepted_action_keys - before))
-            observation = PipelineObservation(
-                accepted, (), self._public_state_digest(state), (),
-            )
-            holder.append(observation)
-            return observation
-
-        runner = None if self._pipeline_mode is PipelineMode.V2 else v1_runner
-        pipeline = RolePipeline(self._pipeline_mode, runner, self._pipeline_scheduler)
-        try: result = await asyncio.to_thread(pipeline.run_points, self.state, points)
-        except Exception:
-            if self._pipeline_mode is not PipelineMode.SHADOW or not holder: raise
-            observation = holder[-1]
-            self._shadow_fault = _ShadowFault(self.state.round_number, "shadow_pipeline_failed")
-            result = PipelineResult(
-                observation.accepted_actions, observation.effects, observation.state_digest,
-                observation.public_events, PipelineMode.SHADOW,
-                PipelineDiff(False, ("accepted_actions", "effects", "state_digest", "public_events")),
-            )
+    async def run_schedule_points(self, points: tuple[SchedulePoint, ...]) -> PipelineResult:
+        if self._pipeline_scheduler is None: raise ValueError("pipeline scheduler is required")
+        pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
+        result = await asyncio.to_thread(pipeline.run_points, self.state, points)
         if type(result) is not PipelineResult: raise TypeError("pipeline must return exact PipelineResult")
         return result
 
@@ -219,10 +169,8 @@ class GameEngine:
         self.sm.reset()
         self.state = GameState(game_id=self.game_id, config=self.config)
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
-        self._accepted_action_results.clear()
         self._pending_night_completion = None
         self._pending_night_batch = None
-        self._shadow_fault = None
 
         self.sm.transition(SM_Event.START)
         await self._broadcast_phase_change()
@@ -246,29 +194,20 @@ class GameEngine:
     # Role Assignment
     # =================================================================
 
-    def _camp_from_role(self, role_name: str) -> str:
-        return "werewolf" if "werewolf" in role_name else "good"
-
     def _assign_roles(self) -> None:
         """Assign roles to player state based on the pre-built roles dict (already shuffled)."""
+        specs = builtin_registry.freeze().specs
         players_dict: dict = {}
-        for seat, role_instance in self.roles.items():
+        for seat, role_instance in sorted(self.roles.items()):
             role_name = role_instance.role_name
-            camp = self._camp_from_role(role_name)
-            player = PlayerState(seat_number=seat, role=role_name, camp=camp)
-            if "witch" in role_name:
-                player.has_antidote = True
-                player.has_poison = True
-            if "hunter" in role_name:
-                player.has_gun = True
+            try: spec = specs[role_name]
+            except KeyError: raise ValueError(f"unknown role: {role_name}") from None
+            player = PlayerState(seat_number=seat, role=role_name, camp=spec.camp_id)
             self.state.players[seat] = player
             players_dict[str(seat)] = {
                 "role": role_name,
-                "camp": camp,
+                "camp": spec.camp_id,
                 "is_alive": True,
-                "has_antidote": player.has_antidote,
-                "has_poison": player.has_poison,
-                "has_gun": player.has_gun,
             }
         self.game_logger.log_role_init(self.game_id, players_dict)
 
@@ -325,20 +264,11 @@ class GameEngine:
     async def _execute_night_owned(self) -> None:
         if self._pending_night_completion is not None:
             await self._resume_pipeline_night(); return
-        if self._pipeline_mode is PipelineMode.V2:
-            if self._pending_night_batch is None:
-                self._prepare_night()
-                self._pending_night_batch = _PendingNightBatch(self.state.round_number, 0, ())
-            await self._execute_v2_night_batch()
-            return
-        self._prepare_night()
-        if self._pipeline_mode is PipelineMode.V1:
-            await self._execute_night_legacy()
-            return
-        await self.run_schedule_points(
-            (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT),
-            self._execute_night_legacy,
-        )
+        if self._pipeline_scheduler is None: raise ValueError("pipeline scheduler is required")
+        if self._pending_night_batch is None:
+            self._prepare_night()
+            self._pending_night_batch = _PendingNightBatch(self.state.round_number, 0, ())
+        await self._execute_v2_night_batch()
 
     async def _execute_v2_night_batch(self) -> None:
         points = (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT)
@@ -390,6 +320,10 @@ class GameEngine:
         except (KeyError, TypeError, UnicodeError, ValueError):
             raise PipelinePaused("invalid pipeline night event") from None
         return tuple(deaths)
+
+    def get_night_deaths(self) -> list[DeathReport]:
+        """Get all deaths from the current round."""
+        return [d for d in self.state.death_history if d.round_number == self.state.round_number]
 
     async def _resume_pipeline_night(self) -> None:
         pending = self._pending_night_completion
@@ -454,588 +388,18 @@ class GameEngine:
                 phase=self.state.phase.value, round_number=self.state.round_number, state=self.state)
             self._pending_night_completion = None
 
-    async def _execute_night_legacy(self) -> None:
-
-        all_actions: list[NightAction] = []
-        wolf_seats = self._get_role_seats("werewolf")
-        round_num = self.state.round_number
-
-        # ── 1. 狼人睁眼 → 投票刀人（投票中的理由即为内部交流） ────
-        logger.info(f"Night {round_num}: Werewolf phase starting, wolf_seats={wolf_seats}")
-        await self._broadcast_night_substep("werewolf_open", highlight_seats=wolf_seats)
-        await self._sleep_night_step()
-
-        # Werewolf kill vote (each wolf's reasoning is visible to subsequent wolves as chat)
-        logger.info(f"Night {round_num}: Werewolf kill vote starting")
-        wolf_actions, wolf_target = await self.werewolf_kill(wolf_seats)
-        logger.info(f"Night {round_num}: Werewolf kill complete, target={wolf_target}")
-        all_actions.extend(wolf_actions)
-        self.state.last_wolf_kill_target = wolf_target
-
-        await self._broadcast_night_substep(
-            "werewolf_close", highlight_seats=[], wolf_kill_target=wolf_target,
-        )
-        await self._sleep_night_step()
-
-        # Log
-        wolf_vote_dicts = [a.to_dict() for a in wolf_actions]
-        self.game_logger.log_werewolf_kill(
-            self.game_id, round_num, wolf_seats, wolf_target, wolf_vote_dicts,
-        )
-
-        # ── 2. 女巫睁眼 → 单次决定解药、毒药或放弃 ────────────────
-        logger.info(f"Night {round_num}: Witch phase starting")
-        witch = self._find_player_by_role("witch")
-        witch_role = self.roles.get(witch.seat_number) if witch else None
-        witch_action = None
-
-        if witch and witch.is_alive and (witch.has_antidote or witch.has_poison):
-            await self._broadcast_night_substep("witch_open", highlight_seats=[witch.seat_number])
-            await self._sleep_night_step()
-
-            # Only a witch with antidote is told the current wolf target.
-            if witch.has_antidote and wolf_target is not None:
-                sys_msg = f"今晚狼人刀了 {wolf_target} 号玩家。"
-            elif witch.has_antidote:
-                sys_msg = "今晚狼人没有刀人。"
-            else:
-                sys_msg = "你已没有解药，本夜只能选择使用毒药或放弃行动。"
-            self.conversation_log.add_night_intel(
-                sys_msg, round_num, "night", visible_to=[witch.seat_number],
-            )
-
-            witch_action = await self.witch_action(witch.seat_number)
-            if witch_action is not None:
-                all_actions.append(witch_action)
-            if witch_action and witch_action.action_type == "save":
-                self.game_logger.log_witch_save(
-                    self.game_id, round_num, witch.seat_number, wolf_target, True,
-                )
-                sys_msg = f"你使用了【解药】，救活了 {wolf_target} 号玩家。"
-                self.conversation_log.add_night_intel(
-                    sys_msg, round_num, "night", visible_to=[witch.seat_number],
-                )
-                await self._broadcast_night_substep(
-                    "witch_action", highlight_seats=[witch.seat_number],
-                    action_seat=witch.seat_number, action=witch_action.to_dict(),
-                    wolf_kill_target=None,
-                )
-                await self._sleep_night_step()
-            elif witch_action:
-                self.game_logger.log_witch_save(
-                    self.game_id, round_num, witch.seat_number, wolf_target, False,
-                )
-
-            if witch_action and witch_action.action_type == "poison":
-                self.game_logger.log_witch_poison(
-                    self.game_id, round_num, witch.seat_number,
-                    witch_action.target_seat,
-                )
-                sys_msg = f"你使用了【毒药】，毒杀了 {witch_action.target_seat} 号玩家。"
-                self.conversation_log.add_night_intel(
-                    sys_msg, round_num, "night", visible_to=[witch.seat_number],
-                )
-                await self._broadcast_night_substep(
-                    "witch_action", highlight_seats=[witch.seat_number],
-                    action_seat=witch.seat_number,
-                    action=witch_action.to_dict(),
-                    wolf_kill_target=wolf_target,
-                )
-                await self._sleep_night_step()
-
-            await self._broadcast_night_substep("witch_close", highlight_seats=[])
-            await self._sleep_night_step()
-
-        # ── 3. 预言家睁眼 → 查验身份 ──────────────────────────
-        logger.info(f"Night {round_num}: Seer phase starting")
-        seer = self._find_player_by_role("seer")
-        if seer and seer.is_alive:
-            await self._broadcast_night_substep("seer_open", highlight_seats=[seer.seat_number])
-            await self._sleep_night_step()
-
-            check_action = await self.seer_check(seer.seat_number)
-            if check_action and check_action.target_seat:
-                all_actions.append(check_action)
-                result = self.resolve_seer_check(check_action)
-                self.game_logger.log_seer_check(
-                    self.game_id, round_num, seer.seat_number,
-                    check_action.target_seat, result,
-                )
-                result_cn = "狼人" if result == "werewolf" else "好人"
-                sys_msg = f"你查验了 {check_action.target_seat} 号玩家，他是【{result_cn}】。"
-                self.conversation_log.add_night_intel(
-                    sys_msg, round_num, "night", visible_to=[seer.seat_number],
-                )
-                await self._broadcast_night_substep(
-                    "seer_check", highlight_seats=[seer.seat_number],
-                    action_seat=seer.seat_number,
-                    action={**check_action.to_dict(), "seer_result": result},
-                )
-                await self._sleep_night_step()
-
-            await self._broadcast_night_substep("seer_close", highlight_seats=[])
-            await self._sleep_night_step()
-
-        # ── 4. 结算死亡 ──────────────────────────────────────
-        logger.info(f"Night {round_num}: Resolving actions, total actions={len(all_actions)}")
-        accepted_actions = self._accept_night_actions(all_actions)
-        self.state.night_actions = [
-            NightAction(
-                player_seat=accepted.request.actor_seat,
-                action_type=accepted.command.action_type,
-                target_seat=accepted.command.target_seat,
-                reasoning=accepted.command.reasoning,
-            )
-            for accepted in accepted_actions
-        ]
-        deaths = self.action_resolver.resolve(self.state, accepted_actions)
-
-        # Hunter death check & shoot
-        hunter_seat = self.action_resolver.has_hunter_died(self.state, deaths)
-        if hunter_seat is not None:
-            hunter_death = await self.hunter_shoot(
-                hunter_seat, emit_death_event=False,
-            )
-            if hunter_death:
-                deaths.append(hunter_death)
-
-        for d in deaths:
-            self.state.death_history.append(d)
-            await self.event_bus.publish(
-                BusEvent.PLAYER_DIED, game_id=self.game_id, death=d,
-            )
-
-        self.game_logger.log_deaths(
-            self.game_id, round_num, [d.to_dict() for d in deaths],
-        )
-
-        if self.memory_service:
-            self.memory_service.save_memories(self.state)
-
-        if await self._check_game_over():
-            await self._broadcast_phase_change()
-            return
-
-        self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
-        await self._broadcast_phase_change()
-
-    # =================================================================
-    # Night Operation Functions
-    # =================================================================
-
-    async def _request_night_action(
-        self, seat: int, contract_id: str, operation: str | None = None
-    ) -> AcceptedAction:
-        player = self.state.players[seat]
-        contract = next(
-            contract
-            for contract in builtin_registry.require(player.role).contracts
-            if contract.contract_id == contract_id and contract.phase == GamePhase.NIGHT
-        )
-        if contract_id == "witch_action":
-            action_types = []
-            if player.has_antidote and self.state.last_wolf_kill_target is not None:
-                action_types.append("save")
-            if player.has_poison:
-                action_types.append("poison")
-            action_types.append("pass")
-            contract = ActionContract(
-                contract_id=contract.contract_id,
-                phase=contract.phase,
-                action_types=tuple(action_types),
-                actions_requiring_target=frozenset(action_types) - {"pass"},
-                resolution_priority=contract.resolution_priority,
-                fallback_action_type=contract.fallback_action_type,
-            )
-        key_suffix = (
-            f":{operation}"
-            if operation and contract_id != "witch_action"
-            else ""
-        )
-        request = ActionRequest(
-            actor_seat=seat,
-            role_id=player.role,
-            contract=contract,
-            phase=GamePhase.NIGHT,
-            round_id=self.state.round_number,
-            idempotency_key=(
-                f"{self.state.round_number}:{GamePhase.NIGHT.value}:{seat}:"
-                f"{contract.contract_id}{key_suffix}"
-            ),
-        )
-        if request.idempotency_key in self.state.accepted_action_keys:
-            raise ActionValidationError("action already accepted")
-        role = self.roles[seat]
-        accepted = await role.request_action(
-            self.state, self.conversation_log, request
-        )
-        self._accepted_action_results[request.idempotency_key] = accepted
-        return accepted
-
-    @staticmethod
-    def _night_action_from_accepted(accepted: AcceptedAction) -> NightAction:
-        return NightAction(
-            player_seat=accepted.request.actor_seat,
-            action_type=accepted.command.action_type,
-            target_seat=accepted.command.target_seat,
-            reasoning=accepted.command.reasoning,
-        )
-
-    async def _request_hunter_action(self, seat: int) -> AcceptedAction:
-        player = self.state.players[seat]
-        registered_contract = next(
-            contract
-            for contract in builtin_registry.require(player.role).contracts
-            if contract.contract_id == "hunter_shoot"
-        )
-        contract = ActionContract(
-            contract_id=registered_contract.contract_id,
-            phase=self.state.phase,
-            action_types=registered_contract.action_types,
-            actions_requiring_target=registered_contract.actions_requiring_target,
-            resolution_priority=registered_contract.resolution_priority,
-            fallback_action_type=registered_contract.fallback_action_type,
-        )
-        request = ActionRequest(
-            actor_seat=seat,
-            role_id=player.role,
-            contract=contract,
-            phase=self.state.phase,
-            round_id=self.state.round_number,
-            idempotency_key=(
-                f"{self.state.round_number}:{self.state.phase.value}:{seat}:"
-                f"{contract.contract_id}"
-            ),
-        )
-        return await self.roles[seat].request_action(
-            self.state, self.conversation_log, request
-        )
-
-    def _accept_night_actions(
-        self, actions: list[NightAction]
-    ) -> list[AcceptedAction]:
-        """Validate legacy night actions before the resolver settles them."""
-        requests_by_actor: dict[int, list[ActionRequest]] = {}
-        for request in builtin_registry.build_requests(
-            self.state, self.roles, GamePhase.NIGHT,
-        ):
-            requests_by_actor.setdefault(request.actor_seat, []).append(request)
-        accepted_actions: list[AcceptedAction] = []
-
-        for action in actions:
-            cached = next(
-                (
-                    accepted
-                    for accepted in self._accepted_action_results.values()
-                    if accepted.request.actor_seat == action.player_seat
-                    and accepted.command.action_type == action.action_type
-                    and accepted.command.target_seat == action.target_seat
-                ),
-                None,
-            )
-            if cached is not None:
-                accepted_actions.append(cached)
-                continue
-            actor_requests = requests_by_actor.get(action.player_seat, [])
-            if not actor_requests:
-                logger.warning(
-                    "Discarding night action without an issued contract (seat=%s)",
-                    action.player_seat,
-                )
-                continue
-
-            player = self.state.players.get(action.player_seat)
-            if player is None:
-                logger.warning(
-                    "Discarding night action from missing player (seat=%s)",
-                    action.player_seat,
-                )
-                continue
-            night_contracts = [
-                contract
-                for contract in builtin_registry.require(player.role).contracts
-                if contract.phase == GamePhase.NIGHT
-            ]
-            matching_contracts = [
-                contract
-                for contract in night_contracts
-                if action.action_type in contract.action_types
-            ]
-            if len(matching_contracts) > 1:
-                logger.warning(
-                    "Discarding night action with ambiguous contract (seat=%s, action=%s)",
-                    action.player_seat, action.action_type,
-                )
-                continue
-
-            if matching_contracts:
-                contract = matching_contracts[0]
-                idempotency_key = (
-                    f"{self.state.round_number}:{GamePhase.NIGHT.value}:"
-                    f"{action.player_seat}:{contract.contract_id}"
-                )
-                if idempotency_key in self.state.accepted_action_keys:
-                    logger.warning(
-                        "Discarding duplicate night action for accepted contract "
-                        "(seat=%s, contract=%s)",
-                        action.player_seat, contract.contract_id,
-                    )
-                    continue
-                matching_requests = [
-                    request
-                    for request in actor_requests
-                    if request.contract.contract_id == contract.contract_id
-                ]
-                if len(matching_requests) != 1:
-                    logger.warning(
-                        "Discarding night action without an active matching contract "
-                        "(seat=%s, action=%s)",
-                        action.player_seat, action.action_type,
-                    )
-                    continue
-                request = matching_requests[0]
-            elif len(night_contracts) == 1:
-                request = actor_requests[0]
-            else:
-                logger.warning(
-                    "Discarding night action without a unique matching contract "
-                    "(seat=%s, action=%s)",
-                    action.player_seat, action.action_type,
-                )
-                continue
-
-            cached = self._accepted_action_results.get(request.idempotency_key)
-            if cached is not None:
-                accepted_actions.append(cached)
-                continue
-
-            if request.idempotency_key in self.state.accepted_action_keys:
-                logger.warning(
-                    "Discarding duplicate night action for accepted contract "
-                    "(seat=%s, contract=%s)",
-                    action.player_seat, request.contract.contract_id,
-                )
-                continue
-
-            payload = {
-                "action_type": action.action_type,
-                "target_seat": action.target_seat,
-                "reasoning": action.reasoning,
-            }
-            try:
-                accepted_actions.append(
-                    self.action_validator.validate_and_accept(
-                        self.state, request, payload,
-                    )
-                )
-            except ActionValidationError as error:
-                logger.warning(
-                    "Night action rejected; using safe fallback (seat=%s): %s",
-                    action.player_seat, error,
-                )
-                try:
-                    accepted_actions.append(
-                        self.action_validator.safe_fallback(self.state, request)
-                    )
-                except ActionValidationError as fallback_error:
-                    logger.warning(
-                        "Night action fallback rejected (seat=%s): %s",
-                        action.player_seat, fallback_error,
-                    )
-
-        return accepted_actions
-
-    async def werewolf_kill(self, wolf_seats: list[int]) -> tuple[list[NightAction], Optional[int]]:
-        """Werewolves vote on kill target. Returns all actions and resolved target."""
-        actions: list[NightAction] = []
-        round_num = self.state.round_number
-
-        for seat in wolf_seats:
-            if seat not in self.roles:
-                continue
-            try:
-                accepted = await self._request_night_action(seat, "werewolf_kill")
-                action = self._night_action_from_accepted(accepted)
-            except Exception as e:
-                logger.error(f"Werewolf kill error (seat={seat}): {e}")
-                action = None
-            if action:
-                actions.append(action)
-                # Log each wolf's vote as werewolf chat — subsequent wolves see this to coordinate
-                target_str = f"{action.target_seat}号" if action.target_seat else "弃权"
-                reason = action.reasoning.strip() if action.reasoning else ""
-                if not reason:
-                    reason = "（未说明理由）" if action.target_seat else "（观望一轮，不急于行动）"
-                self.conversation_log.add_werewolf_chat(
-                    seat, "wolf-killer-werewolf",
-                    f"我选择刀{target_str}。理由：{reason}",
-                    round_num,
-                )
-                await self._broadcast_night_substep(
-                    "werewolf_vote", highlight_seats=wolf_seats,
-                    action_seat=seat, action=action.to_dict(),
-                )
-                await self._sleep_night_step(0.8)
-
-        target = self.action_resolver._resolve_wolf_kill(actions)
-
-        await self._broadcast_night_substep(
-            "werewolf_target", highlight_seats=wolf_seats,
-            wolf_kill_target=target,
-        )
-        await self._sleep_night_step()
-
-        return actions, target
-
-    async def witch_action(self, witch_seat: int) -> Optional[NightAction]:
-        """Request the witch's single action for the current night."""
-        player = self.state.players.get(witch_seat)
-        if (
-            witch_seat not in self.roles
-            or player is None
-            or not (player.has_antidote or player.has_poison)
-        ):
-            return None
-        try:
-            accepted = await self._request_night_action(witch_seat, "witch_action")
-            return self._night_action_from_accepted(accepted)
-        except Exception as error:
-            logger.error("Witch action error (seat=%s): %s", witch_seat, error)
-            return None
-
-    async def witch_save(self, witch_seat: int, wolf_target: Optional[int]) -> bool:
-        """Witch decides whether to use antidote. Returns True if used."""
-        if witch_seat not in self.roles or wolf_target is None:
-            return False
-        player = self.state.players.get(witch_seat)
-        if player is None or not player.has_antidote:
-            return False
-        try:
-            accepted = await self._request_night_action(
-                witch_seat, "witch_action", "save"
-            )
-            return (
-                accepted.command.action_type == "save"
-                and accepted.command.target_seat == wolf_target
-            )
-        except Exception as e:
-            logger.error(f"Witch save error (seat={witch_seat}): {e}")
-            return False
-
-    async def witch_poison(self, witch_seat: int, wolf_target: Optional[int]) -> Optional[NightAction]:
-        """Witch decides whether to use poison. Returns action or None."""
-        if witch_seat not in self.roles:
-            return None
-        player = self.state.players.get(witch_seat)
-        if player is None or not player.has_poison:
-            return None
-        try:
-            accepted = await self._request_night_action(
-                witch_seat, "witch_action", "poison"
-            )
-            return self._night_action_from_accepted(accepted)
-        except Exception as e:
-            logger.error(f"Witch poison error (seat={witch_seat}): {e}")
-            return None
-
-    async def seer_check(self, seer_seat: int) -> Optional[NightAction]:
-        """Seer decides who to check. Returns the action."""
-        if seer_seat not in self.roles:
-            return None
-        try:
-            accepted = await self._request_night_action(seer_seat, "seer_check")
-            return self._night_action_from_accepted(accepted)
-        except Exception as e:
-            logger.error(f"Seer check error (seat={seer_seat}): {e}")
-            return None
-
-    def resolve_seer_check(self, action: NightAction) -> str:
-        """Return 'werewolf' or 'good' for a seer check target."""
-        if action.target_seat is None:
-            return "good"
-        target = self.state.players.get(action.target_seat)
-        if target is None:
-            return "good"
-        return "werewolf" if "werewolf" in target.role else "good"
-
-    def get_night_deaths(self) -> list[DeathReport]:
-        """Get all deaths from the current round."""
-        return [d for d in self.state.death_history if d.round_number == self.state.round_number]
-
-    async def hunter_shoot(
-        self, hunter_seat: int, *, emit_death_event: bool = True,
-    ) -> Optional[DeathReport]:
-        """Hunter shoots a player on death. Returns DeathReport or None."""
-        hunter = self.roles.get(hunter_seat)
-        if hunter is None:
-            return None
-        player = self.state.players.get(hunter_seat)
-        if player is None or not player.has_gun:
-            return None
-
-        self.game_logger.log_operation(
-            self.game_id, "hunter_death", self.state.round_number, "night",
-            seat=hunter_seat, data={"message": "猎人死亡，可以开枪"},
-        )
-        sys_msg = "你被杀害了！作为猎人，你可以开枪带走一名玩家。"
-        self.conversation_log.add_night_intel(
-            sys_msg, self.state.round_number, "night", visible_to=[hunter_seat],
-        )
-
-        try:
-            accepted = await self._request_hunter_action(hunter_seat)
-        except Exception as e:
-            logger.error(f"Hunter shoot LLM error (seat={hunter_seat}): {e}")
-            self.game_logger.log_hunter_shoot(
-                self.game_id, self.state.round_number, hunter_seat, None,
-            )
-            return None
-
-        if (
-            accepted.command.action_type == "pass"
-            or accepted.command.target_seat is None
-        ):
-            self.game_logger.log_hunter_shoot(
-                self.game_id, self.state.round_number, hunter_seat, None,
-            )
-            return None
-
-        death = self.action_resolver.resolve_hunter_shoot(
-            self.state, hunter_seat, accepted
-        )
-        if death:
-            if emit_death_event:
-                await self.event_bus.publish(
-                    BusEvent.PLAYER_DIED, game_id=self.game_id, death=death,
-                )
-            self.game_logger.log_hunter_shoot(
-                self.game_id, self.state.round_number, hunter_seat,
-                accepted.command.target_seat,
-            )
-            sys_msg = f"你开枪带走了 {accepted.command.target_seat} 号玩家。"
-            self.conversation_log.add_night_intel(
-                sys_msg, self.state.round_number, "night", visible_to=[hunter_seat],
-            )
-        else:
-            # Target was dead or invalid, log pass (gun not consumed by resolver)
-            self.game_logger.log_hunter_shoot(
-                self.game_id, self.state.round_number, hunter_seat, None,
-            )
-        return death
-
     async def give_last_words(self, seat: int, cause: str, death_round: int) -> Optional[str]:
         """Generate last words for a dying player. Standalone function with validation.
 
         Eligibility:
-        - First-night deaths (wolf_kill, poison) in round 1
+        - First-night deaths (any night cause) in round 1
         - Vote-exiled players (any round)
 
         Validation:
         - Player must exist and not have already given last words
         - Death cause must be eligible
         """
-        night_causes = ("wolf_kill", "poison")
-        is_first_night_death = cause in night_causes and death_round == 1
+        is_first_night_death = cause != "exile" and death_round == 1
         is_exile = cause == "exile"
         if not (is_first_night_death or is_exile):
             return None
@@ -1093,8 +457,8 @@ class GameEngine:
     # =================================================================
 
     async def _execute_last_words(self) -> None:
-        # Only first-night deaths (wolf_kill, poison) get last words here.
-        # Exiled players get last words immediately during vote_resolution.
+        # Only first-night deaths get last words here; exiled players give
+        # their last words immediately during vote resolution.
         for death in self.state.death_history:
             await self.give_last_words(death.player_seat, death.cause, death.round_number)
 
@@ -1219,10 +583,7 @@ class GameEngine:
                     player_seat=exiled_seat, cause="exile",
                     round_number=self.state.round_number,
                 ))
-                if "hunter" in player.role and player.has_gun:
-                    hunter_death = await self.hunter_shoot(exiled_seat)
-                    if hunter_death:
-                        self.state.death_history.append(hunter_death)
+                await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(
                     exiled_seat, "exile", self.state.round_number,
                 )
@@ -1266,13 +627,7 @@ class GameEngine:
                     player_seat=exiled_seat, cause="exile",
                     round_number=self.state.round_number,
                 ))
-                # Hunter shot FIRST (before last words, so the hunter can reference
-                # their shooting decision in their final speech)
-                if "hunter" in player.role and player.has_gun:
-                    hunter_death = await self.hunter_shoot(exiled_seat)
-                    if hunter_death:
-                        self.state.death_history.append(hunter_death)
-                # Exiled player gives last words AFTER shooting
+                await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(exiled_seat, "exile", self.state.round_number)
 
         # Announce vote result
@@ -1291,6 +646,43 @@ class GameEngine:
             self.sm.transition(SM_Event.VOTE_RESOLVED)
 
         await self._broadcast_phase_change()
+
+    # =================================================================
+    # Exile Reaction (pipeline response windows)
+    # =================================================================
+
+    def _exile_commit(self, exiled_seat: int) -> CommitResult:
+        """Build a synthetic committed event announcing the exile so the
+        pipeline's response windows can react to it without engine-side
+        knowledge of any specific role."""
+        event = {
+            "event_type": "PLAYER_DIED",
+            "payload": {
+                "target_seat": exiled_seat,
+                "cause": "exile",
+                "round_number": self.state.round_number,
+            },
+            "visibility": ("PUBLIC",),
+        }
+        return CommitResult(
+            f"vote:{exiled_seat}", (), 0, (event,),
+            self._public_state_digest(self.state),
+        )
+
+    async def _run_exile_reaction(self, exiled_seat: int) -> None:
+        scheduler = self._pipeline_scheduler
+        if scheduler is None: raise ValueError("pipeline scheduler is required")
+        commit = self._exile_commit(exiled_seat)
+        key = PointKey(
+            self.state.game_id, self.state.round_number, self.state.phase.value,
+            SchedulePoint.DAWN_REACTION, scheduler.registry.digest,
+        )
+        point_journal(self.state).put(key, PointCheckpoint(
+            (), (), (commit,), commit.events, (), (PendingEvent(0, 0, 0),),
+            WorkCursor("response", 0, 0), work_count=0,
+        ))
+        pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+        await asyncio.to_thread(pipeline.run_point, self.state, SchedulePoint.DAWN_REACTION)
 
     # =================================================================
     # Day Operation Functions
@@ -1329,15 +721,11 @@ class GameEngine:
         """
         player = self.state.players.get(seat)
         role_cn = "玩家"
-        if player and hasattr(player, "role"):
-            role_map = {
-                "wolf-killer-werewolf": "狼人",
-                "wolf-killer-villager": "平民",
-                "wolf-killer-seer": "预言家",
-                "wolf-killer-witch": "女巫",
-                "wolf-killer-hunter": "猎人",
-            }
-            role_cn = role_map.get(player.role, "玩家")
+        if player:
+            try:
+                role_cn = builtin_registry.freeze().specs[player.role].display_name
+            except KeyError:
+                role_cn = "玩家"
 
         if context == "last_words":
             return (
@@ -1450,29 +838,6 @@ class GameEngine:
     # =================================================================
     # Helpers
     # =================================================================
-
-    def _get_role_seats(self, role_keyword: str) -> list[int]:
-        return [
-            s for s, p in self.state.players.items()
-            if role_keyword in p.role and p.is_alive
-        ]
-
-    def _find_player_by_role(self, role_keyword: str) -> Optional[PlayerState]:
-        for p in self.state.players.values():
-            if role_keyword in p.role and p.is_alive:
-                return p
-        return None
-
-    async def _broadcast_night_substep(self, step: str, **kwargs) -> None:
-        await self.event_bus.publish(
-            BusEvent.NIGHT_SUBSTEP, game_id=self.game_id, step=step,
-            round_number=self.state.round_number, **kwargs,
-        )
-
-    async def _sleep_night_step(self, duration: float | None = None) -> None:
-        if duration is None:
-            duration = min(self._phase_delay * 0.3, 1.5)
-        await asyncio.sleep(duration)
 
     async def _broadcast_phase_change(self) -> None:
         self.state.phase = self.sm.get_state()

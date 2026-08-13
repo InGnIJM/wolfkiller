@@ -1,50 +1,44 @@
-import ast
 import asyncio
 import inspect
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import app.core.game_engine as game_engine_module
-from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
-from app.models.actions import NightAction, VoteAction, DeathReport, WinResult
+from app.models.actions import VoteAction, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
-from app.core.action_validator import ActionValidationError
-from app.agents.prompt_builder import PromptBuilder
-from app.services.game_service import PUBLIC_NIGHT_SUBSTEPS
 from app.config import PipelineMode
-from app.core.role_pipeline import PipelineDiff, PipelineObservation, PipelineResult
+from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
 
 
-def _night_substeps_emitted_by_engine_source() -> set[str]:
-    """Return every literal night-progress step emitted by GameEngine itself."""
-    source = inspect.getsource(GameEngine)
-    tree = ast.parse(source)
-    steps: set[str] = set()
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "_broadcast_night_substep"
-        ):
-            continue
-        assert node.args, "Every night-progress broadcast must name its step"
-        step = node.args[0]
-        assert isinstance(step, ast.Constant) and isinstance(step.value, str), (
-            "Night-progress steps must be string literals so the public contract "
-            "can be checked statically"
-        )
-        steps.add(step.value)
-    return steps
+def test_engine_source_has_no_builtin_role_or_action_branches() -> None:
+    source = Path("app/core/game_engine.py").read_text("utf-8")
+    for token in ("witch", "seer", "hunter", "werewolf_kill", "poison", "shoot"):
+        assert token not in source
+
+
+@pytest.fixture(autouse=True)
+def _isolated_data(tmp_path, monkeypatch):
+    """Point every engine's default GameLogger at a per-test temp dir so engine
+    tests never contend on the shared data/games directory."""
+    original = game_engine_module.GameLogger
+
+    def isolated(data_dir="data"):
+        return original(data_dir=data_dir if data_dir != "data" else str(tmp_path))
+
+    monkeypatch.setattr(game_engine_module, "GameLogger", isolated)
 
 
 class ScheduleStub:
-    def __init__(self, result, mutate=None):
-        self.result, self.mutate, self.calls = result, mutate, []
+    def __init__(self, result, mutate=None, digest="stub"):
+        self.result, self.mutate, self.calls, self.digest = result, mutate, [], digest
+        self.registry = MagicMock(digest=digest)
 
     def run_point(self, state, point):
         self.calls.append((state, point))
@@ -53,48 +47,27 @@ class ScheduleStub:
 
 
 @pytest.mark.asyncio
-async def test_schedule_point_freezes_mode_and_bridges_v1_once(monkeypatch) -> None:
-    monkeypatch.setenv("ROLE_PIPELINE_V2", "v1")
-    engine = GameEngine("bridge")
-    monkeypatch.setenv("ROLE_PIPELINE_V2", "v2")
-    calls = []
-    async def legacy():
-        calls.append("legacy"); engine.state.accepted_action_keys.add("accepted")
-    result = await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, legacy)
-    assert type(result) is PipelineResult and result.mode is PipelineMode.V1
-    assert result.accepted_actions == ("accepted",) and result.effects == result.public_events == ()
-    assert calls == ["legacy"] and engine.pipeline_mode is PipelineMode.V1
-
-
-@pytest.mark.asyncio
-async def test_schedule_point_v2_skips_legacy_and_shadow_isolates_state() -> None:
+async def test_schedule_point_runs_pipeline_in_thread_and_requires_scheduler() -> None:
     point_result = PointResult((), (), (), "v2-digest")
-    v2_scheduler = ScheduleStub(point_result, lambda state: setattr(state, "round_number", 7))
-    v2 = GameEngine("v2", pipeline_mode=PipelineMode.V2, pipeline_scheduler=v2_scheduler)
-    async def forbidden(): raise AssertionError("legacy called")
-    result = await v2.run_schedule_point(SchedulePoint.NIGHT_ACTION, forbidden)
-    assert result.mode is PipelineMode.V2 and v2.state.round_number == 7
+    scheduler = ScheduleStub(point_result, lambda state: setattr(state, "round_number", 7))
+    engine = GameEngine("v2", pipeline_scheduler=scheduler)
+    result = await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION)
+    assert type(result) is PipelineResult and result.mode is PipelineMode.V2
+    assert engine.state.round_number == 7
 
-    shadow_scheduler = ScheduleStub(point_result, lambda state: setattr(state, "round_number", 99))
-    shadow = GameEngine("shadow", pipeline_mode=PipelineMode.SHADOW, pipeline_scheduler=shadow_scheduler)
-    async def legacy(): shadow.state.round_number = 2
-    result = await shadow.run_schedule_point(SchedulePoint.NIGHT_ACTION, legacy)
-    assert result.mode is PipelineMode.SHADOW and shadow.state.round_number == 2
-    assert shadow_scheduler.calls[0][0] is not shadow.state
+    with pytest.raises(ValueError, match="scheduler"):
+        await GameEngine("missing").run_schedule_point(SchedulePoint.NIGHT_ACTION)
+    with pytest.raises(TypeError):
+        await engine.run_schedule_point("night")
 
 
 @pytest.mark.asyncio
-async def test_schedule_point_propagates_errors_validates_types_and_does_not_block_loop() -> None:
-    with pytest.raises(TypeError): GameEngine("bad", pipeline_mode="v1")
-    engine = GameEngine("missing", pipeline_mode=PipelineMode.V2)
-    with pytest.raises(ValueError):
-        await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, AsyncMock())
-    engine = GameEngine("error", pipeline_mode=PipelineMode.V1)
-    async def explode(): raise RuntimeError("boom")
+async def test_schedule_point_propagates_errors_and_does_not_block_loop() -> None:
+    class ExplodingScheduler:
+        def run_point(self, state, point): raise RuntimeError("boom")
+    engine = GameEngine("error", pipeline_scheduler=ExplodingScheduler())
     with pytest.raises(RuntimeError, match="boom"):
-        await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, explode)
-    with pytest.raises(TypeError): await engine.run_schedule_point("night", AsyncMock())
-    with pytest.raises(TypeError): await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, object())
+        await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION)
 
     class BadPipeline:
         def __init__(self, *args): pass
@@ -102,91 +75,92 @@ async def test_schedule_point_propagates_errors_validates_types_and_does_not_blo
     monkeypatch = pytest.MonkeyPatch(); monkeypatch.setattr(game_engine_module, "RolePipeline", BadPipeline)
     try:
         with pytest.raises(TypeError, match="exact PipelineResult"):
-            await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, AsyncMock())
+            await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION)
     finally: monkeypatch.undo()
 
+    scheduler = ScheduleStub(PointResult((), (), (), "d"))
+    engine = GameEngine("loop", pipeline_scheduler=scheduler)
     started, release = asyncio.Event(), asyncio.Event()
-    async def waiting(): started.set(); await release.wait()
-    task = asyncio.create_task(engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, waiting))
-    await started.wait(); await asyncio.sleep(0); assert not task.done()
+    def blocking(state, point):
+        return PointResult((), (), (), "d")
+    scheduler.run_point = blocking
+    async def waiting():
+        started.set()
+        await release.wait()
+        return await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION)
+    task = asyncio.create_task(waiting())
+    await started.wait(); await asyncio.sleep(0.05)
+    assert not task.done()
     release.set(); assert type(await task) is PipelineResult
 
 
 @pytest.mark.asyncio
 async def test_schedule_points_batches_once_and_single_point_delegates() -> None:
     scheduler = ScheduleStub(PointResult((), (), (), "d"))
-    engine = GameEngine("batch", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
-    legacy = AsyncMock(side_effect=AssertionError("legacy called"))
+    engine = GameEngine("batch", pipeline_scheduler=scheduler)
     result = await engine.run_schedule_points(
-        (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT), legacy,
+        (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT),
     )
     assert type(result) is PipelineResult
     assert [point for _, point in scheduler.calls] == [
         SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT,
     ]
     scheduler.calls.clear()
-    await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION, legacy)
+    await engine.run_schedule_point(SchedulePoint.NIGHT_ACTION)
     assert [point for _, point in scheduler.calls] == [SchedulePoint.NIGHT_ACTION]
-    legacy.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", [PipelineMode.V1, PipelineMode.SHADOW])
-async def test_execute_night_prepares_once_and_legacy_runs_once(mode) -> None:
-    scheduler = None if mode is PipelineMode.V1 else ScheduleStub(PointResult((), (), (), "d"))
-    engine = GameEngine("night", pipeline_mode=mode, pipeline_scheduler=scheduler)
+async def test_execute_night_prepares_once_and_runs_v2_batch() -> None:
+    scheduler = ScheduleStub(PointResult((), (), (), "d"))
+    engine = GameEngine("night", pipeline_scheduler=scheduler)
     engine.state.round_number = 4; engine.state.night_actions.append(object())
     engine.state.last_wolf_kill_target = 2
-    seen = []
-    async def legacy():
-        seen.append((engine.state.round_number, tuple(engine.state.night_actions), engine.state.last_wolf_kill_target))
-    engine._execute_night_legacy = legacy
+    engine._resume_pipeline_night = AsyncMock()
     await engine._execute_night()
-    assert seen == [(5, (), None)] and engine.state.round_number == 5
-    if mode is PipelineMode.SHADOW:
-        assert [point for _, point in scheduler.calls] == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
-        assert all(state is not engine.state and state.round_number == 5 for state, _ in scheduler.calls)
+    assert engine.state.round_number == 5 and engine.state.night_actions == []
+    assert engine.state.last_wolf_kill_target is None
+    assert [point for _, point in scheduler.calls] == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert engine._pending_night_batch is None and engine._pending_night_completion is not None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", [PipelineMode.V1, PipelineMode.V2])
-async def test_execute_night_is_single_flight_for_concurrent_callers(mode) -> None:
+async def test_execute_night_is_single_flight_for_concurrent_callers() -> None:
     entered, release = asyncio.Event(), asyncio.Event(); calls = []
-    scheduler = None
-    engine = GameEngine("single", pipeline_mode=mode, pipeline_scheduler=object() if mode is PipelineMode.V2 else None)
-    if mode is PipelineMode.V1:
-        async def legacy(): calls.append("legacy"); entered.set(); await release.wait()
-        engine._execute_night_legacy = legacy
-    else:
-        async def point(value):
-            calls.append(value)
-            if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
-            return PointResult((), (), (), value.value)
-        engine._execute_v2_point = point; engine._resume_pipeline_night = AsyncMock()
+    engine = GameEngine("single", pipeline_scheduler=object())
+    async def point(value):
+        calls.append(value)
+        if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
+        return PointResult((), (), (), value.value)
+    engine._execute_v2_point = point; engine._resume_pipeline_night = AsyncMock()
     first = asyncio.create_task(engine._execute_night()); second = asyncio.create_task(engine._execute_night())
     await entered.wait(); release.set(); await asyncio.gather(first, second)
-    assert calls == (["legacy"] if mode is PipelineMode.V1 else [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT])
+    assert calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
     assert engine.state.round_number == 1 and engine._night_task is None
 
 
 @pytest.mark.asyncio
 async def test_cancelled_night_waiter_does_not_cancel_owner() -> None:
     entered, release = asyncio.Event(), asyncio.Event()
-    engine = GameEngine("cancel", pipeline_mode=PipelineMode.V1)
-    async def legacy(): entered.set(); await release.wait(); engine.state.accepted_action_keys.add("done")
-    engine._execute_night_legacy = legacy
+    engine = GameEngine("cancel", pipeline_scheduler=object())
+    async def point(value):
+        if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
+        return PointResult((), (), (), value.value)
+    engine._execute_v2_point = point
     waiter = asyncio.create_task(engine._execute_night()); await entered.wait(); waiter.cancel()
     with pytest.raises(asyncio.CancelledError): await waiter
     assert engine._night_task is not None and not engine._night_task.done()
     release.set(); await engine._night_task
-    assert engine.state.accepted_action_keys == {"done"} and engine._night_task is None
+    assert engine._night_task is None
 
 
 @pytest.mark.asyncio
 async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() -> None:
-    release = asyncio.Event(); engine = GameEngine("lifecycle", pipeline_mode=PipelineMode.V1)
-    async def legacy(): await release.wait()
-    engine._execute_night_legacy = legacy
+    release = asyncio.Event(); engine = GameEngine("lifecycle", pipeline_scheduler=object())
+    async def point(value):
+        if value is SchedulePoint.NIGHT_ACTION: await release.wait()
+        return PointResult((), (), (), value.value)
+    engine._execute_v2_point = point
     waiter = asyncio.create_task(engine._execute_night()); await asyncio.sleep(0)
     with pytest.raises(ValueError, match="night execution is active"): await engine.start()
     original = engine.state; await engine.stop(); assert engine.state is original
@@ -207,7 +181,7 @@ async def test_v2_night_batch_resumes_only_failed_point_and_aggregates_exactly()
             inner.calls.append(point)
             if point is SchedulePoint.NIGHT_COMMIT and inner.calls.count(point) == 1: raise RuntimeError("commit failed")
             return first if point is SchedulePoint.NIGHT_ACTION else second
-    scheduler = Scheduler(); engine = GameEngine("checkpoint", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    scheduler = Scheduler(); engine = GameEngine("checkpoint", pipeline_scheduler=scheduler)
     engine.run_schedule_point = AsyncMock(side_effect=AssertionError("mixed API used")); engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="commit failed"): await engine._execute_night()
     assert engine.state.round_number == 1 and engine._pending_night_batch.next_point == 1
@@ -230,50 +204,12 @@ async def test_v2_point_that_commits_then_raises_is_retried_without_reprepare() 
             if value is SchedulePoint.NIGHT_ACTION and inner.calls.count(value) == 1:
                 state.accepted_action_keys.add("stable-action"); raise RuntimeError("after commit")
             return PointResult((), (), (), value.value)
-    scheduler = Scheduler(); engine = GameEngine("commit-boundary", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    scheduler = Scheduler(); engine = GameEngine("commit-boundary", pipeline_scheduler=scheduler)
     engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="after commit"): await engine._execute_night()
     await engine._execute_night()
     assert engine.state.round_number == 1
     assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
-
-
-@pytest.mark.asyncio
-async def test_shadow_failure_after_legacy_degrades_once_without_secret() -> None:
-    class BrokenScheduler:
-        def __init__(self): self.calls = []
-        def run_point(self, state, point):
-            self.calls.append(point)
-            if point is SchedulePoint.NIGHT_COMMIT: raise RuntimeError("SECRET shadow hook")
-            return PointResult((), (), (), "action")
-    scheduler = BrokenScheduler()
-    live = GameEngine("shadow-fault", pipeline_mode=PipelineMode.SHADOW, pipeline_scheduler=scheduler)
-    calls, captured = [], []
-    async def legacy():
-        calls.append("legacy"); live.state.accepted_action_keys.add("accepted"); live.state.phase = GamePhase.DAWN
-    live._execute_night_legacy = legacy
-    original = live.run_schedule_points
-    async def recording(points, runner):
-        result = await original(points, runner); captured.append(result); return result
-    live.run_schedule_points = recording
-    await live._execute_night()
-    assert calls == ["legacy"] and live.state.round_number == 1 and live.state.phase is GamePhase.DAWN
-    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
-    assert type(captured[0]) is PipelineResult and captured[0].mode is PipelineMode.SHADOW
-    assert captured[0].accepted_actions == ("accepted",)
-    assert captured[0].diff == PipelineDiff(False, ("accepted_actions", "effects", "state_digest", "public_events"))
-    assert live._shadow_fault == game_engine_module._ShadowFault(1, "shadow_pipeline_failed")
-    assert "SECRET" not in repr(live._shadow_fault)
-
-
-@pytest.mark.asyncio
-async def test_shadow_failure_before_legacy_completion_propagates() -> None:
-    engine = GameEngine("shadow-before", pipeline_mode=PipelineMode.SHADOW,
-                        pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
-    async def legacy(): raise RuntimeError("legacy failed")
-    with pytest.raises(RuntimeError, match="legacy failed"):
-        await engine.run_schedule_points((SchedulePoint.NIGHT_ACTION,), legacy)
-    assert engine._shadow_fault is None
 
 
 def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
@@ -287,8 +223,6 @@ def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
         lambda: game_engine_module._PendingNightBatch(1, 1, (object(),)),
         lambda: game_engine_module._PendingNightBatch(1, 0, (result,)),
         lambda: game_engine_module._PendingNightBatch(1, 1, (type("SubPoint", (PointResult,), {})((), (), (), "d"),)),
-        lambda: game_engine_module._ShadowFault(0, "shadow_pipeline_failed"),
-        lambda: game_engine_module._ShadowFault(1, "SECRET"),
     ):
         with pytest.raises((TypeError, ValueError)): call()
 
@@ -297,7 +231,7 @@ def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
 async def test_v2_batch_rejects_non_v2_point_result_without_checkpoint() -> None:
     class Scheduler:
         def run_point(self, state, point): return object()
-    engine = GameEngine("wrong-mode", pipeline_mode=PipelineMode.V2, pipeline_scheduler=Scheduler())
+    engine = GameEngine("wrong-mode", pipeline_scheduler=Scheduler())
     with pytest.raises(TypeError, match="exact PointResult"):
         await engine._execute_night()
     assert engine._pending_night_batch == game_engine_module._PendingNightBatch(1, 0, ())
@@ -312,7 +246,7 @@ async def test_v2_observation_failure_reuses_checkpointed_raw_results() -> None:
         def run_point(inner, state, point):
             inner.calls.append(point)
             return PointResult((), (), (), "action") if point is SchedulePoint.NIGHT_ACTION else bad
-    scheduler = Scheduler(); engine = GameEngine("observe-fail", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    scheduler = Scheduler(); engine = GameEngine("observe-fail", pipeline_scheduler=scheduler)
     for _ in range(2):
         with pytest.raises(TypeError, match="commit"):
             await engine._execute_night()
@@ -340,7 +274,7 @@ async def test_execute_night_v2_publishes_public_deaths_and_advances() -> None:
     scheduler = NightScheduler(); bus = EventBus(); published = []
     async def on_death(**kwargs): published.append(kwargs["death"])
     bus.subscribe(BusEvent.PLAYER_DIED, on_death)
-    engine = GameEngine("v2-night", event_bus=bus, pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    engine = GameEngine("v2-night", event_bus=bus, pipeline_scheduler=scheduler)
     engine.state.players = {
         1: PlayerState(1, "wolf-killer-villager", "good"),
         2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
@@ -385,7 +319,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
             if seat == 2 and self.attempts.count(2) == 1: raise RuntimeError("transport")
             self.delivered.append(seat)
     scheduler, bus = RecoveringScheduler(), RecoveringBus()
-    engine = GameEngine("recover", event_bus=bus, pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    engine = GameEngine("recover", event_bus=bus, pipeline_scheduler=scheduler)
     engine.state.players = {seat: PlayerState(seat, "r", "good") for seat in (1, 2, 3)}
     engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
     engine.game_logger.log_deaths = MagicMock(side_effect=[RuntimeError("disk"), None])
@@ -419,7 +353,7 @@ async def test_malformed_pipeline_event_is_persisted_and_never_reruns_batch() ->
                 return PointResult((), (commit,), commit.events, "final")
             return PointResult((), (), (), "action")
     scheduler = MalformedScheduler(); engine = GameEngine(
-        "malformed", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler,
+        "malformed", pipeline_scheduler=scheduler,
     )
     engine.state.players = {1: PlayerState(1, "r", "good")}
     engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
@@ -441,7 +375,7 @@ async def test_malformed_pipeline_event_is_persisted_and_never_reruns_batch() ->
 ])
 async def test_pipeline_public_event_validation_is_closed_before_side_effects(event) -> None:
     result = PipelineResult((), (), "digest", (event,), PipelineMode.V2)
-    engine = GameEngine("validate", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine = GameEngine("validate", pipeline_scheduler=object())
     engine.state.round_number = 1
     engine.state.players = {1: PlayerState(1, "r", "good", is_alive=False)}
     engine.state.death_history = [DeathReport(1, "wolf_kill", 1)]
@@ -454,13 +388,14 @@ async def test_pipeline_public_event_validation_is_closed_before_side_effects(ev
 
 
 @pytest.mark.asyncio
-async def test_start_resets_pending_night_completion() -> None:
-    engine = GameEngine("reset"); engine._pending_night_completion = object()
-    engine._pending_night_batch = object(); engine._shadow_fault = object()
+async def test_start_resets_pending_night_checkpoints() -> None:
+    engine = GameEngine("reset")
+    engine._pending_night_completion = object()
+    engine._pending_night_batch = object()
     engine._game_loop = AsyncMock(); engine._broadcast_phase_change = AsyncMock()
     engine._assign_roles = MagicMock()
     await engine.start()
-    assert engine._pending_night_completion is engine._pending_night_batch is engine._shadow_fault is None
+    assert engine._pending_night_completion is engine._pending_night_batch is None
 
 
 @pytest.mark.asyncio
@@ -471,7 +406,7 @@ async def test_pipeline_terminal_completion_resumes_log_and_publish_without_rech
             if event is BusEvent.PHASE_CHANGED: return
             assert event is BusEvent.GAME_OVER; self.calls += 1
             if self.calls == 1: raise RuntimeError("publish")
-    engine = GameEngine("terminal", event_bus=TerminalBus(), pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine = GameEngine("terminal", event_bus=TerminalBus(), pipeline_scheduler=object())
     engine.state.round_number = 1; engine.sm.set_state(GamePhase.NIGHT)
     result = PipelineResult((), (), "digest", (), PipelineMode.V2)
     engine._pending_night_completion = game_engine_module._PendingNightCompletion(result, deaths=(), stage=2)
@@ -490,7 +425,7 @@ async def test_pipeline_terminal_completion_resumes_log_and_publish_without_rech
 
 @pytest.mark.asyncio
 async def test_pipeline_transition_hook_failure_resumes_without_retransition() -> None:
-    engine = GameEngine("transition", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine = GameEngine("transition", pipeline_scheduler=object())
     engine.state.round_number = 1; engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
     result = PipelineResult((), (), "digest", (), PipelineMode.V2)
     engine._pending_night_completion = game_engine_module._PendingNightCompletion(result, deaths=(), stage=2)
@@ -514,7 +449,7 @@ async def test_pipeline_phase_publish_failure_does_not_repeat_phase_log() -> Non
         async def publish(self, event, **kwargs):
             assert event is BusEvent.PHASE_CHANGED; self.calls += 1
             if self.calls == 1: raise RuntimeError("phase publish")
-    engine = GameEngine("phase", event_bus=PhaseBus(), pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine = GameEngine("phase", event_bus=PhaseBus(), pipeline_scheduler=object())
     engine.state.round_number = 1; engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
     result = PipelineResult((), (), "digest", (), PipelineMode.V2)
     engine._pending_night_completion = game_engine_module._PendingNightCompletion(
@@ -529,7 +464,7 @@ async def test_pipeline_phase_publish_failure_does_not_repeat_phase_log() -> Non
 
 @pytest.mark.asyncio
 async def test_pending_snapshots_are_frozen_from_external_mutation() -> None:
-    engine = GameEngine("snapshot", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine = GameEngine("snapshot", pipeline_scheduler=object())
     engine.state.round_number = 1; engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
     engine.state.players = {1: PlayerState(1, "r", "good", is_alive=False)}
     engine.state.death_history = [DeathReport(1, "wolf_kill", 1)]
@@ -552,7 +487,7 @@ async def test_pending_snapshots_are_frozen_from_external_mutation() -> None:
 @pytest.mark.asyncio
 async def test_nonexact_win_result_is_cached_as_invalid_without_rechecking() -> None:
     class WinSubclass(WinResult): pass
-    engine = GameEngine("bad-win", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine = GameEngine("bad-win", pipeline_scheduler=object())
     engine.state.round_number = 1; engine.sm.set_state(GamePhase.NIGHT)
     result = PipelineResult((), (), "digest", (), PipelineMode.V2)
     engine._pending_night_completion = game_engine_module._PendingNightCompletion(result, deaths=(), stage=2)
@@ -580,45 +515,57 @@ def test_pending_snapshots_validate_exact_types_and_ranges() -> None:
         with pytest.raises((TypeError, ValueError)): call()
 
 
+@pytest.mark.asyncio
+async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
+    from app.core.scheduler import Scheduler
+    from app.core.context_projector import ContextProjector
+    from app.core.action_validator import ActionValidator
+    from app.core.action_resolver import ActionResolver
+    from app.core.effect_applier import EffectApplier
+    from app.roles.registry import builtin_registry
+    from app.models.pipeline import ActionCommand as PipelineActionCommand
+    snapshot = builtin_registry.freeze()
+
+    def provider(request, context, attempt):
+        if request.contract.contract_id == "werewolf_kill":
+            return PipelineActionCommand(action_type="kill", target_seat=4, reasoning="plan")
+        if request.contract.contract_id == "witch_action":
+            return PipelineActionCommand(action_type="pass", target_seat=None, reasoning="wait")
+        if request.contract.contract_id == "seer_check":
+            return PipelineActionCommand(action_type="check", target_seat=1, reasoning="probe")
+        return PipelineActionCommand(action_type="pass", target_seat=None, reasoning="")
+
+    scheduler = Scheduler(snapshot, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(), provider)
+    roles = {seat: make_mock_role(seat, name) for seat, name in {
+        1: "wolf-killer-werewolf", 2: "wolf-killer-werewolf", 3: "wolf-killer-werewolf",
+        4: "wolf-killer-villager", 5: "wolf-killer-villager", 6: "wolf-killer-seer",
+        7: "wolf-killer-witch", 8: "wolf-killer-hunter", 9: "wolf-killer-villager",
+    }.items()}
+    bus = EventBus(); deaths = []
+    async def on_death(**kwargs): deaths.append(kwargs["death"])
+    bus.subscribe(BusEvent.PLAYER_DIED, on_death)
+    engine = GameEngine("e2e-night", roles=roles, event_bus=bus,
+                        pipeline_scheduler=scheduler, data_dir=str(tmp_path))
+    engine._assign_roles()
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine.phase_delay = 0.01
+    await engine._execute_night()
+    assert engine.state.round_number == 1
+    assert [(d.player_seat, d.cause) for d in deaths] == [(4, "wolf_kill")]
+    assert engine.sm.get_state() is GamePhase.DAWN
+    assert engine.state.players[4].is_alive is False
+
+
 def make_mock_role(seat: int, role_name: str,
-                   night_action: NightAction = None,
                    speech: str = "test speech",
-                   vote: VoteAction = None,
-                   chat_msg: str = "let's kill someone"):
+                   vote: VoteAction = None):
     role = MagicMock()
     role.seat = seat
     role.role_name = role_name
 
     async def _speak(state, conversation_log, context):
         return speech
-
-    async def _vote(state, conversation_log, context):
-        if vote:
-            return vote
-        return VoteAction(voter_seat=seat, target_seat=None)
-
-    async def _kill(state, conversation_log):
-        if night_action and night_action.action_type == "kill":
-            return night_action
-        return NightAction(player_seat=seat, action_type="kill", target_seat=9)
-
-    async def _save(state, conversation_log, wolf_target):
-        return False  # Default: don't save
-
-    async def _poison(state, conversation_log, wolf_target):
-        if night_action and night_action.action_type == "poison":
-            return night_action
-        return NightAction(player_seat=seat, action_type="pass")
-
-    async def _check(state, conversation_log):
-        if night_action and night_action.action_type == "check":
-            return night_action
-        return NightAction(player_seat=seat, action_type="check", target_seat=1)
-
-    async def _shoot(state, conversation_log):
-        if night_action and night_action.action_type == "shoot":
-            return night_action
-        return NightAction(player_seat=seat, action_type="pass")
 
     async def _request_action(state, conversation_log, request):
         if request.contract.contract_id == "exile_vote":
@@ -631,36 +578,13 @@ def make_mock_role(seat: int, role_name: str,
                     reasoning="",
                 ),
             )
-        action = night_action or NightAction(
-            player_seat=seat, action_type="pass", target_seat=None
-        )
         return AcceptedAction(
             request=request,
-            command=ActionCommand(
-                action_type=action.action_type,
-                target_seat=action.target_seat,
-                reasoning=action.reasoning,
-            ),
+            command=ActionCommand(action_type="pass", target_seat=None, reasoning=""),
         )
 
-    async def _chat(state, conversation_log):
-        return chat_msg
-
     role.speak = AsyncMock(side_effect=_speak)
-    role.vote = AsyncMock(side_effect=_vote)
     role.request_action = AsyncMock(side_effect=_request_action)
-
-    if "werewolf" in role_name:
-        role.kill = AsyncMock(side_effect=_kill)
-        role.chat = AsyncMock(side_effect=_chat)
-    if "witch" in role_name:
-        role.save = AsyncMock(side_effect=_save)
-        role.poison = AsyncMock(side_effect=_poison)
-    if "seer" in role_name:
-        role.check = AsyncMock(side_effect=_check)
-    if "hunter" in role_name:
-        role.shoot = AsyncMock(side_effect=_shoot)
-
     return role
 
 
@@ -672,10 +596,7 @@ def make_9_mock_roles():
         (7, "wolf-killer-seer"), (8, "wolf-killer-witch"), (9, "wolf-killer-hunter"),
     ]
     for seat, role_name in role_names:
-        target = 9 if "werewolf" in role_name else (2 if "seer" in role_name else None)
-        action_type = "kill" if "werewolf" in role_name else ("check" if "seer" in role_name else "pass")
         roles[seat] = make_mock_role(seat, role_name,
-            night_action=NightAction(player_seat=seat, action_type=action_type, target_seat=target),
             vote=VoteAction(voter_seat=seat, target_seat=1),
         )
     return roles
@@ -683,259 +604,23 @@ def make_9_mock_roles():
 
 class TestGameEngine:
     @pytest.mark.asyncio
-    async def test_engine_night_progress_steps_match_public_service_contract(self):
-        """Every engine NIGHT_SUBSTEP reaches EventBus and is public-safe."""
-        emitted_steps = _night_substeps_emitted_by_engine_source()
-        captured_events = []
-        bus = EventBus()
-
-        async def capture(**kwargs):
-            captured_events.append(kwargs)
-
-        bus.subscribe(BusEvent.NIGHT_SUBSTEP, capture)
-        engine = GameEngine(game_id="night-progress-contract", event_bus=bus)
-        engine.state.round_number = 1
-
-        for step in emitted_steps:
-            await engine._broadcast_night_substep(step)
-
-        captured_steps = {event["step"] for event in captured_events}
-        assert captured_steps == emitted_steps
-        assert captured_steps == PUBLIC_NIGHT_SUBSTEPS
-        assert all(
-            event["game_id"] == engine.game_id and event["round_number"] == 1
-            for event in captured_events
-        )
-
-    @pytest.mark.asyncio
-    async def test_witch_pass_then_poison_uses_one_request_per_night(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
-            ),
-            2: make_mock_role(2, "wolf-killer-witch"),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="witch-pass-poison", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-        responses = iter([
-            {"action_type": "pass", "target_seat": None, "reasoning": "wait"},
-            {"action_type": "poison", "target_seat": 1, "reasoning": "poison wolf"},
-        ])
-
-        async def witch_action(state, conversation_log, request):
-            return engine.action_validator.validate_and_accept(
-                state, request, next(responses),
-            )
-
-        roles[2].request_action = AsyncMock(side_effect=witch_action)
-
-        await engine._execute_night()
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine.state.phase = GamePhase.NIGHT
-        await engine._execute_night()
-
-        requests = roles[2].request_action.await_args_list
-        assert len(requests) == 2
-        assert all(
-            request.args[2].contract.action_types == ("save", "poison", "pass")
-            for request in requests
-        )
-        assert engine.state.players[2].has_antidote is True
-        assert engine.state.players[2].has_poison is False
-        witch_actions = [
-            action for action in engine.state.night_actions if action.player_seat == 2
-        ]
-        assert [(action.action_type, action.target_seat) for action in witch_actions] == [
-            ("poison", 1),
-        ]
-
-    @pytest.mark.asyncio
-    async def test_witch_save_prevents_poison_and_resolver_gets_one_action(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
-            ),
-            2: make_mock_role(2, "wolf-killer-witch"),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="witch-save", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-
-        async def witch_action(state, conversation_log, request):
-            assert request.contract.action_types == ("save", "poison", "pass")
-            return engine.action_validator.validate_and_accept(
-                state,
-                request,
-                {"action_type": "save", "target_seat": 3, "reasoning": "save target"},
-            )
-
-        roles[2].request_action = AsyncMock(side_effect=witch_action)
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        await engine._execute_night()
-
-        witch_actions = [
-            action for action in resolve.call_args.args[1]
-            if action.request.actor_seat == 2
-        ]
-        assert roles[2].request_action.await_count == 1
-        assert [action.command.action_type for action in witch_actions] == ["save"]
-        assert engine.state.players[2].has_antidote is False
-        assert engine.state.players[2].has_poison is True
-
-    @pytest.mark.asyncio
-    async def test_witch_poison_prevents_save_and_hides_wolf_target_without_antidote(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
-            ),
-            2: make_mock_role(2, "wolf-killer-witch"),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="witch-poison", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-
-        async def witch_action(state, conversation_log, request):
-            assert request.contract.action_types == ("save", "poison", "pass")
-            return engine.action_validator.validate_and_accept(
-                state,
-                request,
-                {"action_type": "poison", "target_seat": 1, "reasoning": "poison wolf"},
-            )
-
-        roles[2].request_action = AsyncMock(side_effect=witch_action)
-
-        engine.state.players[2].has_antidote = False
-        prompt = PromptBuilder().build_action_prompt(
-            engine.state,
-            2,
-            "wolf-killer-witch",
-            engine.conversation_log,
-            "witch_save",
-            wolf_target=3,
-        )
-        engine.state.players[2].has_antidote = True
-
-        await engine._execute_night()
-        assert roles[2].request_action.await_count == 1
-        assert engine.state.players[2].has_antidote is True
-        assert engine.state.players[2].has_poison is False
-        assert '"action_type":"save"' not in prompt
-        assert "3号玩家" not in prompt
-
-    @pytest.mark.asyncio
-    async def test_witch_with_no_potions_is_not_requested(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
-            ),
-            2: make_mock_role(2, "wolf-killer-witch"),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="witch-no-potions", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.players[2].has_antidote = False
-        engine.state.players[2].has_poison = False
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-
-        await engine._execute_night()
-
-        roles[2].request_action.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_witch_invalid_save_target_becomes_pass_without_spending_antidote(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
-            ),
-            2: make_mock_role(2, "wolf-killer-witch"),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="witch-invalid-save", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-
-        async def invalid_save(state, conversation_log, request):
-            with pytest.raises(ActionValidationError, match="save target"):
-                engine.action_validator.validate_and_accept(
-                    state,
-                    request,
-                    {"action_type": "save", "target_seat": 1, "reasoning": "wrong target"},
-                )
-            return engine.action_validator.safe_fallback(state, request)
-
-        roles[2].request_action = AsyncMock(side_effect=invalid_save)
-
-        await engine._execute_night()
-
-        assert roles[2].request_action.await_count == 1
-        assert engine.state.players[2].has_antidote is True
-        assert engine.state.players[2].has_poison is True
-        assert [
-            action.action_type for action in engine.state.night_actions
-            if action.player_seat == 2
-        ] == ["pass"]
-
-    @pytest.mark.asyncio
     async def test_role_assignment(self):
         roles = make_9_mock_roles()
-        bus = EventBus()
-        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine = GameEngine(game_id="test", roles=roles)
         engine._assign_roles()
 
         assert len(engine.state.players) == 9
         wolves = [p for p in engine.state.players.values() if p.camp == "werewolf"]
         assert len(wolves) == 3
-
-        witch = [p for p in engine.state.players.values() if "witch" in p.role]
-        assert len(witch) == 1
-        assert witch[0].has_antidote is True
-        assert witch[0].has_poison is True
-
-        hunter = [p for p in engine.state.players.values() if "hunter" in p.role]
-        assert len(hunter) == 1
-        assert hunter[0].has_gun is True
+        assert [p.role for p in engine.state.players.values()].count("wolf-killer-seer") == 1
+        assert [p.role for p in engine.state.players.values()].count("wolf-killer-witch") == 1
+        assert [p.role for p in engine.state.players.values()].count("wolf-killer-hunter") == 1
 
     @pytest.mark.asyncio
-    async def test_camp_from_role(self):
-        roles = make_9_mock_roles()
-        engine = GameEngine(game_id="test", roles=roles)
-        assert engine._camp_from_role("wolf-killer-werewolf") == "werewolf"
-        assert engine._camp_from_role("wolf-killer-villager") == "good"
-        assert engine._camp_from_role("wolf-killer-seer") == "good"
-
-    @pytest.mark.asyncio
-    async def test_find_player_by_role(self):
-        roles = make_9_mock_roles()
-        engine = GameEngine(game_id="test", roles=roles)
-        engine._assign_roles()
-
-        seer = engine._find_player_by_role("seer")
-        assert seer is not None
-        assert "seer" in seer.role
-
-        nonexistent = engine._find_player_by_role("nonexistent")
-        assert nonexistent is None
+    async def test_role_assignment_rejects_unknown_role(self):
+        engine = GameEngine(game_id="test", roles={1: make_mock_role(1, "wolf-killer-unknown")})
+        with pytest.raises(ValueError, match="unknown role"):
+            engine._assign_roles()
 
     @pytest.mark.asyncio
     async def test_resolve_votes(self):
@@ -1045,114 +730,6 @@ class TestGameEngine:
         assert {event["game_id"] for event in votes} == {engine.game_id}
 
     @pytest.mark.asyncio
-    async def test_night_death_and_game_over_events_are_game_scoped(self):
-        bus = EventBus()
-        deaths = []
-        game_over = []
-
-        async def record_death(**kwargs):
-            deaths.append(kwargs)
-
-        async def record_game_over(**kwargs):
-            game_over.append(kwargs)
-
-        bus.subscribe("player_died", record_death)
-        bus.subscribe("game_over", record_game_over)
-        roles = {
-            1: make_mock_role(
-                1,
-                "wolf-killer-werewolf",
-                night_action=NightAction(1, "kill", 3),
-            ),
-            2: make_mock_role(
-                2,
-                "wolf-killer-seer",
-                night_action=NightAction(2, "check", 1),
-            ),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="public-night-events", roles=roles, event_bus=bus)
-        engine._assign_roles()
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine.state.phase = GamePhase.NIGHT
-        engine._sleep_night_step = AsyncMock()
-
-        await engine._execute_night()
-
-        assert len(deaths) == 1
-        assert len(game_over) == 1
-        assert deaths[0]["game_id"] == engine.game_id
-        assert game_over[0]["game_id"] == engine.game_id
-
-    @pytest.mark.asyncio
-    async def test_night_hunter_shot_emits_one_public_death_event(self):
-        bus = EventBus()
-        deaths = []
-
-        async def record_death(**kwargs):
-            deaths.append(kwargs)
-
-        bus.subscribe("player_died", record_death)
-        roles = {
-            1: make_mock_role(
-                1,
-                "wolf-killer-werewolf",
-                night_action=NightAction(1, "kill", 2),
-            ),
-            2: make_mock_role(
-                2,
-                "wolf-killer-hunter",
-                night_action=NightAction(2, "shoot", 3),
-            ),
-            3: make_mock_role(3, "wolf-killer-villager"),
-            4: make_mock_role(
-                4,
-                "wolf-killer-seer",
-                night_action=NightAction(4, "check", 1),
-            ),
-        }
-        engine = GameEngine(game_id="night-hunter-once", roles=roles, event_bus=bus)
-        engine._assign_roles()
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine.state.phase = GamePhase.NIGHT
-        engine._sleep_night_step = AsyncMock()
-
-        await engine._execute_night()
-
-        shot_events = [
-            event for event in deaths if event["death"].player_seat == 3
-        ]
-        assert len(shot_events) == 1
-        assert shot_events[0]["game_id"] == engine.game_id
-        assert [event["death"].player_seat for event in deaths].count(2) == 1
-
-    @pytest.mark.asyncio
-    async def test_hunter_death_event_is_game_scoped(self):
-        bus = EventBus()
-        deaths = []
-
-        async def record_death(**kwargs):
-            deaths.append(kwargs)
-
-        bus.subscribe("player_died", record_death)
-        roles = {
-            1: make_mock_role(
-                1,
-                "wolf-killer-hunter",
-                night_action=NightAction(1, "shoot", 2),
-            ),
-            2: make_mock_role(2, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="public-hunter-event", roles=roles, event_bus=bus)
-        engine._assign_roles()
-
-        death = await engine.hunter_shoot(1)
-
-        assert death is not None
-        assert len(deaths) == 1
-        assert deaths[0]["game_id"] == engine.game_id
-
-    @pytest.mark.asyncio
     async def test_last_words_speech_event_is_game_scoped(self):
         bus = EventBus()
         speeches = []
@@ -1171,6 +748,19 @@ class TestGameEngine:
         assert last_words
         assert len(speeches) == 1
         assert speeches[0]["game_id"] == engine.game_id
+
+    @pytest.mark.asyncio
+    async def test_last_words_eligibility_is_cause_generic(self):
+        roles = {1: make_mock_role(1, "wolf-killer-villager")}
+        engine = GameEngine(game_id="test", roles=roles)
+        engine._assign_roles()
+        engine.state.players[1].is_alive = False
+
+        # First-night death of any night cause is eligible in round 1.
+        assert await engine.give_last_words(1, "wolf_kill", 1)
+        assert await engine.give_last_words(1, "wolf_kill", 1) is None  # already given
+        assert await engine.give_last_words(1, "wolf_kill", 2) is None  # not first night
+        assert await engine.give_last_words(1, "exile", 2) is not None  # exile any round
 
     @pytest.mark.asyncio
     async def test_vote_resolution_wolf_wins(self):
@@ -1211,7 +801,8 @@ class TestGameEngine:
     async def test_vote_resolution_exile_player(self):
         roles = make_9_mock_roles()
         bus = EventBus()
-        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus,
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
 
         votes = [VoteAction(voter_seat=s, target_seat=1) for s in range(2, 10)]
@@ -1221,6 +812,39 @@ class TestGameEngine:
         engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
         await engine._execute_vote_resolution()
         assert engine.state.players[1].is_alive is False
+
+    @pytest.mark.asyncio
+    async def test_exile_reaction_requires_scheduler(self):
+        roles = {1: make_mock_role(1, "wolf-killer-villager")}
+        engine = GameEngine(game_id="test", roles=roles)
+        with pytest.raises(ValueError, match="scheduler"):
+            await engine._run_exile_reaction(1)
+
+    @pytest.mark.asyncio
+    async def test_exile_reaction_injects_commit_and_runs_dawn_point(self):
+        calls = []
+        class Scheduler:
+            def __init__(self): self.registry = MagicMock(digest="d" * 64)
+            def run_point(self, state, point):
+                calls.append((state, point))
+                return PointResult((), (), (), "done")
+        scheduler = Scheduler()
+        roles = {1: make_mock_role(1, "wolf-killer-villager"), 2: make_mock_role(2, "wolf-killer-villager")}
+        engine = GameEngine("exile-react", roles=roles, pipeline_scheduler=scheduler)
+        engine._assign_roles()
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.state.phase = GamePhase.VOTE_RESOLUTION
+        engine.state.round_number = 2
+        engine.state.players[1].mark_dead("exile")
+        engine.state.death_history.append(DeathReport(1, "exile", 2))
+        await engine._run_exile_reaction(1)
+        assert calls == [(engine.state, SchedulePoint.DAWN_REACTION)]
+        from app.core.point_journal import PointKey, point_journal
+        key = PointKey("exile-react", 2, "vote_resolution", SchedulePoint.DAWN_REACTION, "d" * 64)
+        saved = point_journal(engine.state).get(key)
+        assert saved is not None and saved.cursor.kind == "response"
+        assert saved.commits[0].events[0]["event_type"] == "PLAYER_DIED"
+        assert saved.commits[0].events[0]["payload"]["cause"] == "exile"
 
     @pytest.mark.asyncio
     async def test_speak_no_role(self):
@@ -1277,298 +901,6 @@ class TestGameEngine:
         engine = GameEngine(game_id="test", roles={1: role})
         result = await engine.vote(1)
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_execute_night_round(self):
-        roles = {}
-        role_list = [
-            (1, "wolf-killer-werewolf"), (2, "wolf-killer-werewolf"), (3, "wolf-killer-werewolf"),
-            (4, "wolf-killer-villager"), (5, "wolf-killer-villager"), (6, "wolf-killer-villager"),
-            (7, "wolf-killer-seer"), (8, "wolf-killer-witch"), (9, "wolf-killer-hunter"),
-        ]
-        for seat, role_name in role_list:
-            target = 4 if "werewolf" in role_name else (2 if "seer" in role_name else None)
-            action_type = "kill" if "werewolf" in role_name else ("check" if "seer" in role_name else "pass")
-            roles[seat] = make_mock_role(seat, role_name,
-                night_action=NightAction(player_seat=seat, action_type=action_type, target_seat=target),
-            )
-
-        bus = EventBus()
-        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
-        # Manually set up players without random shuffle to match mock roles
-        for seat, role_name in role_list:
-            camp = "werewolf" if "werewolf" in role_name else "good"
-            player = PlayerState(seat_number=seat, role=role_name, camp=camp)
-            if "witch" in role_name:
-                player.has_antidote = True
-                player.has_poison = True
-            if "hunter" in role_name:
-                player.has_gun = True
-            engine.state.players[seat] = player
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine.state.phase = GamePhase.NIGHT
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        await engine._execute_night()
-
-        assert engine.state.round_number == 1
-        assert len(engine.state.night_actions) > 0
-        assert all(
-            isinstance(action, AcceptedAction)
-            for action in resolve.call_args.args[1]
-        )
-        assert engine.sm.get_state() == GamePhase.DAWN
-
-    @pytest.mark.asyncio
-    async def test_accept_night_actions_converts_invalid_actions_before_resolver(self):
-        roles = {
-            1: make_mock_role(1, "wolf-killer-werewolf"),
-            7: make_mock_role(7, "wolf-killer-seer"),
-        }
-        engine = GameEngine(game_id="test", roles=roles)
-        engine.state.players = {
-            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
-            4: PlayerState(4, "wolf-killer-villager", "good"),
-            7: PlayerState(7, "wolf-killer-seer", "good"),
-        }
-        engine.state.phase = GamePhase.NIGHT
-
-        accepted_actions = engine._accept_night_actions([
-            NightAction(player_seat=1, action_type="poison", target_seat=4),
-            NightAction(player_seat=7, action_type="check", target_seat=99),
-        ])
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        deaths = engine.action_resolver.resolve(engine.state, accepted_actions)
-
-        resolver_actions = resolve.call_args.args[1]
-        assert deaths == []
-        assert all(isinstance(action, AcceptedAction) for action in resolver_actions)
-        assert all(not isinstance(action, NightAction) for action in resolver_actions)
-        assert [action.command.action_type for action in resolver_actions] == ["pass", "pass"]
-        assert all(action.command.target_seat is None for action in resolver_actions)
-
-    @pytest.mark.asyncio
-    async def test_execute_night_does_not_send_second_witch_potion_to_resolver(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=5),
-            ),
-            2: make_mock_role(2, "wolf-killer-witch"),
-            3: make_mock_role(3, "wolf-killer-villager"),
-            4: make_mock_role(
-                4, "wolf-killer-seer",
-                night_action=NightAction(player_seat=4, action_type="check", target_seat=1),
-            ),
-            5: make_mock_role(5, "wolf-killer-villager"),
-        }
-        async def save_action(state, conversation_log, request):
-            state.players[2].has_antidote = False
-            return AcceptedAction(
-                request=request,
-                command=ActionCommand(
-                    action_type="save", target_seat=5, reasoning="x"
-                ),
-            )
-
-        roles[2].request_action = AsyncMock(side_effect=save_action)
-        engine = GameEngine(game_id="test", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        await engine._execute_night()
-
-        resolver_actions = resolve.call_args.args[1]
-        witch_actions = [
-            action for action in resolver_actions
-            if action.request.actor_seat == 2
-        ]
-        assert all(isinstance(action, AcceptedAction) for action in resolver_actions)
-        assert [action.command.action_type for action in witch_actions] == ["save"]
-        assert [action.action_type for action in engine.state.night_actions if action.player_seat == 2] == ["save"]
-        assert engine.state.players[2].has_antidote is False
-        assert engine.state.players[2].has_poison is True
-
-    @pytest.mark.asyncio
-    async def test_execute_night_records_safe_fallback_instead_of_invalid_raw_action(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-            ),
-            2: make_mock_role(2, "wolf-killer-villager"),
-        }
-        roles[1].kill = AsyncMock(return_value=NightAction(
-            player_seat=1, action_type="poison", target_seat=2,
-        ))
-        engine = GameEngine(game_id="test", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-
-        await engine._execute_night()
-
-        assert [(action.player_seat, action.action_type, action.target_seat) for action in engine.state.night_actions] == [
-            (1, "pass", None),
-        ]
-
-    @pytest.mark.asyncio
-    async def test_execute_night_records_each_wolf_kill_without_overwriting(self, tmp_path):
-        roles = {
-            1: make_mock_role(
-                1, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=1, action_type="kill", target_seat=3),
-            ),
-            2: make_mock_role(
-                2, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=2, action_type="kill", target_seat=3),
-            ),
-            3: make_mock_role(3, "wolf-killer-villager"),
-        }
-        engine = GameEngine(game_id="test", roles=roles, data_dir=str(tmp_path))
-        engine._assign_roles()
-        engine.state.phase = GamePhase.NIGHT
-        engine.sm.set_state(GamePhase.NIGHT)
-        engine._sleep_night_step = AsyncMock()
-
-        await engine._execute_night()
-
-        assert [(action.player_seat, action.action_type, action.target_seat) for action in engine.state.night_actions] == [
-            (1, "kill", 3),
-            (2, "kill", 3),
-        ]
-
-    def test_accept_night_actions_rejects_duplicate_without_second_resolution(self):
-        roles = {1: make_mock_role(1, "wolf-killer-werewolf")}
-        engine = GameEngine(game_id="test", roles=roles)
-        engine.state.players = {
-            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
-            2: PlayerState(2, "wolf-killer-villager", "good"),
-        }
-        engine.state.phase = GamePhase.NIGHT
-        action = NightAction(player_seat=1, action_type="kill", target_seat=2)
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        accepted_actions = engine._accept_night_actions([action])
-        engine.action_resolver.resolve(engine.state, accepted_actions)
-        duplicate_actions = engine._accept_night_actions([action])
-        if duplicate_actions:
-            engine.action_resolver.resolve(engine.state, duplicate_actions)
-
-        assert [accepted.command.action_type for accepted in accepted_actions] == ["kill"]
-        assert duplicate_actions == []
-        assert resolve.call_count == 1
-
-    def test_accept_night_actions_discards_missing_player_without_fallback(self, caplog):
-        engine = GameEngine(game_id="test")
-        engine.state.players = {
-            1: PlayerState(1, "wolf-killer-villager", "good"),
-        }
-        engine.state.phase = GamePhase.NIGHT
-        missing_player_request = ActionRequest(
-            actor_seat=99,
-            role_id="wolf-killer-werewolf",
-            contract=ActionContract(
-                contract_id="werewolf_kill", phase=GamePhase.NIGHT,
-                action_types=("kill", "pass"), actions_requiring_target=frozenset({"kill"}),
-                resolution_priority=10, fallback_action_type="pass",
-            ),
-            phase=GamePhase.NIGHT, round_id=0,
-            idempotency_key="0:night:99:werewolf_kill",
-        )
-        engine.action_validator.safe_fallback = MagicMock()
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        with patch(
-            "app.core.game_engine.builtin_registry.build_requests",
-            return_value=[missing_player_request],
-        ):
-            accepted_actions = engine._accept_night_actions([
-                NightAction(player_seat=99, action_type="kill", target_seat=1),
-            ])
-        if accepted_actions:
-            engine.action_resolver.resolve(engine.state, accepted_actions)
-
-        assert accepted_actions == []
-        assert engine.state.accepted_action_keys == set()
-        assert engine.state.night_actions == []
-        engine.action_validator.safe_fallback.assert_not_called()
-        resolve.assert_not_called()
-        assert "Discarding night action from missing player (seat=99)" in caplog.text
-
-    def test_accept_night_actions_keeps_duplicate_bound_to_its_original_contract(self):
-        roles = {1: make_mock_role(1, "wolf-killer-werewolf")}
-        engine = GameEngine(game_id="test", roles=roles)
-        engine.state.players = {
-            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
-            2: PlayerState(2, "wolf-killer-villager", "good"),
-        }
-        engine.state.phase = GamePhase.NIGHT
-        kill_request = ActionRequest(
-            actor_seat=1,
-            role_id="wolf-killer-werewolf",
-            contract=ActionContract(
-                contract_id="kill", phase=GamePhase.NIGHT,
-                action_types=("kill",), actions_requiring_target=frozenset({"kill"}),
-                resolution_priority=10, fallback_action_type="pass",
-            ),
-            phase=GamePhase.NIGHT, round_id=0, idempotency_key="0:night:1:kill",
-        )
-        check_request = ActionRequest(
-            actor_seat=1,
-            role_id="wolf-killer-werewolf",
-            contract=ActionContract(
-                contract_id="check", phase=GamePhase.NIGHT,
-                action_types=("check", "pass"), actions_requiring_target=frozenset({"check"}),
-                resolution_priority=20, fallback_action_type="pass",
-            ),
-            phase=GamePhase.NIGHT, round_id=0, idempotency_key="0:night:1:check",
-        )
-        action = NightAction(player_seat=1, action_type="kill", target_seat=2)
-        resolve = MagicMock(wraps=engine.action_resolver.resolve)
-        engine.action_resolver.resolve = resolve
-
-        with patch(
-            "app.core.game_engine.builtin_registry.build_requests",
-            side_effect=([kill_request, check_request], [check_request], [check_request]),
-        ), patch(
-            "app.core.game_engine.builtin_registry.require",
-            return_value=MagicMock(
-                contracts=(kill_request.contract, check_request.contract),
-            ),
-        ):
-            accepted_actions = engine._accept_night_actions([action])
-            engine.state.night_actions = [action]
-            engine.action_resolver.resolve(engine.state, accepted_actions)
-            night_actions_before = list(engine.state.night_actions)
-            accepted_keys_before = set(engine.state.accepted_action_keys)
-            resolver_inputs_before = list(resolve.call_args_list)
-
-            duplicate_actions = engine._accept_night_actions([action])
-            if duplicate_actions:
-                engine.action_resolver.resolve(engine.state, duplicate_actions)
-
-            unknown_actions = engine._accept_night_actions([
-                NightAction(player_seat=1, action_type="unknown", target_seat=None),
-            ])
-            if unknown_actions:
-                engine.action_resolver.resolve(engine.state, unknown_actions)
-
-        assert [accepted.command.action_type for accepted in accepted_actions] == ["kill"]
-        assert duplicate_actions == []
-        assert unknown_actions == []
-        assert engine.state.night_actions == night_actions_before
-        assert engine.state.accepted_action_keys == accepted_keys_before == {"0:night:1:kill"}
-        assert resolve.call_args_list == resolver_inputs_before
 
     @pytest.mark.asyncio
     async def test_execute_speech_round(self):
@@ -1678,7 +1010,8 @@ class TestGameEngine:
     async def test_vote_resolution_tie_no_exile(self):
         roles = make_9_mock_roles()
         bus = EventBus()
-        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus,
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
 
         # Initial vote: tie (3 for 1, 3 for 2)
@@ -1715,7 +1048,8 @@ class TestGameEngine:
             3: make_mock_role(3, "wolf-killer-villager"),
             4: make_mock_role(4, "wolf-killer-villager"),
         }
-        engine = GameEngine(game_id="first-tie", roles=roles)
+        engine = GameEngine(game_id="first-tie", roles=roles,
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
         engine.state.votes = [
             VoteAction(voter_seat=1, target_seat=1),
@@ -1767,7 +1101,8 @@ class TestGameEngine:
             3: make_mock_role(3, "wolf-killer-villager"),
             4: make_mock_role(4, "wolf-killer-villager"),
         }
-        engine = GameEngine(game_id="resume-tiebreak", roles=roles)
+        engine = GameEngine(game_id="resume-tiebreak", roles=roles,
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
         engine.state.is_tiebreak = True
         engine.state.vote_round = 2
@@ -1861,33 +1196,6 @@ class TestGameEngine:
         assert engine.speak.await_count == 0
         assert engine.sm.get_state() == GamePhase.NIGHT
         assert engine.state.is_tiebreak is False
-
-    @pytest.mark.asyncio
-    async def test_seer_check_result(self):
-        engine = GameEngine(game_id="test")
-        engine.state.players[1] = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")
-        engine.state.players[2] = PlayerState(seat_number=2, role="wolf-killer-villager", camp="good")
-
-        assert engine.resolve_seer_check(NightAction(player_seat=7, action_type="check", target_seat=1)) == "werewolf"
-        assert engine.resolve_seer_check(NightAction(player_seat=7, action_type="check", target_seat=2)) == "good"
-
-    @pytest.mark.asyncio
-    async def test_werewolf_kill(self):
-        roles = {}
-        for seat in [1, 2, 3]:
-            roles[seat] = make_mock_role(seat, "wolf-killer-werewolf",
-                night_action=NightAction(player_seat=seat, action_type="kill", target_seat=4))
-
-        bus = EventBus()
-        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
-        for seat, role_name in [(1, "wolf-killer-werewolf"), (2, "wolf-killer-werewolf"),
-                                 (3, "wolf-killer-werewolf"), (4, "wolf-killer-villager")]:
-            camp = "werewolf" if "werewolf" in role_name else "good"
-            engine.state.players[seat] = PlayerState(seat_number=seat, role=role_name, camp=camp)
-
-        actions, target = await engine.werewolf_kill([1, 2, 3])
-        assert len(actions) == 3
-        assert target == 4
 
     @pytest.mark.asyncio
     async def test_get_night_deaths(self):

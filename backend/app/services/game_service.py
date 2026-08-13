@@ -6,18 +6,33 @@ import random
 import uuid
 from typing import Optional
 
+from langchain_core.messages import SystemMessage, HumanMessage
+
 from app.config import config as app_config
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import LLMClient
 from app.agents.prompt_builder import PromptBuilder
+from app.agents.prompt_renderer import PromptRenderer
+from app.core.action_resolver import ActionResolver
+from app.core.action_validator import ActionValidator
+from app.core.context_projector import ContextProjector
+from app.core.effect_applier import EffectApplier
+from app.core.scheduler import Scheduler
+from app.models.pipeline import ActionCommand as PipelineActionCommand
 from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest
 
 logger = logging.getLogger(__name__)
+
+_SYSTEM_PROMPT = (
+    "You are a player in an AI Werewolf game. Follow the ROLE_CONTRACT exactly, "
+    "reason from PROJECTED_CONTEXT and UNTRUSTED_HISTORY, and respond with only "
+    "the JSON described by OUTPUT_ACTION_COMMAND_SCHEMA."
+)
 
 PUBLIC_NIGHT_SUBSTEPS = frozenset({
     "werewolf_open",
@@ -208,6 +223,20 @@ class GameService:
         prompt_builder = PromptBuilder()
         roles = self._create_roles(config, prompt_builder, models)
 
+        # Build the registry-driven pipeline scheduler for night actions and
+        # day death reactions; a single per-game model answers all pipeline calls.
+        snapshot = builtin_registry.freeze()
+        renderer = PromptRenderer()
+        llm_client = LLMClient(model=random.choice(models))
+        scheduler = Scheduler(
+            snapshot,
+            ContextProjector(),
+            ActionValidator(),
+            ActionResolver(),
+            EffectApplier(),
+            self._command_provider(snapshot, renderer, llm_client),
+        )
+
         # Create engine
         engine = GameEngine(
             game_id=game_id,
@@ -215,6 +244,7 @@ class GameService:
             event_bus=self.event_bus,
             roles=roles,
             memory_service=self.memory_service,
+            pipeline_scheduler=scheduler,
         )
 
         self._engines[game_id] = engine
@@ -240,6 +270,49 @@ class GameService:
             prompt_builder,
             llm_client_factory=lambda: LLMClient(model=random.choice(models)),
         )
+
+    def _command_provider(self, snapshot, renderer: PromptRenderer, llm_client: LLMClient):
+        """LLM-backed command provider for the pipeline scheduler.
+
+        Renders a prompt from the frozen registry spec, projected context and
+        the game's conversation history, then parses the response into an
+        ActionCommand. Parse failures degrade to the contract's safe fallback
+        so a point never stalls on a malformed model response.
+        """
+        def provider(request, context, attempt):
+            role_spec = snapshot.require(request.role_id)
+            engine = self._engines.get(context.game_id)
+            history = ""
+            if engine is not None:
+                records = engine.conversation_log.get_conversations_for_role(
+                    request.actor_seat, request.role_id,
+                )
+                history = "\n".join(
+                    f"[{record.round_number}|{record.phase}|"
+                    f"{record.speaker_seat if record.speaker_seat is not None else ''}] {record.content}"
+                    for record in records[-120:]
+                )
+            prompt = renderer.render(role_spec, request.contract, context, history)
+            messages = [
+                SystemMessage(content=_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+            try:
+                response = llm_client.get_model().invoke(messages)
+                content = response.content if hasattr(response, "content") else str(response)
+                if not isinstance(content, str):
+                    raise ValueError("model response is not text")
+                command = PipelineActionCommand.model_validate(json.loads(content))
+            except Exception:
+                command = None
+            if command is None or command.action_type not in request.contract.action_types:
+                return PipelineActionCommand(
+                    action_type=request.contract.fallback_action_type,
+                    target_seat=None,
+                    reasoning="safe fallback",
+                )
+            return command
+        return provider
 
     def get_game_state(self, game_id: str) -> Optional[GameState]:
         return self._games.get(game_id)
