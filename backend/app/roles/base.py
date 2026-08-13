@@ -7,13 +7,32 @@ from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
 from app.agents.output_parser import OutputParser, StrictCapabilityError, ToolCallError
 from app.core.action_validator import ActionValidationError, ActionValidator
-from app.models.contracts import AcceptedAction, ActionRequest
+from app.core.effect_applier import EffectApplier, EffectPermission, derive_effect_id
+from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
+from app.models.pipeline import (
+    ActionCommand as PipelineActionCommand,
+    ActionContext,
+    ActionContract as PipelineActionContract,
+    EffectKind,
+    GameEffect,
+    SchedulePoint,
+)
 from langchain_core.messages import SystemMessage, HumanMessage
 
 if TYPE_CHECKING:
     from app.agents.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+_VOTE_CONTRACT = PipelineActionContract(
+    contract_id="exile_vote",
+    schedule_point=SchedulePoint.VOTE_ACTION,
+    order=0,
+    action_types=("vote", "abstain"),
+    actions_requiring_target=frozenset({"vote"}),
+    fallback_action_type="abstain",
+    visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
+)
 
 
 class BaseRole:
@@ -338,12 +357,15 @@ class BaseRole:
         for attempt in range(2):
             try:
                 command = await invoke(active_messages, request)
-                return self.action_validator.validate_and_accept(
-                    state, request, command.model_dump()
-                )
+                return self._accept_command(state, request, command)
             except ActionValidationError:
                 if attempt == 1:
-                    return self.action_validator.safe_fallback(state, request)
+                    fallback = ActionCommand(
+                        action_type=request.contract.fallback_action_type,
+                        target_seat=None,
+                        reasoning="safe fallback",
+                    )
+                    return self._accept_command(state, request, fallback)
                 active_messages = [
                     *messages,
                     HumanMessage(
@@ -354,6 +376,62 @@ class BaseRole:
                     ),
                 ]
         raise AssertionError("unreachable")
+
+    def _accept_command(self, state: GameState, request: ActionRequest,
+                        command: ActionCommand) -> AcceptedAction:
+        """Validate a vote command through the pure pipeline validator and
+        record its acceptance atomically through EffectApplier — the only
+        state-writing path in the codebase."""
+        runtime = getattr(state, "_pipeline_runtime", None)
+        revision = 0 if runtime is None else runtime.revision
+        player = state.players.get(self.seat)
+        context = ActionContext(
+            game_id=state.game_id,
+            revision=revision,
+            facts={
+                "alive_seats": tuple(sorted(state.alive_players())),
+                "phase": state.phase.value,
+                "round_number": state.round_number,
+            },
+            contract_id=_VOTE_CONTRACT.contract_id,
+            contract_version=_VOTE_CONTRACT.schema_version,
+            contract_digest=_VOTE_CONTRACT.stable_digest(),
+            round_number=state.round_number,
+            phase=state.phase.value,
+            window_id=request.idempotency_key,
+            schedule_point=_VOTE_CONTRACT.schedule_point,
+            actor_seat=self.seat,
+            actor_role_id=self.role_name,
+            actor_alive=player is not None and player.is_alive,
+            action_key=request.idempotency_key,
+        )
+        pipeline_command = PipelineActionCommand(
+            action_type=command.action_type,
+            target_seat=command.target_seat,
+            reasoning=command.reasoning,
+        )
+        violations = self.action_validator.validate(context, _VOTE_CONTRACT, pipeline_command)
+        if violations:
+            raise ActionValidationError(violations[0].message)
+        accept = GameEffect(
+            effect_id=derive_effect_id(context.action_key, 0),
+            kind=EffectKind.ACCEPT_ACTION,
+            source_action_key=context.action_key,
+            payload={
+                "actor_seat": self.seat,
+                "contract_id": _VOTE_CONTRACT.contract_id,
+                "window_id": request.idempotency_key,
+                "round_number": state.round_number,
+            },
+            expected_revision=context.revision,
+            sort_key=(0,),
+        )
+        permission = EffectPermission(
+            self.seat, frozenset(), frozenset(),
+            frozenset(state.alive_players()) | {self.seat}, frozenset(),
+        )
+        EffectApplier().apply(state, (accept,), permission)
+        return AcceptedAction(request=request, command=command)
 
     async def _invoke_strict_action(self, messages, request):
         try:
