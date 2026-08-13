@@ -12,7 +12,8 @@ from app.models.pipeline import (
 )
 from app.roles.registry import RegistrySnapshot
 from app.core.role_runtime import (
-    role_action_counters, role_private_facts_view, role_resource_view,
+    role_action_counters, role_private_data_view, role_private_facts_view,
+    role_resource_view,
 )
 
 
@@ -466,7 +467,12 @@ class ContextProjector:
                         state.last_wolf_kill_target, "wolf_kill_target"
                     )
             else:
-                facts[key] = cls._copy_json_value(default)
+                canonical = role_private_data_view(state, actor.seat_number)
+                facts[key] = (
+                    cls._copy_json_value(canonical[key])
+                    if key in canonical
+                    else cls._copy_json_value(default)
+                )
         return facts
 
     @staticmethod

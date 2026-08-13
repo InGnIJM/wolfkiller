@@ -119,6 +119,19 @@ def role_resource_view(state: GameState, seat: int) -> Mapping[str, int]:
         return MappingProxyType(dict(resources))
 
 
+def role_private_data_view(state: GameState, seat: int) -> Mapping[str, object]:
+    from app.core.effect_applier import EffectRejected
+    if type(state) is not GameState: raise TypeError("state must be GameState")
+    if type(seat) is not int or seat <= 0: raise ValueError("invalid seat")
+    with state_transaction_lock(state):
+        runtime = getattr(state, "_pipeline_runtime", None)
+        if runtime is None:
+            return MappingProxyType({})
+        try: private_data = runtime.clone().private_data.get(seat, {})
+        except (AttributeError, TypeError, ValueError) as error: raise EffectRejected("invalid pipeline runtime") from error
+        return MappingProxyType(dict(private_data))
+
+
 def role_private_facts_view(
     state: GameState, seat: int, namespace: str,
 ) -> tuple[Mapping[str, object], ...]:

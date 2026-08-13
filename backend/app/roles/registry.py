@@ -21,6 +21,7 @@ from app.models.pipeline import (
     RuleViolation,
 )
 from app.roles.hunter import HUNTER_SPEC, Hunter
+from app.roles.guard import GUARD_SPEC
 from app.roles.seer import SEER_SPEC, Seer
 from app.roles.villager import VILLAGER_SPEC, Villager
 from app.roles.werewolf import WEREWOLF_SPEC, Werewolf
@@ -378,6 +379,7 @@ builtin_registry.register_pipeline(WITCH_SPEC)
 builtin_registry.register_pipeline(SEER_SPEC)
 builtin_registry.register_pipeline(HUNTER_SPEC)
 builtin_registry.register_pipeline(VILLAGER_SPEC)
+builtin_registry.register_pipeline(GUARD_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
