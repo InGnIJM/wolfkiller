@@ -852,3 +852,143 @@ def test_resource_initialization_is_concurrently_idempotent() -> None:
     barrier.wait()
     for thread in threads: thread.join()
     assert results[0] is results[1] and s._pipeline_runtime.revision == 1
+
+
+def test_settle_pending_is_atomic_stable_and_idempotent() -> None:
+    s = state()
+    EffectApplier().apply(s, batch([
+        (EffectKind.SUBMIT_DAMAGE, {"target": 3, "amount": 1, "cause": "z_damage"}, 3),
+        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 2, "cause": "wolf_kill"}, 2),
+        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "poison"}, 2),
+        (EffectKind.SUBMIT_PROTECTION, {"target": 2, "amount": 1}, 2),
+        (EffectKind.SUBMIT_PROTECTION, {"target": 3, "amount": 1}, 3),
+    ], visibility=("PUBLIC",)), permission())
+    before = s._pipeline_runtime.revision
+
+    first = EffectApplier().settle_pending(s, round_number=4)
+    second = EffectApplier().settle_pending(s, round_number=4)
+
+    assert first is second and first.revision == before + 1
+    assert first.events == ({
+        "event_type": "PLAYER_DIED",
+        "payload": {"seat": 2, "cause": "wolf_kill", "round_number": 4},
+        "visibility": ("PUBLIC",),
+    },)
+    assert s.players[2].is_alive is False and s.players[3].is_alive is True
+    assert [(item.player_seat, item.cause, item.round_number) for item in s.death_history] == [
+        (2, "wolf_kill", 4),
+    ]
+    assert s._pipeline_runtime.pending_damage == ()
+    assert s._pipeline_runtime.pending_protection == ()
+    assert s._pipeline_runtime.commits[first.action_key] is first
+
+
+def test_settle_pending_empty_is_noop_and_protection_only_commits() -> None:
+    empty = state()
+    assert EffectApplier().settle_pending(empty, round_number=0) is None
+    assert not hasattr(empty, "_pipeline_runtime")
+
+    protected = state()
+    EffectApplier().apply(protected, batch([
+        (EffectKind.SUBMIT_PROTECTION, {"target": 2, "amount": 1}, 2),
+    ]), permission())
+    result = EffectApplier().settle_pending(protected, round_number=1)
+    assert result is not None and result.events == ()
+    assert result.effect_ids and protected._pipeline_runtime.pending_protection == ()
+    assert all(player.is_alive for player in protected.players.values())
+
+
+def test_damage_payload_cause_is_closed_and_legacy_is_migration_only() -> None:
+    valid = state()
+    EffectApplier().apply(valid, batch([
+        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "future.cause"}, 2),
+    ]), permission())
+    assert valid._pipeline_runtime.pending_damage == (
+        {"target": 2, "amount": 1, "cause": "future.cause"},
+    )
+
+    for payload in (
+        {"target": 2, "amount": 1, "cause": "bad cause"},
+        {"target": 2, "amount": 1, "cause": "ok", "extra": 1},
+    ):
+        with pytest.raises(EffectRejected):
+            EffectApplier().apply(state(), batch([
+                (EffectKind.SUBMIT_DAMAGE, payload, 2),
+            ]), permission())
+
+    legacy = state()
+    EffectApplier().apply(legacy, batch([
+        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1}, 2),
+    ]), permission())
+    runtime = legacy._pipeline_runtime
+    with pytest.raises(EffectRejected, match="pending damage"):
+        EffectApplier().settle_pending(legacy, round_number=1)
+    assert legacy._pipeline_runtime is runtime and legacy.players[2].is_alive
+
+
+@pytest.mark.parametrize("round_number", [True, -1, 2_147_483_648])
+def test_settle_pending_rejects_bad_input_and_runtime_atomically(round_number) -> None:
+    s = state()
+    with pytest.raises((TypeError, ValueError)):
+        EffectApplier().settle_pending(s, round_number=round_number)
+    assert not hasattr(s, "_pipeline_runtime")
+
+
+def test_settle_pending_rejects_non_state() -> None:
+    with pytest.raises(TypeError): EffectApplier().settle_pending(object(), round_number=1)
+
+
+def test_settle_pending_rejects_malformed_or_overflowing_runtime() -> None:
+    from app.core.effect_applier import _Runtime
+
+    malformed = state(); malformed.death_history = object()
+    malformed._pipeline_runtime = _Runtime(
+        pending_damage=({"target": 2, "amount": 1, "cause": "attack"},)
+    )
+    with pytest.raises(EffectRejected): EffectApplier().settle_pending(malformed, round_number=1)
+    assert malformed.players[2].is_alive
+
+    for pending in (
+        ({"target": 99, "amount": 1, "cause": "attack"},),
+        ({"target": 2, "amount": 0, "cause": "attack"},),
+        ({"target": 2, "amount": 2_147_483_647, "cause": "attack"},
+         {"target": 2, "amount": 1, "cause": "attack"}),
+    ):
+        bad = state(); runtime = _Runtime(pending_damage=pending); bad._pipeline_runtime = runtime
+        with pytest.raises(EffectRejected): EffectApplier().settle_pending(bad, round_number=1)
+        assert bad._pipeline_runtime is runtime and bad.players[2].is_alive
+
+
+def test_night_settlement_pure_boundaries_are_strict() -> None:
+    from app.core.night_settlement import settle, settlement_key
+
+    for game_id in ("", "\ud800"):
+        with pytest.raises(ValueError): settlement_key(game_id, 1)
+    for round_number in (True, -1):
+        with pytest.raises((TypeError, ValueError)): settlement_key("g", round_number)
+    for args in (
+        ([], (), {1}, {1: True}, 1),
+        ((), (), {0}, {0: True}, 1),
+        ((), (), {1}, {1: 1}, 1),
+    ):
+        with pytest.raises((TypeError, ValueError)): settle(*args)
+    for pending in (
+        ({"target": 1, "amount": 1, "cause": 1},),
+        ({"target": 1, "amount": 1, "cause": "bad cause"},),
+    ):
+        with pytest.raises(ValueError): settle(pending, (), {1}, {1: True}, 1)
+
+
+def test_settle_pending_is_concurrently_idempotent() -> None:
+    s = state()
+    EffectApplier().apply(s, batch([
+        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "attack"}, 2),
+    ]), permission())
+    barrier = Barrier(3); results = []
+    def settle(): barrier.wait(); results.append(EffectApplier().settle_pending(s, round_number=1))
+    threads = [Thread(target=settle), Thread(target=settle)]
+    for thread in threads: thread.start()
+    barrier.wait()
+    for thread in threads: thread.join()
+    assert results[0] is results[1]
+    assert len(s.death_history) == 1 and s._pipeline_runtime.revision == 2

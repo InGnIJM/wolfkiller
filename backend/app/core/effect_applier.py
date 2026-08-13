@@ -1,14 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import hashlib
-import json
 import math
 import re
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass, field; from types import MappingProxyType
 from typing import Mapping
-from app.models.game import GameState
-from app.models.pipeline import EffectKind, GameEffect
-from app.core.state_transaction import state_transaction_lock
+from app.models.game import GameState; from app.models.pipeline import EffectKind, GameEffect
+from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import settle, settlement_key, state_digest as _digest
 from app.core.role_runtime import clone_action_counts, initialize_role_resources, record_accepted_action, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -217,11 +214,15 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
         **{kind: frozenset({"target", "status"}) for kind in (EffectKind.ADD_STATUS, EffectKind.REMOVE_STATUS)},
         **{kind: frozenset({"target", "relation", "other_seat"}) for kind in (EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION)},
         EffectKind.RECORD_PRIVATE_FACT: frozenset({"target", "namespace", "fact"}),
-        **{kind: frozenset({"target", "amount"}) for kind in (EffectKind.SUBMIT_DAMAGE, EffectKind.SUBMIT_PROTECTION)},
+        EffectKind.SUBMIT_DAMAGE: frozenset(payload),
+        EffectKind.SUBMIT_PROTECTION: frozenset({"target", "amount"}),
         EffectKind.MARK_DEATH: frozenset({"target", "cause"}),
         EffectKind.EMIT_EVENT: frozenset({"event_type", "payload"}),
     }
     _exact(payload, schemas[kind], "payload")
+    if kind is EffectKind.SUBMIT_DAMAGE and frozenset(payload) not in (
+        frozenset({"target", "amount"}), frozenset({"target", "amount", "cause"}),
+    ): raise EffectRejected("invalid payload fields")
     if kind is EffectKind.ACCEPT_ACTION:
         if effect.target_seat is not None: raise EffectRejected("accept action cannot have target")
         return payload
@@ -248,6 +249,7 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
         if not isinstance(payload["fact"], Mapping): raise EffectRejected("fact must be a mapping")
     elif kind in {EffectKind.SUBMIT_DAMAGE, EffectKind.SUBMIT_PROTECTION}:
         _int_field(payload, "amount", positive=True)
+        if kind is EffectKind.SUBMIT_DAMAGE and "cause" in payload: _token_field(payload, "cause")
     else:
         try:
             _utf8(payload["cause"], "cause")
@@ -323,46 +325,43 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
     elif kind is EffectKind.RECORD_PRIVATE_FACT:
         runtime.private_facts.setdefault(target, []).append({"namespace": payload["namespace"], "fact": payload["fact"]})
     elif kind is EffectKind.SUBMIT_DAMAGE:
-        runtime.pending_damage += ({"target": target, "amount": payload["amount"]},)
+        runtime.pending_damage += ({key: payload[key] for key in payload},)
     elif kind is EffectKind.SUBMIT_PROTECTION:
         runtime.pending_protection += ({"target": target, "amount": payload["amount"]},)
     else:
         if not alive[target]: raise EffectRejected("player already dead")
         alive[target] = False
         events.append({"event_type": "PLAYER_DIED", "payload": {"seat": target, "cause": payload["cause"]}, "visibility": effect.visibility})
-def _jsonable(value: object) -> object:
-    if isinstance(value, Mapping): return {str(key): _jsonable(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
-    if isinstance(value, (tuple, list, set, frozenset)):
-        items = [_jsonable(item) for item in value]
-        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False)) if isinstance(value, (set, frozenset)) else items
-    return value
-def _digest(state: GameState, runtime: _Runtime, alive: dict[int, bool]) -> str:
-    document = {
-        "game_id": state.game_id,
-        "revision": runtime.revision,
-        "alive": alive,
-        "role_resources": runtime.role_resources,
-        "private_data": runtime.private_data,
-        "statuses": runtime.statuses,
-        "relations": runtime.relations,
-        "private_facts": runtime.private_facts,
-        "pending_damage": runtime.pending_damage,
-        "pending_protection": runtime.pending_protection,
-        "events": runtime.events,
-        "resource_setup_digest": runtime.resource_setup_digest,
-        "action_counts": runtime.action_counts,
-    }
-    return hashlib.sha256(json.dumps(_jsonable(document), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 class EffectApplier:
-    def apply(self, state: GameState, effects: tuple[GameEffect, ...],
-              permission: EffectPermission) -> CommitResult:
+    def settle_pending(self, state: GameState, *, round_number: int) -> CommitResult | None:
+        if type(state) is not GameState: raise TypeError("state must be GameState")  # pragma: no branch
+        action_key = settlement_key(state.game_id, round_number)
+        with state_transaction_lock(state):
+            current = _runtime(state); simulated = current.clone()
+            if action_key in current.commits: return current.commits[action_key]  # pragma: no branch
+            if not simulated.pending_damage and not simulated.pending_protection: return None  # pragma: no branch
+            if type(state.death_history) is not list: raise EffectRejected("invalid death history")  # pragma: no branch
+            alive = {seat: player.is_alive for seat, player in state.players.items()}
+            try: deaths, resulting_alive = settle(simulated.pending_damage, simulated.pending_protection, set(state.players), alive, round_number)
+            except (TypeError, ValueError) as error: raise EffectRejected("invalid pending damage or protection") from error
+            simulated.pending_damage = (); simulated.pending_protection = (); simulated.revision += 1
+            events = tuple({"event_type": "PLAYER_DIED", "payload": death, "visibility": ("PUBLIC",)} for death in deaths)
+            simulated.events += tuple(_json(event, "event") for event in events)
+            ids = tuple(derive_effect_id(action_key, ordinal) for ordinal in range(len(deaths) + 1))
+            digest = _digest(state, simulated, resulting_alive)
+            result = CommitResult(action_key, ids, simulated.revision, events, digest)
+            simulated.commits[action_key] = result
+            from app.models.actions import DeathReport
+            reports = [DeathReport(item["seat"], item["cause"], item["round_number"]) for item in deaths]
+            for seat, is_alive in resulting_alive.items(): state.players[seat].is_alive = is_alive
+            state.death_history.extend(reports); setattr(state, "_pipeline_runtime", simulated)
+            return result
+    def apply(self, state: GameState, effects: tuple[GameEffect, ...], permission: EffectPermission) -> CommitResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
         observed_revision = _runtime(state).revision
         with state_transaction_lock(state):
             return self._apply_locked(state, effects, permission, observed_revision)
-
-    def _apply_locked(self, state: GameState, effects: tuple[GameEffect, ...], permission: EffectPermission, observed_revision: int,
-                      resource_setup_digest: str | None = None) -> CommitResult:
+    def _apply_locked(self, state: GameState, effects: tuple[GameEffect, ...], permission: EffectPermission, observed_revision: int, resource_setup_digest: str | None = None) -> CommitResult:
         if type(effects) is not tuple: raise TypeError("effects must be a tuple")
         if type(permission) is not EffectPermission: raise TypeError("permission must be EffectPermission")
         if not effects or any(type(effect) is not GameEffect for effect in effects): raise EffectRejected("effects must contain GameEffect values")
