@@ -46,7 +46,9 @@ def test_aggregate_majority_tie_lowest_and_all_pass() -> None:
     effect = majority[0]
     assert effect.kind is EffectKind.SUBMIT_DAMAGE
     assert effect.source_action_key == ctx.action_key and effect.expected_revision == ctx.revision
-    assert effect.sort_key == (1,) and effect.payload == {"target": 3, "amount": 1}
+    assert effect.sort_key == (1,) and effect.payload == {
+        "target": 3, "amount": 1, "cause": "wolf_kill",
+    }
 
 
 def test_resolver_adds_single_accept_and_registry_keeps_legacy() -> None:

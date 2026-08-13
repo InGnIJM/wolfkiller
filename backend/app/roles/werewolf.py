@@ -33,7 +33,7 @@ def aggregate_werewolf_votes(
     return (GameEffect(
         derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_DAMAGE,
         context.action_key, target_seat=target,
-        payload={"target": target, "amount": 1},
+        payload={"target": target, "amount": 1, "cause": "wolf_kill"},
         expected_revision=context.revision, source_event_id=context.source_event_id,
         sort_key=(1,),
     ),)
