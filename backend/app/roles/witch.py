@@ -37,6 +37,9 @@ def resolve_witch_action(
     resource = "antidote" if command.action_type == "save" else "poison"
     outcome = EffectKind.SUBMIT_PROTECTION if command.action_type == "save" else EffectKind.SUBMIT_DAMAGE
     target = command.target_seat
+    outcome_payload = {"target": target, "amount": 1}
+    if command.action_type == "poison":
+        outcome_payload["cause"] = "poison"
     common = {"expected_revision": context.revision, "source_event_id": context.source_event_id}
     return (
         GameEffect(derive_effect_id(context.action_key, 1), EffectKind.CONSUME_RESOURCE,
@@ -45,7 +48,7 @@ def resolve_witch_action(
             preconditions={"resource_equals": {"resource": resource, "value": 1}},
             sort_key=(1,), **common),
         GameEffect(derive_effect_id(context.action_key, 2), outcome, context.action_key,
-            target_seat=target, payload={"target": target, "amount": 1}, sort_key=(2,), **common),
+            target_seat=target, payload=outcome_payload, sort_key=(2,), **common),
     )
 
 

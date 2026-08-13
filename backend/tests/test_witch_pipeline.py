@@ -50,6 +50,8 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     assert [item.kind for item in poisoned] == [EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE]
     assert [item.sort_key for item in saved] == [(1,), (2,)]
     assert saved[0].target_seat == 1 and saved[1].target_seat == 2
+    assert saved[1].payload == {"target": 2, "amount": 1}
+    assert poisoned[1].payload == {"target": 3, "amount": 1, "cause": "poison"}
     assert saved[0].preconditions["resource_equals"] == {"resource": "antidote", "value": 1}
     assert resolve_witch_action(context(), command("pass")) == ()
 
@@ -139,7 +141,7 @@ def test_scheduler_poison_applies_damage_and_consumes_only_poison() -> None:
     result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
     assert result.commits[-1].revision == 3
     assert role_resource_view(game, 1) == {"antidote": 1, "poison": 0}
-    assert game._pipeline_runtime.pending_damage == ({"target": 2, "amount": 1},)
+    assert game._pipeline_runtime.pending_damage == ({"target": 2, "amount": 1, "cause": "poison"},)
 
 
 def test_legacy_target_validation_branches_remain_available() -> None:
