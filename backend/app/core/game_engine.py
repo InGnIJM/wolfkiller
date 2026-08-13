@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
-from app.models.actions import NightAction, VoteAction, SpeechRecord, DeathReport
+from app.models.actions import NightAction, VoteAction, SpeechRecord, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
@@ -46,7 +46,8 @@ class _PendingNightCompletion:
     deaths: tuple[DeathReport, ...] | None = None
     event_cursor: int = 0
     stage: int = 0
-    game_over: bool | None = None
+    win_result: WinResult | None = None
+    win_checked: bool = False
 
 
 class GameEngine:
@@ -284,11 +285,33 @@ class GameEngine:
             if self.memory_service: self.memory_service.save_memories(self.state)
             pending = replace(pending, stage=2); self._pending_night_completion = pending
         if pending.stage == 2:
-            pending = replace(pending, stage=3, game_over=await self._check_game_over()); self._pending_night_completion = pending
+            if not pending.win_checked:
+                pending = replace(pending, win_checked=True, win_result=self.rule_engine.check_win(self.state))
+                self._pending_night_completion = pending
+            pending = replace(pending, stage=3); self._pending_night_completion = pending
         if pending.stage == 3:
-            if not pending.game_over: self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
+            if pending.win_result is not None:
+                self.state.win_result = pending.win_result.to_dict(); self.state.phase = GamePhase.GAME_OVER
+                self.sm.set_state(GamePhase.GAME_OVER)
             pending = replace(pending, stage=4); self._pending_night_completion = pending
         if pending.stage == 4:
+            if pending.win_result is not None:
+                self.game_logger.log_game_over(self.game_id, self.state.round_number,
+                    pending.win_result.winning_camp, pending.win_result.reason)
+            pending = replace(pending, stage=5); self._pending_night_completion = pending
+        if pending.stage == 5:
+            if pending.win_result is not None:
+                await self.event_bus.publish(BusEvent.GAME_OVER, game_id=self.game_id, win_result=pending.win_result)
+            pending = replace(pending, stage=6); self._pending_night_completion = pending
+        if pending.stage == 6:
+            if pending.win_result is None and self.sm.get_state() is not GamePhase.DAWN:
+                try: self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
+                except BaseException:
+                    if self.sm.get_state() is GamePhase.DAWN:
+                        pending = replace(pending, stage=7); self._pending_night_completion = pending
+                    raise
+            pending = replace(pending, stage=7); self._pending_night_completion = pending
+        if pending.stage == 7:
             await self._broadcast_phase_change()
             self._pending_night_completion = None
 

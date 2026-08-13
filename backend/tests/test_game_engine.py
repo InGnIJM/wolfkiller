@@ -7,7 +7,7 @@ import app.core.game_engine as game_engine_module
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
-from app.models.actions import NightAction, VoteAction, DeathReport
+from app.models.actions import NightAction, VoteAction, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.action_validator import ActionValidationError
@@ -174,7 +174,7 @@ async def test_execute_night_v2_publishes_public_deaths_and_advances() -> None:
         2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
     }
     engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
-    engine._check_game_over = AsyncMock(return_value=False)
+    engine.rule_engine.check_win = MagicMock(return_value=None)
     engine._broadcast_phase_change = AsyncMock()
     engine.game_logger.log_deaths = MagicMock()
     memory = MagicMock(); engine.memory_service = memory
@@ -216,7 +216,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
     engine.state.players = {seat: PlayerState(seat, "r", "good") for seat in (1, 2, 3)}
     engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
     engine.game_logger.log_deaths = MagicMock(side_effect=[RuntimeError("disk"), None])
-    engine.memory_service = MagicMock(); engine._check_game_over = AsyncMock(return_value=False)
+    engine.memory_service = MagicMock(); engine.rule_engine.check_win = MagicMock(return_value=None)
     engine._broadcast_phase_change = AsyncMock()
     with pytest.raises(RuntimeError, match="transport"): await engine._execute_night()
     with pytest.raises(RuntimeError, match="disk"): await engine._execute_night()
@@ -225,7 +225,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
     assert engine.state.round_number == 1 and bus.attempts == [1, 2, 2]
     assert bus.delivered == [1, 2] and engine.game_logger.log_deaths.call_count == 2
     engine.memory_service.save_memories.assert_called_once_with(engine.state)
-    engine._check_game_over.assert_awaited_once(); engine._broadcast_phase_change.assert_awaited_once()
+    engine.rule_engine.check_win.assert_called_once_with(engine.state); engine._broadcast_phase_change.assert_awaited_once()
     assert engine._pending_night_completion is None and engine.sm.get_state() is GamePhase.DAWN
 
 
@@ -287,6 +287,48 @@ async def test_start_resets_pending_night_completion() -> None:
     engine._assign_roles = MagicMock()
     await engine.start()
     assert engine._pending_night_completion is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_terminal_completion_resumes_log_and_publish_without_rechecking() -> None:
+    class TerminalBus:
+        def __init__(self): self.calls = 0
+        async def publish(self, event, **kwargs):
+            assert event is BusEvent.GAME_OVER; self.calls += 1
+            if self.calls == 1: raise RuntimeError("publish")
+    engine = GameEngine("terminal", event_bus=TerminalBus(), pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine.state.round_number = 1; engine.sm.set_state(GamePhase.NIGHT)
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(result, deaths=(), stage=2)
+    engine.rule_engine.check_win = MagicMock(return_value=WinResult("good", "all_wolves_dead"))
+    engine.game_logger.log_game_over = MagicMock(side_effect=[RuntimeError("disk"), None])
+    engine._broadcast_phase_change = AsyncMock()
+    with pytest.raises(RuntimeError, match="disk"): await engine._execute_night()
+    assert engine.state.phase is GamePhase.GAME_OVER and engine.sm.get_state() is GamePhase.GAME_OVER
+    with pytest.raises(RuntimeError, match="publish"): await engine._execute_night()
+    await engine._execute_night()
+    engine.rule_engine.check_win.assert_called_once_with(engine.state)
+    assert engine.game_logger.log_game_over.call_count == 2 and engine.event_bus.calls == 2
+    engine._broadcast_phase_change.assert_awaited_once()
+    assert engine._pending_night_completion is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_transition_hook_failure_resumes_without_retransition() -> None:
+    engine = GameEngine("transition", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine.state.round_number = 1; engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(result, deaths=(), stage=2)
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    calls = []
+    def explode_after_transition(): calls.append("hook"); raise RuntimeError("hook")
+    engine.sm.on_enter(GamePhase.DAWN, explode_after_transition)
+    engine._broadcast_phase_change = AsyncMock()
+    with pytest.raises(RuntimeError, match="hook"): await engine._execute_night()
+    assert engine.sm.get_state() is GamePhase.DAWN
+    await engine._execute_night()
+    assert calls == ["hook"] and engine.rule_engine.check_win.call_count == 1
+    engine._broadcast_phase_change.assert_awaited_once()
 
 
 def make_mock_role(seat: int, role_name: str,
