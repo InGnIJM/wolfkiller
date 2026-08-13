@@ -30,6 +30,15 @@ class CustomControlFlow(BaseException):
     pass
 
 
+APPLICABILITY_CALLS = 0
+
+
+def counted_applicable(context: ActionContext) -> bool:
+    global APPLICABILITY_CALLS
+    APPLICABILITY_CALLS += 1
+    return True
+
+
 def applicable(context: ActionContext) -> bool:
     return True
 
@@ -347,7 +356,8 @@ def test_aggregate_rerun_is_idempotent() -> None:
     engine = scheduler(registry)
     first = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
     second = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
-    assert second.commits == first.commits
+    assert len(first.commits) == 1
+    assert second.requests == second.commits == ()
     assert engine._revision(game) == 1
 
 
@@ -490,7 +500,7 @@ def test_run_point_serializes_same_state_across_scheduler_instances() -> None:
     second = Thread(target=run, args=(scheduler(registry, provider), second_attempted)); second.start(); second_attempted.wait()
     try: assert not second_entered.is_set()
     finally: release_first.set(); first.join(); second.join()
-    assert failures == [] and second_entered.is_set()
+    assert failures == [] and not second_entered.is_set() and calls == 1
     assert scheduler(registry)._revision(game) == 1 and len(game._pipeline_runtime.commits) == 1
 
 
@@ -662,3 +672,81 @@ def test_concurrent_issue_initializes_resources_once() -> None:
     assert failures == []
     assert revisions == [1, 1]
     assert engine._revision(game) == 1
+
+
+def test_accepted_action_limits_gate_before_provider_and_applicability() -> None:
+    global APPLICABILITY_CALLS
+    APPLICABILITY_CALLS = 0
+    calls = {"provider": 0, "applicable": 0}
+
+    def provider(request, context, attempt):
+        calls["provider"] += 1
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+
+    c = contract("c", applies=counted_applicable)
+    object.__setattr__(c, "per_round_limit", 1)
+    object.__setattr__(c, "per_game_limit", 1)
+    registry = snapshot(spec("r", c)); game = state("r"); engine = scheduler(registry, provider)
+    assert len(engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)) == 1
+    assert calls["provider"] == 0 and APPLICABILITY_CALLS == 1
+    engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    before = (calls["provider"], APPLICABILITY_CALLS)
+    assert engine.issue(game, SchedulePoint.NIGHT_ACTION, registry) == ()
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert result.requests == result.commits == ()
+    assert (calls["provider"], APPLICABILITY_CALLS) == before
+
+
+@pytest.mark.parametrize("scope", ["window", "round", "game"])
+def test_each_action_limit_gates_at_boundary_but_not_below(scope) -> None:
+    c = contract("c")
+    object.__setattr__(c, "per_window_limit", 2)
+    object.__setattr__(c, "per_round_limit", 2)
+    object.__setattr__(c, "per_game_limit", 2)
+    registry = snapshot(spec("r", c)); game = state("r"); engine = scheduler(registry)
+    request = engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)[0]
+    key = {
+        "window": f"1\0c\0{request.window_id}",
+        "round": "1\0c\0" + "1",
+        "game": "1\0c",
+    }[scope]
+    from app.core.effect_applier import _Runtime
+    counts = {name: {} for name in ("window", "round", "game")}
+    counts[scope][key] = 1
+    game._pipeline_runtime = _Runtime(action_counts=counts)
+    assert len(engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)) == 1
+    game._pipeline_runtime.action_counts[scope][key] = 2
+    assert engine.issue(game, SchedulePoint.NIGHT_ACTION, registry) == ()
+
+
+def test_action_limits_are_isolated_by_actor() -> None:
+    c = contract("c"); registry = snapshot(spec("r", c)); game = state("r", "r")
+    from app.core.effect_applier import _Runtime
+    requests = scheduler(registry).issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    first = next(item for item in requests if item.actor_seat == 1)
+    game._pipeline_runtime = _Runtime(action_counts={
+        "window": {f"1\0c\0{first.window_id}": 1},
+        "round": {"1\0c\0" + "1": 1}, "game": {"1\0c": 1},
+    })
+    assert [item.actor_seat for item in scheduler(registry).issue(
+        game, SchedulePoint.NIGHT_ACTION, registry
+    )] == [2]
+
+
+def test_response_limit_gate_skips_react_hook(monkeypatch) -> None:
+    primary = contract("primary")
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "react", react_event)
+    registry = snapshot(spec("r", primary, response)); game = state("r")
+    event = DomainEvent("event:" + "a" * 16, "DONE", {"target_seat": 1})
+    window = ResponseWindow("response-window", event.event_id, "response", 1, 0)
+    calls = iter([(event, 0, (window,)), None])
+    monkeypatch.setattr(ResponseQueue, "pop", lambda self, state: next(calls))
+    from app.core.effect_applier import _Runtime
+    game._pipeline_runtime = _Runtime(action_counts={
+        "window": {"1\0response\0response-window": 1},
+        "round": {"1\0response\0" + "1": 1}, "game": {"1\0response": 1},
+    })
+    result = scheduler(registry).run_point(game, SchedulePoint.DAY_ACTION)
+    assert len(result.requests) == len(result.commits) == 1
+    assert all(event["event_type"] != "REACTED" for event in result.events)

@@ -238,15 +238,30 @@ class Scheduler:
         for role_id, role in registry.specs.items():
             for contract in role.contracts:
                 if contract.schedule_point is not point: continue
-                for seat, player in state.players.items():
-                    if player.role != role_id or not player.is_alive: continue
+                candidates = tuple(sorted(
+                    (seat, player) for seat, player in state.players.items()
+                    if player.role == role_id and player.is_alive
+                ))
+                prepared = []
+                for seat, player in candidates:
                     token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, registry.digest)
                     request = IssuedActionRequest(seat, role_id, contract, revision, state.round_number, phase, token, token)
                     context = self.projector.project(state, request, registry)
+                    prepared.append((request, context))
+                if contract.aggregate is not None and prepared and self._limit_reached(prepared[0][1], contract): continue
+                for request, context in prepared:
+                    if contract.aggregate is None and self._limit_reached(context, contract): continue
                     applies = contract.is_applicable is None or self._rule_call("applicability", lambda: contract.is_applicable(context))
                     if type(applies) is not bool: raise PipelinePaused("applicability rule failed")
                     if applies: requests.append(request)
         return tuple(sorted(requests, key=lambda r: (r.contract.order, r.role_id, r.contract.contract_id, r.actor_seat)))
+
+    @staticmethod
+    def _limit_reached(context: ActionContext, contract: ActionContract) -> bool:
+        limits = (("window", contract.per_window_limit), ("round", contract.per_round_limit),
+                  ("game", contract.per_game_limit))
+        return any(limit is not None and context.counters.get(scope, 0) >= limit
+                   for scope, limit in limits)
 
     def _bind(self, request: IssuedActionRequest, state: GameState, *, action_key: str | None = None) -> IssuedActionRequest:
         return IssuedActionRequest(request.actor_seat, request.role_id, request.contract, self._revision(state),
@@ -344,6 +359,7 @@ class Scheduler:
                 trigger = {"event_id": event.event_id, "type": event.event_type, **{key: event.payload[key] for key in ("source_seat", "target_seat", "cause", "round_number", "phase") if key in event.payload}}
                 try: context = self.projector.project(state, base, self.registry, source_event_id=event.event_id, trigger_event=trigger, trigger_reason=event.reason)
                 except Exception: raise PipelinePaused("invalid response context") from None
+                if self._limit_reached(context, contract): continue
                 if contract.react is not None:
                     try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
