@@ -158,11 +158,11 @@ async def test_execute_night_is_single_flight_for_concurrent_callers(mode) -> No
         async def legacy(): calls.append("legacy"); entered.set(); await release.wait()
         engine._execute_night_legacy = legacy
     else:
-        async def point(value, legacy):
+        async def point(value):
             calls.append(value)
             if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
-            return PipelineResult((), (), value.value, (), PipelineMode.V2)
-        engine.run_schedule_point = point; engine._resume_pipeline_night = AsyncMock()
+            return PointResult((), (), (), value.value)
+        engine._execute_v2_point = point; engine._resume_pipeline_night = AsyncMock()
     first = asyncio.create_task(engine._execute_night()); second = asyncio.create_task(engine._execute_night())
     await entered.wait(); release.set(); await asyncio.gather(first, second)
     assert calls == (["legacy"] if mode is PipelineMode.V1 else [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT])
@@ -195,21 +195,24 @@ async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() 
 
 @pytest.mark.asyncio
 async def test_v2_night_batch_resumes_only_failed_point_and_aggregates_exactly() -> None:
-    calls = []
-    engine = GameEngine("checkpoint", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
     first_event = {"event_type": "FIRST", "payload": {}, "visibility": ("PUBLIC",)}
     second_event = {"event_type": "SECOND", "payload": {}, "visibility": ("PUBLIC",)}
-    first = PipelineResult(("a",), ("e1",), "action", (first_event,), PipelineMode.V2)
-    second = PipelineResult(("b",), ("e2",), "commit", (second_event,), PipelineMode.V2)
-    async def point(point, legacy):
-        calls.append(point)
-        if point is SchedulePoint.NIGHT_COMMIT and calls.count(point) == 1: raise RuntimeError("commit failed")
-        return first if point is SchedulePoint.NIGHT_ACTION else second
-    engine.run_schedule_point = point; engine._resume_pipeline_night = AsyncMock()
+    first_commit = CommitResult("a", ("e1",), 1, (first_event,), "action")
+    second_commit = CommitResult("b", ("e2",), 2, (second_event,), "commit")
+    first = PointResult((), (first_commit,), first_commit.events, "action")
+    second = PointResult((), (second_commit,), second_commit.events, "commit")
+    class Scheduler:
+        def __init__(self): self.calls = []
+        def run_point(inner, state, point):
+            inner.calls.append(point)
+            if point is SchedulePoint.NIGHT_COMMIT and inner.calls.count(point) == 1: raise RuntimeError("commit failed")
+            return first if point is SchedulePoint.NIGHT_ACTION else second
+    scheduler = Scheduler(); engine = GameEngine("checkpoint", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    engine.run_schedule_point = AsyncMock(side_effect=AssertionError("mixed API used")); engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="commit failed"): await engine._execute_night()
     assert engine.state.round_number == 1 and engine._pending_night_batch.next_point == 1
     await engine._execute_night()
-    assert calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT, SchedulePoint.NIGHT_COMMIT]
+    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT, SchedulePoint.NIGHT_COMMIT]
     pending = engine._pending_night_completion
     assert pending.result.accepted_actions == ("a", "b") and pending.result.effects == ("e1", "e2")
     assert tuple(event["event_type"] for event in pending.result.public_events) == ("FIRST", "SECOND")
@@ -220,18 +223,19 @@ async def test_v2_night_batch_resumes_only_failed_point_and_aggregates_exactly()
 
 @pytest.mark.asyncio
 async def test_v2_point_that_commits_then_raises_is_retried_without_reprepare() -> None:
-    engine = GameEngine("commit-boundary", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
-    calls = []
-    async def point(value, legacy):
-        calls.append(value)
-        if value is SchedulePoint.NIGHT_ACTION and calls.count(value) == 1:
-            engine.state.accepted_action_keys.add("stable-action"); raise RuntimeError("after commit")
-        return PipelineResult((), (), value.value, (), PipelineMode.V2)
-    engine.run_schedule_point = point; engine._resume_pipeline_night = AsyncMock()
+    class Scheduler:
+        def __init__(self): self.calls = []
+        def run_point(inner, state, value):
+            inner.calls.append(value)
+            if value is SchedulePoint.NIGHT_ACTION and inner.calls.count(value) == 1:
+                state.accepted_action_keys.add("stable-action"); raise RuntimeError("after commit")
+            return PointResult((), (), (), value.value)
+    scheduler = Scheduler(); engine = GameEngine("commit-boundary", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="after commit"): await engine._execute_night()
     await engine._execute_night()
     assert engine.state.round_number == 1
-    assert calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
 
 
 @pytest.mark.asyncio
@@ -273,7 +277,7 @@ async def test_shadow_failure_before_legacy_completion_propagates() -> None:
 
 
 def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
-    result = PipelineResult((), (), "d", (), PipelineMode.V2)
+    result = PointResult((), (), (), "d")
     batch = game_engine_module._PendingNightBatch(1, 1, (result,))
     assert batch.next_point == 1
     for call in (
@@ -282,7 +286,7 @@ def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
         lambda: game_engine_module._PendingNightBatch(1, 0, []),
         lambda: game_engine_module._PendingNightBatch(1, 1, (object(),)),
         lambda: game_engine_module._PendingNightBatch(1, 0, (result,)),
-        lambda: game_engine_module._PendingNightBatch(1, 1, (PipelineResult((), (), "d", (), PipelineMode.V1),)),
+        lambda: game_engine_module._PendingNightBatch(1, 1, (type("SubPoint", (PointResult,), {})((), (), (), "d"),)),
         lambda: game_engine_module._ShadowFault(0, "shadow_pipeline_failed"),
         lambda: game_engine_module._ShadowFault(1, "SECRET"),
     ):
@@ -291,12 +295,29 @@ def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
 
 @pytest.mark.asyncio
 async def test_v2_batch_rejects_non_v2_point_result_without_checkpoint() -> None:
-    engine = GameEngine("wrong-mode", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
-    async def point(value, legacy): return PipelineResult((), (), "d", (), PipelineMode.V1)
-    engine.run_schedule_point = point
-    with pytest.raises(TypeError, match="exact V2"):
+    class Scheduler:
+        def run_point(self, state, point): return object()
+    engine = GameEngine("wrong-mode", pipeline_mode=PipelineMode.V2, pipeline_scheduler=Scheduler())
+    with pytest.raises(TypeError, match="exact PointResult"):
         await engine._execute_night()
     assert engine._pending_night_batch == game_engine_module._PendingNightBatch(1, 0, ())
+
+
+@pytest.mark.asyncio
+async def test_v2_observation_failure_reuses_checkpointed_raw_results() -> None:
+    bad = PointResult((), (), (), "commit")
+    object.__setattr__(bad, "commits", (object(),))
+    class Scheduler:
+        def __init__(self): self.calls = []
+        def run_point(inner, state, point):
+            inner.calls.append(point)
+            return PointResult((), (), (), "action") if point is SchedulePoint.NIGHT_ACTION else bad
+    scheduler = Scheduler(); engine = GameEngine("observe-fail", pipeline_mode=PipelineMode.V2, pipeline_scheduler=scheduler)
+    for _ in range(2):
+        with pytest.raises(TypeError, match="commit"):
+            await engine._execute_night()
+    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert engine._pending_night_batch.raw_results == (PointResult((), (), (), "action"), bad)
 
 
 @pytest.mark.asyncio

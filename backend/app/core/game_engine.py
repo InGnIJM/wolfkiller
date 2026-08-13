@@ -23,7 +23,7 @@ from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 from app.config import PipelineMode, pipeline_mode_from_env
 from app.core.role_pipeline import PipelineDiff, PipelineObservation, PipelineResult, RolePipeline
-from app.core.scheduler import PipelinePaused
+from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
 
 logger = logging.getLogger(__name__)
@@ -89,16 +89,15 @@ class _PendingNightCompletion:
 class _PendingNightBatch:
     round_number: int
     next_point: int
-    observations: tuple[PipelineResult, ...]
+    raw_results: tuple[PointResult, ...]
 
     def __post_init__(self) -> None:
         if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
             raise ValueError("invalid batch round")
         if type(self.next_point) is not int or not 0 <= self.next_point <= 2: raise ValueError("invalid batch cursor")
-        if type(self.observations) is not tuple or any(type(item) is not PipelineResult for item in self.observations):
-            raise TypeError("invalid batch observations")
-        if len(self.observations) != self.next_point or any(item.mode is not PipelineMode.V2 for item in self.observations):
-            raise ValueError("invalid batch observations")
+        if type(self.raw_results) is not tuple or any(type(item) is not PointResult for item in self.raw_results):
+            raise TypeError("invalid batch results")
+        if len(self.raw_results) != self.next_point: raise ValueError("invalid batch results")
 
 
 @dataclass(frozen=True)
@@ -345,14 +344,12 @@ class GameEngine:
         points = (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT)
         pending = self._pending_night_batch
         while pending.next_point < len(points):
-            result = await self.run_schedule_point(points[pending.next_point], self._execute_night_legacy)
-            if type(result) is not PipelineResult or result.mode is not PipelineMode.V2:
-                raise TypeError("schedule point must return exact V2 PipelineResult")
+            raw = await self._execute_v2_point(points[pending.next_point])
             pending = _PendingNightBatch(
-                pending.round_number, pending.next_point + 1, pending.observations + (result,),
+                pending.round_number, pending.next_point + 1, pending.raw_results + (raw,),
             )
             self._pending_night_batch = pending
-        observations = pending.observations
+        observations = tuple(RolePipeline.observe_v2(raw) for raw in pending.raw_results)
         result = PipelineResult(
             tuple(item for value in observations for item in value.accepted_actions),
             tuple(item for value in observations for item in value.effects),
@@ -363,6 +360,10 @@ class GameEngine:
         self._pending_night_completion = _PendingNightCompletion(result)
         self._pending_night_batch = None
         await self._resume_pipeline_night()
+
+    async def _execute_v2_point(self, point: SchedulePoint) -> PointResult:
+        pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
+        return await asyncio.to_thread(pipeline.execute_v2_point, self.state, point)
 
     def _pipeline_night_deaths(self, result: PipelineResult) -> tuple[_PendingDeath, ...]:
         deaths, seen = [], set()
