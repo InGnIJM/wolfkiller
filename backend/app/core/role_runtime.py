@@ -103,9 +103,7 @@ def initialize_role_resources(state: GameState, specs: Mapping[str, RoleSpec],
                 expected_revision=revision, sort_key=(ordinal,)))
         permission = EffectPermission(declared[0][0], frozenset({EffectKind.SET_RESOURCE}),
             frozenset({EffectKind.SET_RESOURCE}), frozenset(seat for seat, _, _ in declared), frozenset())
-        result = EffectApplier().apply(state, tuple(effects), permission)
-        state._pipeline_runtime.resource_setup_digest = marker
-        return result
+        return EffectApplier()._apply_locked(state, tuple(effects), permission, revision, marker)
 
 
 def role_resource_view(state: GameState, seat: int) -> Mapping[str, int]:

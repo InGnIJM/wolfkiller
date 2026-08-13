@@ -361,8 +361,8 @@ class EffectApplier:
         with state_transaction_lock(state):
             return self._apply_locked(state, effects, permission, observed_revision)
 
-    def _apply_locked(self, state: GameState, effects: tuple[GameEffect, ...],
-                      permission: EffectPermission, observed_revision: int) -> CommitResult:
+    def _apply_locked(self, state: GameState, effects: tuple[GameEffect, ...], permission: EffectPermission, observed_revision: int,
+                      resource_setup_digest: str | None = None) -> CommitResult:
         if type(effects) is not tuple: raise TypeError("effects must be a tuple")
         if type(permission) is not EffectPermission: raise TypeError("permission must be EffectPermission")
         if not effects or any(type(effect) is not GameEffect for effect in effects): raise EffectRejected("effects must contain GameEffect values")
@@ -372,6 +372,7 @@ class EffectApplier:
         current = _runtime(state)
         simulated = current.clone()
         if action_key in current.commits: return current.commits[action_key]
+        if resource_setup_digest is not None: simulated.resource_setup_digest = resource_setup_digest
         ordered = tuple(sorted(effects, key=lambda effect: (effect.sort_key, effect.effect_id)))
         ids = [effect.effect_id for effect in ordered]
         if len(ids) != len(set(ids)): raise EffectRejected("duplicate effect id")

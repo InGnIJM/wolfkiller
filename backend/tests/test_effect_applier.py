@@ -797,6 +797,10 @@ def test_initialize_role_resources_is_stable_idempotent_and_immutable() -> None:
     with pytest.raises(TypeError): role_resource_view(s, 1)["poison"] = 0
     assert initialize_role_resources(s, specs, "a" * 64) is first
     assert s._pipeline_runtime.revision == 1
+    from app.core.effect_applier import _digest
+    alive = {seat: player.is_alive for seat, player in s.players.items()}
+    assert first.state_digest == _digest(s, s._pipeline_runtime, alive)
+    assert initialize_role_resources(s, specs, "a" * 64).state_digest == _digest(s, s._pipeline_runtime, alive)
 
 
 def test_resource_initialization_never_resets_consumed_or_changes_config() -> None:
