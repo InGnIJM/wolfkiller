@@ -119,18 +119,32 @@ class RolePipeline:
             raise ValueError("scheduler is required")
 
     def run_point(self, state: GameState, point: SchedulePoint) -> PipelineResult:
+        return self.run_points(state, (point,))
+
+    def run_points(self, state: GameState, points: tuple[SchedulePoint, ...]) -> PipelineResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
-        if type(point) is not SchedulePoint: raise TypeError("point must be SchedulePoint")
+        if type(points) is not tuple or not points or any(type(point) is not SchedulePoint for point in points):
+            raise TypeError("points must be a nonempty tuple of SchedulePoint")
+        if len(points) != len(set(points)): raise ValueError("points must be unique")
         if self.mode is PipelineMode.V2:
-            return self._result(self._v2(state, point), None)
+            return self._result(self._v2_points(state, points), None)
         shadow = deepcopy(state) if self.mode is PipelineMode.SHADOW else None
-        first = self.v1_runner(state, point)
+        first = self.v1_runner(state, points[0])
         if type(first) is not PipelineObservation: raise TypeError("v1 runner must return PipelineObservation")
         if shadow is None: return self._result(first, None)
-        second = self._v2(shadow, point)
+        second = self._v2_points(shadow, points)
         names = tuple(name for name in ("accepted_actions", "effects", "state_digest", "public_events")
                       if getattr(first, name) != getattr(second, name))
         return self._result(first, PipelineDiff(not names, names))
+
+    def _v2_points(self, state: GameState, points: tuple[SchedulePoint, ...]) -> PipelineObservation:
+        observations = tuple(self._v2(state, point) for point in points)
+        return PipelineObservation(
+            tuple(item for value in observations for item in value.accepted_actions),
+            tuple(item for value in observations for item in value.effects),
+            observations[-1].state_digest,
+            tuple(item for value in observations for item in value.public_events),
+        )
 
     def _v2(self, state: GameState, point: SchedulePoint) -> PipelineObservation:
         result = self.scheduler.run_point(state, point)

@@ -45,6 +45,17 @@ class FakeScheduler:
         return self.result
 
 
+class SequencedScheduler:
+    def __init__(self, results, fail_at=None):
+        self.results, self.fail_at, self.calls = results, fail_at, []
+
+    def run_point(self, state, schedule_point):
+        self.calls.append((state, schedule_point))
+        state.round_number += 1
+        if len(self.calls) == self.fail_at: raise RuntimeError("point failed")
+        return self.results[len(self.calls) - 1]
+
+
 def test_pipeline_mode_from_env_is_strict_and_reads_at_call_time(monkeypatch) -> None:
     monkeypatch.delenv("ROLE_PIPELINE_V2", raising=False)
     assert pipeline_mode_from_env() == PipelineMode.V1
@@ -110,6 +121,53 @@ def test_shadow_diff_is_deterministic_and_matches_equal_observations() -> None:
         GameState("g"), SchedulePoint.NIGHT_ACTION
     )
     assert result.diff == PipelineDiff(True, ())
+
+
+def test_run_points_v2_uses_one_live_state_and_merges_in_point_order() -> None:
+    first, second = point(), PointResult((), (
+        CommitResult("a3", ("e4",), 3, (
+            {"event_type": "LAST", "payload": {}, "visibility": ("PUBLIC",)},
+        ), "digest-3"),
+    ), (), "final-digest")
+    scheduler = SequencedScheduler((first, second)); game = GameState("g")
+    result = RolePipeline(PipelineMode.V2, None, scheduler).run_points(
+        game, (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT),
+    )
+    assert all(call[0] is game for call in scheduler.calls)
+    assert result.accepted_actions == ("a2", "a1", "a3")
+    assert result.effects == ("e2", "e1", "e3", "e4")
+    assert [event["event_type"] for event in result.public_events] == ["PUBLIC", "LAST"]
+    assert result.state_digest == "final-digest" and game.round_number == 2
+
+
+def test_run_points_shadow_copies_once_and_calls_legacy_once() -> None:
+    same = observation(accepted_actions=("a2", "a1", "a2", "a1"),
+        effects=("e2", "e1", "e3", "e2", "e1", "e3"),
+        public_events=(
+            {"event_type": "PUBLIC", "payload": {"seat": 2}, "visibility": ("PUBLIC",)},
+            {"event_type": "PUBLIC", "payload": {"seat": 2}, "visibility": ("PUBLIC",)},
+        ), state_digest="v2-digest")
+    scheduler = SequencedScheduler((point(), point())); calls = []
+    def legacy(state, first_point):
+        calls.append((state, first_point)); state.round_number = 10; return same
+    game = GameState("g")
+    result = RolePipeline(PipelineMode.SHADOW, legacy, scheduler).run_points(
+        game, (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT),
+    )
+    shadow = scheduler.calls[0][0]
+    assert len(calls) == 1 and calls[0] == (game, SchedulePoint.NIGHT_ACTION)
+    assert shadow is scheduler.calls[1][0] and shadow is not game
+    assert game.round_number == 10 and shadow.round_number == 2
+    assert result.diff == PipelineDiff(True, ())
+
+
+def test_run_points_validates_exact_points_and_stops_after_failure() -> None:
+    adapter = RolePipeline(PipelineMode.V2, None, SequencedScheduler((point(), point()), fail_at=1))
+    for points in ([], (), ("night",), (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_ACTION)):
+        with pytest.raises((TypeError, ValueError)): adapter.run_points(GameState("g"), points)
+    with pytest.raises(RuntimeError, match="point failed"):
+        adapter.run_points(GameState("g"), (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT))
+    assert len(adapter.scheduler.calls) == 1
 
 
 def test_dependencies_boundaries_and_exceptions_do_not_compensate() -> None:
