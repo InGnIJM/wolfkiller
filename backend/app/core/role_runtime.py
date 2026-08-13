@@ -10,6 +10,58 @@ from app.models.game import GameState
 from app.models.pipeline import EffectKind, GameEffect, RoleSpec
 
 _INT32 = 2_147_483_647
+_COUNT_SCOPES = ("window", "round", "game")
+
+
+def clone_action_counts(value: object) -> dict[str, dict[str, int]]:
+    from app.core.effect_applier import EffectRejected
+    if not isinstance(value, Mapping) or set(value) != set(_COUNT_SCOPES):
+        raise EffectRejected("invalid action_counts")
+    result: dict[str, dict[str, int]] = {}
+    for scope in _COUNT_SCOPES:
+        row = value[scope]
+        if not isinstance(row, Mapping):
+            raise EffectRejected("invalid action_counts")
+        copied: dict[str, int] = {}
+        for key, count in row.items():
+            if type(key) is not str or not key or type(count) is not int or not 0 <= count <= _INT32:
+                raise EffectRejected("invalid action_counts")
+            try: key.encode("utf-8", errors="strict")
+            except UnicodeEncodeError: raise EffectRejected("invalid action_counts") from None
+            copied[key] = count
+        result[scope] = copied
+    return result
+
+
+def record_accepted_action(
+    counts: dict[str, dict[str, int]], payload: Mapping[str, object], seats: set[int],
+) -> None:
+    from app.core.effect_applier import EffectRejected
+    fields = {"actor_seat", "contract_id", "window_id", "round_number"}
+    if set(payload) != fields:
+        raise EffectRejected("invalid accept action fields")
+    actor = payload["actor_seat"]; round_number = payload["round_number"]
+    contract = payload["contract_id"]; window = payload["window_id"]
+    if type(actor) is not int or actor not in seats:
+        raise EffectRejected("invalid accept action actor")
+    if type(round_number) is not int or not 0 <= round_number <= _INT32:
+        raise EffectRejected("invalid accept action round")
+    for value, name in ((contract, "contract"), (window, "window")):
+        if type(value) is not str or not value or len(value) > 256:
+            raise EffectRejected(f"invalid accept action {name}")
+        try: value.encode("utf-8", errors="strict")
+        except UnicodeEncodeError: raise EffectRejected(f"invalid accept action {name}") from None
+    if any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:-" for char in contract):
+        raise EffectRejected("invalid accept action contract")
+    keys = {
+        "window": f"{actor}\0{contract}\0{window}",
+        "round": f"{actor}\0{contract}\0{round_number}",
+        "game": f"{actor}\0{contract}",
+    }
+    for scope, key in keys.items():
+        current = counts[scope].get(key, 0)
+        if current >= _INT32: raise EffectRejected("action count overflow")
+        counts[scope][key] = current + 1
 
 
 def initialize_role_resources(state: GameState, specs: Mapping[str, RoleSpec],

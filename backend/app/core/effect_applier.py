@@ -9,7 +9,7 @@ from typing import Mapping
 from app.models.game import GameState
 from app.models.pipeline import EffectKind, GameEffect
 from app.core.state_transaction import state_transaction_lock
-from app.core.role_runtime import initialize_role_resources, role_resource_view
+from app.core.role_runtime import clone_action_counts, initialize_role_resources, record_accepted_action, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 class EffectRejected(ValueError): pass
@@ -112,6 +112,7 @@ class _Runtime:
     events: tuple[Mapping[str, object], ...] = ()
     commits: dict[str, CommitResult] = field(default_factory=dict)
     resource_setup_digest: str | None = None
+    action_counts: dict[str, dict[str, int]] = field(default_factory=lambda: {"window": {}, "round": {}, "game": {}})
     def clone(self) -> "_Runtime":
         try:
             revision = _integer(self.revision, "runtime revision")
@@ -124,6 +125,7 @@ class _Runtime:
             protection = _json_sequence(self.pending_protection, "pending_protection")
             events = _json_sequence(self.events, "events")
             commits = _commit_map(self.commits)
+            counts = clone_action_counts(self.action_counts)
         except (AttributeError, TypeError, ValueError) as error:
             raise EffectRejected("invalid pipeline runtime") from error
         marker = self.resource_setup_digest
@@ -131,7 +133,7 @@ class _Runtime:
             try: _utf8(marker, "resource setup digest", token=True)
             except (TypeError, ValueError) as error: raise EffectRejected("invalid pipeline runtime") from error
         return _Runtime(revision, resources, data, statuses, relations, facts,
-                        damage, protection, events, commits, marker)
+                        damage, protection, events, commits, marker, counts)
 def _seat(seat: object) -> int:
     try: return _integer(seat, "runtime seat", positive=True)
     except (TypeError, ValueError) as error: raise EffectRejected(str(error)) from error
@@ -208,7 +210,7 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
     _json(effect.payload, "payload")
     kind = effect.kind
     schemas = {
-        EffectKind.ACCEPT_ACTION: frozenset(),
+        EffectKind.ACCEPT_ACTION: frozenset(payload),
         EffectKind.CONSUME_RESOURCE: frozenset({"target", "resource", "amount"}),
         EffectKind.SET_RESOURCE: frozenset({"target", "resource", "value"}),
         EffectKind.SET_PRIVATE_DATA: frozenset({"target", "key", "value"}),
@@ -348,6 +350,7 @@ def _digest(state: GameState, runtime: _Runtime, alive: dict[int, bool]) -> str:
         "pending_protection": runtime.pending_protection,
         "events": runtime.events,
         "resource_setup_digest": runtime.resource_setup_digest,
+        "action_counts": runtime.action_counts,
     }
     return hashlib.sha256(json.dumps(_jsonable(document), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 class EffectApplier:
@@ -383,6 +386,8 @@ class EffectApplier:
         generated_events: list[Mapping[str, object]] = []
         for effect in ordered:
             payload = _validate_payload(effect, set(state.players))
+            if effect.kind is EffectKind.ACCEPT_ACTION and payload:
+                record_accepted_action(simulated.action_counts, payload, set(state.players))
             _check_preconditions(effect, simulated, alive)
             _apply_one(effect, payload, simulated, alive, generated_events)
         simulated.revision += 1

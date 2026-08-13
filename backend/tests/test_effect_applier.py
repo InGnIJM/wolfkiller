@@ -55,8 +55,9 @@ def batch(
     revision: int = 0,
     visibility: tuple[str, ...] = (),
     preconditions: dict[str, object] | None = None,
+    accept_payload: dict[str, object] | None = None,
 ) -> tuple[GameEffect, ...]:
-    rows = [(EffectKind.ACCEPT_ACTION, {}, None), *specs]
+    rows = [(EffectKind.ACCEPT_ACTION, accept_payload or {}, None), *specs]
     return tuple(
         GameEffect(
             effect_id=derive_effect_id(action, ordinal),
@@ -146,6 +147,109 @@ def test_duplicate_action_returns_original_commit_without_writing_twice() -> Non
     assert second == first
     assert s._pipeline_runtime.revision == 1
     assert s._pipeline_runtime.role_resources[1]["potion"] == 0
+
+
+def test_accept_metadata_increments_window_round_and_game_counts_idempotently() -> None:
+    s = state()
+    metadata = {
+        "actor_seat": 1, "contract_id": "witch_action",
+        "window_id": "window-1", "round_number": 2,
+    }
+    first = EffectApplier().apply(
+        s, batch([], action="first", accept_payload=metadata), permission()
+    )
+    duplicate = EffectApplier().apply(
+        s, batch([], action="first", accept_payload=metadata), permission()
+    )
+    assert duplicate is first
+    assert s._pipeline_runtime.action_counts == {
+        "window": {"1\0witch_action\0window-1": 1},
+        "round": {"1\0witch_action\0" + "2": 1},
+        "game": {"1\0witch_action": 1},
+    }
+
+    EffectApplier().apply(
+        s, batch([], action="second", revision=1, accept_payload=metadata), permission()
+    )
+    changed = dict(metadata); changed["window_id"] = "window-2"
+    EffectApplier().apply(
+        s, batch([], action="third", revision=2, accept_payload=changed), permission()
+    )
+    changed["round_number"] = 3
+    EffectApplier().apply(
+        s, batch([], action="fourth", revision=3, accept_payload=changed), permission()
+    )
+    assert s._pipeline_runtime.action_counts == {
+        "window": {
+            "1\0witch_action\0window-1": 2,
+            "1\0witch_action\0window-2": 2,
+        },
+        "round": {
+            "1\0witch_action\0" + "2": 3,
+            "1\0witch_action\0" + "3": 1,
+        },
+        "game": {"1\0witch_action": 4},
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"actor_seat": 1, "contract_id": "c", "window_id": "w"},
+        {"actor_seat": 1, "contract_id": "c", "window_id": "w", "round_number": 1, "extra": 1},
+        {"actor_seat": True, "contract_id": "c", "window_id": "w", "round_number": 1},
+        {"actor_seat": 99, "contract_id": "c", "window_id": "w", "round_number": 1},
+        {"actor_seat": 1, "contract_id": "bad value", "window_id": "w", "round_number": 1},
+        {"actor_seat": 1, "contract_id": "c", "window_id": "", "round_number": 1},
+        {"actor_seat": 1, "contract_id": "c", "window_id": "w", "round_number": -1},
+        {"actor_seat": 1, "contract_id": "c", "window_id": "w", "round_number": True},
+        {"actor_seat": 1, "contract_id": "c", "window_id": 1, "round_number": 1},
+        {"actor_seat": 1, "contract_id": "c", "window_id": "x" * 257, "round_number": 1},
+    ],
+)
+def test_accept_metadata_is_closed_and_atomic(metadata) -> None:
+    s = state()
+    with pytest.raises(EffectRejected):
+        EffectApplier().apply(
+            s, batch([], accept_payload=metadata), permission()
+        )
+    assert not hasattr(s, "_pipeline_runtime")
+
+
+def test_action_count_overflow_and_invalid_runtime_are_atomic() -> None:
+    from app.core.effect_applier import _Runtime
+
+    key = "1\0c"
+    metadata = {
+        "actor_seat": 1, "contract_id": "c",
+        "window_id": "w", "round_number": 1,
+    }
+    for counts in (
+        {"window": {}, "round": {}, "game": {key: 2_147_483_647}},
+        {"window": {}, "round": {}, "game": {key: True}},
+        {"window": {}, "round": {}},
+        {"window": [], "round": {}, "game": {}},
+        {"window": {"\ud800": 1}, "round": {}, "game": {}},
+        {"window": {}, "round": {}, "game": {"x": -1}},
+    ):
+        s = state(); runtime = _Runtime(action_counts=counts); s._pipeline_runtime = runtime
+        with pytest.raises(EffectRejected):
+            EffectApplier().apply(
+                s, batch([], accept_payload=metadata), permission()
+            )
+        assert s._pipeline_runtime is runtime
+
+
+def test_accept_metadata_defensively_rejects_invalid_utf8() -> None:
+    from app.core.role_runtime import record_accepted_action
+
+    counts = {"window": {}, "round": {}, "game": {}}
+    with pytest.raises(EffectRejected, match="window"):
+        record_accepted_action(
+            counts,
+            {"actor_seat": 1, "contract_id": "c", "window_id": "\ud800", "round_number": 1},
+            {1},
+        )
 
 
 def test_stable_sorting_digest_and_tie_breaker() -> None:
