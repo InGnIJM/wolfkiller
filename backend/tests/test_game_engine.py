@@ -326,9 +326,62 @@ async def test_pipeline_transition_hook_failure_resumes_without_retransition() -
     engine._broadcast_phase_change = AsyncMock()
     with pytest.raises(RuntimeError, match="hook"): await engine._execute_night()
     assert engine.sm.get_state() is GamePhase.DAWN
+    assert engine.state.phase is GamePhase.DAWN
     await engine._execute_night()
     assert calls == ["hook"] and engine.rule_engine.check_win.call_count == 1
     engine._broadcast_phase_change.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pending_snapshots_are_frozen_from_external_mutation() -> None:
+    engine = GameEngine("snapshot", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine.state.round_number = 1; engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
+    engine.state.players = {1: PlayerState(1, "r", "good", is_alive=False)}
+    engine.state.death_history = [DeathReport(1, "wolf_kill", 1)]
+    event = {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",)}
+    result = PipelineResult((), (), "digest", (event,), PipelineMode.V2)
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(result)
+    seen = []
+    class MutatingBus:
+        async def publish(self, kind, **kwargs):
+            death = kwargs["death"]; seen.append((death.player_seat, death.cause, death.round_number))
+            death.cause = "tampered"
+    engine.event_bus = MutatingBus(); engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine.game_logger.log_deaths = MagicMock(); engine._broadcast_phase_change = AsyncMock()
+    await engine._execute_night()
+    assert seen == [(1, "wolf_kill", 1)]
+    assert engine.game_logger.log_deaths.call_args.args[2] == [{"player_seat": 1, "cause": "wolf_kill", "round_number": 1}]
+
+
+@pytest.mark.asyncio
+async def test_nonexact_win_result_is_cached_as_invalid_without_rechecking() -> None:
+    class WinSubclass(WinResult): pass
+    engine = GameEngine("bad-win", pipeline_mode=PipelineMode.V2, pipeline_scheduler=object())
+    engine.state.round_number = 1; engine.sm.set_state(GamePhase.NIGHT)
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(result, deaths=(), stage=2)
+    engine.rule_engine.check_win = MagicMock(return_value=WinSubclass("good", "all_wolves_dead"))
+    for _ in range(2):
+        with pytest.raises(PipelinePaused, match="invalid pipeline win result"):
+            await engine._execute_night()
+    engine.rule_engine.check_win.assert_called_once_with(engine.state)
+
+
+def test_pending_snapshots_validate_exact_types_and_ranges() -> None:
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    death = game_engine_module._PendingDeath(1, "wolf_kill", 1)
+    win = game_engine_module._PendingWin("good", "all_wolves_dead")
+    game_engine_module._PendingNightCompletion(result, (death,), 1, 7, win, True, False)
+    for call in (
+        lambda: game_engine_module._PendingDeath(True, "x", 1),
+        lambda: game_engine_module._PendingDeath(1, "bad cause", 1),
+        lambda: game_engine_module._PendingWin("good", "bad reason"),
+        lambda: game_engine_module._PendingNightCompletion(object()),
+        lambda: game_engine_module._PendingNightCompletion(result, (object(),)),
+        lambda: game_engine_module._PendingNightCompletion(result, (), 1, 0),
+        lambda: game_engine_module._PendingNightCompletion(result, (), 0, 8),
+    ):
+        with pytest.raises((TypeError, ValueError)): call()
 
 
 def make_mock_role(seat: int, role_name: str,

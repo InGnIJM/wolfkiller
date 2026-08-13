@@ -41,13 +41,48 @@ _EVENT_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 
 
 @dataclass(frozen=True)
+class _PendingDeath:
+    seat: int
+    cause: str
+    round_number: int
+
+    def __post_init__(self) -> None:
+        if type(self.seat) is not int or not 1 <= self.seat <= 2_147_483_647: raise ValueError("invalid pending death seat")
+        if type(self.round_number) is not int or not 0 <= self.round_number <= 2_147_483_647: raise ValueError("invalid pending death round")
+        if type(self.cause) is not str or _EVENT_TOKEN.fullmatch(self.cause) is None: raise ValueError("invalid pending death cause")
+        try: self.cause.encode("utf-8", errors="strict")
+        except UnicodeError: raise ValueError("invalid pending death cause") from None
+
+
+@dataclass(frozen=True)
+class _PendingWin:
+    winning_camp: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        for value, name in ((self.winning_camp, "camp"), (self.reason, "reason")):
+            if type(value) is not str or _EVENT_TOKEN.fullmatch(value) is None: raise ValueError(f"invalid pending win {name}")
+            try: value.encode("utf-8", errors="strict")
+            except UnicodeError: raise ValueError(f"invalid pending win {name}") from None
+
+
+@dataclass(frozen=True)
 class _PendingNightCompletion:
     result: PipelineResult
-    deaths: tuple[DeathReport, ...] | None = None
+    deaths: tuple[_PendingDeath, ...] | None = None
     event_cursor: int = 0
     stage: int = 0
-    win_result: WinResult | None = None
+    win_result: _PendingWin | None = None
     win_checked: bool = False
+    win_invalid: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.result) is not PipelineResult: raise TypeError("result must be exact PipelineResult")
+        if self.deaths is not None and (type(self.deaths) is not tuple or any(type(item) is not _PendingDeath for item in self.deaths)): raise TypeError("invalid pending deaths")
+        if type(self.event_cursor) is not int or self.event_cursor < 0 or self.deaths is None and self.event_cursor or self.deaths is not None and self.event_cursor > len(self.deaths): raise ValueError("invalid event cursor")
+        if type(self.stage) is not int or not 0 <= self.stage <= 7: raise ValueError("invalid completion stage")
+        if self.win_result is not None and type(self.win_result) is not _PendingWin: raise TypeError("invalid pending win")
+        if type(self.win_checked) is not bool or type(self.win_invalid) is not bool: raise TypeError("invalid win flags")
 
 
 class GameEngine:
@@ -243,7 +278,7 @@ class GameEngine:
         self._pending_night_completion = _PendingNightCompletion(result)
         await self._resume_pipeline_night()
 
-    def _pipeline_night_deaths(self, result: PipelineResult) -> tuple[DeathReport, ...]:
+    def _pipeline_night_deaths(self, result: PipelineResult) -> tuple[_PendingDeath, ...]:
         deaths, seen = [], set()
         try:
             for event in result.public_events:
@@ -264,7 +299,7 @@ class GameEngine:
                 matches = [item for item in self.state.death_history if type(item) is DeathReport and
                     (item.player_seat, item.cause, item.round_number) == (seat, cause, round_number)]
                 if player is None or player.is_alive or len(matches) != 1: raise ValueError
-                seen.add(seat); deaths.append(DeathReport(seat, cause, round_number))
+                seen.add(seat); deaths.append(_PendingDeath(seat, cause, round_number))
         except (KeyError, TypeError, UnicodeError, ValueError):
             raise PipelinePaused("invalid pipeline night event") from None
         return tuple(deaths)
@@ -275,23 +310,31 @@ class GameEngine:
             pending = replace(pending, deaths=self._pipeline_night_deaths(pending.result))
             self._pending_night_completion = pending
         while pending.event_cursor < len(pending.deaths):
-            death = pending.deaths[pending.event_cursor]
-            await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
+            snapshot = pending.deaths[pending.event_cursor]
+            await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id,
+                death=DeathReport(snapshot.seat, snapshot.cause, snapshot.round_number))
             pending = replace(pending, event_cursor=pending.event_cursor + 1); self._pending_night_completion = pending
         if pending.stage == 0:
-            self.game_logger.log_deaths(self.game_id, self.state.round_number, [death.to_dict() for death in pending.deaths])
+            self.game_logger.log_deaths(self.game_id, self.state.round_number,
+                [DeathReport(item.seat, item.cause, item.round_number).to_dict() for item in pending.deaths])
             pending = replace(pending, stage=1); self._pending_night_completion = pending
         if pending.stage == 1:
             if self.memory_service: self.memory_service.save_memories(self.state)
             pending = replace(pending, stage=2); self._pending_night_completion = pending
         if pending.stage == 2:
+            if pending.win_invalid: raise PipelinePaused("invalid pipeline win result")
             if not pending.win_checked:
-                pending = replace(pending, win_checked=True, win_result=self.rule_engine.check_win(self.state))
+                value = self.rule_engine.check_win(self.state)
+                if value is not None and type(value) is not WinResult:
+                    pending = replace(pending, win_checked=True, win_invalid=True); self._pending_night_completion = pending
+                    raise PipelinePaused("invalid pipeline win result")
+                snapshot = None if value is None else _PendingWin(value.winning_camp, value.reason)
+                pending = replace(pending, win_checked=True, win_result=snapshot)
                 self._pending_night_completion = pending
             pending = replace(pending, stage=3); self._pending_night_completion = pending
         if pending.stage == 3:
             if pending.win_result is not None:
-                self.state.win_result = pending.win_result.to_dict(); self.state.phase = GamePhase.GAME_OVER
+                self.state.win_result = WinResult(pending.win_result.winning_camp, pending.win_result.reason).to_dict(); self.state.phase = GamePhase.GAME_OVER
                 self.sm.set_state(GamePhase.GAME_OVER)
             pending = replace(pending, stage=4); self._pending_night_completion = pending
         if pending.stage == 4:
@@ -301,13 +344,15 @@ class GameEngine:
             pending = replace(pending, stage=5); self._pending_night_completion = pending
         if pending.stage == 5:
             if pending.win_result is not None:
-                await self.event_bus.publish(BusEvent.GAME_OVER, game_id=self.game_id, win_result=pending.win_result)
+                await self.event_bus.publish(BusEvent.GAME_OVER, game_id=self.game_id,
+                    win_result=WinResult(pending.win_result.winning_camp, pending.win_result.reason))
             pending = replace(pending, stage=6); self._pending_night_completion = pending
         if pending.stage == 6:
             if pending.win_result is None and self.sm.get_state() is not GamePhase.DAWN:
                 try: self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
                 except BaseException:
                     if self.sm.get_state() is GamePhase.DAWN:
+                        self.state.phase = GamePhase.DAWN
                         pending = replace(pending, stage=7); self._pending_night_completion = pending
                     raise
             pending = replace(pending, stage=7); self._pending_night_completion = pending
