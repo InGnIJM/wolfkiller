@@ -6,7 +6,10 @@ import pytest
 
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
-from app.models.pipeline import ActionCommand, ActionContext, EffectKind
+from app.core.context_projector import ContextProjector
+from app.core.effect_applier import EffectApplier, role_resource_view
+from app.core.scheduler import Scheduler
+from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
 from app.roles.registry import builtin_registry
 from app.roles.witch import WITCH_SPEC, Witch, resolve_witch_action, validate_witch_action, witch_applicable
 from app.models.actions import NightAction
@@ -47,7 +50,7 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     assert [item.kind for item in poisoned] == [EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE]
     assert [item.sort_key for item in saved] == [(1,), (2,)]
     assert saved[0].target_seat == 1 and saved[1].target_seat == 2
-    assert saved[0].preconditions["resource_equals"] == {"target": 1, "resource": "antidote", "value": 1}
+    assert saved[0].preconditions["resource_equals"] == {"resource": "antidote", "value": 1}
     assert resolve_witch_action(context(), command("pass")) == ()
 
 
@@ -64,6 +67,79 @@ def test_resolver_adds_accept_and_registry_preserves_legacy() -> None:
     assert [item.kind for item in effects] == [EffectKind.ACCEPT_ACTION, EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION]
     assert spec is WITCH_SPEC and spec.initial_resources == {"antidote": 1, "poison": 1}
     assert builtin_registry.require("wolf-killer-witch").role_factory is not None
+
+
+def test_spec_declares_dynamic_wolf_kill_target() -> None:
+    assert WITCH_SPEC.initial_private_data == {"wolf_kill_target": None}
+
+
+def test_scheduler_save_projects_target_and_applies_resources_atomically() -> None:
+    registry = builtin_registry.freeze()
+    game = GameState(
+        "save-game", phase="night", round_number=1,
+        players={
+            1: PlayerState(1, WITCH_SPEC.role_id, "good"),
+            2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        },
+        last_wolf_kill_target=2,
+    )
+    seen = []
+
+    def provider(request, projected, attempt):
+        if request.role_id == WITCH_SPEC.role_id:
+            seen.append(projected)
+            return command("save", 2)
+        return command("pass")
+
+    engine = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(),
+        EffectApplier(),
+        provider,
+    )
+    issued = engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    witch_request = next(item for item in issued if item.role_id == WITCH_SPEC.role_id)
+    assert witch_request.context_revision == 1
+    projected = ContextProjector().project(game, witch_request, registry)
+    assert projected.resources == {"antidote": 1, "poison": 1}
+    assert projected.facts["wolf_kill_target"] == 2
+
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert seen[0].facts["wolf_kill_target"] == 2
+    assert role_resource_view(game, 1) == {"antidote": 0, "poison": 1}
+    assert game._pipeline_runtime.pending_protection == ({"target": 2, "amount": 1},)
+    assert result.commits[-1].revision == game._pipeline_runtime.revision == 3
+
+    engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert role_resource_view(game, 1) == {"antidote": 0, "poison": 1}
+    assert len(seen) == 1
+    assert all(
+        request.role_id != WITCH_SPEC.role_id
+        for request in engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    )
+
+
+def test_scheduler_poison_applies_damage_and_consumes_only_poison() -> None:
+    registry = builtin_registry.freeze()
+    game = GameState(
+        "poison-game", phase="night", round_number=1,
+        players={
+            1: PlayerState(1, WITCH_SPEC.role_id, "good"),
+            2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        },
+    )
+
+    def provider(request, projected, attempt):
+        return command("poison", 2) if request.role_id == WITCH_SPEC.role_id else command("pass")
+
+    engine = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(),
+        EffectApplier(),
+        provider,
+    )
+    result = engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert result.commits[-1].revision == 3
+    assert role_resource_view(game, 1) == {"antidote": 1, "poison": 0}
+    assert game._pipeline_runtime.pending_damage == ({"target": 2, "amount": 1},)
 
 
 def test_legacy_target_validation_branches_remain_available() -> None:
