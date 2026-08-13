@@ -7,7 +7,9 @@ import re
 from types import MappingProxyType
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import GameState, PlayerState
-from app.models.pipeline import ActionCommand, ActionContext, IssuedActionRequest
+from app.models.pipeline import (
+    ActionCommand, ActionContext, IssuedActionRequest, SchedulePoint,
+)
 from app.roles.registry import RegistrySnapshot
 from app.core.role_runtime import (
     role_action_counters, role_private_facts_view, role_resource_view,
@@ -199,6 +201,67 @@ class ContextProjector:
                 )
             ),
             facts=facts,
+        )
+
+    def project_view(
+        self, state: GameState, registry: RegistrySnapshot, seat: int
+    ) -> ActionContext:
+        """Project a contract-free observation context for one seat.
+
+        Mirrors `project` for a synthetic observation boundary so non-action
+        flows (day speech, votes, audience views) share the same frozen,
+        namespace-filtered facts as pipeline actions without issuing a
+        registered contract.
+        """
+        if type(state) is not GameState:
+            raise TypeError("state must be a GameState")
+        if type(registry) is not RegistrySnapshot:
+            raise TypeError("registry must be a RegistrySnapshot")
+        if type(seat) is not int or seat <= 0:
+            raise ValueError("invalid view seat")
+        actor = state.players.get(seat)
+        if actor is None:
+            raise ValueError("actor seat does not exist in state")
+        spec = registry.require(actor.role)
+        if actor.camp != spec.camp_id:
+            raise ValueError("actor camp does not match registered role")
+        facts = self._public_facts(state)
+        facts["actor_identity"] = {
+            "seat": actor.seat_number,
+            "role_id": actor.role,
+            "camp_id": spec.camp_id,
+        }
+        if "CAMP" in spec.visibility_namespaces:
+            facts["camp_members"] = tuple(
+                sorted(
+                    seat
+                    for seat, player in state.players.items()
+                    if player.camp == actor.camp
+                )
+            )
+        resources = self._actor_resources(state, actor, spec.initial_resources)
+        facts.update(
+            self._actor_private_facts(
+                state, actor, spec.initial_private_data, resources
+            )
+        )
+        return ActionContext(
+            game_id=state.game_id,
+            revision=0,
+            facts=facts,
+            config_version=registry.digest,
+            contract_id="observation",
+            contract_version=1,
+            contract_digest="observation",
+            round_number=state.round_number,
+            phase=state.phase.value if hasattr(state.phase, "value") else state.phase,
+            window_id="observation",
+            schedule_point=SchedulePoint.DAY_ACTION,
+            actor_seat=actor.seat_number,
+            actor_role_id=actor.role,
+            actor_alive=actor.is_alive,
+            resources=resources,
+            action_key="observation",
         )
 
     @staticmethod

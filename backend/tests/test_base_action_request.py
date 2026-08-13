@@ -5,20 +5,18 @@ from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 
 from app.agents.output_parser import StrictCapabilityError
-from app.agents.prompt_builder import PromptBuilder
-from app.core.game_engine import GameEngine
+from app.core.game_engine import GameEngine, VOTE_CONTRACT
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
 from app.models.game import Camp, GamePhase, GameState, PlayerState
 from app.roles.base import BaseRole
-from app.roles.registry import builtin_registry
 
 
 class PromptBuilderStub:
     def get_system_prompt(self):
         return "system"
 
-    def build_action_prompt(self, *args, **kwargs):
-        return "choose an action"
+    def build_vote_prompt(self, *args, **kwargs):
+        return "choose a vote"
 
 
 class ModelStub:
@@ -49,19 +47,20 @@ class ClientStub:
 
 
 def request_for(state: GameState) -> ActionRequest:
-    return next(
-        request
-        for request in builtin_registry.build_requests(
-            state, {seat: object() for seat in state.players}, state.phase
-        )
-        if request.actor_seat == 1
+    return ActionRequest(
+        actor_seat=1,
+        role_id="wolf-killer-villager",
+        contract=VOTE_CONTRACT,
+        phase=GamePhase.VOTE_CASTING,
+        round_id=state.round_number,
+        idempotency_key="1:vote_casting:1:1:exile_vote",
     )
 
 
 def make_state() -> GameState:
-    state = GameState(game_id="base-action", phase=GamePhase.NIGHT, round_number=1)
+    state = GameState(game_id="base-action", phase=GamePhase.VOTE_CASTING, round_number=1)
     state.players = {
-        1: PlayerState(1, "wolf-killer-werewolf", Camp.WEREWOLF.value),
+        1: PlayerState(1, "wolf-killer-villager", Camp.GOOD.value),
         2: PlayerState(2, "wolf-killer-villager", Camp.GOOD.value),
     }
     return state
@@ -71,8 +70,8 @@ def action_tool_response(*, target=2):
     return AIMessage(
         content="private reasoning must not be persisted",
         tool_calls=[{
-            "name": "werewolf_kill",
-            "args": {"action_type": "kill", "target_seat": target, "reasoning": "x"},
+            "name": "exile_vote",
+            "args": {"action_type": "vote", "target_seat": target, "reasoning": "x"},
             "id": "call_1",
         }],
     )
@@ -82,11 +81,11 @@ def action_tool_response(*, target=2):
 async def test_request_action_uses_strict_tool_and_returns_validator_accepted_action():
     state = make_state()
     client = ClientStub([action_tool_response()])
-    role = BaseRole(1, "wolf-killer-werewolf", PromptBuilderStub(), client)
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
 
     accepted = await role.request_action(state, object(), request_for(state))
 
-    assert accepted.command.action_type == "kill"
+    assert accepted.command.action_type == "vote"
     assert accepted.command.target_seat == 2
     assert client.contracts == [accepted.request.contract]
     assert state.accepted_action_keys == {accepted.request.idempotency_key}
@@ -97,9 +96,9 @@ async def test_request_action_falls_back_to_strict_json_only_for_capability_erro
     state = make_state()
     client = ClientStub(
         [StrictCapabilityError("strict schema is unsupported")],
-        [AIMessage(content='{"action_type":"kill","target_seat":2,"reasoning":"x"}')],
+        [AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}')],
     )
-    role = BaseRole(1, "wolf-killer-werewolf", PromptBuilderStub(), client)
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
 
     accepted = await role.request_action(state, object(), request_for(state))
 
@@ -112,7 +111,7 @@ async def test_request_action_falls_back_to_strict_json_only_for_capability_erro
 async def test_request_action_retries_invalid_strict_action_once_with_generic_correction():
     state = make_state()
     client = ClientStub([action_tool_response(target=None), action_tool_response(target=2)])
-    role = BaseRole(1, "wolf-killer-werewolf", PromptBuilderStub(), client)
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
 
     accepted = await role.request_action(state, object(), request_for(state))
 
@@ -128,11 +127,11 @@ async def test_request_action_retries_invalid_strict_action_once_with_generic_co
 async def test_request_action_uses_safe_fallback_after_two_invalid_actions():
     state = make_state()
     client = ClientStub([action_tool_response(target=None), action_tool_response(target=None)])
-    role = BaseRole(1, "wolf-killer-werewolf", PromptBuilderStub(), client)
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
 
     accepted = await role.request_action(state, object(), request_for(state))
 
-    assert accepted.command.action_type == "pass"
+    assert accepted.command.action_type == "abstain"
     assert accepted.command.target_seat is None
     assert len(client.strict_model.messages) == 2
 
@@ -141,7 +140,7 @@ async def test_request_action_uses_safe_fallback_after_two_invalid_actions():
 async def test_request_action_does_not_downgrade_network_errors_to_json():
     state = make_state()
     client = ClientStub([ConnectionError("network unavailable")])
-    role = BaseRole(1, "wolf-killer-werewolf", PromptBuilderStub(), client)
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
 
     with pytest.raises(ConnectionError, match="network unavailable"):
         await role.request_action(state, object(), request_for(state))

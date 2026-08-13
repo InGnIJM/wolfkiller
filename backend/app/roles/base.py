@@ -1,15 +1,17 @@
 from __future__ import annotations
 import logging
+from typing import TYPE_CHECKING
 from app.models.game import GameState
 from app.models.actions import VoteAction
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
-from app.agents.prompt_builder import PromptBuilder
 from app.agents.output_parser import OutputParser, StrictCapabilityError, ToolCallError
-from app.agents.llm_client import LLMClient
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.models.contracts import AcceptedAction, ActionRequest
 from langchain_core.messages import SystemMessage, HumanMessage
+
+if TYPE_CHECKING:
+    from app.agents.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -323,20 +325,10 @@ class BaseRole:
         conversation_log: ConversationLog,
         request: ActionRequest,
     ) -> str:
-        context_by_contract = {
-            "werewolf_kill": "night_kill",
-            "seer_check": "night_check",
-            "witch_action": "witch_save",
-            "hunter_shoot": "hunter_shoot",
-            "exile_vote": "exile_vote",
-        }
-        context = context_by_contract.get(request.contract.contract_id, "action")
-        extra = {}
-        if request.contract.contract_id == "witch_action":
-            extra["wolf_target"] = getattr(state, "last_wolf_kill_target", None)
-        extra["contract"] = request.contract
-        return self.prompt_builder.build_action_prompt(
-            state, self.seat, self.role_name, conversation_log, context, **extra
+        if request.contract.contract_id != "exile_vote":
+            raise ValueError(f"unsupported contract: {request.contract.contract_id}")
+        return self.prompt_builder.build_vote_prompt(
+            state, self.seat, self.role_name, conversation_log, "exile_vote"
         )
 
     async def _request_action_with_transport(

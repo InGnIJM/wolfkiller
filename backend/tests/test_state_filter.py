@@ -1,113 +1,81 @@
 import pytest
+
 from app.agents.state_filter import StateFilter
-from app.models.game import GameState, GameConfig, PlayerState
-from app.models.actions import SpeechRecord, DeathReport
+from app.models.game import GameState, GamePhase, PlayerState
+from app.roles.registry import builtin_registry
 
 
-def make_player(seat, role, camp, alive=True):
-    p = PlayerState(seat_number=seat, role=role, camp=camp, is_alive=alive)
-    if "witch" in role:
-        p.has_antidote = True
-        p.has_poison = True
-    if "hunter" in role:
-        p.has_gun = True
-    return p
+def make_state(role_assignments: dict[int, str]) -> GameState:
+    state = GameState(game_id="view", phase=GamePhase.SPEECH, round_number=1)
+    specs = builtin_registry.freeze().specs
+    for seat, role in role_assignments.items():
+        state.players[seat] = PlayerState(
+            seat_number=seat, role=role, camp=specs[role].camp_id
+        )
+    return state
+
+
+def wolf_state() -> GameState:
+    return make_state({
+        1: "wolf-killer-werewolf",
+        2: "wolf-killer-werewolf",
+        3: "wolf-killer-villager",
+        4: "wolf-killer-witch",
+    })
 
 
 class TestStateFilter:
-    def test_werewolf_sees_teammates(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        state.players = {
-            1: make_player(1, "wolf-killer-werewolf", "werewolf"),
-            2: make_player(2, "wolf-killer-werewolf", "werewolf"),
-            3: make_player(3, "wolf-killer-werewolf", "werewolf"),
-            4: make_player(4, "wolf-killer-villager", "good"),
+    def test_view_contains_public_facts_and_actor_identity(self):
+        view = StateFilter().filter_for_role(wolf_state(), 1, "wolf-killer-werewolf")
+
+        assert view["game_id"] == "view"
+        assert view["phase"] == "speech"
+        assert view["round_number"] == 1
+        assert view["actor_seat"] == 1
+        assert view["actor_alive"] is True
+        assert view["actor_role_id"] == "wolf-killer-werewolf"
+        assert tuple(view["facts"]["alive_seats"]) == (1, 2, 3, 4)
+        assert view["facts"]["actor_identity"] == {
+            "seat": 1, "role_id": "wolf-killer-werewolf", "camp_id": "werewolf",
         }
 
-        view = sf.filter_for_role(state, 1, "wolf-killer-werewolf")
-        assert view["your_seat"] == 1
-        assert set(view["wolf_teammates"]) == {2, 3}
+    def test_camp_members_visible_only_for_camp_roles(self):
+        filter_ = StateFilter()
+        wolf_view = filter_.filter_for_role(wolf_state(), 1, "wolf-killer-werewolf")
+        villager_view = filter_.filter_for_role(wolf_state(), 3, "wolf-killer-villager")
 
-    def test_villager_sees_only_public(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        state.players = {
-            1: make_player(1, "wolf-killer-villager", "good"),
-            2: make_player(2, "wolf-killer-werewolf", "werewolf"),
-        }
+        assert wolf_view["facts"]["camp_members"] == [1, 2]
+        assert "camp_members" not in villager_view["facts"]
 
-        view = sf.filter_for_role(state, 1, "wolf-killer-villager")
-        assert "wolf_teammates" not in view
-        assert "check_results" not in view
-        assert len(view["alive_players"]) == 2
+    def test_resources_projected_generically_from_spec(self):
+        state = wolf_state()
+        state.players[4].has_antidote = True
+        state.last_wolf_kill_target = 3
+        view = StateFilter().filter_for_role(state, 4, "wolf-killer-witch")
 
-    def test_seer_sees_check_results(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        p1 = make_player(1, "wolf-killer-seer", "good")
-        p1.check_results = [{"target_seat": 2, "result": "werewolf", "round": 1}]
-        state.players = {1: p1, 2: make_player(2, "wolf-killer-villager", "good")}
+        assert set(view["resources"]) == {"antidote", "poison"}
+        assert view["facts"]["wolf_kill_target"] == 3
 
-        view = sf.filter_for_role(state, 1, "wolf-killer-seer")
-        assert len(view["check_results"]) == 1
-        assert view["check_results"][0]["result"] == "werewolf"
+    def test_view_is_a_plain_independent_copy(self):
+        filter_ = StateFilter()
+        state = wolf_state()
+        first = filter_.filter_for_role(state, 1, "wolf-killer-werewolf")
+        first["facts"]["alive_seats"].append(99)
+        first["resources"]["tampered"] = True
+        second = filter_.filter_for_role(state, 1, "wolf-killer-werewolf")
+        assert second["facts"]["alive_seats"] == [1, 2, 3, 4]
+        assert "tampered" not in second["resources"]
 
-    def test_witch_sees_potion_status(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        state.players = {
-            1: make_player(1, "wolf-killer-witch", "good"),
-            2: make_player(2, "wolf-killer-werewolf", "werewolf"),
-        }
-        state.last_wolf_kill_target = 2
+    def test_view_requires_existing_player_and_matching_role(self):
+        filter_ = StateFilter()
+        state = wolf_state()
+        with pytest.raises(ValueError, match="does not exist"):
+            filter_.filter_for_role(state, 99, "wolf-killer-werewolf")
+        with pytest.raises(ValueError, match="does not match"):
+            filter_.filter_for_role(state, 1, "wolf-killer-villager")
 
-        view = sf.filter_for_role(state, 1, "wolf-killer-witch")
-        assert view["has_antidote"] is True
-        assert view["has_poison"] is True
-        assert view["last_wolf_kill_target"] == 2
-
-    def test_hunter_sees_gun_status(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        state.players = {
-            1: make_player(1, "wolf-killer-hunter", "good"),
-            2: make_player(2, "wolf-killer-villager", "good"),
-        }
-
-        view = sf.filter_for_role(state, 1, "wolf-killer-hunter")
-        assert view["has_gun"] is True
-
-    def test_dead_players_listed(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        p1 = make_player(1, "wolf-killer-villager", "good", alive=False)
-        state.players = {
-            1: p1,
-            2: make_player(2, "wolf-killer-werewolf", "werewolf"),
-        }
-        state.death_history = [DeathReport(player_seat=1, cause="wolf_kill", round_number=1)]
-
-        view = sf.filter_for_role(state, 2, "wolf-killer-werewolf")
-        assert len(view["dead_players"]) == 1
-
-    def test_dead_player_no_history(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        p1 = make_player(1, "wolf-killer-villager", "good", alive=False)
-        state.players = {1: p1, 2: make_player(2, "wolf-killer-werewolf", "werewolf")}
-
-        view = sf.filter_for_role(state, 2, "wolf-killer-werewolf")
-        assert view["dead_players"][0]["seat"] == 1
-
-    def test_speeches_truncated(self):
-        sf = StateFilter()
-        state = GameState(game_id="test", config=GameConfig())
-        state.players = {1: make_player(1, "wolf-killer-villager", "good")}
-
-        # Add >20 speeches to test limit
-        for i in range(25):
-            state.speeches.append(SpeechRecord(player_seat=1, text=f"speech {i}", round_number=1))
-
-        view = sf.filter_for_role(state, 1, "wolf-killer-villager")
-        assert len(view["speeches"]) == 20
+    def test_view_rejects_unknown_role(self):
+        state = wolf_state()
+        state.players[3].role = "wolf-killer-unknown"
+        with pytest.raises(ValueError, match="unknown role"):
+            StateFilter().filter_for_role(state, 3, "wolf-killer-unknown")

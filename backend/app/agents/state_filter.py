@@ -1,74 +1,60 @@
 from __future__ import annotations
-from app.models.game import GameState, PlayerState
+
+from collections.abc import Mapping
+
+from app.core.context_projector import ContextProjector
+from app.models.game import GameState
+from app.roles.registry import builtin_registry
+
+
+def _plain(value: object, *, depth: int = 0, active: set[int] | None = None) -> object:
+    """Convert a frozen projected value into a plain, serializable copy."""
+    if depth > 64:
+        raise ValueError("view exceeds maximum depth")
+    if value is None or type(value) in (bool, int, float):
+        return value
+    if isinstance(value, str):
+        return value
+    active = set() if active is None else active
+    identity = id(value)
+    if identity in active:
+        raise ValueError("view contains a cycle")
+    if isinstance(value, Mapping):
+        active.add(identity)
+        try:
+            return {
+                key: _plain(item, depth=depth + 1, active=active)
+                for key, item in value.items()
+            }
+        finally:
+            active.remove(identity)
+    if isinstance(value, (tuple, list)):
+        active.add(identity)
+        try:
+            return [_plain(item, depth=depth + 1, active=active) for item in value]
+        finally:
+            active.remove(identity)
+    raise TypeError("unsupported view value")
 
 
 class StateFilter:
-    """Filters game state to produce role-specific views, enforcing information asymmetry."""
+    """Delegates role views to the pipeline's frozen context projection."""
+
+    def __init__(self):
+        self.projector = ContextProjector()
 
     def filter_for_role(self, state: GameState, player_id: int, role_name: str) -> dict:
-        view: dict = {
-            "alive_players": self._public_alive_players(state),
-            "dead_players": self._public_dead_players(state),
-            "speeches": self._recent_speeches(state),
-            "votes": self._public_votes(state),
-            "phase": state.phase.value,
-            "round_number": state.round_number,
-            "sheriff": state.sheriff,
-            "your_seat": player_id,
-            "your_role": role_name,
-        }
+        """Return a plain, safe copy of the projected observation context.
 
-        # Werewolves know their teammates
-        if "werewolf" in role_name:
-            view["wolf_teammates"] = self._get_wolf_teammates(state, player_id)
-
-        # Seer knows check results
-        if "seer" in role_name:
-            player = state.players.get(player_id)
-            if player:
-                view["check_results"] = player.check_results
-
-        # Witch knows night kill victims (before antidote used)
-        if "witch" in role_name:
-            player = state.players.get(player_id)
-            if player:
-                view["has_antidote"] = player.has_antidote
-                view["has_poison"] = player.has_poison
-                view["last_wolf_kill_target"] = state.last_wolf_kill_target
-
-        # Hunter knows gun status
-        if "hunter" in role_name:
-            player = state.players.get(player_id)
-            if player:
-                view["has_gun"] = player.has_gun
-
-        return view
-
-    def _public_alive_players(self, state: GameState) -> list[dict]:
-        return [
-            {"seat": s, "is_sheriff": p.is_sheriff}
-            for s, p in state.players.items()
-            if p.is_alive
-        ]
-
-    def _public_dead_players(self, state: GameState) -> list[dict]:
-        return [
-            {
-                "seat": s,
-            }
-            for s, p in state.players.items()
-            if not p.is_alive
-        ]
-
-    def _recent_speeches(self, state: GameState, limit: int = 20) -> list[dict]:
-        recent = state.speeches[-limit:] if len(state.speeches) > limit else state.speeches
-        return [s.to_dict() if hasattr(s, "to_dict") else s for s in recent]
-
-    def _public_votes(self, state: GameState) -> list[dict]:
-        return [v.to_dict() if hasattr(v, "to_dict") else v for v in state.votes]
-
-    def _get_wolf_teammates(self, state: GameState, player_id: int) -> list[int]:
-        return [
-            s for s, p in state.players.items()
-            if "werewolf" in p.role and s != player_id
-        ]
+        The projection is produced by ContextProjector from the frozen role
+        registry, so no role-specific branch exists here; private facts and
+        resources are included only for the requesting seat.
+        """
+        player = state.players.get(player_id)
+        if player is None:
+            raise ValueError("player seat does not exist in state")
+        if player.role != role_name:
+            raise ValueError("player role does not match requested role")
+        context = self.projector.project_view(state, builtin_registry.freeze(), player_id)
+        view = {field: getattr(context, field) for field in context.__dataclass_fields__}
+        return _plain(view)
