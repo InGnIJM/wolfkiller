@@ -971,6 +971,8 @@ def test_night_settlement_pure_boundaries_are_strict() -> None:
     ):
         with pytest.raises((TypeError, ValueError)): settle(*args)
     for pending in (
+        (object(),),
+        ({"target": 1, "amount": 1},),
         ({"target": 1, "amount": 1, "cause": 1},),
         ({"target": 1, "amount": 1, "cause": "bad cause"},),
     ):
