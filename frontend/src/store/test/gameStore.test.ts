@@ -490,6 +490,11 @@ describe('public replay state', () => {
         },
         {
           ...replayEventMeta,
+          event_type: 'night_action',
+          payload: { action_type: 'seer_check', target_seat: 1, round_number: 8, result: 'good' },
+        },
+        {
+          ...replayEventMeta,
           event_type: 'winner',
           payload: { winning_camp: 'werewolf', reason: 'all_gods_dead' },
         },
@@ -501,14 +506,70 @@ describe('public replay state', () => {
     useGameStore.getState().seekTo(99);
 
     const state = useGameStore.getState();
-    expect(state.timelineIndex).toBe(7);
+    expect(state.timelineIndex).toBe(8);
     expect(state.speeches).toHaveLength(1);
     expect(state.votes).toHaveLength(1);
     expect(state.deathHistory).toHaveLength(3);
+    expect(state.nightActions).toEqual([{
+      action_type: 'seer_check', target_seat: 1, round_number: 8, result: 'good',
+    }]);
     expect(state.players[2].is_alive).toBe(false);
-    expect(state.roundNumber).toBe(7);
+    expect(state.roundNumber).toBe(8);
     expect(state.phase).toBe('game_over');
     expect(state.currentSpeaker).toBeNull();
+  });
+
+  it('advances the round for staged night thought and wolf chat events', () => {
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
+        {
+          ...replayEventMeta,
+          event_type: 'seer_thought',
+          payload: { round_number: 2, seat: 3, text: '查验1号' },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_chat_message',
+          payload: { round_number: 2, seat: 1, text: '我觉得4号是神' },
+        },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(2);
+
+    expect(useGameStore.getState().roundNumber).toBe(2);
+    expect(useGameStore.getState().phase).toBe('night');
+  });
+
+  it('keeps night phase and round across staged night events', () => {
+    const logs: GameLogs = {
+      game_id: 'g',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'narration', payload: { round_number: 1, title: '天黑请闭眼', text: '狼人请睁眼' } },
+        { ...replayEventMeta, event_type: 'wolf_chat_message', payload: { round_number: 1, seat: 1, text: '我怀疑2号' } },
+        { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 1, seat: 1, target_seat: 2, reasoning: '像神' } },
+        { ...replayEventMeta, event_type: 'witch_thought', payload: { round_number: 1, seat: 5, text: '考虑救人' } },
+        { ...replayEventMeta, event_type: 'seer_thought', payload: { round_number: 1, seat: 6, text: '查验2号' } },
+      ],
+    };
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(logs.events.length - 1);
+    expect(useGameStore.getState().phase).toBe('night');
+    expect(useGameStore.getState().roundNumber).toBe(1);
+    expect(useGameStore.getState().currentSpeaker).toBeNull();
+  });
+
+  it('keeps viewer role and camp on initial players', () => {
+    useGameStore.getState().initPlayersFromDetail({
+      1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'wolf-killer-werewolf', camp: 'werewolf' },
+    });
+    expect(useGameStore.getState().initialPlayers[1].role).toBe('wolf-killer-werewolf');
+    expect(useGameStore.getState().initialPlayers[1].camp).toBe('werewolf');
   });
 
   it('updates direct public websocket state and controls', () => {

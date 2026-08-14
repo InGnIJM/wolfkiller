@@ -1,5 +1,6 @@
-// Public observer contracts. These types intentionally contain no role,
-// camp, resource, or private night-action information.
+// Public observer contracts. These types intentionally contain no player
+// resource or private identity information; audience-visible night actions
+// (who acted on whom) are exposed through the closed night_action payload.
 
 export type GamePhase =
   | 'waiting'
@@ -22,12 +23,15 @@ export interface PublicPlayerState {
   seat_number: number;
   is_alive: boolean;
   is_sheriff: boolean;
+  role?: string;
+  camp?: string;
 }
 
 export interface SpeechRecord {
   player_seat: number;
   text: string;
   round_number: number;
+  phase?: string;
 }
 
 export interface VoteRecord {
@@ -45,6 +49,62 @@ export interface DeathRecord {
 export interface VoteResult {
   round_number: number;
   exiled_seat: number | null;
+}
+
+export type NightActionType =
+  | 'werewolf_kill'
+  | 'witch_save'
+  | 'witch_poison'
+  | 'seer_check'
+  | 'hunter_shot';
+
+export interface NightActionRecord {
+  action_type: NightActionType;
+  target_seat: number;
+  round_number: number;
+  vote_counts?: Record<string, number>;
+  result?: WinningCamp;
+}
+
+export interface NarrationPayload {
+  round_number: number;
+  title: string;
+  text: string;
+}
+
+export interface WolfChatMessagePayload {
+  round_number: number;
+  seat: number;
+  text: string;
+}
+
+export interface WolfVotePayload {
+  round_number: number;
+  seat: number;
+  target_seat: number | null;
+  reasoning: string;
+}
+
+export interface NightThoughtPayload {
+  round_number: number;
+  seat: number;
+  text: string;
+}
+
+export interface PlayerMemory {
+  seat_number: number;
+  role: string;
+  camp: string;
+  is_alive: boolean;
+  private_knowledge: Record<string, unknown>;
+  action_history: Array<Record<string, unknown>>;
+  witnessed_events: Array<Record<string, unknown>>;
+  last_updated: string;
+}
+
+export interface GameMemories {
+  game_id: string;
+  memories: PlayerMemory[];
 }
 
 export interface WinResult {
@@ -74,6 +134,11 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'death', DeathRecord>
   | PublicReplayEnvelope<'vote', VoteRecord>
   | PublicReplayEnvelope<'vote_result', VoteResult>
+  | PublicReplayEnvelope<'night_action', NightActionRecord>
+  | PublicReplayEnvelope<'narration', NarrationPayload>
+  | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>
+  | PublicReplayEnvelope<'wolf_vote', WolfVotePayload>
+  | PublicReplayEnvelope<'witch_thought' | 'seer_thought', NightThoughtPayload>
   | PublicReplayEnvelope<'phase', { phase: GamePhase; round_number: number }>
   | PublicReplayEnvelope<'winner', WinResult>;
 

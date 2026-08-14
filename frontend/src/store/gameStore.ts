@@ -3,6 +3,7 @@ import type {
   DeathRecord,
   GameLogs,
   GamePhase,
+  NightActionRecord,
   PublicGameState,
   PublicPlayerState,
   PublicReplayEvent,
@@ -16,6 +17,7 @@ interface DerivedState {
   speeches: SpeechRecord[];
   votes: VoteRecord[];
   deathHistory: DeathRecord[];
+  nightActions: NightActionRecord[];
   phase: GamePhase;
   roundNumber: number;
   winResult: WinResult | null;
@@ -66,6 +68,7 @@ const emptyDerivedState: DerivedState = {
   speeches: [],
   votes: [],
   deathHistory: [],
+  nightActions: [],
   phase: 'waiting',
   roundNumber: 0,
   winResult: null,
@@ -111,7 +114,7 @@ function buildInitialPlayers(players: Record<number, PublicPlayerState>) {
   return Object.fromEntries(
     Object.entries(players).map(([seat, player]) => [
       Number(seat),
-      { seat_number: player.seat_number, is_alive: true, is_sheriff: false },
+      { seat_number: player.seat_number, is_alive: true, is_sheriff: false, role: player.role, camp: player.camp },
     ]),
   ) as Record<number, PublicPlayerState>;
 }
@@ -178,6 +181,7 @@ function deriveState(
   const speeches: SpeechRecord[] = [];
   const votes: VoteRecord[] = [];
   const deathHistory: DeathRecord[] = [];
+  const nightActions: NightActionRecord[] = [];
   let phase: GamePhase = 'waiting';
   let roundNumber = 0;
   let winResult: WinResult | null = null;
@@ -211,6 +215,20 @@ function deriveState(
           });
         }
         break;
+      case 'night_action':
+        nightActions.push(event.payload);
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
+      case 'narration':
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        currentSpeaker = null;
+        break;
+      case 'wolf_chat_message':
+      case 'wolf_vote':
+      case 'witch_thought':
+      case 'seer_thought':
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
       case 'death': {
         const player = players[event.payload.player_seat];
         if (player) {
@@ -237,7 +255,7 @@ function deriveState(
     applyCurrentSheriffSnapshot(players, currentPublicPlayers);
   }
 
-  return { players, speeches, votes, deathHistory, phase, roundNumber, winResult, currentSpeaker };
+  return { players, speeches, votes, deathHistory, nightActions, phase, roundNumber, winResult, currentSpeaker };
 }
 
 function startTimer(get: () => GameStore) {
@@ -267,6 +285,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentPublicPlayers,
       speeches: state.speeches,
       deathHistory: state.death_history,
+      nightActions: [],
       winResult: state.win_result,
       currentSpeaker: null,
     });
