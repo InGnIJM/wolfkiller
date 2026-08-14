@@ -289,8 +289,8 @@ class GameEngine:
             self._pending_night_batch = _PendingNightBatch(self.state.round_number, 0, (), (), ())
         await self._execute_staged_night()
 
-    async def _narrate(self, title: str, text: str) -> None:
-        self.game_logger.log_narration(self.game_id, self.state.round_number, "night", title, text)
+    async def _narrate(self, title: str, text: str, phase: str = "night") -> None:
+        self.game_logger.log_narration(self.game_id, self.state.round_number, phase, title, text)
 
     async def _log_stage_audience(self, result: PointResult) -> None:
         observation = RolePipeline.observe_v2(result)
@@ -418,7 +418,7 @@ class GameEngine:
         if pending.stage == 11:
             deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
             title, text = director.dawn_narration(deaths)
-            await self._narrate(title, text)
+            await self._narrate(title, text, phase="dawn")
             pending = replace(pending, stage=12); self._pending_night_batch = pending
 
         observations = tuple(RolePipeline.observe_v2(raw) for raw in pending.raw_results)

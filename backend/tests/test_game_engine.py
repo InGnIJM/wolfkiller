@@ -729,6 +729,9 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
         ("narration", "天亮了"),
         ("night_deaths", None),
     ]
+    assert [record["phase"] for record in records if record["operation"] == "narration"] == [
+        "night", "night", "night", "dawn",
+    ]
     assert records[-1]["operation"] == "phase_change"
 
 
