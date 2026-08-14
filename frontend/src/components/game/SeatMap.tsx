@@ -2,6 +2,15 @@ import { Box, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import type { PublicPlayerState } from '../../store/types';
 
+const ROLE_BADGES: Record<string, { label: string; color: string }> = {
+  'wolf-killer-werewolf': { label: '狼人', color: 'error.main' },
+  'wolf-killer-witch': { label: '女巫', color: 'secondary.main' },
+  'wolf-killer-seer': { label: '预言家', color: 'info.main' },
+  'wolf-killer-hunter': { label: '猎人', color: 'warning.main' },
+  'wolf-killer-villager': { label: '村民', color: 'success.main' },
+  'wolf-killer-guard': { label: '守卫', color: 'success.light' },
+};
+
 interface Props {
   players: Record<number, PublicPlayerState>;
   currentSpeaker?: number | null;
@@ -36,6 +45,7 @@ function PublicSeat({
   voteTarget: number | null | undefined;
   cardSize: number;
 }) {
+  const badge = player.role ? ROLE_BADGES[player.role] : undefined;
   return (
     <Box
       sx={{
@@ -46,7 +56,7 @@ function PublicSeat({
         gap: 0.25,
         p: 0.7,
         border: '1px solid',
-        borderColor: isCurrentSpeaker ? 'primary.main' : 'divider',
+        borderColor: isCurrentSpeaker ? 'primary.main' : (player.camp === 'werewolf' ? 'error.main' : player.camp === 'good' ? 'success.main' : 'divider'),
         borderRadius: 2,
         bgcolor: player.is_alive ? 'background.paper' : 'action.disabledBackground',
         opacity: player.is_alive ? 1 : 0.6,
@@ -55,6 +65,11 @@ function PublicSeat({
       <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
         {seat}号
       </Typography>
+      {badge && (
+        <Typography variant="caption" color={badge.color} sx={{ fontWeight: 600, fontSize: '0.68rem' }}>
+          {badge.label}
+        </Typography>
+      )}
       <Typography variant="caption" color={player.is_alive ? 'success.light' : 'text.disabled'}>
         {player.is_alive ? '存活' : '出局'}
       </Typography>
