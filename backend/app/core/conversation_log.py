@@ -104,6 +104,18 @@ class ConversationLog:
         self._persist(record)
         return record
 
+    def add_werewolf_channel(self, content: str, round_num: int) -> Conversation:
+        """Record one message in the wolves' private night channel."""
+        record = Conversation(
+            scope=ConversationScope.WEREWOLF,
+            content=content,
+            round_number=round_num,
+            phase="night",
+        )
+        self.records.append(record)
+        self._persist(record)
+        return record
+
     def get_thoughts_for_seat(self, seat: int) -> list[Conversation]:
         """Return all thought records belonging to a specific player."""
         return [

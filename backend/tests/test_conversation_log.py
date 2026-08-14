@@ -39,6 +39,18 @@ class TestConversationLogLifecycle:
         camp = log.add_system_message("阵营提示", 1, "werewolf")
         assert camp.scope is ConversationScope.WEREWOLF
 
+    def test_add_werewolf_channel_visible_only_to_wolves(self):
+        log = ConversationLog()
+        record = log.add_werewolf_channel("提议刀 2 号：理由", 3)
+        assert record.scope is ConversationScope.WEREWOLF
+        assert record.phase == "night"
+        assert record.round_number == 3
+
+        wolf_view = log.get_conversations_for_role(1, "wolf-killer-werewolf")
+        assert [item.content for item in wolf_view] == ["提议刀 2 号：理由"]
+        villager_view = log.get_conversations_for_role(2, "wolf-killer-villager")
+        assert villager_view == []
+
     def test_get_all_get_public_and_get_by_round(self):
         log = ConversationLog()
         log.add_public_speech(1, "wolf-killer-villager", "第一轮", 1, "speech")
