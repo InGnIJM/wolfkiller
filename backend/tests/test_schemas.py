@@ -4,9 +4,10 @@ from pydantic import ValidationError
 from app.api.schemas import (
     CreateGameRequest, CreateGameResponse, GameListItem,
     GameListResponse, GameDetailResponse, GameLogsResponse,
-    PublicDeathResponse, PublicPhaseResponse, PublicPlayerResponse,
-    PublicSpeechResponse, PublicVoteResponse, PublicVoteResultResponse,
-    PublicWinnerResponse,
+    GameMemoriesResponse, PlayerMemoryResponse,
+    PublicDeathResponse, PublicNightThoughtResponse, PublicPhaseResponse,
+    PublicPlayerResponse, PublicSpeechResponse, PublicVoteResponse,
+    PublicVoteResultResponse, PublicWinnerResponse, PublicWolfChatResponse,
     SetSpeedRequest, WSMessage,
 )
 
@@ -26,6 +27,19 @@ PUBLIC_REPLAY_EVENTS = [
     }},
     {"event_type": "vote_result", "payload": {
         "round_number": 2, "exiled_seat": 2,
+    }},
+    {"event_type": "night_action", "payload": {
+        "action_type": "witch_save", "target_seat": 3, "round_number": 2,
+    }},
+    {"event_type": "night_thought", "payload": {
+        "round_number": 2, "seat": 7, "action_type": "seer_reasoning",
+        "target_seat": 1, "reasoning": "先查跳预言家的人",
+    }},
+    {"event_type": "wolf_chat", "payload": {
+        "round_number": 2, "votes": [
+            {"action_type": "kill", "target_seat": 4, "reasoning": "觉得4号是神"},
+            {"action_type": "pass", "target_seat": None, "reasoning": "没有想法"},
+        ],
     }},
     {"event_type": "phase", "payload": {
         "phase": "speech", "round_number": 2,
@@ -244,6 +258,48 @@ class TestSchemas:
                 tally={3: 4},
             )
 
+    def test_public_night_action_replay_event_is_closed(self):
+        logs = GameLogsResponse(
+            game_id="abc",
+            events=[{
+                "event_type": "night_action",
+                "timestamp": PUBLIC_TIMESTAMP,
+                "payload": {
+                    "action_type": "werewolf_kill", "target_seat": 4,
+                    "round_number": 2, "vote_counts": {"4": 2},
+                },
+            }],
+        )
+
+        assert logs.model_dump()["events"] == [{
+            "event_type": "night_action",
+            "timestamp": PUBLIC_TIMESTAMP,
+            "payload": {
+                "action_type": "werewolf_kill", "target_seat": 4,
+                "round_number": 2, "vote_counts": {"4": 2}, "result": None,
+            },
+        }]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"action_type": "guard_action", "target_seat": 1, "round_number": 2},
+            {"action_type": "seer_check", "target_seat": 0, "round_number": 2},
+            {"action_type": "seer_check", "target_seat": True, "round_number": 2},
+            {"action_type": "seer_check", "target_seat": 1, "round_number": -1},
+            {"action_type": "seer_check", "target_seat": 1, "round_number": 2, "result": "third_party"},
+            {"action_type": "seer_check", "target_seat": 1, "round_number": 2, "result": 3},
+            {"action_type": "werewolf_kill", "target_seat": 1, "round_number": 2, "vote_counts": {1: 1}},
+            {"action_type": "werewolf_kill", "target_seat": 1, "round_number": 2, "vote_counts": {"1": 0}},
+        ],
+    )
+    def test_public_night_action_rejects_invalid_payloads(self, payload):
+        with pytest.raises(ValidationError):
+            GameLogsResponse(game_id="abc", events=[{
+                "event_type": "night_action", "timestamp": PUBLIC_TIMESTAMP,
+                "payload": payload,
+            }])
+
     def test_public_observer_models_expose_only_public_fields(self):
         detail = GameDetailResponse(
             game_id="abc",
@@ -291,6 +347,42 @@ class TestSchemas:
         serialized = {"detail": detail.model_dump(), "logs": logs.model_dump()}
         forbidden = {"role", "camp", "has_antidote", "has_poison", "has_gun"}
         assert not (forbidden & _all_keys(serialized))
+
+    def test_speech_accepts_optional_phase_for_replay_and_detail(self):
+        with_phase = PublicSpeechResponse(
+            player_seat=1, text="遗言", round_number=1, phase="last_words",
+        )
+        assert with_phase.phase == "last_words"
+        without = PublicSpeechResponse(player_seat=1, text="发言", round_number=1)
+        assert without.phase is None
+
+    def test_night_thought_rejects_unknown_action_type(self):
+        with pytest.raises(ValidationError):
+            PublicNightThoughtResponse(
+                round_number=1, seat=1, action_type="wolf_reasoning",
+                target_seat=None, reasoning="r",
+            )
+
+    def test_wolf_chat_requires_closed_votes(self):
+        value = PublicWolfChatResponse(
+            round_number=1,
+            votes=[{"action_type": "kill", "target_seat": 2, "reasoning": "r"}],
+        )
+        assert value.votes[0].action_type == "kill"
+        with pytest.raises(ValidationError):
+            PublicWolfChatResponse(
+                round_number=1,
+                votes=[{"action_type": "explode", "target_seat": 2, "reasoning": "r"}],
+            )
+
+    def test_memories_response_round_trips_closed_fields(self):
+        memory = PlayerMemoryResponse(
+            seat_number=1, role="wolf-killer-witch", camp="good", is_alive=True,
+            private_knowledge={"has_antidote": True}, action_history=[{"round": 1}],
+            witnessed_events=[], last_updated="2026-01-01T00:00:00Z",
+        )
+        response = GameMemoriesResponse(game_id="g", memories=[memory])
+        assert response.model_dump()["memories"][0]["seat_number"] == 1
 
     def test_public_player_rejects_private_identity_fields(self):
         with pytest.raises(ValidationError):

@@ -88,6 +88,7 @@ class PublicSpeechResponse(_PublicResponse):
     player_seat: PositivePublicInt
     text: str
     round_number: NonNegativePublicInt
+    phase: Optional[PublicGamePhase] = None
 
 
 class PublicDeathResponse(_PublicResponse):
@@ -107,6 +108,19 @@ class PublicVoteResultResponse(_PublicResponse):
     exiled_seat: Optional[PositivePublicInt] = None
 
 
+PublicNightActionType = Literal[
+    "werewolf_kill", "witch_save", "witch_poison", "seer_check", "hunter_shot",
+]
+
+
+class PublicNightActionResponse(_PublicResponse):
+    action_type: PublicNightActionType
+    target_seat: PositivePublicInt
+    round_number: NonNegativePublicInt
+    vote_counts: Optional[dict[str, PositivePublicInt]] = None
+    result: Optional[PublicWinningCamp] = None
+
+
 class PublicPhaseResponse(_PublicResponse):
     phase: PublicGamePhase
     round_number: NonNegativePublicInt
@@ -115,6 +129,30 @@ class PublicPhaseResponse(_PublicResponse):
 class PublicWinnerResponse(_PublicResponse):
     winning_camp: PublicWinningCamp
     reason: PublicWinReason
+
+
+PublicThoughtActionType = Literal[
+    "witch_reasoning", "seer_reasoning", "hunter_reasoning",
+]
+
+
+class PublicNightThoughtResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    action_type: PublicThoughtActionType
+    target_seat: Optional[PositivePublicInt] = None
+    reasoning: str
+
+
+class PublicWolfChatVoteResponse(_PublicResponse):
+    action_type: Literal["kill", "pass"]
+    target_seat: Optional[PositivePublicInt] = None
+    reasoning: str
+
+
+class PublicWolfChatResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    votes: list[PublicWolfChatVoteResponse]
 
 
 class _PublicReplayEvent(_PublicResponse):
@@ -141,6 +179,21 @@ class PublicVoteResultReplayEvent(_PublicReplayEvent):
     payload: PublicVoteResultResponse
 
 
+class PublicNightActionReplayEvent(_PublicReplayEvent):
+    event_type: Literal["night_action"]
+    payload: PublicNightActionResponse
+
+
+class PublicNightThoughtReplayEvent(_PublicReplayEvent):
+    event_type: Literal["night_thought"]
+    payload: PublicNightThoughtResponse
+
+
+class PublicWolfChatReplayEvent(_PublicReplayEvent):
+    event_type: Literal["wolf_chat"]
+    payload: PublicWolfChatResponse
+
+
 class PublicPhaseReplayEvent(_PublicReplayEvent):
     event_type: Literal["phase"]
     payload: PublicPhaseResponse
@@ -157,6 +210,9 @@ PublicReplayEvent = Annotated[
         PublicDeathReplayEvent,
         PublicVoteReplayEvent,
         PublicVoteResultReplayEvent,
+        PublicNightActionReplayEvent,
+        PublicNightThoughtReplayEvent,
+        PublicWolfChatReplayEvent,
         PublicPhaseReplayEvent,
         PublicWinnerReplayEvent,
     ],
@@ -189,6 +245,22 @@ class SetSpeedRequest(BaseModel):
 class GameLogsResponse(_PublicResponse):
     game_id: str
     events: list[PublicReplayEvent]
+
+
+class PlayerMemoryResponse(_PublicResponse):
+    seat_number: PositivePublicInt
+    role: str
+    camp: str
+    is_alive: bool
+    private_knowledge: dict
+    action_history: list
+    witnessed_events: list
+    last_updated: str
+
+
+class GameMemoriesResponse(_PublicResponse):
+    game_id: str
+    memories: list[PlayerMemoryResponse]
 
 
 class WSMessage(BaseModel):
