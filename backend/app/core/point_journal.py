@@ -21,7 +21,7 @@ def _text(value: object, name: str) -> str:
     if type(value) is not str: raise TypeError(f"{name} must be a string")
     try: encoded = value.encode("utf-8", errors="strict")
     except UnicodeEncodeError: raise ValueError(f"{name} must be UTF-8") from None
-    if not encoded or len(encoded) > 256: raise ValueError(f"invalid {name}")
+    if not value or len(value) > 2000: raise ValueError(f"invalid {name}")
     return value
 
 

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import hashlib
 import math
 import re
@@ -15,7 +15,7 @@ def _utf8(value: str, name: str, *, token: bool = False) -> str:
     try:
         value.encode("utf-8", errors="strict")
     except UnicodeEncodeError as error: raise ValueError(f"{name} must be valid UTF-8") from error
-    if not value or len(value) > 256 or (token and _TOKEN.fullmatch(value) is None): raise ValueError(f"invalid {name}")
+    if not value or len(value) > 2000 or (token and _TOKEN.fullmatch(value) is None): raise ValueError(f"invalid {name}")
     return value
 def _integer(value: object, name: str, *, positive: bool = False) -> int:
     if type(value) is not int: raise TypeError(f"{name} must be an integer")

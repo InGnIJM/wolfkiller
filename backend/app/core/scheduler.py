@@ -41,7 +41,7 @@ def _text(value: object, name: str, token: bool = False) -> str:
     if type(value) is not str: raise TypeError(f"{name} must be a string")
     try: value.encode("utf-8")
     except UnicodeEncodeError as error: raise ValueError(f"{name} must be UTF-8") from error
-    if not value or len(value) > 256 or token and _TOKEN.fullmatch(value) is None: raise ValueError(f"invalid {name}")
+    if not value or len(value) > 2000 or token and _TOKEN.fullmatch(value) is None: raise ValueError(f"invalid {name}")
     return value
 
 
