@@ -263,6 +263,20 @@ function EventCard({
         </>
       );
       break;
+    case 'night_thought': {
+      const { action_type, seat, target_seat, reasoning } = event.payload;
+      content = (
+        <>
+          <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
+            {THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
+            {target_seat === null ? `不行动：${reasoning}` : `目标${target_seat}号：${reasoning}`}
+          </Typography>
+        </>
+      );
+      break;
+    }
     case 'death':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
@@ -332,7 +346,7 @@ export default function HistoryPanel({ onClose }: Props) {
     event.event_type === 'night_action' || event.event_type === 'wolf_vote' || event.event_type === 'narration'
   ));
   const thoughts = indexedEvents.filter(({ event }) => (
-    event.event_type === 'wolf_chat_message' || event.event_type === 'witch_thought' || event.event_type === 'seer_thought'
+    event.event_type === 'wolf_chat_message' || event.event_type === 'witch_thought' || event.event_type === 'seer_thought' || event.event_type === 'night_thought'
   ));
   const currentEvents = tab === 0 ? indexedEvents
     : tab === 1 ? speeches

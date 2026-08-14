@@ -118,4 +118,22 @@ describe('CenterDisplay staged night events', () => {
     expect(screen.getByText(/预言家思考/)).toBeInTheDocument();
     expect(screen.getByText('查验3号，是好人')).toBeInTheDocument();
   });
+
+  it('renders hunter reasoning night_thought events', () => {
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_thought',
+          payload: { round_number: 1, seat: 4, action_type: 'hunter_reasoning', target_seat: 6, reasoning: '我开枪带走6号' },
+        },
+      ],
+    };
+
+    renderTimelineAt(logs, 0);
+
+    expect(screen.getByText(/猎人思考/)).toBeInTheDocument();
+    expect(screen.getByText(/我开枪带走6号/)).toBeInTheDocument();
+  });
 });

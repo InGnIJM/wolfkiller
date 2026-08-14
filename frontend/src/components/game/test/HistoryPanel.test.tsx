@@ -85,6 +85,25 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText('昨晚2号被刀，我决定救人')).toBeVisible();
   });
 
+  it('renders hunter reasoning night_thought cards and groups them into 思考', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'night_thought',
+        payload: { round_number: 1, seat: 4, action_type: 'hunter_reasoning', target_seat: 6, reasoning: '我开枪带走6号' },
+      },
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/猎人思考 · 4号/)).toBeVisible();
+    expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: /思考/ }));
+    expect(screen.getByText(/猎人思考 · 4号/)).toBeVisible();
+    expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
+  });
+
   it('groups chat messages into 思考 and narration plus wolf votes into 夜晚', () => {
     const timeline: PublicReplayEvent[] = [
       {
