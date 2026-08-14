@@ -27,6 +27,27 @@ const CAUSE_LABELS: Record<string, string> = {
   exile: '被放逐',
 };
 
+const NIGHT_ACTION_LABELS: Record<string, string> = {
+  werewolf_kill: '狼人行动',
+  witch_save: '女巫救人',
+  witch_poison: '女巫毒人',
+  seer_check: '预言家查验',
+  hunter_shot: '猎人开枪',
+};
+
+const THOUGHT_LABELS: Record<string, string> = {
+  witch_reasoning: '女巫思考',
+  seer_reasoning: '预言家思考',
+  hunter_reasoning: '猎人思考',
+  witch_thought: '女巫思考',
+  seer_thought: '预言家思考',
+};
+
+const CAMP_LABELS: Record<string, string> = {
+  good: '好人',
+  werewolf: '狼人',
+};
+
 const panelSx = {
   textAlign: 'center',
   py: 2,
@@ -53,7 +74,9 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
       return (
         <Box sx={panelSx}>
           <Typography variant="subtitle2" color="primary.light" gutterBottom>
-            {entry.payload.player_seat}号玩家发言
+            {entry.payload.phase === 'last_words'
+              ? `${entry.payload.player_seat}号玩家遗言`
+              : `${entry.payload.player_seat}号玩家发言`}
           </Typography>
           <Typography
             variant="body2"
@@ -85,6 +108,79 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
             {entry.payload.exiled_seat === null
               ? '平票，无人被放逐'
               : `${entry.payload.exiled_seat}号玩家被放逐出局`}
+          </Typography>
+        </Box>
+      );
+    case 'night_action': {
+      const action = entry.payload;
+      const counts = action.vote_counts
+        ? Object.entries(action.vote_counts).map(([target, count]) => `${target}号×${count}`).join('，')
+        : null;
+      const detail = action.action_type === 'seer_check'
+        ? `查验了 ${action.target_seat}号，身份为${CAMP_LABELS[action.result ?? ''] ?? '未知'}`
+        : counts
+          ? `刀向 ${action.target_seat}号（票型：${counts}）`
+          : `目标 ${action.target_seat}号`;
+      return (
+        <Box sx={{ ...panelSx, py: 1.8 }}>
+          <Typography variant="subtitle1" color="info.light" gutterBottom>
+            {NIGHT_ACTION_LABELS[action.action_type] ?? '夜晚行动'}
+          </Typography>
+          <Typography variant="body2" color="grey.300">
+            {detail}
+          </Typography>
+        </Box>
+      );
+    }
+    case 'narration':
+      return (
+        <Box sx={{ ...panelSx, py: 3 }}>
+          <Typography variant="h5" color="primary.light" gutterBottom sx={{ fontWeight: 600 }}>
+            {entry.payload.title}
+          </Typography>
+          <Typography variant="body1" color="grey.300" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+            {entry.payload.text}
+          </Typography>
+        </Box>
+      );
+    case 'wolf_chat_message':
+      return (
+        <Box
+          sx={{
+            ...panelSx,
+            textAlign: 'left',
+            py: 1.5,
+            borderLeft: '3px solid',
+            borderColor: 'error.main',
+          }}
+        >
+          <Typography variant="body1" color="grey.300" sx={{ wordBreak: 'break-word' }}>
+            {entry.payload.seat}号：{entry.payload.text}
+          </Typography>
+        </Box>
+      );
+    case 'wolf_vote':
+      return (
+        <Box sx={panelSx}>
+          <Typography variant="subtitle2" color="warning.light" gutterBottom>
+            {entry.payload.seat}号 出票
+          </Typography>
+          <Typography variant="body2" color="grey.300">
+            {entry.payload.target_seat === null
+              ? `弃权（${entry.payload.reasoning}）`
+              : `→ ${entry.payload.target_seat}号（${entry.payload.reasoning}）`}
+          </Typography>
+        </Box>
+      );
+    case 'witch_thought':
+    case 'seer_thought':
+      return (
+        <Box sx={{ ...panelSx, py: 1.8 }}>
+          <Typography variant="subtitle1" color="info.light" gutterBottom>
+            {THOUGHT_LABELS[entry.event_type]} · {entry.payload.seat}号
+          </Typography>
+          <Typography variant="body2" color="grey.300" sx={{ whiteSpace: 'pre-wrap' }}>
+            {entry.payload.text}
           </Typography>
         </Box>
       );
