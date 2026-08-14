@@ -68,7 +68,7 @@ class LLMClient:
         parameter = str(detail.get("param", "")).lower()
         strict_or_schema = any(
             marker in " ".join((message, code, parameter))
-            for marker in ("strict", "schema", "response_format")
+            for marker in ("strict", "schema", "response_format", "tool")
         )
         unsupported = any(
             marker in " ".join((message, code))

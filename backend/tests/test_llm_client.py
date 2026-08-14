@@ -57,6 +57,23 @@ class TestLLMClient:
         assert isinstance(mapped, StrictCapabilityError)
         assert str(mapped) == body["error"]["message"]
 
+    def test_maps_tool_choice_rejection_to_capability_error(self):
+        body = {
+            "error": {
+                "message": "Thinking mode does not support this tool_choice",
+                "code": "invalid_request_error",
+                "param": None,
+            }
+        }
+        error = self._provider_error(
+            BadRequestError, body["error"]["message"], 400, body
+        )
+
+        mapped = LLMClient.map_strict_capability_error(error)
+
+        assert isinstance(mapped, StrictCapabilityError)
+        assert str(mapped) == body["error"]["message"]
+
     def test_keeps_422_non_strict_schema_rejection_unchanged(self):
         body = {
             "error": {
