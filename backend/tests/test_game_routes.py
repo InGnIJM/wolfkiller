@@ -245,6 +245,7 @@ def test_public_conversation_requires_all_public_speech_fields(record):
              "content": "initial speech", "round_number": 0, "phase": "waiting"},
             {"event_type": "speech", "payload": {
                 "player_seat": 1, "text": "initial speech", "round_number": 0,
+                "phase": "waiting",
             }},
         ),
         (
@@ -465,6 +466,239 @@ def test_public_vote_result_rejects_invalid_exile_data(data):
     assert game_routes._public_operation_events(record) == []
 
 
+def test_public_audience_action_projects_each_supported_event_shape():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "WITCH_SAVE", "payload": {"target_seat": 3}},
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "night_action",
+        "payload": {"action_type": "witch_save", "target_seat": 3, "round_number": 2},
+    }]
+
+    werewolf = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "WEREWOLF_KILL",
+                 "payload": {"target_seat": 4, "vote_counts": {"4": 2, "1": 1}}},
+    }
+    assert game_routes._public_operation_events(werewolf) == [{
+        "event_type": "night_action",
+        "payload": {
+            "action_type": "werewolf_kill", "target_seat": 4, "round_number": 2,
+            "vote_counts": {"4": 2, "1": 1},
+        },
+    }]
+
+    seer = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "SEER_CHECK",
+                 "payload": {"target_seat": 1, "result": "werewolf"}},
+    }
+    assert game_routes._public_operation_events(seer) == [{
+        "event_type": "night_action",
+        "payload": {
+            "action_type": "seer_check", "target_seat": 1, "round_number": 2,
+            "result": "werewolf",
+        },
+    }]
+
+
+@pytest.mark.parametrize(
+    ("record",),
+    [
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "UNKNOWN_ACTION",
+          "payload": {"target_seat": 1}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WITCH_SAVE",
+          "payload": {"target_seat": 1, "extra": True}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WITCH_SAVE",
+          "payload": {"target_seat": 0}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WITCH_SAVE",
+          "payload": {"target_seat": "3"}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WEREWOLF_KILL",
+          "payload": {"target_seat": 1}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WEREWOLF_KILL",
+          "payload": {"target_seat": 1, "vote_counts": [1]}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WEREWOLF_KILL",
+          "payload": {"target_seat": 1, "vote_counts": {"abc": 1}}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WEREWOLF_KILL",
+          "payload": {"target_seat": 1, "vote_counts": {"2": 0}}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "SEER_CHECK",
+          "payload": {"target_seat": 1}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "SEER_CHECK",
+          "payload": {"target_seat": 1, "result": "third_party"}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "SEER_CHECK",
+          "payload": {"target_seat": 1, "result": 7}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": "not-a-dict"},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night",
+          "data": {"event_type": "WITCH_SAVE", "payload": "not-a-dict"}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night",
+          "data": {"event_type": 9, "payload": {"target_seat": 1}}},),
+    ],
+)
+def test_public_audience_action_rejects_malformed_records(record):
+    assert game_routes._public_operation_events(record) == []
+
+
+def test_public_audience_action_helper_rejects_non_dict_data():
+    assert game_routes._public_audience_action_event({"data": "not-a-dict"}, 2) == []
+
+
+def test_narration_and_staged_night_events_project_to_public_events():
+    records = [
+        {"timestamp": "2026-08-14T00:00:01Z", "round": 1, "phase": "night",
+         "operation": "narration", "seat": None,
+         "data": {"title": "天黑请闭眼", "text": "狼人请睁眼，开始讨论今晚的行动。"}},
+        {"timestamp": "2026-08-14T00:00:02Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "WOLF_CHAT_MESSAGE", "payload": {"seat": 1, "text": "我怀疑2号"}}},
+        {"timestamp": "2026-08-14T00:00:03Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "WOLF_VOTE", "payload": {"seat": 1, "target_seat": 2, "reasoning": "像神"}}},
+        {"timestamp": "2026-08-14T00:00:04Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "WITCH_THOUGHT", "payload": {"seat": 3, "text": "考虑救人"}}},
+        {"timestamp": "2026-08-14T00:00:05Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "SEER_THOUGHT", "payload": {"seat": 4, "text": "查验2号"}}},
+    ]
+    events = game_routes._public_replay_events([], records)
+    assert [e["event_type"] for e in events] == [
+        "narration", "wolf_chat_message", "wolf_vote", "witch_thought", "seer_thought"]
+    narration = events[0]["payload"]
+    assert narration == {"round_number": 1, "title": "天黑请闭眼", "text": "狼人请睁眼，开始讨论今晚的行动。"}
+    assert events[1]["payload"] == {"round_number": 1, "seat": 1, "text": "我怀疑2号"}
+    assert events[2]["payload"] == {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "像神"}
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"title": 7, "text": "t"},
+        {"title": "t", "text": 7},
+        {"title": "", "text": "t"},
+        {"title": "t", "text": ""},
+        {"title": "t" * 101, "text": "t"},
+        {"title": "t", "text": "t" * 201},
+    ],
+)
+def test_public_narration_rejects_malformed_records(data):
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "narration", "round": 1,
+        "phase": "night", "data": data,
+    }
+
+    assert game_routes._public_operation_events(record) == []
+
+
+def test_public_reasoning_event_projects_closed_night_thought():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "HUNTER_REASONING",
+                 "payload": {"seat": 7, "action_type": "shoot", "target_seat": 1,
+                             "reasoning": "开枪带走跳狼的人", "thought": "决定开枪带走 1 号玩家：开枪带走跳狼的人"}},
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "night_thought",
+        "payload": {
+            "round_number": 2, "seat": 7, "action_type": "hunter_reasoning",
+            "target_seat": 1, "reasoning": "开枪带走跳狼的人",
+        },
+    }]
+
+    passed = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "HUNTER_REASONING",
+                 "payload": {"seat": 3, "action_type": "pass", "target_seat": None,
+                             "reasoning": "没有把握不开枪", "thought": "决定不开枪：没有把握不开枪"}},
+    }
+    assert game_routes._public_operation_events(passed) == [{
+        "event_type": "night_thought",
+        "payload": {
+            "round_number": 2, "seat": 3, "action_type": "hunter_reasoning",
+            "target_seat": None, "reasoning": "没有把握不开枪",
+        },
+    }]
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        ("HUNTER_REASONING", "not-a-dict"),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
+                              "reasoning": "r", "thought": "t", "extra": 1}),
+        ("HUNTER_REASONING", {"seat": 0, "action_type": "shoot", "target_seat": 2,
+                              "reasoning": "r", "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": True, "action_type": "shoot", "target_seat": 2,
+                              "reasoning": "r", "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": 7, "target_seat": 2,
+                              "reasoning": "r", "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": "save", "target_seat": 2,
+                              "reasoning": "r", "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": "x",
+                              "reasoning": "r", "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": True,
+                              "reasoning": "r", "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
+                              "reasoning": "r" * 501, "thought": "t"}),
+        ("HUNTER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
+                              "reasoning": "r", "thought": 7}),
+    ],
+)
+def test_public_reasoning_event_rejects_malformed_records(event_type, payload):
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night", "data": {"event_type": event_type, "payload": payload},
+    }
+
+    assert game_routes._public_operation_events(record) == []
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        ("WOLF_CHAT_MESSAGE", "not-a-dict"),
+        ("WOLF_CHAT_MESSAGE", {"seat": 0, "text": "t"}),
+        ("WOLF_CHAT_MESSAGE", {"seat": True, "text": "t"}),
+        ("WITCH_THOUGHT", {"seat": 1, "text": 7}),
+        ("SEER_THOUGHT", {"seat": 1, "text": ""}),
+        ("SEER_THOUGHT", {"seat": 1, "text": "t" * 201}),
+        ("WOLF_VOTE", "not-a-dict"),
+        ("WOLF_VOTE", {"seat": 0, "target_seat": 2, "reasoning": "r"}),
+        ("WOLF_VOTE", {"seat": 1, "target_seat": 0, "reasoning": "r"}),
+        ("WOLF_VOTE", {"seat": 1, "target_seat": 2, "reasoning": "r" * 501}),
+        ("WOLF_VOTE", {"seat": 1, "target_seat": None, "reasoning": 7}),
+    ],
+)
+def test_public_staged_night_audience_event_rejects_malformed_records(event_type, payload):
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night", "data": {"event_type": event_type, "payload": payload},
+    }
+
+    assert game_routes._public_operation_events(record) == []
+
+
 def test_public_replay_sorts_naive_and_z_timestamps_as_utc_and_projects_timestamps():
     conversations = [{
         "timestamp": "2026-01-01T00:00:02", "scope": "public", "speaker_seat": 1,
@@ -481,7 +715,8 @@ def test_public_replay_sorts_naive_and_z_timestamps_as_utc_and_projects_timestam
         {"event_type": "phase", "timestamp": "2026-01-01T00:00:01Z",
          "payload": {"phase": "speech", "round_number": 1}},
         {"event_type": "speech", "timestamp": "2026-01-01T00:00:02Z",
-         "payload": {"player_seat": 1, "text": "naive speech", "round_number": 1}},
+         "payload": {"player_seat": 1, "text": "naive speech", "round_number": 1,
+                     "phase": "speech"}},
     ]
 
 
@@ -599,7 +834,8 @@ async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypat
 
     assert response.model_dump()["events"] == [
         {"event_type": "speech", "timestamp": "2026-01-01T00:00:02Z",
-         "payload": {"player_seat": 1, "text": "day speech", "round_number": 1}},
+         "payload": {"player_seat": 1, "text": "day speech", "round_number": 1,
+                     "phase": "speech"}},
         {"event_type": "vote", "timestamp": "2026-01-01T00:00:07Z",
          "payload": {"voter_seat": 1, "target_seat": 2, "round_number": 1}},
         {"event_type": "death", "timestamp": "2026-01-01T00:00:08.500000Z",
@@ -628,6 +864,104 @@ async def test_get_game_logs_returns_404_without_reading_log_files(monkeypatch):
         await game_routes.get_game_logs("missing")
 
     reader.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_game_memories_returns_404_without_state(monkeypatch):
+    service = MagicMock()
+    service.get_game_state.return_value = None
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    with pytest.raises(HTTPException, match="Game not found"):
+        await game_routes.get_game_memories("missing")
+
+
+def test_camp_label_normalizes_str_enum_and_rejects_unknown():
+    from app.models.game import Camp
+
+    assert game_routes._camp_label(Camp.WEREWOLF) == "werewolf"
+    assert game_routes._camp_label("good") == "good"
+    assert game_routes._camp_label(7) == ""
+
+
+@pytest.mark.asyncio
+async def test_get_game_memories_projects_persisted_and_placeholder_entries(monkeypatch):
+    from app.models.game import GameState, PlayerState
+
+    state = GameState("mem-game", players={
+        1: PlayerState(1, "wolf-killer-witch", "good"),
+        2: PlayerState(2, "wolf-killer-werewolf", "werewolf", is_alive=False),
+    })
+    service = MagicMock()
+    service.get_game_state.return_value = state
+    memory_service = MagicMock()
+    memory_service.load_memory = MagicMock(side_effect=lambda game_id, seat: {
+        "game_id": game_id,
+        "seat_number": seat,
+        "role": "wolf-killer-witch",
+        "camp": "good",
+        "is_alive": True,
+        "private_knowledge": {"has_antidote": True, "has_poison": False},
+        "action_history": [{"round": 1, "phase": "night", "action": {}}],
+        "witnessed_events": [],
+        "last_updated": "2026-01-01T00:00:00Z",
+    } if seat == 1 else None)
+    service.memory_service = memory_service
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.get_game_memories("mem-game")
+
+    assert response.model_dump() == {
+        "game_id": "mem-game",
+        "memories": [
+            {
+                "seat_number": 1,
+                "role": "wolf-killer-witch",
+                "camp": "good",
+                "is_alive": True,
+                "private_knowledge": {"has_antidote": True, "has_poison": False},
+                "action_history": [{"round": 1, "phase": "night", "action": {}}],
+                "witnessed_events": [],
+                "last_updated": "2026-01-01T00:00:00Z",
+            },
+            {
+                "seat_number": 2,
+                "role": "wolf-killer-werewolf",
+                "camp": "werewolf",
+                "is_alive": False,
+                "private_knowledge": {},
+                "action_history": [],
+                "witnessed_events": [],
+                "last_updated": "",
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_game_memories_without_memory_service_returns_placeholders(monkeypatch):
+    from app.models.game import GameState, PlayerState
+
+    state = GameState("mem-none", players={
+        1: PlayerState(1, "wolf-killer-villager", "good"),
+    })
+    service = MagicMock()
+    service.get_game_state.return_value = state
+    service.memory_service = None
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.get_game_memories("mem-none")
+
+    assert response.model_dump()["memories"] == [{
+        "seat_number": 1,
+        "role": "wolf-killer-villager",
+        "camp": "good",
+        "is_alive": True,
+        "private_knowledge": {},
+        "action_history": [],
+        "witnessed_events": [],
+        "last_updated": "",
+    }]
 
 
 def _all_keys(value):
