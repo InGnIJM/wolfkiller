@@ -1,3 +1,4 @@
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -854,6 +855,59 @@ async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypat
     raw = repr(response.model_dump())
     for secret in ("role_init", "werewolf", "seer result", "private thought", "reasoning", "roles", "tally"):
         assert secret not in raw
+
+
+@pytest.mark.asyncio
+async def test_get_game_logs_serializes_staged_night_events_end_to_end(monkeypatch, tmp_path):
+    game_dir = tmp_path / "data" / "games" / "staged-night"
+    game_dir.mkdir(parents=True)
+    (game_dir / "conversation.log").write_text("", encoding="utf-8")
+    records = [
+        {"timestamp": "2026-08-14T00:00:01Z", "round": 1, "phase": "night",
+         "operation": "narration", "seat": None,
+         "data": {"title": "天黑请闭眼", "text": "狼人请睁眼，开始讨论今晚的行动。"}},
+        {"timestamp": "2026-08-14T00:00:02Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "WOLF_CHAT_MESSAGE",
+                  "payload": {"seat": 1, "text": "我怀疑2号"}}},
+        {"timestamp": "2026-08-14T00:00:03Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "WOLF_VOTE",
+                  "payload": {"seat": 1, "target_seat": 2, "reasoning": "像神"}}},
+        {"timestamp": "2026-08-14T00:00:04Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "WITCH_THOUGHT",
+                  "payload": {"seat": 3, "text": "考虑救人"}}},
+        {"timestamp": "2026-08-14T00:00:05Z", "round": 1, "phase": "night",
+         "operation": "audience_action", "seat": None,
+         "data": {"event_type": "SEER_THOUGHT",
+                  "payload": {"seat": 4, "text": "查验2号"}}},
+        {"timestamp": "2026-08-14T00:00:06Z", "round": 1, "phase": "dawn",
+         "operation": "night_deaths", "seat": None,
+         "data": {"deaths": [{"player_seat": 2, "cause": "wolf_kill", "round_number": 1}]}},
+    ]
+    (game_dir / "game.log").write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    service = MagicMock()
+    service.get_game_state.return_value = object()
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    monkeypatch.chdir(tmp_path)
+
+    response = await game_routes.get_game_logs("staged-night")
+
+    events = response.model_dump()["events"]
+    assert [event["event_type"] for event in events] == [
+        "narration", "wolf_chat_message", "wolf_vote", "witch_thought", "seer_thought", "death",
+    ]
+    assert events[0]["payload"] == {
+        "round_number": 1, "title": "天黑请闭眼", "text": "狼人请睁眼，开始讨论今晚的行动。",
+    }
+    assert events[1]["payload"] == {"round_number": 1, "seat": 1, "text": "我怀疑2号"}
+    assert events[2]["payload"] == {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "像神"}
+    assert events[3]["payload"] == {"round_number": 1, "seat": 3, "text": "考虑救人"}
+    assert events[4]["payload"] == {"round_number": 1, "seat": 4, "text": "查验2号"}
 
 
 @pytest.mark.asyncio
