@@ -1,8 +1,18 @@
 from __future__ import annotations
 import json
 import os
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Optional
+
+
+def _plain(value: object) -> object:
+    """Recursively convert frozen mappings/tuples into JSON-serializable values."""
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain(item) for item in value]
+    return value
 
 
 class GameLogger:
@@ -49,6 +59,20 @@ class GameLogger:
     ) -> None:
         self.log_operation(game_id, "night_deaths", round_num, "dawn",
                            data={"deaths": deaths})
+
+    def log_audience_action(
+        self, game_id: str, round_num: int, phase: str,
+        event_type: str, payload,
+    ) -> None:
+        """Record one pipeline-emitted PUBLIC audience event (role actions)."""
+        self.log_operation(game_id, "audience_action", round_num, phase,
+                           data={"event_type": event_type, "payload": _plain(payload)})
+
+    def log_narration(self, game_id: str, round_num: int, phase: str,
+                      title: str, text: str) -> None:
+        """Record one narrator page shown to the audience during the night."""
+        self.log_operation(game_id, "narration", round_num, phase,
+                           data={"title": title, "text": text})
 
     def log_speech(
         self, game_id: str, round_num: int, phase: str, seat: int, text: str,
