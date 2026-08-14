@@ -82,6 +82,8 @@ class PublicPlayerResponse(_PublicResponse):
     seat_number: PositivePublicInt
     is_alive: bool
     is_sheriff: bool
+    role: str
+    camp: str
 
 
 class PublicSpeechResponse(_PublicResponse):

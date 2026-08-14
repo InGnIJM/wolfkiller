@@ -142,7 +142,7 @@ class TestSchemas:
     @pytest.mark.parametrize(
         "response_factory, kwargs",
         [
-            (PublicPlayerResponse, {"seat_number": True, "is_alive": "true", "is_sheriff": False}),
+            (PublicPlayerResponse, {"seat_number": True, "is_alive": "true", "is_sheriff": False, "role": "wolf-killer-werewolf", "camp": "werewolf"}),
             (PublicSpeechResponse, {"player_seat": "1", "text": "public", "round_number": 1}),
             (PublicDeathResponse, {"player_seat": 1, "cause": "secret: seer", "round_number": 1}),
             (PublicPhaseResponse, {"phase": "secret: seer checked", "round_number": 1}),
@@ -220,6 +220,7 @@ class TestSchemas:
                 game_id="abc", phase="speech", round_number=2,
                 players={invalid_key: PublicPlayerResponse(
                     seat_number=1, is_alive=True, is_sheriff=False,
+                    role="wolf-killer-villager", camp="good",
                 )},
                 sheriff=None, speeches=[], death_history=[], win_result=None,
             )
@@ -229,12 +230,14 @@ class TestSchemas:
             game_id="abc", phase="speech", round_number=2,
             players={1: PublicPlayerResponse(
                 seat_number=1, is_alive=True, is_sheriff=False,
+                role="wolf-killer-villager", camp="good",
             )},
             sheriff=None, speeches=[], death_history=[], win_result=None,
         )
 
         assert response.model_dump()["players"] == {
-            1: {"seat_number": 1, "is_alive": True, "is_sheriff": False},
+            1: {"seat_number": 1, "is_alive": True, "is_sheriff": False,
+                "role": "wolf-killer-villager", "camp": "good"},
         }
 
     def test_game_detail_rejects_player_map_key_that_differs_from_embedded_seat(self):
@@ -243,6 +246,7 @@ class TestSchemas:
                 game_id="abc", phase="speech", round_number=2,
                 players={1: PublicPlayerResponse(
                     seat_number=2, is_alive=True, is_sheriff=False,
+                    role="wolf-killer-villager", camp="good",
                 )},
                 sheriff=None, speeches=[], death_history=[], win_result=None,
             )
@@ -320,6 +324,8 @@ class TestSchemas:
                 seat_number=1,
                 is_alive=True,
                 is_sheriff=False,
+                role="wolf-killer-villager",
+                camp="good",
             )},
             sheriff=None,
             speeches=[PublicSpeechResponse(
@@ -356,7 +362,7 @@ class TestSchemas:
         )
 
         serialized = {"detail": detail.model_dump(), "logs": logs.model_dump()}
-        forbidden = {"role", "camp", "has_antidote", "has_poison", "has_gun"}
+        forbidden = {"check_results", "has_antidote", "has_poison", "has_gun"}
         assert not (forbidden & _all_keys(serialized))
 
     def test_speech_accepts_optional_phase_for_replay_and_detail(self):
@@ -422,13 +428,24 @@ class TestSchemas:
         response = GameMemoriesResponse(game_id="g", memories=[memory])
         assert response.model_dump()["memories"][0]["seat_number"] == 1
 
-    def test_public_player_rejects_private_identity_fields(self):
+    def test_public_player_accepts_viewer_identity_but_rejects_private_fields(self):
+        public = PublicPlayerResponse(
+            seat_number=1,
+            is_alive=True,
+            is_sheriff=False,
+            role="wolf-killer-werewolf",
+            camp="werewolf",
+        )
+        assert public.role == "wolf-killer-werewolf"
+        assert public.camp == "werewolf"
         with pytest.raises(ValidationError):
             PublicPlayerResponse(
                 seat_number=1,
                 is_alive=True,
                 is_sheriff=False,
                 role="wolf-killer-werewolf",
+                camp="werewolf",
+                has_antidote=True,
             )
 
     def test_game_logs_rejects_legacy_private_log_collections(self):

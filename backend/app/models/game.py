@@ -157,6 +157,8 @@ class GameState:
                     "seat_number": p.seat_number,
                     "is_alive": p.is_alive,
                     "is_sheriff": p.is_sheriff,
+                    "role": p.role,
+                    "camp": p.camp,
                 }
                 for s, p in self.players.items()
             },
