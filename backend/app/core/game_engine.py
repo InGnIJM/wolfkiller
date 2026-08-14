@@ -15,6 +15,7 @@ from app.models.contracts import ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
+from app.core.night_flow import WolfVote
 from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
@@ -37,6 +38,13 @@ VOTE_CONTRACT = ActionContract(
 )
 
 _EVENT_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
+
+_NIGHT_POINTS = (
+    SchedulePoint.NIGHT_WOLF_VOTE,
+    SchedulePoint.NIGHT_WITCH_ACTION,
+    SchedulePoint.NIGHT_SEER_ACTION,
+    SchedulePoint.NIGHT_COMMIT,
+)
 
 
 @dataclass(frozen=True)
@@ -87,16 +95,26 @@ class _PendingNightCompletion:
 @dataclass(frozen=True)
 class _PendingNightBatch:
     round_number: int
-    next_point: int
+    stage: int
+    discussion_history: tuple[str, ...]
+    wolf_votes: tuple[WolfVote, ...]
     raw_results: tuple[PointResult, ...]
 
     def __post_init__(self) -> None:
         if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
             raise ValueError("invalid batch round")
-        if type(self.next_point) is not int or not 0 <= self.next_point <= 2: raise ValueError("invalid batch cursor")
+        if type(self.stage) is not int or not 0 <= self.stage <= 12:
+            raise ValueError("invalid batch stage")
+        if type(self.discussion_history) is not tuple or any(type(item) is not str for item in self.discussion_history):
+            raise TypeError("invalid discussion history")
+        if type(self.wolf_votes) is not tuple or any(type(item) is not WolfVote for item in self.wolf_votes):
+            raise TypeError("invalid wolf votes")
         if type(self.raw_results) is not tuple or any(type(item) is not PointResult for item in self.raw_results):
             raise TypeError("invalid batch results")
-        if len(self.raw_results) != self.next_point: raise ValueError("invalid batch results")
+        points_done = (1 if self.stage > 3 else 0) + (1 if self.stage > 6 else 0) \
+            + (1 if self.stage > 9 else 0) + (1 if self.stage > 10 else 0)
+        if len(self.raw_results) != points_done:
+            raise ValueError("invalid batch results")
 
 
 class GameEngine:
@@ -111,6 +129,7 @@ class GameEngine:
         memory_service: object | None = None,
         data_dir: str = "data",
         pipeline_scheduler: object | None = None,
+        director: object | None = None,
     ):
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
@@ -127,6 +146,7 @@ class GameEngine:
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
         self._pipeline_scheduler = pipeline_scheduler
+        self._director = director
         self._pending_night_completion: _PendingNightCompletion | None = None
         self._pending_night_batch: _PendingNightBatch | None = None
         self._night_task: asyncio.Task | None = None
@@ -263,20 +283,143 @@ class GameEngine:
         if self._pending_night_completion is not None:
             await self._resume_pipeline_night(); return
         if self._pipeline_scheduler is None: raise ValueError("pipeline scheduler is required")
+        if self._director is None: raise ValueError("night director is required")
         if self._pending_night_batch is None:
             self._prepare_night()
-            self._pending_night_batch = _PendingNightBatch(self.state.round_number, 0, ())
-        await self._execute_v2_night_batch()
+            self._pending_night_batch = _PendingNightBatch(self.state.round_number, 0, (), (), ())
+        await self._execute_staged_night()
 
-    async def _execute_v2_night_batch(self) -> None:
-        points = (SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT)
+    async def _narrate(self, title: str, text: str) -> None:
+        self.game_logger.log_narration(self.game_id, self.state.round_number, "night", title, text)
+
+    async def _log_stage_audience(self, result: PointResult) -> None:
+        self._log_audience_events(
+            PipelineResult((), (), result.state_digest, result.events, PipelineMode.V2),
+            "night",
+        )
+
+    async def _execute_staged_night(self) -> None:
         pending = self._pending_night_batch
-        while pending.next_point < len(points):
-            raw = await self._execute_v2_point(points[pending.next_point])
-            pending = _PendingNightBatch(
-                pending.round_number, pending.next_point + 1, pending.raw_results + (raw,),
-            )
+        director = self._director
+        state = self.state
+        wolves = [
+            seat for seat in sorted(state.players)
+            if state.players[seat].role == "wolf-killer-werewolf" and state.players[seat].is_alive
+        ]
+
+        if pending.stage == 0:
+            title, text = director.narration("wolf_open")
+            await self._narrate(title, text)
+            pending = replace(pending, stage=1); self._pending_night_batch = pending
+
+        if pending.stage == 1:
+            if wolves:
+                history = list(pending.discussion_history)
+                max_turns = 3 * len(wolves)
+                while len(history) < max_turns:
+                    seat = wolves[len(history) % len(wolves)]
+                    result = await asyncio.to_thread(director.wolf_discussion_turn, state, seat, tuple(history))
+                    if result.spoke:
+                        history.append(f"{seat}号：{result.text}")
+                        self.game_logger.log_audience_action(
+                            self.game_id, state.round_number, "night",
+                            "WOLF_CHAT_MESSAGE", {"seat": seat, "text": result.text},
+                        )
+                    else:
+                        history.append(f"{seat}号：（跳过）")
+                    pending = replace(pending, discussion_history=tuple(history))
+                    self._pending_night_batch = pending
+                    if (len(history) >= len(wolves)
+                            and all(line.endswith("（跳过）") for line in history[-len(wolves):])):
+                        break
+            pending = replace(pending, stage=2); self._pending_night_batch = pending
+
+        if pending.stage == 2:
+            if wolves:
+                votes = list(pending.wolf_votes)
+                discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
+                for seat in wolves:
+                    result = await asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(votes))
+                    votes.append(result)
+                    self.game_logger.log_audience_action(
+                        self.game_id, state.round_number, "night", "WOLF_VOTE",
+                        {"seat": seat, "target_seat": result.target_seat, "reasoning": result.reasoning},
+                    )
+                    pending = replace(pending, wolf_votes=tuple(votes)); self._pending_night_batch = pending
+                director.record_votes(tuple(votes))
+            else:
+                director.record_votes(())
+            pending = replace(pending, stage=3); self._pending_night_batch = pending
+
+        if pending.stage == 3:
+            raw = await self._execute_v2_point(_NIGHT_POINTS[0])
+            await self._log_stage_audience(raw)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=4)
             self._pending_night_batch = pending
+
+        if pending.stage == 4:
+            title, text = director.narration("witch_open")
+            await self._narrate(title, text)
+            pending = replace(pending, stage=5); self._pending_night_batch = pending
+
+        if pending.stage == 5:
+            witch = next((seat for seat in sorted(state.players)
+                          if state.players[seat].role == "wolf-killer-witch"
+                          and state.players[seat].is_alive), None)
+            if witch is not None:
+                runtime = getattr(state, "_pipeline_runtime", None)
+                damage = tuple(runtime.pending_damage) if runtime is not None else ()
+                wolf_target = next((int(item["target"]) for item in damage
+                                    if isinstance(item, Mapping) and "target" in item), None)
+                thought = await asyncio.to_thread(director.witch_think, state, witch, wolf_target)
+                if thought is not None:
+                    self.game_logger.log_audience_action(
+                        self.game_id, state.round_number, "night", "WITCH_THOUGHT",
+                        {"seat": thought.seat, "text": thought.text},
+                    )
+            pending = replace(pending, stage=6); self._pending_night_batch = pending
+
+        if pending.stage == 6:
+            raw = await self._execute_v2_point(_NIGHT_POINTS[1])
+            await self._log_stage_audience(raw)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=7)
+            self._pending_night_batch = pending
+
+        if pending.stage == 7:
+            title, text = director.narration("seer_open")
+            await self._narrate(title, text)
+            pending = replace(pending, stage=8); self._pending_night_batch = pending
+
+        if pending.stage == 8:
+            seer = next((seat for seat in sorted(state.players)
+                         if state.players[seat].role == "wolf-killer-seer"
+                         and state.players[seat].is_alive), None)
+            if seer is not None:
+                thought = await asyncio.to_thread(director.seer_think, state, seer)
+                if thought is not None:
+                    self.game_logger.log_audience_action(
+                        self.game_id, state.round_number, "night", "SEER_THOUGHT",
+                        {"seat": thought.seat, "text": thought.text},
+                    )
+            pending = replace(pending, stage=9); self._pending_night_batch = pending
+
+        if pending.stage == 9:
+            raw = await self._execute_v2_point(_NIGHT_POINTS[2])
+            await self._log_stage_audience(raw)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=10)
+            self._pending_night_batch = pending
+
+        if pending.stage == 10:
+            raw = await self._execute_v2_point(_NIGHT_POINTS[3])
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=11)
+            self._pending_night_batch = pending
+
+        if pending.stage == 11:
+            deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
+            title, text = director.dawn_narration(deaths)
+            await self._narrate(title, text)
+            pending = replace(pending, stage=12); self._pending_night_batch = pending
+
         observations = tuple(RolePipeline.observe_v2(raw) for raw in pending.raw_results)
         result = PipelineResult(
             tuple(item for value in observations for item in value.accepted_actions),
@@ -318,6 +461,43 @@ class GameEngine:
         except (KeyError, TypeError, UnicodeError, ValueError):
             raise PipelinePaused("invalid pipeline night event") from None
         return tuple(deaths)
+
+    def _pipeline_audience_events(self, result: PipelineResult) -> tuple[tuple[str, object], ...]:
+        """Collect validated non-death PUBLIC pipeline events for the audience log."""
+        events = []
+        try:
+            for event in result.public_events:
+                if not isinstance(event, Mapping) or set(event) != {"event_type", "payload", "visibility"}:
+                    raise ValueError
+                event_type, payload, visibility = event["event_type"], event["payload"], event["visibility"]
+                if type(event_type) is not str or not event_type or not isinstance(payload, Mapping): raise ValueError
+                event_type.encode("utf-8", errors="strict")
+                if _EVENT_TOKEN.fullmatch(event_type) is None: raise ValueError
+                if type(visibility) is not tuple or "PUBLIC" not in visibility or any(type(item) is not str for item in visibility): raise ValueError
+                if event_type == "PLAYER_DIED": continue
+                events.append((event_type, payload))
+        except (KeyError, TypeError, UnicodeError, ValueError):
+            raise PipelinePaused("invalid pipeline audience event") from None
+        return tuple(events)
+
+    def _log_audience_events(self, result: PipelineResult, phase: str) -> None:
+        for event_type, payload in self._pipeline_audience_events(result):
+            self.game_logger.log_audience_action(
+                self.game_id, self.state.round_number, phase, event_type, payload,
+            )
+            thought = payload.get("thought")
+            seat = payload.get("seat")
+            if type(thought) is str and type(seat) is int and seat > 0:
+                player = self.state.players.get(seat)
+                if player is not None:
+                    self.conversation_log.add_thought(
+                        seat, player.role, thought, self.state.round_number, phase,
+                    )
+            channel = payload.get("channel")
+            if type(channel) is str:
+                self.conversation_log.add_werewolf_channel(
+                    channel, self.state.round_number,
+                )
 
     def get_night_deaths(self) -> list[DeathReport]:
         """Get all deaths from the current round."""
@@ -628,6 +808,10 @@ class GameEngine:
                 await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(exiled_seat, "exile", self.state.round_number)
 
+        # Reset this round's votes and casting bookkeeping so the next round
+        # starts with an empty ballot instead of re-exiling the same seat.
+        self._clear_tiebreak_state()
+
         # Announce vote result
         if exiled_seat is not None:
             self.conversation_log.add_vote_result(
@@ -680,7 +864,8 @@ class GameEngine:
             WorkCursor("response", 0, 0), work_count=0,
         ))
         pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
-        await asyncio.to_thread(pipeline.run_point, self.state, SchedulePoint.DAWN_REACTION)
+        result = await asyncio.to_thread(pipeline.run_point, self.state, SchedulePoint.DAWN_REACTION)
+        self._log_audience_events(result, self.state.phase.value)
 
     # =================================================================
     # Day Operation Functions
@@ -794,10 +979,13 @@ class GameEngine:
         return False
 
     def resolve_votes(self) -> Optional[int]:
-        """Tally votes. Returns exiled seat, or None on tie."""
+        """Tally votes. Returns exiled seat, or None on tie/abstain."""
         tally = self._tally_votes()
 
         if not tally:
+            self.game_logger.log_vote_result(
+                self.game_id, self.state.round_number, None, tally,
+            )
             return None
 
         max_votes = max(tally.values())

@@ -11,6 +11,7 @@ from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import VoteAction, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
+from app.core.night_flow import DiscussionTurn, ThinkResult, WolfVote
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult
@@ -20,7 +21,10 @@ from app.models.pipeline import SchedulePoint
 
 def test_engine_source_has_no_builtin_role_or_action_branches() -> None:
     source = Path("app/core/game_engine.py").read_text("utf-8")
-    for token in ("witch", "seer", "hunter", "werewolf_kill", "poison", "shoot"):
+    # The staged night driver legitimately references the werewolf/witch/seer
+    # role ids to drive narration, discussion, votes and thinks, so only
+    # action-specific branches remain forbidden here.
+    for token in ("hunter", "werewolf_kill", "poison", "shoot"):
         assert token not in source
 
 
@@ -45,6 +49,33 @@ class ScheduleStub:
         self.calls.append((state, point))
         if self.mutate is not None: self.mutate(state)
         return self.result
+
+
+class _FakeDirector:
+    """Deterministic in-memory stand-in for NightDirector (no LLM)."""
+    def __init__(self, *, speak: bool = True, vote: int | None = 4,
+                 witch_thought: str | None = "考虑救人", seer_thought: str | None = "查验2号"):
+        self.speak, self.vote = speak, vote
+        self.witch_thought, self.seer_thought = witch_thought, seer_thought
+        self.votes: list[WolfVote] = []
+    def narration(self, kind): return ("标题", "正文")
+    def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
+    def wolf_discussion_turn(self, state, seat, history):
+        return DiscussionTurn(seat, self.speak, "我怀疑2号" if self.speak else "")
+    def wolf_vote_turn(self, state, seat, discussion, prior):
+        if self.vote is None:
+            return WolfVote(seat, "pass", None, "观望")
+        return WolfVote(seat, "kill", self.vote, "像神")
+    def witch_think(self, state, seat, target):
+        return None if self.witch_thought is None else ThinkResult(seat, self.witch_thought)
+    def seer_think(self, state, seat):
+        return None if self.seer_thought is None else ThinkResult(seat, self.seer_thought)
+    def record_votes(self, votes): self.votes = list(votes)
+    def collected_vote(self, seat):
+        for vote in self.votes:
+            if vote.seat == seat:
+                return vote.to_command()
+        return None
 
 
 @pytest.mark.asyncio
@@ -112,40 +143,40 @@ async def test_schedule_points_batches_once_and_single_point_delegates() -> None
 
 
 @pytest.mark.asyncio
-async def test_execute_night_prepares_once_and_runs_v2_batch() -> None:
+async def test_execute_night_prepares_once_and_runs_staged_night() -> None:
     scheduler = ScheduleStub(PointResult((), (), (), "d"))
-    engine = GameEngine("night", pipeline_scheduler=scheduler)
+    engine = GameEngine("night", pipeline_scheduler=scheduler, director=_FakeDirector())
     engine.state.round_number = 4; engine.state.night_actions.append(object())
     engine.state.last_wolf_kill_target = 2
     engine._resume_pipeline_night = AsyncMock()
     await engine._execute_night()
     assert engine.state.round_number == 5 and engine.state.night_actions == []
     assert engine.state.last_wolf_kill_target is None
-    assert [point for _, point in scheduler.calls] == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert [point for _, point in scheduler.calls] == list(game_engine_module._NIGHT_POINTS)
     assert engine._pending_night_batch is None and engine._pending_night_completion is not None
 
 
 @pytest.mark.asyncio
 async def test_execute_night_is_single_flight_for_concurrent_callers() -> None:
     entered, release = asyncio.Event(), asyncio.Event(); calls = []
-    engine = GameEngine("single", pipeline_scheduler=object())
+    engine = GameEngine("single", pipeline_scheduler=object(), director=_FakeDirector())
     async def point(value):
         calls.append(value)
-        if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
+        if value is SchedulePoint.NIGHT_WOLF_VOTE: entered.set(); await release.wait()
         return PointResult((), (), (), value.value)
     engine._execute_v2_point = point; engine._resume_pipeline_night = AsyncMock()
     first = asyncio.create_task(engine._execute_night()); second = asyncio.create_task(engine._execute_night())
     await entered.wait(); release.set(); await asyncio.gather(first, second)
-    assert calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert calls == list(game_engine_module._NIGHT_POINTS)
     assert engine.state.round_number == 1 and engine._night_task is None
 
 
 @pytest.mark.asyncio
 async def test_cancelled_night_waiter_does_not_cancel_owner() -> None:
     entered, release = asyncio.Event(), asyncio.Event()
-    engine = GameEngine("cancel", pipeline_scheduler=object())
+    engine = GameEngine("cancel", pipeline_scheduler=object(), director=_FakeDirector())
     async def point(value):
-        if value is SchedulePoint.NIGHT_ACTION: entered.set(); await release.wait()
+        if value is SchedulePoint.NIGHT_WOLF_VOTE: entered.set(); await release.wait()
         return PointResult((), (), (), value.value)
     engine._execute_v2_point = point
     waiter = asyncio.create_task(engine._execute_night()); await entered.wait(); waiter.cancel()
@@ -157,9 +188,9 @@ async def test_cancelled_night_waiter_does_not_cancel_owner() -> None:
 
 @pytest.mark.asyncio
 async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() -> None:
-    release = asyncio.Event(); engine = GameEngine("lifecycle", pipeline_scheduler=object())
+    release = asyncio.Event(); engine = GameEngine("lifecycle", pipeline_scheduler=object(), director=_FakeDirector())
     async def point(value):
-        if value is SchedulePoint.NIGHT_ACTION: await release.wait()
+        if value is SchedulePoint.NIGHT_WOLF_VOTE: await release.wait()
         return PointResult((), (), (), value.value)
     engine._execute_v2_point = point
     waiter = asyncio.create_task(engine._execute_night()); await asyncio.sleep(0)
@@ -169,90 +200,120 @@ async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() 
 
 
 @pytest.mark.asyncio
-async def test_v2_night_batch_resumes_only_failed_point_and_aggregates_exactly() -> None:
-    first_event = {"event_type": "FIRST", "payload": {}, "visibility": ("PUBLIC",)}
-    second_event = {"event_type": "SECOND", "payload": {}, "visibility": ("PUBLIC",)}
-    first_commit = CommitResult("a", ("e1",), 1, (first_event,), "action")
-    second_commit = CommitResult("b", ("e2",), 2, (second_event,), "commit")
-    first = PointResult((), (first_commit,), first_commit.events, "action")
-    second = PointResult((), (second_commit,), second_commit.events, "commit")
+async def test_staged_night_resumes_only_failed_point_and_aggregates_exactly() -> None:
+    points = game_engine_module._NIGHT_POINTS
+
+    def commit(key, effects, event_type, digest):
+        event = {"event_type": event_type, "payload": {}, "visibility": ("PUBLIC",)}
+        return CommitResult(key, effects, 1, (event,), digest)
+
+    commits = {
+        points[0]: commit("a", ("e1",), "FIRST", "wolf"),
+        points[1]: commit("b", ("e2",), "SECOND", "witch"),
+        points[2]: commit("c", ("e3",), "THIRD", "seer"),
+        points[3]: commit("d", ("e4",), "FOURTH", "commit"),
+    }
     class Scheduler:
         def __init__(self): self.calls = []
         def run_point(inner, state, point):
             inner.calls.append(point)
-            if point is SchedulePoint.NIGHT_COMMIT and inner.calls.count(point) == 1: raise RuntimeError("commit failed")
-            return first if point is SchedulePoint.NIGHT_ACTION else second
-    scheduler = Scheduler(); engine = GameEngine("checkpoint", pipeline_scheduler=scheduler)
+            if point is points[3] and inner.calls.count(point) == 1: raise RuntimeError("commit failed")
+            c = commits[point]
+            return PointResult((), (c,), c.events, c.state_digest)
+    scheduler = Scheduler(); engine = GameEngine("checkpoint", pipeline_scheduler=scheduler, director=_FakeDirector())
     engine.run_schedule_point = AsyncMock(side_effect=AssertionError("mixed API used")); engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="commit failed"): await engine._execute_night()
-    assert engine.state.round_number == 1 and engine._pending_night_batch.next_point == 1
+    assert engine.state.round_number == 1 and engine._pending_night_batch.stage == 10
     await engine._execute_night()
-    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT, SchedulePoint.NIGHT_COMMIT]
+    assert scheduler.calls == [*points, points[3]]
     pending = engine._pending_night_completion
-    assert pending.result.accepted_actions == ("a", "b") and pending.result.effects == ("e1", "e2")
-    assert tuple(event["event_type"] for event in pending.result.public_events) == ("FIRST", "SECOND")
+    assert pending.result.accepted_actions == ("a", "b", "c", "d") and pending.result.effects == ("e1", "e2", "e3", "e4")
+    assert tuple(event["event_type"] for event in pending.result.public_events) == ("FIRST", "SECOND", "THIRD", "FOURTH")
     assert pending.result.state_digest == "commit" and pending.result.mode is PipelineMode.V2
     assert pending.result.diff is None and type(pending.result) is PipelineResult
     assert engine._pending_night_batch is None
 
 
 @pytest.mark.asyncio
-async def test_v2_point_that_commits_then_raises_is_retried_without_reprepare() -> None:
+async def test_staged_night_point_that_commits_then_raises_is_retried_without_reprepare() -> None:
+    points = game_engine_module._NIGHT_POINTS
     class Scheduler:
         def __init__(self): self.calls = []
         def run_point(inner, state, value):
             inner.calls.append(value)
-            if value is SchedulePoint.NIGHT_ACTION and inner.calls.count(value) == 1:
+            if value is points[0] and inner.calls.count(value) == 1:
                 state.accepted_action_keys.add("stable-action"); raise RuntimeError("after commit")
             return PointResult((), (), (), value.value)
-    scheduler = Scheduler(); engine = GameEngine("commit-boundary", pipeline_scheduler=scheduler)
+    scheduler = Scheduler(); engine = GameEngine("commit-boundary", pipeline_scheduler=scheduler, director=_FakeDirector())
     engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="after commit"): await engine._execute_night()
     await engine._execute_night()
     assert engine.state.round_number == 1
-    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert scheduler.calls == [points[0], points[0], points[1], points[2], points[3]]
 
 
 def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
     result = PointResult((), (), (), "d")
-    batch = game_engine_module._PendingNightBatch(1, 1, (result,))
-    assert batch.next_point == 1
+    vote = WolfVote(1, "pass", None, "观望")
+    batch = game_engine_module._PendingNightBatch(1, 4, ("1号：我怀疑2号",), (vote,), (result,))
+    assert batch.stage == 4 and batch.raw_results == (result,)
+    # Valid checkpoints at every raw_results boundary
+    game_engine_module._PendingNightBatch(1, 0, (), (), ())
+    game_engine_module._PendingNightBatch(1, 3, (), (), ())
+    game_engine_module._PendingNightBatch(1, 4, (), (), (result,))
+    game_engine_module._PendingNightBatch(1, 7, (), (), (result, result))
+    game_engine_module._PendingNightBatch(1, 10, (), (), (result, result, result))
+    game_engine_module._PendingNightBatch(1, 12, (), (), (result, result, result, result))
+    sub = type("SubPoint", (PointResult,), {})((), (), (), "d")
     for call in (
-        lambda: game_engine_module._PendingNightBatch(True, 0, ()),
-        lambda: game_engine_module._PendingNightBatch(1, 3, ()),
-        lambda: game_engine_module._PendingNightBatch(1, 0, []),
-        lambda: game_engine_module._PendingNightBatch(1, 1, (object(),)),
-        lambda: game_engine_module._PendingNightBatch(1, 0, (result,)),
-        lambda: game_engine_module._PendingNightBatch(1, 1, (type("SubPoint", (PointResult,), {})((), (), (), "d"),)),
+        lambda: game_engine_module._PendingNightBatch(True, 0, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(0, 0, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(2_147_483_648, 0, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, True, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, -1, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, 13, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, 0, [], (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (1,), (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (), [vote], ()),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (), (object(),), ()),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (), (), []),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (), (), (object(),)),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (), (), (result,)),
+        lambda: game_engine_module._PendingNightBatch(1, 4, (), (), ()),
+        lambda: game_engine_module._PendingNightBatch(1, 7, (), (), (result,)),
+        lambda: game_engine_module._PendingNightBatch(1, 10, (), (), (result, result)),
+        lambda: game_engine_module._PendingNightBatch(1, 4, (), (), (sub,)),
     ):
         with pytest.raises((TypeError, ValueError)): call()
 
 
 @pytest.mark.asyncio
-async def test_v2_batch_rejects_non_v2_point_result_without_checkpoint() -> None:
+async def test_staged_night_rejects_non_point_result_without_checkpoint() -> None:
     class Scheduler:
         def run_point(self, state, point): return object()
-    engine = GameEngine("wrong-mode", pipeline_scheduler=Scheduler())
+    engine = GameEngine("wrong-mode", pipeline_scheduler=Scheduler(), director=_FakeDirector())
     with pytest.raises(TypeError, match="exact PointResult"):
         await engine._execute_night()
-    assert engine._pending_night_batch == game_engine_module._PendingNightBatch(1, 0, ())
+    assert engine._pending_night_batch == game_engine_module._PendingNightBatch(1, 3, (), (), ())
 
 
 @pytest.mark.asyncio
-async def test_v2_observation_failure_reuses_checkpointed_raw_results() -> None:
+async def test_staged_night_observation_failure_reuses_checkpointed_raw_results() -> None:
+    points = game_engine_module._NIGHT_POINTS
     bad = PointResult((), (), (), "commit")
     object.__setattr__(bad, "commits", (object(),))
+    good = PointResult((), (), (), "action")
     class Scheduler:
         def __init__(self): self.calls = []
         def run_point(inner, state, point):
             inner.calls.append(point)
-            return PointResult((), (), (), "action") if point is SchedulePoint.NIGHT_ACTION else bad
-    scheduler = Scheduler(); engine = GameEngine("observe-fail", pipeline_scheduler=scheduler)
+            return bad if point is points[3] else good
+    scheduler = Scheduler(); engine = GameEngine("observe-fail", pipeline_scheduler=scheduler, director=_FakeDirector())
     for _ in range(2):
         with pytest.raises(TypeError, match="commit"):
             await engine._execute_night()
-    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
-    assert engine._pending_night_batch.raw_results == (PointResult((), (), (), "action"), bad)
+    assert scheduler.calls == list(points)
+    assert engine._pending_night_batch.raw_results == (good, good, good, bad)
 
 
 @pytest.mark.asyncio
@@ -275,7 +336,7 @@ async def test_execute_night_v2_publishes_public_deaths_and_advances() -> None:
     scheduler = NightScheduler(); bus = EventBus(); published = []
     async def on_death(**kwargs): published.append(kwargs["death"])
     bus.subscribe(BusEvent.PLAYER_DIED, on_death)
-    engine = GameEngine("v2-night", event_bus=bus, pipeline_scheduler=scheduler)
+    engine = GameEngine("v2-night", event_bus=bus, pipeline_scheduler=scheduler, director=_FakeDirector())
     engine.state.players = {
         1: PlayerState(1, "wolf-killer-villager", "good"),
         2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
@@ -320,7 +381,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
             if seat == 2 and self.attempts.count(2) == 1: raise RuntimeError("transport")
             self.delivered.append(seat)
     scheduler, bus = RecoveringScheduler(), RecoveringBus()
-    engine = GameEngine("recover", event_bus=bus, pipeline_scheduler=scheduler)
+    engine = GameEngine("recover", event_bus=bus, pipeline_scheduler=scheduler, director=_FakeDirector())
     engine.state.players = {seat: PlayerState(seat, "r", "good") for seat in (1, 2, 3)}
     engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
     engine.game_logger.log_deaths = MagicMock(side_effect=[RuntimeError("disk"), None])
@@ -329,7 +390,7 @@ async def test_pipeline_night_resumes_delivery_without_rerunning_batch_or_stages
     with pytest.raises(RuntimeError, match="transport"): await engine._execute_night()
     with pytest.raises(RuntimeError, match="disk"): await engine._execute_night()
     await engine._execute_night()
-    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert scheduler.calls == list(game_engine_module._NIGHT_POINTS)
     assert engine.state.round_number == 1 and bus.attempts == [1, 2, 2]
     assert bus.delivered == [1, 2] and engine.game_logger.log_deaths.call_count == 2
     engine.memory_service.save_memories.assert_called_once_with(engine.state)
@@ -354,7 +415,7 @@ async def test_malformed_pipeline_event_is_persisted_and_never_reruns_batch() ->
                 return PointResult((), (commit,), commit.events, "final")
             return PointResult((), (), (), "action")
     scheduler = MalformedScheduler(); engine = GameEngine(
-        "malformed", pipeline_scheduler=scheduler,
+        "malformed", pipeline_scheduler=scheduler, director=_FakeDirector(),
     )
     engine.state.players = {1: PlayerState(1, "r", "good")}
     engine.state.phase = GamePhase.NIGHT; engine.sm.set_state(GamePhase.NIGHT)
@@ -362,7 +423,7 @@ async def test_malformed_pipeline_event_is_persisted_and_never_reruns_batch() ->
     for _ in range(2):
         with pytest.raises(PipelinePaused, match="invalid pipeline night event"):
             await engine._execute_night()
-    assert scheduler.calls == [SchedulePoint.NIGHT_ACTION, SchedulePoint.NIGHT_COMMIT]
+    assert scheduler.calls == list(game_engine_module._NIGHT_POINTS)
     assert engine.state.round_number == 1 and engine._pending_night_completion is not None
     engine.event_bus.publish.assert_not_awaited(); engine.game_logger.log_deaths.assert_not_called()
 
@@ -525,13 +586,27 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
     from app.core.action_validator import ActionValidator
     from app.core.action_resolver import ActionResolver
     from app.core.effect_applier import EffectApplier
+    from app.core.night_flow import NightDirector
     from app.roles.registry import builtin_registry
     from app.models.pipeline import ActionCommand as PipelineActionCommand
     snapshot = builtin_registry.freeze()
 
+    def invoke(messages):
+        human = messages[1]["content"]
+        if "投票" in human:
+            return '{"schema_version": 1, "action_type": "kill", "target_seat": 4, "reasoning": "像神"}'
+        if "讨论" in human:
+            return '{"speak": true, "text": "刀4号"}'
+        return '{"text": "考虑救人"}'
+
+    director = NightDirector(snapshot, invoke)
+
     def provider(request, context, attempt):
-        if request.contract.contract_id == "werewolf_kill":
-            return PipelineActionCommand(action_type="kill", target_seat=4, reasoning="plan")
+        if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
+            command = director.collected_vote(request.actor_seat)
+            return command if command is not None else PipelineActionCommand(
+                action_type="pass", target_seat=None, reasoning="safe fallback",
+            )
         if request.contract.contract_id == "witch_action":
             return PipelineActionCommand(action_type="pass", target_seat=None, reasoning="wait")
         if request.contract.contract_id == "seer_check":
@@ -544,18 +619,18 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
         4: "wolf-killer-villager", 5: "wolf-killer-villager", 6: "wolf-killer-seer",
         7: "wolf-killer-witch", 8: "wolf-killer-hunter", 9: "wolf-killer-villager",
     }.items()}
-    engine = GameEngine("e2e-night", roles=roles, pipeline_scheduler=scheduler, data_dir=str(tmp_path))
+    engine = GameEngine("e2e-night", roles=roles, pipeline_scheduler=scheduler, director=director, data_dir=str(tmp_path))
     engine._assign_roles()
     engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
     engine._prepare_night()
-    result = await engine.run_schedule_points((
-        SchedulePoint.NIGHT_WOLF_VOTE, SchedulePoint.NIGHT_WITCH_ACTION,
-        SchedulePoint.NIGHT_SEER_ACTION, SchedulePoint.NIGHT_COMMIT,
-    ))
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._broadcast_phase_change = AsyncMock()
+    await engine._execute_staged_night()
     assert engine.state.round_number == 1
     assert engine.state.players[4].is_alive is False
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [(4, "wolf_kill")]
-    engine._log_audience_events(result, "night")
 
     log_lines = (tmp_path / "games" / "e2e-night" / "game.log").read_text("utf-8").splitlines()
     audience = [json.loads(line) for line in log_lines
@@ -564,6 +639,92 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
     assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
     assert by_type["SEER_CHECK"] == {"target_seat": 1, "result": "werewolf"}
     assert {record["round"] for record in audience} == {1}
+
+
+@pytest.mark.asyncio
+async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
+    class OrderScheduler:
+        def __init__(self): self.calls = []
+        def run_point(self, state, point):
+            self.calls.append(point)
+            if point is SchedulePoint.NIGHT_WOLF_VOTE:
+                kill_event = {
+                    "event_type": "WEREWOLF_KILL",
+                    "payload": {"target_seat": 4, "vote_counts": {"1": 1}},
+                    "visibility": ("PUBLIC",),
+                }
+                return PointResult((), (), (kill_event,), "wolf")
+            if point is SchedulePoint.NIGHT_COMMIT:
+                state.players[4].is_alive = False
+                state.death_history.append(DeathReport(4, "wolf_kill", 1))
+                death_event = {
+                    "event_type": "PLAYER_DIED",
+                    "payload": {"seat": 4, "cause": "wolf_kill", "round_number": 1},
+                    "visibility": ("PUBLIC",),
+                }
+                commit = CommitResult("settle", ("effect",), 1, (death_event,), "final")
+                return PointResult((), (commit,), commit.events, "final")
+            return PointResult((), (), (), "action")
+
+    engine = GameEngine("order", pipeline_scheduler=OrderScheduler(), director=_FakeDirector(), data_dir=str(tmp_path))
+    engine.state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+        6: PlayerState(6, "wolf-killer-seer", "good"),
+        7: PlayerState(7, "wolf-killer-witch", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    await engine._execute_staged_night()
+
+    records = [json.loads(line) for line in (tmp_path / "games" / "order" / "game.log").read_text("utf-8").splitlines()]
+    night_ops = []
+    for record in records:
+        op = record["operation"]
+        if op == "narration":
+            night_ops.append(("narration", record["data"]["title"]))
+        elif op == "audience_action":
+            night_ops.append(("audience_action", record["data"]["event_type"]))
+        elif op == "night_deaths":
+            night_ops.append(("night_deaths", None))
+
+    assert night_ops == [
+        ("narration", "标题"),
+        ("audience_action", "WOLF_CHAT_MESSAGE"),
+        ("audience_action", "WOLF_CHAT_MESSAGE"),
+        ("audience_action", "WOLF_CHAT_MESSAGE"),
+        ("audience_action", "WOLF_VOTE"),
+        ("audience_action", "WEREWOLF_KILL"),
+        ("narration", "标题"),
+        ("audience_action", "WITCH_THOUGHT"),
+        ("narration", "标题"),
+        ("audience_action", "SEER_THOUGHT"),
+        ("narration", "天亮了"),
+        ("night_deaths", None),
+    ]
+    assert records[-1]["operation"] == "phase_change"
+
+
+@pytest.mark.asyncio
+async def test_staged_night_skip_discussion_and_none_thoughts() -> None:
+    director = _FakeDirector(speak=False, witch_thought=None, seer_thought=None)
+    engine = GameEngine("skip-none", pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")), director=director)
+    engine.state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+        2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        6: PlayerState(6, "wolf-killer-seer", "good"),
+        7: PlayerState(7, "wolf-killer-witch", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+    assert len(director.votes) == 2
+    assert engine._pending_night_completion is not None
 
 
 def test_pipeline_audience_events_keep_only_valid_public_non_death_events() -> None:
@@ -1433,6 +1594,12 @@ class TestGameEngine:
     async def test_night_without_scheduler_raises(self):
         engine = GameEngine(game_id="no-scheduler")
         with pytest.raises(ValueError, match="scheduler"):
+            await engine._execute_night()
+
+    @pytest.mark.asyncio
+    async def test_night_without_director_raises(self):
+        engine = GameEngine(game_id="no-director", pipeline_scheduler=object())
+        with pytest.raises(ValueError, match="director"):
             await engine._execute_night()
 
     @pytest.mark.asyncio
