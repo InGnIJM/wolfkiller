@@ -2,13 +2,13 @@ import { Box, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import type { PublicPlayerState } from '../../store/types';
 
-const ROLE_BADGES: Record<string, { label: string; color: string }> = {
-  'wolf-killer-werewolf': { label: '狼人', color: 'error.main' },
-  'wolf-killer-witch': { label: '女巫', color: 'secondary.main' },
-  'wolf-killer-seer': { label: '预言家', color: 'info.main' },
-  'wolf-killer-hunter': { label: '猎人', color: 'warning.main' },
-  'wolf-killer-villager': { label: '村民', color: 'success.main' },
-  'wolf-killer-guard': { label: '守卫', color: 'success.light' },
+const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> = {
+  'wolf-killer-werewolf': { label: '狼人', color: 'error.main', bg: 'rgba(242,184,181,0.16)' },
+  'wolf-killer-witch': { label: '女巫', color: 'secondary.main', bg: 'rgba(196,181,253,0.16)' },
+  'wolf-killer-seer': { label: '预言家', color: 'info.main', bg: 'rgba(157,189,249,0.16)' },
+  'wolf-killer-hunter': { label: '猎人', color: 'warning.main', bg: 'rgba(255,217,104,0.16)' },
+  'wolf-killer-villager': { label: '村民', color: 'success.main', bg: 'rgba(165,214,167,0.16)' },
+  'wolf-killer-guard': { label: '守卫', color: 'success.light', bg: 'rgba(204,232,206,0.16)' },
 };
 
 interface Props {
@@ -46,8 +46,16 @@ function PublicSeat({
   cardSize: number;
 }) {
   const badge = player.role ? ROLE_BADGES[player.role] : undefined;
+  const status = player.is_alive ? '存活' : '出局';
+  const label = [
+    `${seat}号`,
+    badge?.label,
+    status,
+    player.is_sheriff ? '警长' : '',
+  ].filter(Boolean).join(' ');
   return (
     <Box
+      aria-label={label}
       sx={{
         display: 'flex',
         minWidth: cardSize,
@@ -56,7 +64,10 @@ function PublicSeat({
         gap: 0.25,
         p: 0.7,
         border: '1px solid',
-        borderColor: isCurrentSpeaker ? 'primary.main' : (player.camp === 'werewolf' ? 'error.main' : player.camp === 'good' ? 'success.main' : 'divider'),
+        borderColor: isCurrentSpeaker ? 'primary.main' : (
+          badge?.color
+          ?? (player.camp === 'werewolf' ? 'error.main' : player.camp === 'good' ? 'success.main' : 'divider')
+        ),
         borderRadius: 2,
         bgcolor: player.is_alive ? 'background.paper' : 'action.disabledBackground',
         opacity: player.is_alive ? 1 : 0.6,
@@ -66,12 +77,26 @@ function PublicSeat({
         {seat}号
       </Typography>
       {badge && (
-        <Typography variant="caption" color={badge.color} sx={{ fontWeight: 600, fontSize: '0.68rem' }}>
+        <Typography
+          component="span"
+          sx={{
+            fontWeight: 700,
+            fontSize: '0.72rem',
+            lineHeight: 1.3,
+            px: 0.7,
+            py: 0.15,
+            borderRadius: 1,
+            color: badge.color,
+            bgcolor: badge.bg,
+            border: '1px solid',
+            borderColor: badge.color,
+          }}
+        >
           {badge.label}
         </Typography>
       )}
       <Typography variant="caption" color={player.is_alive ? 'success.light' : 'text.disabled'}>
-        {player.is_alive ? '存活' : '出局'}
+        {status}
       </Typography>
       {player.is_sheriff && <Typography variant="caption" color="warning.light">警长</Typography>}
       {voteTarget !== undefined && (
