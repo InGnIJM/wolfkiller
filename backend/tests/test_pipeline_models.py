@@ -790,12 +790,6 @@ def test_remaining_mapping_fields_reject_every_non_mapping_shape(
     "factory",
     [
         lambda: _contract(schema_version=2),
-        lambda: RoleSpec(
-            schema_version=2,
-            role_id="villager",
-            display_name="Villager",
-            camp_id="good",
-        ),
         lambda: IssuedActionRequest(
             schema_version=2,
             actor_seat=1,
@@ -819,6 +813,33 @@ def test_remaining_mapping_fields_reject_every_non_mapping_shape(
 def test_frozen_values_reject_unknown_schema_versions(factory: object) -> None:
     with pytest.raises(ValueError, match="schema_version"):
         factory()
+
+
+def test_role_spec_accepts_schema_v1_and_v2_and_rejects_others() -> None:
+    assert RoleSpec.SCHEMA_VERSION == 2
+    for version in (1, 2):
+        role = RoleSpec(
+            schema_version=version,
+            role_id="villager",
+            display_name="Villager",
+            camp_id="good",
+        )
+        assert role.schema_version == version
+    for bad_version in (0, 3):
+        with pytest.raises(ValueError, match="schema_version"):
+            RoleSpec(
+                schema_version=bad_version,
+                role_id="villager",
+                display_name="Villager",
+                camp_id="good",
+            )
+    with pytest.raises(TypeError, match="schema_version"):
+        RoleSpec(
+            schema_version=True,
+            role_id="villager",
+            display_name="Villager",
+            camp_id="good",
+        )
 
 
 def test_model_from_mapping_rejects_unknown_fields_and_round_trips() -> None:

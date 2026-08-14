@@ -49,14 +49,47 @@ def test_aggregate_majority_tie_lowest_and_all_pass() -> None:
     assert effect.sort_key == (1,) and effect.payload == {
         "target": 3, "amount": 1, "cause": "wolf_kill",
     }
+    emit = majority[1]
+    assert emit.kind is EffectKind.EMIT_EVENT
+    assert emit.visibility == ("PUBLIC",) and emit.sort_key == (2,)
+    assert emit.payload == {
+        "event_type": "WEREWOLF_KILL",
+        "payload": {"target_seat": 3, "vote_counts": {"3": 2, "4": 1}},
+    }
+
+
+def test_aggregate_ignores_pass_and_blank_reasoning_keeps_only_kill_event() -> None:
+    ctx = context((1, 2, 3))
+    blank = ActionCommand(action_type="kill", target_seat=2, reasoning="")
+    effects = aggregate_werewolf_votes(ctx, (blank, command("pass")))
+    assert [effect.kind for effect in effects] == [EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT]
+    assert effects[0].target_seat == 2
+    assert [e.payload["event_type"] for e in effects if e.kind is EffectKind.EMIT_EVENT] == ["WEREWOLF_KILL"]
+
+
+def test_werewolf_contract_moved_to_vote_point_and_keeps_kill_event_only() -> None:
+    contract = next(c for c in WEREWOLF_SPEC.contracts if c.contract_id == "werewolf_kill")
+    assert contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE
+    assert WEREWOLF_SPEC.schema_version == 2
+    ctx = context()
+    commands = (
+        ActionCommand(action_type="kill", target_seat=2, reasoning="怀疑2号"),
+        ActionCommand(action_type="kill", target_seat=3, reasoning="怀疑3号"),
+    )
+    effects = aggregate_werewolf_votes(ctx, commands)
+    emitted = [e.payload["event_type"] for e in effects if e.kind is EffectKind.EMIT_EVENT]
+    assert emitted == ["WEREWOLF_KILL"]
 
 
 def test_resolver_adds_single_accept_and_registry_keeps_legacy() -> None:
     snapshot = builtin_registry.freeze()
     spec = snapshot.require("wolf-killer-werewolf"); contract = spec.contracts[0]
     effects = ActionResolver().aggregate_effects(context(), spec, contract, (command("kill", 1), command("pass")))
-    assert [effect.kind for effect in effects] == [EffectKind.ACCEPT_ACTION, EffectKind.SUBMIT_DAMAGE]
-    assert spec is WEREWOLF_SPEC and contract.schedule_point is SchedulePoint.NIGHT_ACTION
+    assert [effect.kind for effect in effects] == [
+        EffectKind.ACCEPT_ACTION, EffectKind.SUBMIT_DAMAGE,
+        EffectKind.EMIT_EVENT,
+    ]
+    assert spec is WEREWOLF_SPEC and contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE
     assert builtin_registry.require("wolf-killer-werewolf").role_factory is not None
     assert werewolf_applicable(context()) is True
 
