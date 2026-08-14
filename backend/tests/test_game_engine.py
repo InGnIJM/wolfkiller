@@ -1966,3 +1966,95 @@ class TestGameEngine:
         assert await engine.give_last_words(1, "exile", 1) is None
         assert await engine.give_last_words(99, "exile", 1) is None
 
+
+# ── wolf kill target recording (witch antidote fix) ──────────
+
+
+def test_wolf_kill_target_extracts_only_wolf_damage() -> None:
+    assert game_engine_module._wolf_kill_target(()) is None
+    assert game_engine_module._wolf_kill_target(
+        ({"target": 4, "amount": 1, "cause": "wolf_kill"},)
+    ) == 4
+    assert game_engine_module._wolf_kill_target(
+        ({"target": 2, "amount": 1, "cause": "poison"},)
+    ) is None
+    assert game_engine_module._wolf_kill_target(
+        (
+            {"target": 2, "amount": 1, "cause": "poison"},
+            {"target": 4, "amount": 1, "cause": "wolf_kill"},
+        )
+    ) == 4
+    assert game_engine_module._wolf_kill_target((object(),)) is None
+    assert game_engine_module._wolf_kill_target(
+        ({"target": "x", "amount": 1, "cause": "wolf_kill"},)
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_v2_night_records_wolf_kill_target_and_witch_save_rescues(tmp_path) -> None:
+    from app.core.scheduler import Scheduler
+    from app.core.context_projector import ContextProjector
+    from app.core.action_validator import ActionValidator
+    from app.core.action_resolver import ActionResolver
+    from app.core.effect_applier import EffectApplier, role_resource_view
+    from app.core.night_flow import NightDirector
+    from app.roles.registry import builtin_registry
+    from app.models.pipeline import ActionCommand as PipelineActionCommand
+    snapshot = builtin_registry.freeze()
+
+    def invoke(messages):
+        human = messages[1]["content"]
+        if "投票" in human:
+            return '{"schema_version": 1, "action_type": "kill", "target_seat": 4, "reasoning": "像神"}'
+        if "讨论" in human:
+            return '{"speak": true, "text": "刀4号"}'
+        return '{"text": "考虑救人"}'
+
+    director = NightDirector(snapshot, invoke)
+
+    def provider(request, context, attempt):
+        if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
+            command = director.collected_vote(request.actor_seat)
+            return command if command is not None else PipelineActionCommand(
+                action_type="pass", target_seat=None, reasoning="safe fallback",
+            )
+        if request.contract.contract_id == "witch_action":
+            target = context.facts.get("wolf_kill_target")
+            return PipelineActionCommand(
+                action_type="save" if target is not None else "pass",
+                target_seat=target,
+                reasoning="use antidote on the wolf target",
+            )
+        if request.contract.contract_id == "seer_check":
+            return PipelineActionCommand(action_type="check", target_seat=1, reasoning="probe")
+        return PipelineActionCommand(action_type="pass", target_seat=None, reasoning="")
+
+    scheduler = Scheduler(snapshot, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(), provider)
+    roles = {seat: make_mock_role(seat, name) for seat, name in {
+        1: "wolf-killer-werewolf", 2: "wolf-killer-werewolf", 3: "wolf-killer-werewolf",
+        4: "wolf-killer-villager", 5: "wolf-killer-villager", 6: "wolf-killer-seer",
+        7: "wolf-killer-witch", 8: "wolf-killer-hunter", 9: "wolf-killer-villager",
+    }.items()}
+    engine = GameEngine("e2e-night-save", roles=roles, pipeline_scheduler=scheduler, director=director, data_dir=str(tmp_path))
+    engine._assign_roles()
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._broadcast_phase_change = AsyncMock()
+    await engine._execute_staged_night()
+
+    assert engine.state.last_wolf_kill_target == 4
+    assert engine.state.players[4].is_alive is True
+    assert [(d.player_seat, d.cause) for d in engine.state.death_history] == []
+    witch_seat = 7
+    assert role_resource_view(engine.state, witch_seat) == {"antidote": 0, "poison": 1}
+
+    log_lines = (tmp_path / "games" / "e2e-night-save" / "game.log").read_text("utf-8").splitlines()
+    audience = [json.loads(line) for line in log_lines
+                if json.loads(line)["operation"] == "audience_action"]
+    by_type = {record["data"]["event_type"]: record["data"]["payload"] for record in audience}
+    assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
+    assert by_type["WITCH_SAVE"] == {"target_seat": 4}
+

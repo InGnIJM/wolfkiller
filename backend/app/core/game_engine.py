@@ -47,6 +47,21 @@ _NIGHT_POINTS = (
 )
 
 
+def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
+    """Extract the current night's wolf kill target from pending damage.
+
+    Only wolf-inflicted damage is recorded so the witch's antidote targets
+    the actual victim; every other damage cause is ignored.
+    """
+    for item in pending_damage:
+        if not isinstance(item, Mapping) or item.get("cause") != "wolf_kill":
+            continue
+        target = item.get("target")
+        if type(target) is int and target >= 1:
+            return target
+    return None
+
+
 @dataclass(frozen=True)
 class _PendingDeath:
     seat: int
@@ -355,6 +370,9 @@ class GameEngine:
         if pending.stage == 3:
             raw = await self._execute_v2_point(_NIGHT_POINTS[0])
             await self._log_stage_audience(raw)
+            runtime = getattr(state, "_pipeline_runtime", None)
+            if runtime is not None:
+                state.last_wolf_kill_target = _wolf_kill_target(tuple(runtime.pending_damage))
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=4)
             self._pending_night_batch = pending
 
