@@ -48,7 +48,7 @@ def test_spec_declares_bounded_death_response_and_gun() -> None:
     assert HUNTER_SPEC.role_id == "wolf-killer-hunter"
     assert HUNTER_SPEC.initial_resources == {"gun": 1}
     assert HUNTER_SPEC.allowed_effects == {
-        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
     }
     assert contract.schedule_point is SchedulePoint.DAWN_REACTION
     assert contract.order == 40
@@ -77,16 +77,36 @@ def test_validate_and_resolve_shoot_or_pass() -> None:
     assert validate_hunter_action(context(), command("shoot", 2)) == ()
     assert validate_hunter_action(context(), command("pass")) == ()
     assert validate_hunter_action(context(gun=0), command("shoot", 2))
-    assert resolve_hunter_action(context(), command("pass")) == ()
+    passed = resolve_hunter_action(context(), command("pass"))
+    assert [effect.kind for effect in passed] == [EffectKind.EMIT_EVENT]
+    assert passed[0].sort_key == (1,)
+    assert passed[0].payload == {
+        "event_type": "HUNTER_REASONING",
+        "payload": {
+            "seat": 1, "action_type": "pass", "target_seat": None,
+            "reasoning": "ok", "thought": "决定不开枪：ok",
+        },
+    }
     effects = resolve_hunter_action(context(), command("shoot", 2))
     assert [effect.kind for effect in effects] == [
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert effects[0].payload == {"target": 1, "resource": "gun", "amount": 1}
     assert effects[0].preconditions == {"resource_equals": {"resource": "gun", "value": 1}}
     assert effects[1].payload == {"target": 2, "amount": 1, "cause": "hunter_shot"}
-    assert [effect.target_seat for effect in effects] == [1, 2]
-    assert [effect.sort_key for effect in effects] == [(1,), (2,)]
+    assert effects[2].payload == {"event_type": "HUNTER_SHOT", "payload": {"target_seat": 2}}
+    assert effects[2].visibility == ("PUBLIC",)
+    assert effects[3].payload == {
+        "event_type": "HUNTER_REASONING",
+        "payload": {
+            "seat": 1, "action_type": "shoot", "target_seat": 2,
+            "reasoning": "ok", "thought": "决定开枪带走 2 号玩家：ok",
+        },
+    }
+    assert effects[3].visibility == ("PUBLIC",)
+    assert [effect.target_seat for effect in effects] == [1, 2, None, None]
+    assert [effect.sort_key for effect in effects] == [(1,), (2,), (3,), (4,)]
     assert all(effect.source_event_id == context().source_event_id for effect in effects)
 
 

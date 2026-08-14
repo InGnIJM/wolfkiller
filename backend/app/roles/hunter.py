@@ -32,11 +32,39 @@ def validate_hunter_action(
     return ()
 
 
+def _hunter_reasoning_effect(
+    context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
+) -> GameEffect:
+    if command.action_type == "shoot" and command.target_seat is not None:
+        thought = f"决定开枪带走 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
+    else:
+        thought = f"决定不开枪：{command.reasoning or '无理由'}"
+    return GameEffect(
+        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
+        context.action_key,
+        payload={
+            "event_type": "HUNTER_REASONING",
+            "payload": {
+                "seat": context.actor_seat,
+                "action_type": command.action_type,
+                "target_seat": command.target_seat,
+                "reasoning": command.reasoning,
+                "thought": thought,
+            },
+        },
+        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    )
+
+
 def resolve_hunter_action(
     context: ActionContext, command: ActionCommand,
 ) -> tuple[GameEffect, ...]:
     if command.action_type == "pass":
-        return ()
+        return (_hunter_reasoning_effect(
+            context, command, 1,
+            expected_revision=context.revision,
+            source_event_id=context.source_event_id,
+        ),)
     common = {
         "expected_revision": context.revision,
         "source_event_id": context.source_event_id,
@@ -55,6 +83,13 @@ def resolve_hunter_action(
             payload={"target": command.target_seat, "amount": 1, "cause": "hunter_shot"},
             sort_key=(2,), **common,
         ),
+        GameEffect(
+            derive_effect_id(context.action_key, 3), EffectKind.EMIT_EVENT,
+            context.action_key,
+            payload={"event_type": "HUNTER_SHOT", "payload": {"target_seat": command.target_seat}},
+            visibility=("PUBLIC",), sort_key=(3,), **common,
+        ),
+        _hunter_reasoning_effect(context, command, 4, **common),
     )
 
 
@@ -64,14 +99,14 @@ HUNTER_SPEC = RoleSpec(
         contract_id="hunter_shoot", schedule_point=SchedulePoint.DAWN_REACTION,
         order=40, action_types=("shoot", "pass"),
         actions_requiring_target=frozenset({"shoot"}), fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE}),
+        allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
         response_event_types=frozenset({"PLAYER_DIED"}),
         response_reasons=_SHOOT_REASONS, per_window_limit=1, per_game_limit=1,
         is_applicable=hunter_applicable, validate=validate_hunter_action,
         resolve=resolve_hunter_action,
     ),), initial_resources={"gun": 1},
-    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE}),
+    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions="After an eligible death, shoot one living player or pass.",
 )
