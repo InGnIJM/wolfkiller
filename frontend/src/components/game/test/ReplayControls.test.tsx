@@ -6,8 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useGameStore } from '../../../store/gameStore';
 import type { PublicReplayEvent } from '../../../store/types';
+import { fetchGameMemories } from '../../../api/client';
 import HistoryPanel from '../HistoryPanel';
 import TimelineController from '../TimelineController';
+
+vi.mock('../../../api/client', () => ({
+  fetchGameMemories: vi.fn(),
+}));
 
 const replayEventMeta = { timestamp: '2026-08-13T00:00:00Z' } as const;
 
@@ -18,6 +23,7 @@ const timeline: PublicReplayEvent[] = [
   { ...replayEventMeta, event_type: 'vote', payload: { voter_seat: 2, target_seat: null, round_number: 1 } },
   { ...replayEventMeta, event_type: 'vote_result', payload: { exiled_seat: 2, round_number: 1 } },
   { ...replayEventMeta, event_type: 'vote_result', payload: { exiled_seat: null, round_number: 2 } },
+  { ...replayEventMeta, event_type: 'night_action', payload: { action_type: 'werewolf_kill', target_seat: 2, round_number: 1, vote_counts: { '2': 2 } } },
   { ...replayEventMeta, event_type: 'death', payload: { player_seat: 2, cause: 'wolf_kill', round_number: 1 } },
   { ...replayEventMeta, event_type: 'winner', payload: { winning_camp: 'good', reason: 'all_wolves_dead' } },
 ];
@@ -218,17 +224,85 @@ describe('HistoryPanel accessibility', () => {
     expect(screen.getByRole('button', { name: /弃权/ })).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: /死亡/ }));
     expect(screen.getByRole('button', { name: /2号出局/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: /夜晚/ }));
+    expect(screen.getByRole('button', { name: /狼人行动/ })).toBeVisible();
   });
 
-  it('shows the empty state for every history category', () => {
-    useGameStore.setState({ timeline: [] });
+  it('shows the empty state for every history category', async () => {
+    vi.mocked(fetchGameMemories).mockResolvedValue({ game_id: 'game-1', memories: [] });
+    useGameStore.setState({ timeline: [], gameId: 'game-1' });
     render(<HistoryPanel onClose={vi.fn()} />);
 
-    for (const tabName of [/全部/, /发言/, /投票/, /死亡/]) {
+    for (const tabName of [/全部/, /发言/, /投票/, /死亡/, /夜晚/, /思考/]) {
       fireEvent.click(screen.getByRole('tab', { name: tabName }));
       expect(screen.getByText('暂无记录')).toBeVisible();
     }
 
-    expect(within(screen.getByRole('tablist')).getAllByRole('tab')).toHaveLength(4);
+    fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
+    expect(await screen.findByText('暂无记忆数据')).toBeVisible();
+
+    expect(within(screen.getByRole('tablist')).getAllByRole('tab')).toHaveLength(7);
+  });
+
+  it('renders seer thought and wolf chat cards and fetches seat memories', async () => {
+    vi.mocked(fetchGameMemories).mockResolvedValue({
+      game_id: 'game-1',
+      memories: [{
+        seat_number: 3,
+        role: 'wolf-killer-witch',
+        camp: 'good',
+        is_alive: true,
+        private_knowledge: { has_antidote: true, has_poison: false },
+        action_history: [{ round: 1, phase: 'night', action: {} }],
+        witnessed_events: [],
+        last_updated: '2026-01-01T00:00:00Z',
+      }],
+    });
+    useGameStore.setState({
+      gameId: 'game-1',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'seer_thought',
+          payload: {
+            round_number: 1, seat: 7, text: '先查跳预言家的人',
+          },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_chat_message',
+          payload: {
+            round_number: 1, seat: 1, text: '我怀疑2号',
+          },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'speech',
+          payload: { player_seat: 2, text: '我是好人', round_number: 1, phase: 'last_words' },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: /思考/ }));
+    expect(screen.getByRole('button', { name: /预言家思考/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /1号：我怀疑2号/ })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: /发言/ }));
+    expect(screen.getByRole('button', { name: /2号遗言/ })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
+    expect(await screen.findByText(/3号 · 女巫/)).toBeVisible();
+    expect(screen.getByText(/解药：可用/)).toBeVisible();
+  });
+
+  it('surfaces a friendly message when seat memories fail to load', async () => {
+    vi.mocked(fetchGameMemories).mockRejectedValue(new Error('network'));
+    useGameStore.setState({ timeline: [], gameId: 'game-1' });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
+
+    expect(await screen.findByText('记忆数据加载失败')).toBeVisible();
   });
 });
