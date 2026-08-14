@@ -65,7 +65,7 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
     )
     assert [effect.kind for effect in effects] == [
         EffectKind.ACCEPT_ACTION, EffectKind.RECORD_PRIVATE_FACT,
-        EffectKind.EMIT_EVENT,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     fact = effects[1]
     assert fact.target_seat == 1
@@ -83,16 +83,43 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
         "event_type": "SEER_CHECK",
         "payload": {"target_seat": 2, "result": "werewolf"},
     }
-    assert resolve_seer_action(context(target=None), command("pass")) == ()
+    reasoning = effects[3]
+    assert reasoning.kind is EffectKind.EMIT_EVENT and reasoning.visibility == ("PUBLIC",)
+    assert reasoning.sort_key == (3,)
+    assert reasoning.payload == {
+        "event_type": "SEER_REASONING",
+        "payload": {
+            "seat": 1, "action_type": "check", "target_seat": 2,
+            "reasoning": "ok", "thought": "决定查验 2 号玩家：ok",
+        },
+    }
+
+
+def test_resolve_pass_emits_reasoning_event() -> None:
+    effects = resolve_seer_action(context(target=None), command("pass"))
+    assert [effect.kind for effect in effects] == [EffectKind.EMIT_EVENT]
+    assert effects[0].payload == {
+        "event_type": "SEER_REASONING",
+        "payload": {
+            "seat": 1, "action_type": "pass", "target_seat": None,
+            "reasoning": "ok", "thought": "决定今晚不查验：ok",
+        },
+    }
+    assert effects[0].visibility == ("PUBLIC",)
 
 
 def test_seer_contract_moved_to_action_point_and_keeps_only_check_event() -> None:
     contract = next(c for c in SEER_SPEC.contracts if c.contract_id == "seer_check")
     assert contract.schedule_point is SchedulePoint.NIGHT_SEER_ACTION
     assert SEER_SPEC.schema_version == 2
-    assert resolve_seer_action(context(target=None), command("pass")) == ()
     effects = resolve_seer_action(context(), command("check", 2))
-    assert [e.payload["event_type"] for e in effects if e.kind is EffectKind.EMIT_EVENT] == ["SEER_CHECK"]
+    assert [e.payload["event_type"] for e in effects if e.kind is EffectKind.EMIT_EVENT] == [
+        "SEER_CHECK", "SEER_REASONING",
+    ]
+    passed = resolve_seer_action(context(target=None), command("pass"))
+    assert [e.payload["event_type"] for e in passed if e.kind is EffectKind.EMIT_EVENT] == [
+        "SEER_REASONING",
+    ]
 
 
 def test_resolve_rejects_missing_mismatched_or_malformed_selected_fact() -> None:

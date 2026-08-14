@@ -26,11 +26,39 @@ def validate_seer_action(
     return ()
 
 
+def _seer_reasoning_effect(
+    context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
+) -> GameEffect:
+    if command.action_type == "check" and command.target_seat is not None:
+        thought = f"决定查验 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
+    else:
+        thought = f"决定今晚不查验：{command.reasoning or '无理由'}"
+    return GameEffect(
+        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
+        context.action_key,
+        payload={
+            "event_type": "SEER_REASONING",
+            "payload": {
+                "seat": context.actor_seat,
+                "action_type": command.action_type,
+                "target_seat": command.target_seat,
+                "reasoning": command.reasoning,
+                "thought": thought,
+            },
+        },
+        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    )
+
+
 def resolve_seer_action(
     context: ActionContext, command: ActionCommand,
 ) -> tuple[GameEffect, ...]:
     if command.action_type == "pass":
-        return ()
+        return (_seer_reasoning_effect(
+            context, command, 1,
+            expected_revision=context.revision,
+            source_event_id=context.source_event_id,
+        ),)
     selected = context.facts.get("selected_target")
     if not isinstance(selected, Mapping) or selected.get("seat") != command.target_seat:
         raise ValueError("selected target fact is missing or mismatched")
@@ -63,6 +91,10 @@ def resolve_seer_action(
         expected_revision=context.revision,
         source_event_id=context.source_event_id,
         sort_key=(2,),
+    ), _seer_reasoning_effect(
+        context, command, 3,
+        expected_revision=context.revision,
+        source_event_id=context.source_event_id,
     ),)
 
 
