@@ -680,14 +680,18 @@ def test_public_reasoning_event_rejects_malformed_records(event_type, payload):
         ("WOLF_CHAT_MESSAGE", "not-a-dict"),
         ("WOLF_CHAT_MESSAGE", {"seat": 0, "text": "t"}),
         ("WOLF_CHAT_MESSAGE", {"seat": True, "text": "t"}),
+        ("WOLF_CHAT_MESSAGE", {"seat": 1, "text": "t", "extra": True}),
         ("WITCH_THOUGHT", {"seat": 1, "text": 7}),
+        ("WITCH_THOUGHT", {"seat": 1, "text": "t", "extra": True}),
         ("SEER_THOUGHT", {"seat": 1, "text": ""}),
         ("SEER_THOUGHT", {"seat": 1, "text": "t" * 201}),
+        ("SEER_THOUGHT", {"seat": 1, "text": "t", "extra": True}),
         ("WOLF_VOTE", "not-a-dict"),
         ("WOLF_VOTE", {"seat": 0, "target_seat": 2, "reasoning": "r"}),
         ("WOLF_VOTE", {"seat": 1, "target_seat": 0, "reasoning": "r"}),
         ("WOLF_VOTE", {"seat": 1, "target_seat": 2, "reasoning": "r" * 501}),
         ("WOLF_VOTE", {"seat": 1, "target_seat": None, "reasoning": 7}),
+        ("WOLF_VOTE", {"seat": 1, "target_seat": 2, "reasoning": "r", "extra": True}),
     ],
 )
 def test_public_staged_night_audience_event_rejects_malformed_records(event_type, payload):

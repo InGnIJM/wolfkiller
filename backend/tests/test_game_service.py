@@ -10,6 +10,35 @@ from app.roles.registry import builtin_registry
 from app.services.game_manifest import GameManifest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_service_data(tmp_path, monkeypatch):
+    """Redirect every GameService's default-relative data writes to a per-test
+    temp dir so service tests never create games inside the real data/games
+    directory (which the running backend also uses)."""
+    import app.services.game_service as service_module
+
+    original_engine = service_module.GameEngine
+
+    def isolated_engine(*args, **kwargs):
+        if kwargs.get("data_dir") == "data":
+            kwargs["data_dir"] = str(tmp_path)
+        return original_engine(*args, **kwargs)
+
+    original_manifest = service_module.GameManifest
+
+    def isolated_manifest(data_dir="data"):
+        return original_manifest(data_dir=data_dir if data_dir != "data" else str(tmp_path))
+
+    monkeypatch.setattr(service_module, "GameEngine", isolated_engine)
+    monkeypatch.setattr(service_module, "GameManifest", isolated_manifest)
+
+
+def test_system_prompt_demands_chinese_output() -> None:
+    from app.services.game_service import _SYSTEM_PROMPT
+
+    assert "简体中文" in _SYSTEM_PROMPT
+
+
 class TestGameService:
     @pytest.mark.asyncio
     async def test_create_and_list_games(self):
@@ -97,6 +126,42 @@ class TestGameService:
             )
 
         create_roles.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_game_stores_night_director(self, monkeypatch):
+        from app.core.night_flow import NightDirector
+
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        await service.create_game(num_werewolves=1, num_villagers=3)
+
+        assert isinstance(service._director, NightDirector)
+
+    @pytest.mark.asyncio
+    async def test_night_invoke_requires_text_model_response(self, monkeypatch):
+        import app.services.game_service as service_module
+
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        fake_llm = MagicMock()
+        fake_llm.get_model.return_value.invoke.side_effect = [
+            MagicMock(content="今晚刀2号"),
+            MagicMock(content=123),
+            object(),
+        ]
+        monkeypatch.setattr(service_module, "LLMClient", lambda model: fake_llm)
+
+        await service.create_game(num_werewolves=1, num_villagers=3)
+
+        invoke = service._director._invoke
+        assert invoke([{"role": "user", "content": "x"}]) == "今晚刀2号"
+        with pytest.raises(ValueError):
+            invoke([{"role": "user", "content": "x"}])
+        assert isinstance(invoke([{"role": "user", "content": "x"}]), str)
 
     def test_manifest_accepts_canonical_role_counts(self, tmp_path):
         manifest = GameManifest(str(tmp_path))
@@ -1151,13 +1216,14 @@ class TestPipelineSnapshotVersioning:
 
 
 class TestCommandProvider:
-    def _request(self):
+    def _request(self, role_id="wolf-killer-werewolf"):
         from app.models.pipeline import IssuedActionRequest
-        contract = builtin_registry.freeze().require("wolf-killer-werewolf").contracts[0]
-        return IssuedActionRequest(1, "wolf-killer-werewolf", contract, 0, 1, "night", "w", "k")
+        contract = builtin_registry.freeze().require(role_id).contracts[0]
+        return IssuedActionRequest(1, role_id, contract, 0, 1, "night", "w", "k")
 
     def _provider(self, service, response_content="kill-ok"):
         from unittest.mock import MagicMock
+        from app.core.night_flow import NightDirector
         snapshot = builtin_registry.freeze()
         renderer = MagicMock()
         renderer.render.return_value = "prompt"
@@ -1168,17 +1234,18 @@ class TestCommandProvider:
             response = MagicMock()
             response.content = response_content
             llm.get_model.return_value.invoke.return_value = response
-        return service._command_provider(snapshot, renderer, llm), renderer
+        director = NightDirector(snapshot, lambda messages: None)
+        return service._command_provider(snapshot, renderer, llm, director), renderer
 
     def test_provider_returns_parsed_command(self):
         service = GameService(WSManager(), EventBus())
         provider, _ = self._provider(
-            service, '{"action_type":"kill","target_seat":2,"reasoning":"x"}'
+            service, '{"action_type":"check","target_seat":2,"reasoning":"x"}'
         )
         from unittest.mock import MagicMock
         context = MagicMock(game_id="g")
-        command = provider(self._request(), context, 0)
-        assert command.action_type == "kill"
+        command = provider(self._request("wolf-killer-seer"), context, 0)
+        assert command.action_type == "check"
         assert command.target_seat == 2
 
     def test_provider_falls_back_on_bad_json_or_network_error(self):
@@ -1186,7 +1253,7 @@ class TestCommandProvider:
         from unittest.mock import MagicMock
         for content in ("not json", "[]", Exception("network")):
             provider, _ = self._provider(service, content)
-            command = provider(self._request(), MagicMock(game_id="g"), 0)
+            command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
             assert command.action_type == "pass"
             assert command.target_seat is None
 
@@ -1194,12 +1261,12 @@ class TestCommandProvider:
         service = GameService(WSManager(), EventBus())
         from unittest.mock import MagicMock
         provider, _ = self._provider(service, object())
-        assert provider(self._request(), MagicMock(game_id="g"), 0).action_type == "pass"
+        assert provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0).action_type == "pass"
 
         provider, _ = self._provider(
             service, '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
         )
-        assert provider(self._request(), MagicMock(game_id="g"), 0).action_type == "pass"
+        assert provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0).action_type == "pass"
 
     def test_provider_renders_game_history_when_engine_exists(self):
         service = GameService(WSManager(), EventBus())
@@ -1213,7 +1280,7 @@ class TestCommandProvider:
         )
         from unittest.mock import MagicMock
         context = MagicMock(game_id="g")
-        provider(self._request(), context, 0)
+        provider(self._request("wolf-killer-seer"), context, 0)
         renderer.render.assert_called_once()
         history = renderer.render.call_args.args[3]
         assert "大家好" in history
@@ -1224,8 +1291,56 @@ class TestCommandProvider:
             service, '{"action_type":"kill","target_seat":2,"reasoning":"x"}'
         )
         from unittest.mock import MagicMock
-        provider(self._request(), MagicMock(game_id="g"), 0)
+        provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
         assert renderer.render.call_args.args[3] == ""
+
+    def test_provider_dispatches_collected_wolf_vote_without_llm(self):
+        from unittest.mock import MagicMock
+        from app.core.night_flow import NightDirector, WolfVote
+        from app.models.pipeline import SchedulePoint
+        from app.agents.prompt_renderer import PromptRenderer
+
+        def raise_invoke(messages):
+            raise AssertionError("director invoke must not be called")
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        director = NightDirector(snapshot, raise_invoke)
+        director.record_votes((WolfVote(1, "kill", 2, "怀疑2号"),))
+
+        llm = MagicMock()
+        provider = service._command_provider(snapshot, PromptRenderer(), llm, director)
+
+        request = self._request()
+        assert request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE
+
+        command = provider(request, MagicMock(game_id="g"), 0)
+        assert command.action_type == "kill"
+        assert command.target_seat == 2
+        assert command.reasoning == "怀疑2号"
+        llm.get_model.assert_not_called()
+
+    def test_provider_falls_back_when_collected_wolf_vote_missing(self):
+        from unittest.mock import MagicMock
+        from app.core.night_flow import NightDirector
+        from app.agents.prompt_renderer import PromptRenderer
+
+        def raise_invoke(messages):
+            raise AssertionError("director invoke must not be called")
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        director = NightDirector(snapshot, raise_invoke)
+
+        llm = MagicMock()
+        provider = service._command_provider(snapshot, PromptRenderer(), llm, director)
+
+        request = self._request()
+        command = provider(request, MagicMock(game_id="g"), 0)
+        assert command.action_type == "pass"
+        assert command.target_seat is None
+        assert command.reasoning == "safe fallback"
+        llm.get_model.assert_not_called()
 
 
 class TestReconstruction:
