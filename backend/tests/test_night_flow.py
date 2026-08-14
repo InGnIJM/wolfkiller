@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.effect_applier import _Runtime
 from app.core.night_flow import (
     DiscussionTurn,
     NightDirector,
@@ -11,7 +12,7 @@ from app.core.night_flow import (
 )
 from app.models.game import GameConfig, GameState, PlayerState
 from app.models.pipeline import ActionCommand
-from app.roles.registry import RegistrySnapshot
+from app.roles.registry import RegistrySnapshot, builtin_registry
 
 
 def _state() -> GameState:
@@ -345,6 +346,35 @@ def test_witch_think_prompt_with_target(state: GameState, director: NightDirecto
 def test_witch_think_prompt_no_target(state: GameState, director: NightDirector):
     messages = director.witch_think_prompt(state, 2, None)
     assert "昨夜没有袭击发生" in messages[1]["content"]
+
+
+def test_witch_think_prompt_reports_remaining_potions_from_runtime(state: GameState, director: NightDirector):
+    state._pipeline_runtime = _Runtime(role_resources={2: {"antidote": 0, "poison": 1}})
+    messages = director.witch_think_prompt(state, 2, 3)
+    assert "昨夜狼人袭击了 3 号" in messages[1]["content"]
+    assert "解药 0 瓶" in messages[1]["content"]
+    assert "毒药 1 瓶" in messages[1]["content"]
+
+
+def test_witch_think_prompt_defaults_to_initial_potions_without_runtime(state: GameState):
+    director = NightDirector(builtin_registry.freeze(), lambda _messages: "{}")
+    messages = director.witch_think_prompt(state, 2, None)
+    assert "解药 1 瓶" in messages[1]["content"]
+    assert "毒药 1 瓶" in messages[1]["content"]
+
+
+def test_witch_think_prompt_falls_back_to_spec_when_runtime_lacks_seat(state: GameState):
+    state._pipeline_runtime = _Runtime(role_resources={})
+    director = NightDirector(builtin_registry.freeze(), lambda _messages: "{}")
+    messages = director.witch_think_prompt(state, 2, None)
+    assert "解药 1 瓶" in messages[1]["content"]
+    assert "毒药 1 瓶" in messages[1]["content"]
+
+
+def test_witch_think_prompt_zero_potions_without_runtime_and_spec(state: GameState, director: NightDirector):
+    messages = director.witch_think_prompt(state, 2, None)
+    assert "解药 0 瓶" in messages[1]["content"]
+    assert "毒药 0 瓶" in messages[1]["content"]
 
 
 def test_seer_think_prompt(state: GameState, director: NightDirector):

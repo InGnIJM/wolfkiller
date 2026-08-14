@@ -189,11 +189,31 @@ class NightDirector:
         return self._messages(system, human)
 
     def witch_think_prompt(self, state: GameState, seat: int, wolf_target: Optional[int]) -> list[dict[str, str]]:
+        antidote, poison = self._witch_potions(state, seat)
         extra = (
             f"昨夜狼人袭击了 {wolf_target} 号。" if wolf_target is not None
             else "昨夜没有袭击发生。"
-        ) + "你有一瓶解药和一瓶毒药，各只能使用一次。"
+        ) + f"你目前剩余解药 {antidote} 瓶、毒药 {poison} 瓶。"
         return self._think_prompt(state, seat, "Witch", extra)
+
+    def _witch_potions(self, state: GameState, seat: int) -> tuple[int, int]:
+        """Current witch potion counts from the pipeline resources.
+
+        Falls back to the registered witch spec's initial resources when the
+        pipeline runtime has not initialized this seat (e.g. early snapshots),
+        and to zero when no witch spec is available at all.
+        """
+        from app.core.role_runtime import role_resource_view
+
+        resources = dict(role_resource_view(state, seat))
+        if resources:
+            return resources.get("antidote", 0), resources.get("poison", 0)
+        spec = self._snapshot.specs.get("wolf-killer-witch")
+        if spec is None:
+            return 0, 0
+        return int(spec.initial_resources.get("antidote", 0)), int(
+            spec.initial_resources.get("poison", 0)
+        )
 
     def seer_think_prompt(self, state: GameState, seat: int) -> list[dict[str, str]]:
         return self._think_prompt(state, seat, "Seer", "你每晚可以查验一名玩家的阵营。")
