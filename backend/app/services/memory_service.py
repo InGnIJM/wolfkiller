@@ -57,12 +57,15 @@ class MemoryService:
         }
 
     def _build_private_knowledge(self, state: GameState, seat: int, player) -> dict:
+        from app.core.role_runtime import role_resource_view
+
+        resources = dict(role_resource_view(state, seat))
         knowledge: dict = {
             "teammates": [],
             "check_results": [],
-            "has_antidote": player.has_antidote,
-            "has_poison": player.has_poison,
-            "has_gun": player.has_gun,
+            "has_antidote": bool(resources.get("antidote", player.has_antidote)),
+            "has_poison": bool(resources.get("poison", player.has_poison)),
+            "has_gun": bool(resources.get("gun", player.has_gun)),
             "last_wolf_kill_target": None,
         }
 

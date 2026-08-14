@@ -107,3 +107,33 @@ class TestMemoryService:
         assert loaded is not None
         assert loaded["role"] == "wolf-killer-seer"
         assert loaded["seat_number"] == 4
+
+    def test_witch_potions_read_pipeline_resources_over_legacy_fields(self, tmp_path):
+        from app.core.effect_applier import _Runtime
+        service = MemoryService(str(tmp_path))
+        state = make_state()
+        # Runtime says the antidote was spent and the poison is still held,
+        # which must override the legacy PlayerState flags (True / False).
+        state._pipeline_runtime = _Runtime(role_resources={5: {"antidote": 0, "poison": 1}})
+
+        service.save_memories(state)
+
+        witch = json.loads(
+            (service.get_memory_dir(state.game_id) / "seat_5_wolf-killer-witch.json").read_text("utf-8")
+        )
+        assert witch["private_knowledge"]["has_antidote"] is False
+        assert witch["private_knowledge"]["has_poison"] is True
+
+    def test_witch_potions_fall_back_to_legacy_when_runtime_has_no_seat(self, tmp_path):
+        from app.core.effect_applier import _Runtime
+        service = MemoryService(str(tmp_path))
+        state = make_state()
+        state._pipeline_runtime = _Runtime(role_resources={})
+
+        service.save_memories(state)
+
+        witch = json.loads(
+            (service.get_memory_dir(state.game_id) / "seat_5_wolf-killer-witch.json").read_text("utf-8")
+        )
+        assert witch["private_knowledge"]["has_antidote"] is True
+        assert witch["private_knowledge"]["has_poison"] is False
