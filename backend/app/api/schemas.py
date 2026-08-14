@@ -132,7 +132,7 @@ class PublicWinnerResponse(_PublicResponse):
 
 
 PublicThoughtActionType = Literal[
-    "witch_reasoning", "seer_reasoning", "hunter_reasoning",
+    "hunter_reasoning",
 ]
 
 
@@ -144,15 +144,35 @@ class PublicNightThoughtResponse(_PublicResponse):
     reasoning: str
 
 
-class PublicWolfChatVoteResponse(_PublicResponse):
-    action_type: Literal["kill", "pass"]
-    target_seat: Optional[PositivePublicInt] = None
-    reasoning: str
-
-
-class PublicWolfChatResponse(_PublicResponse):
+class PublicNarrationResponse(_PublicResponse):
     round_number: NonNegativePublicInt
-    votes: list[PublicWolfChatVoteResponse]
+    title: Annotated[str, Field(min_length=1, max_length=100)]
+    text: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class PublicWolfChatMessageResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    text: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class PublicWolfVoteResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: Optional[PositivePublicInt] = None
+    reasoning: Annotated[str, Field(max_length=500)]
+
+
+class PublicWitchThoughtResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    text: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class PublicSeerThoughtResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    text: Annotated[str, Field(min_length=1, max_length=200)]
 
 
 class _PublicReplayEvent(_PublicResponse):
@@ -189,9 +209,29 @@ class PublicNightThoughtReplayEvent(_PublicReplayEvent):
     payload: PublicNightThoughtResponse
 
 
-class PublicWolfChatReplayEvent(_PublicReplayEvent):
-    event_type: Literal["wolf_chat"]
-    payload: PublicWolfChatResponse
+class PublicNarrationReplayEvent(_PublicReplayEvent):
+    event_type: Literal["narration"]
+    payload: PublicNarrationResponse
+
+
+class PublicWolfChatMessageReplayEvent(_PublicReplayEvent):
+    event_type: Literal["wolf_chat_message"]
+    payload: PublicWolfChatMessageResponse
+
+
+class PublicWolfVoteReplayEvent(_PublicReplayEvent):
+    event_type: Literal["wolf_vote"]
+    payload: PublicWolfVoteResponse
+
+
+class PublicWitchThoughtReplayEvent(_PublicReplayEvent):
+    event_type: Literal["witch_thought"]
+    payload: PublicWitchThoughtResponse
+
+
+class PublicSeerThoughtReplayEvent(_PublicReplayEvent):
+    event_type: Literal["seer_thought"]
+    payload: PublicSeerThoughtResponse
 
 
 class PublicPhaseReplayEvent(_PublicReplayEvent):
@@ -212,7 +252,11 @@ PublicReplayEvent = Annotated[
         PublicVoteResultReplayEvent,
         PublicNightActionReplayEvent,
         PublicNightThoughtReplayEvent,
-        PublicWolfChatReplayEvent,
+        PublicNarrationReplayEvent,
+        PublicWolfChatMessageReplayEvent,
+        PublicWolfVoteReplayEvent,
+        PublicWitchThoughtReplayEvent,
+        PublicSeerThoughtReplayEvent,
         PublicPhaseReplayEvent,
         PublicWinnerReplayEvent,
     ],

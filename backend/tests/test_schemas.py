@@ -5,9 +5,11 @@ from app.api.schemas import (
     CreateGameRequest, CreateGameResponse, GameListItem,
     GameListResponse, GameDetailResponse, GameLogsResponse,
     GameMemoriesResponse, PlayerMemoryResponse,
-    PublicDeathResponse, PublicNightThoughtResponse, PublicPhaseResponse,
-    PublicPlayerResponse, PublicSpeechResponse, PublicVoteResponse,
-    PublicVoteResultResponse, PublicWinnerResponse, PublicWolfChatResponse,
+    PublicDeathResponse, PublicNarrationResponse, PublicNightThoughtResponse,
+    PublicPhaseResponse, PublicPlayerResponse, PublicSeerThoughtResponse,
+    PublicSpeechResponse, PublicVoteResponse, PublicVoteResultResponse,
+    PublicWinnerResponse, PublicWitchThoughtResponse,
+    PublicWolfChatMessageResponse, PublicWolfVoteResponse,
     SetSpeedRequest, WSMessage,
 )
 
@@ -32,14 +34,23 @@ PUBLIC_REPLAY_EVENTS = [
         "action_type": "witch_save", "target_seat": 3, "round_number": 2,
     }},
     {"event_type": "night_thought", "payload": {
-        "round_number": 2, "seat": 7, "action_type": "seer_reasoning",
+        "round_number": 2, "seat": 7, "action_type": "hunter_reasoning",
         "target_seat": 1, "reasoning": "先查跳预言家的人",
     }},
-    {"event_type": "wolf_chat", "payload": {
-        "round_number": 2, "votes": [
-            {"action_type": "kill", "target_seat": 4, "reasoning": "觉得4号是神"},
-            {"action_type": "pass", "target_seat": None, "reasoning": "没有想法"},
-        ],
+    {"event_type": "narration", "payload": {
+        "round_number": 2, "title": "天黑请闭眼", "text": "狼人请睁眼",
+    }},
+    {"event_type": "wolf_chat_message", "payload": {
+        "round_number": 2, "seat": 1, "text": "我怀疑2号",
+    }},
+    {"event_type": "wolf_vote", "payload": {
+        "round_number": 2, "seat": 1, "target_seat": 2, "reasoning": "像神",
+    }},
+    {"event_type": "witch_thought", "payload": {
+        "round_number": 2, "seat": 3, "text": "考虑救人",
+    }},
+    {"event_type": "seer_thought", "payload": {
+        "round_number": 2, "seat": 4, "text": "查验2号",
     }},
     {"event_type": "phase", "payload": {
         "phase": "speech", "round_number": 2,
@@ -363,17 +374,44 @@ class TestSchemas:
                 target_seat=None, reasoning="r",
             )
 
-    def test_wolf_chat_requires_closed_votes(self):
-        value = PublicWolfChatResponse(
-            round_number=1,
-            votes=[{"action_type": "kill", "target_seat": 2, "reasoning": "r"}],
-        )
-        assert value.votes[0].action_type == "kill"
+    def test_staged_night_payload_models_enforce_route_boundaries(self):
+        assert PublicNarrationResponse(
+            round_number=1, title="天" * 100, text="文" * 200,
+        ).text == "文" * 200
+        assert PublicWolfChatMessageResponse(
+            round_number=1, seat=1, text="文" * 200,
+        ).seat == 1
+        assert PublicWitchThoughtResponse(
+            round_number=1, seat=1, text="文" * 200,
+        ).round_number == 1
+        assert PublicSeerThoughtResponse(
+            round_number=1, seat=1, text="文" * 200,
+        ).round_number == 1
+        assert PublicWolfVoteResponse(
+            round_number=1, seat=1, target_seat=None, reasoning="r" * 500,
+        ).reasoning == "r" * 500
+
+    @pytest.mark.parametrize(
+        "response_factory, kwargs",
+        [
+            (PublicNarrationResponse, {"round_number": 1, "title": "", "text": "t"}),
+            (PublicNarrationResponse, {"round_number": 1, "title": "t", "text": ""}),
+            (PublicNarrationResponse, {"round_number": 1, "title": "t" * 101, "text": "t"}),
+            (PublicNarrationResponse, {"round_number": 1, "title": "t", "text": "t" * 201}),
+            (PublicWolfChatMessageResponse, {"round_number": 1, "seat": 0, "text": "t"}),
+            (PublicWolfChatMessageResponse, {"round_number": 1, "seat": 1, "text": ""}),
+            (PublicWolfChatMessageResponse, {"round_number": 1, "seat": 1, "text": "t" * 201}),
+            (PublicWolfVoteResponse, {"round_number": 1, "seat": 1, "target_seat": 0, "reasoning": "r"}),
+            (PublicWolfVoteResponse, {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "r" * 501}),
+            (PublicWitchThoughtResponse, {"round_number": 1, "seat": 0, "text": "t"}),
+            (PublicWitchThoughtResponse, {"round_number": 1, "seat": 1, "text": "t" * 201}),
+            (PublicSeerThoughtResponse, {"round_number": 1, "seat": 0, "text": "t"}),
+            (PublicSeerThoughtResponse, {"round_number": 1, "seat": 1, "text": ""}),
+        ],
+    )
+    def test_staged_night_payload_models_reject_out_of_bound_values(self, response_factory, kwargs):
         with pytest.raises(ValidationError):
-            PublicWolfChatResponse(
-                round_number=1,
-                votes=[{"action_type": "explode", "target_seat": 2, "reasoning": "r"}],
-            )
+            response_factory(**kwargs)
 
     def test_memories_response_round_trips_closed_fields(self):
         memory = PlayerMemoryResponse(
