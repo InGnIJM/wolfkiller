@@ -46,6 +46,10 @@ _NIGHT_POINTS = (
     SchedulePoint.NIGHT_COMMIT,
 )
 
+# Staged night batch stages at which each pipeline point executes; a batch
+# with `stage > point_stage` must carry that point's result in raw_results.
+_NIGHT_POINT_STAGES = (3, 5, 7, 8)
+
 
 def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
     """Extract the current night's wolf kill target from pending damage.
@@ -126,8 +130,9 @@ class _PendingNightBatch:
             raise TypeError("invalid wolf votes")
         if type(self.raw_results) is not tuple or any(type(item) is not PointResult for item in self.raw_results):
             raise TypeError("invalid batch results")
-        points_done = (1 if self.stage > 3 else 0) + (1 if self.stage > 6 else 0) \
-            + (1 if self.stage > 9 else 0) + (1 if self.stage > 10 else 0)
+        points_done = sum(
+            1 for point_stage in _NIGHT_POINT_STAGES if self.stage > point_stage
+        )
         if len(self.raw_results) != points_done:
             raise ValueError("invalid batch results")
 
@@ -382,58 +387,28 @@ class GameEngine:
             pending = replace(pending, stage=5); self._pending_night_batch = pending
 
         if pending.stage == 5:
-            witch = next((seat for seat in sorted(state.players)
-                          if state.players[seat].role == "wolf-killer-witch"
-                          and state.players[seat].is_alive), None)
-            if witch is not None:
-                runtime = getattr(state, "_pipeline_runtime", None)
-                damage = tuple(runtime.pending_damage) if runtime is not None else ()
-                wolf_target = next((int(item["target"]) for item in damage
-                                    if isinstance(item, Mapping) and "target" in item), None)
-                thought = await asyncio.to_thread(director.witch_think, state, witch, wolf_target)
-                if thought is not None:
-                    self.game_logger.log_audience_action(
-                        self.game_id, state.round_number, "night", "WITCH_THOUGHT",
-                        {"seat": thought.seat, "text": thought.text},
-                    )
-            pending = replace(pending, stage=6); self._pending_night_batch = pending
-
-        if pending.stage == 6:
             raw = await self._execute_v2_point(_NIGHT_POINTS[1])
             await self._log_stage_audience(raw)
-            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=7)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=6)
             self._pending_night_batch = pending
 
-        if pending.stage == 7:
+        if pending.stage == 6:
             title, text = director.narration("seer_open")
             await self._narrate(title, text)
-            pending = replace(pending, stage=8); self._pending_night_batch = pending
+            pending = replace(pending, stage=7); self._pending_night_batch = pending
 
-        if pending.stage == 8:
-            seer = next((seat for seat in sorted(state.players)
-                         if state.players[seat].role == "wolf-killer-seer"
-                         and state.players[seat].is_alive), None)
-            if seer is not None:
-                thought = await asyncio.to_thread(director.seer_think, state, seer)
-                if thought is not None:
-                    self.game_logger.log_audience_action(
-                        self.game_id, state.round_number, "night", "SEER_THOUGHT",
-                        {"seat": thought.seat, "text": thought.text},
-                    )
-            pending = replace(pending, stage=9); self._pending_night_batch = pending
-
-        if pending.stage == 9:
+        if pending.stage == 7:
             raw = await self._execute_v2_point(_NIGHT_POINTS[2])
             await self._log_stage_audience(raw)
-            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=10)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=8)
             self._pending_night_batch = pending
 
-        if pending.stage == 10:
+        if pending.stage == 8:
             raw = await self._execute_v2_point(_NIGHT_POINTS[3])
-            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=11)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=9)
             self._pending_night_batch = pending
 
-        if pending.stage == 11:
+        if pending.stage == 9:
             deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
             title, text = director.dawn_narration(deaths)
             await self._narrate(title, text, phase="dawn")

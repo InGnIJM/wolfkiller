@@ -11,7 +11,7 @@ from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import VoteAction, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
-from app.core.night_flow import DiscussionTurn, ThinkResult, WolfVote
+from app.core.night_flow import DiscussionTurn, WolfVote
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult
@@ -53,10 +53,8 @@ class ScheduleStub:
 
 class _FakeDirector:
     """Deterministic in-memory stand-in for NightDirector (no LLM)."""
-    def __init__(self, *, speak: bool = True, vote: int | None = 4,
-                 witch_thought: str | None = "考虑救人", seer_thought: str | None = "查验2号"):
+    def __init__(self, *, speak: bool = True, vote: int | None = 4):
         self.speak, self.vote = speak, vote
-        self.witch_thought, self.seer_thought = witch_thought, seer_thought
         self.votes: list[WolfVote] = []
         self.vote_calls: list[int] = []
     def narration(self, kind): return ("标题", "正文")
@@ -68,10 +66,6 @@ class _FakeDirector:
         if self.vote is None:
             return WolfVote(seat, "pass", None, "观望")
         return WolfVote(seat, "kill", self.vote, "像神")
-    def witch_think(self, state, seat, target):
-        return None if self.witch_thought is None else ThinkResult(seat, self.witch_thought)
-    def seer_think(self, state, seat):
-        return None if self.seer_thought is None else ThinkResult(seat, self.seer_thought)
     def record_votes(self, votes): self.votes = list(votes)
     def collected_vote(self, seat):
         for vote in self.votes:
@@ -225,7 +219,7 @@ async def test_staged_night_resumes_only_failed_point_and_aggregates_exactly() -
     scheduler = Scheduler(); engine = GameEngine("checkpoint", pipeline_scheduler=scheduler, director=_FakeDirector())
     engine.run_schedule_point = AsyncMock(side_effect=AssertionError("mixed API used")); engine._resume_pipeline_night = AsyncMock()
     with pytest.raises(RuntimeError, match="commit failed"): await engine._execute_night()
-    assert engine.state.round_number == 1 and engine._pending_night_batch.stage == 10
+    assert engine.state.round_number == 1 and engine._pending_night_batch.stage == 8
     await engine._execute_night()
     assert scheduler.calls == [*points, points[3]]
     pending = engine._pending_night_completion
@@ -285,7 +279,7 @@ def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
     game_engine_module._PendingNightBatch(1, 3, (), (), ())
     game_engine_module._PendingNightBatch(1, 4, (), (), (result,))
     game_engine_module._PendingNightBatch(1, 7, (), (), (result, result))
-    game_engine_module._PendingNightBatch(1, 10, (), (), (result, result, result))
+    game_engine_module._PendingNightBatch(1, 8, (), (), (result, result, result))
     game_engine_module._PendingNightBatch(1, 12, (), (), (result, result, result, result))
     sub = type("SubPoint", (PointResult,), {})((), (), (), "d")
     for call in (
@@ -661,6 +655,10 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
     by_type = {record["data"]["event_type"]: record["data"]["payload"] for record in audience}
     assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
     assert by_type["SEER_CHECK"] == {"target_seat": 1, "result": "werewolf"}
+    assert by_type["WITCH_REASONING"]["action_type"] == "pass"
+    assert by_type["WITCH_REASONING"]["target_seat"] is None
+    assert by_type["SEER_REASONING"]["action_type"] == "check"
+    assert by_type["SEER_REASONING"]["target_seat"] == 1
     assert {record["round"] for record in audience} == {1}
 
 
@@ -723,9 +721,7 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
         ("audience_action", "WOLF_VOTE"),
         ("audience_action", "WEREWOLF_KILL"),
         ("narration", "标题"),
-        ("audience_action", "WITCH_THOUGHT"),
         ("narration", "标题"),
-        ("audience_action", "SEER_THOUGHT"),
         ("narration", "天亮了"),
         ("night_deaths", None),
     ]
@@ -736,8 +732,8 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_staged_night_skip_discussion_and_none_thoughts() -> None:
-    director = _FakeDirector(speak=False, witch_thought=None, seer_thought=None)
+async def test_staged_night_skip_discussion_and_no_thought_logs() -> None:
+    director = _FakeDirector(speak=False)
     engine = GameEngine("skip-none", pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")), director=director)
     engine.state.players = {
         1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
@@ -2057,4 +2053,8 @@ async def test_v2_night_records_wolf_kill_target_and_witch_save_rescues(tmp_path
     by_type = {record["data"]["event_type"]: record["data"]["payload"] for record in audience}
     assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
     assert by_type["WITCH_SAVE"] == {"target_seat": 4}
+    assert by_type["WITCH_REASONING"]["action_type"] == "save"
+    assert by_type["WITCH_REASONING"]["target_seat"] == 4
+    assert by_type["SEER_REASONING"]["action_type"] == "check"
+    assert by_type["SEER_REASONING"]["target_seat"] == 1
 
