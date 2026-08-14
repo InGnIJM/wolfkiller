@@ -1,4 +1,6 @@
-import type { GameListResponse, GameLogs, PublicGameState } from '../store/types';
+import type {
+  GameListResponse, GameLogs, GameMemories, PublicGameState,
+} from '../store/types';
 
 function getApiBase(): string {
   return import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -39,6 +41,12 @@ export async function fetchGameLogs(gameId: string): Promise<GameLogs> {
 export async function fetchGameDetail(gameId: string): Promise<PublicGameState> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}`);
   if (!res.ok) throw new Error(`Fetch game detail failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchGameMemories(gameId: string): Promise<GameMemories> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/memories`);
+  if (!res.ok) throw new Error(`Fetch game memories failed: ${res.status}`);
   return res.json();
 }
 
