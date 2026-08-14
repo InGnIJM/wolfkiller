@@ -49,6 +49,8 @@ _REASONING_EVENT_SCHEMA = frozenset(
 )
 _REASONING_EVENT_TYPES = {
     "HUNTER_REASONING": ("hunter_reasoning", frozenset({"shoot", "pass"})),
+    "WITCH_REASONING": ("witch_reasoning", frozenset({"save", "poison", "pass"})),
+    "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
 }
 
 

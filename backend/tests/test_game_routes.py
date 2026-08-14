@@ -647,6 +647,36 @@ def test_public_reasoning_event_projects_closed_night_thought():
 
 
 @pytest.mark.parametrize(
+    ("event_type", "action", "target", "public_type"),
+    [
+        ("WITCH_REASONING", "save", 4, "witch_reasoning"),
+        ("WITCH_REASONING", "poison", 2, "witch_reasoning"),
+        ("WITCH_REASONING", "pass", None, "witch_reasoning"),
+        ("SEER_REASONING", "check", 5, "seer_reasoning"),
+        ("SEER_REASONING", "pass", None, "seer_reasoning"),
+    ],
+)
+def test_public_reasoning_event_projects_witch_and_seer_thoughts(
+    event_type, action, target, public_type,
+):
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": event_type,
+                 "payload": {"seat": 8, "action_type": action, "target_seat": target,
+                             "reasoning": "理由", "thought": "思考"}},
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "night_thought",
+        "payload": {
+            "round_number": 2, "seat": 8, "action_type": public_type,
+            "target_seat": target, "reasoning": "理由",
+        },
+    }]
+
+
+@pytest.mark.parametrize(
     ("event_type", "payload"),
     [
         ("HUNTER_REASONING", "not-a-dict"),
@@ -668,6 +698,14 @@ def test_public_reasoning_event_projects_closed_night_thought():
                               "reasoning": "r" * 501, "thought": "t"}),
         ("HUNTER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
                               "reasoning": "r", "thought": 7}),
+        ("WITCH_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
+                             "reasoning": "r", "thought": "t"}),
+        ("WITCH_REASONING", {"seat": 1, "action_type": "save", "target_seat": 2,
+                             "reasoning": "r", "thought": "t", "extra": 1}),
+        ("SEER_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
+                            "reasoning": "r", "thought": "t"}),
+        ("SEER_REASONING", {"seat": 0, "action_type": "check", "target_seat": 2,
+                            "reasoning": "r", "thought": "t"}),
     ],
 )
 def test_public_reasoning_event_rejects_malformed_records(event_type, payload):
