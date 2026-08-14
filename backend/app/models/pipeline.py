@@ -279,7 +279,7 @@ class _FrozenValue:
     def _validate_schema_version(self) -> None:
         if type(self.schema_version) is not int:
             raise TypeError("schema_version must be an integer")
-        if self.schema_version != self.SCHEMA_VERSION:
+        if not 1 <= self.schema_version <= self.SCHEMA_VERSION:
             raise ValueError(f"unsupported schema_version: {self.schema_version}")
 
 
@@ -484,6 +484,8 @@ class ActionContract(_FrozenValue):
 
 @dataclass(frozen=True)
 class RoleSpec(_FrozenValue):
+    SCHEMA_VERSION: ClassVar[int] = 2
+
     role_id: str
     display_name: str = ""
     camp_id: str = ""
