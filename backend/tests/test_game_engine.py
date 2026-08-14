@@ -58,11 +58,13 @@ class _FakeDirector:
         self.speak, self.vote = speak, vote
         self.witch_thought, self.seer_thought = witch_thought, seer_thought
         self.votes: list[WolfVote] = []
+        self.vote_calls: list[int] = []
     def narration(self, kind): return ("标题", "正文")
     def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
     def wolf_discussion_turn(self, state, seat, history):
         return DiscussionTurn(seat, self.speak, "我怀疑2号" if self.speak else "")
     def wolf_vote_turn(self, state, seat, discussion, prior):
+        self.vote_calls.append(seat)
         if self.vote is None:
             return WolfVote(seat, "pass", None, "观望")
         return WolfVote(seat, "kill", self.vote, "像神")
@@ -232,6 +234,27 @@ async def test_staged_night_resumes_only_failed_point_and_aggregates_exactly() -
     assert pending.result.state_digest == "commit" and pending.result.mode is PipelineMode.V2
     assert pending.result.diff is None and type(pending.result) is PipelineResult
     assert engine._pending_night_batch is None
+
+
+@pytest.mark.asyncio
+async def test_staged_night_resumes_wolf_voting_from_checkpointed_cursor() -> None:
+    scheduler = ScheduleStub(PointResult((), (), (), "d"))
+    director = _FakeDirector()
+    engine = GameEngine("wolf-vote-resume", pipeline_scheduler=scheduler, director=director)
+    engine.state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+        2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        3: PlayerState(3, "wolf-killer-werewolf", "werewolf"),
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(
+        engine.state.round_number, 2, (), (WolfVote(1, "pass", None, "观望"),), (),
+    )
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+    assert director.vote_calls == [2, 3]
 
 
 @pytest.mark.asyncio

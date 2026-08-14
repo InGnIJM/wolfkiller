@@ -338,7 +338,7 @@ class GameEngine:
             if wolves:
                 votes = list(pending.wolf_votes)
                 discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
-                for seat in wolves:
+                for seat in wolves[len(votes):]:
                     result = await asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(votes))
                     votes.append(result)
                     self.game_logger.log_audience_action(
