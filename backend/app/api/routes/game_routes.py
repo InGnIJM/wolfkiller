@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException
 from app.api.schemas import (
     CreateGameRequest, CreateGameResponse,
     GameListResponse, GameListItem, GameDetailResponse, GameLogsResponse,
+    GameMemoriesResponse, PlayerMemoryResponse,
 )
+from app.models.game import Camp
 from app.services.game_service import GameService
 
 router = APIRouter(prefix="/api/games", tags=["games"])
@@ -29,6 +31,25 @@ _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
 })
+
+_AUDIENCE_ACTION_SCHEMAS = {
+    "WEREWOLF_KILL": frozenset({"target_seat", "vote_counts"}),
+    "WITCH_SAVE": frozenset({"target_seat"}),
+    "WITCH_POISON": frozenset({"target_seat"}),
+    "SEER_CHECK": frozenset({"target_seat", "result"}),
+    "HUNTER_SHOT": frozenset({"target_seat"}),
+    "WOLF_CHAT_MESSAGE": frozenset({"seat", "text"}),
+    "WOLF_VOTE": frozenset({"seat", "target_seat", "reasoning"}),
+    "WITCH_THOUGHT": frozenset({"seat", "text"}),
+    "SEER_THOUGHT": frozenset({"seat", "text"}),
+}
+
+_REASONING_EVENT_SCHEMA = frozenset(
+    {"seat", "action_type", "target_seat", "reasoning", "thought"}
+)
+_REASONING_EVENT_TYPES = {
+    "HUNTER_REASONING": ("hunter_reasoning", frozenset({"shoot", "pass"})),
+}
 
 
 def get_service() -> GameService:
@@ -150,6 +171,10 @@ def _is_non_negative_int(value: Any) -> bool:
     return _is_int(value) and value >= 0
 
 
+def _is_reasoning_text(value: Any) -> bool:
+    return isinstance(value, str) and len(value) <= 500
+
+
 def _public_conversation_event(record: dict[str, Any]) -> dict | None:
     if record.get("scope") != "public" or _timestamp(record) is None:
         return None
@@ -167,8 +192,103 @@ def _public_conversation_event(record: dict[str, Any]) -> dict | None:
         return None
     return {
         "event_type": "speech",
-        "payload": {"player_seat": seat, "text": content, "round_number": round_number},
+        "payload": {
+            "player_seat": seat, "text": content, "round_number": round_number,
+            "phase": phase,
+        },
     }
+
+
+def _public_reasoning_event(
+    event_type: str, payload: dict[str, Any], round_number: int,
+) -> list[dict]:
+    """Project a role reasoning audience record into a closed night_thought event."""
+    public_type, allowed_actions = _REASONING_EVENT_TYPES[event_type]
+    seat = payload.get("seat")
+    action = payload.get("action_type")
+    target = payload.get("target_seat")
+    reasoning = payload.get("reasoning")
+    thought = payload.get("thought")
+    if not _is_positive_int(seat):
+        return []
+    if not isinstance(action, str) or action not in allowed_actions:
+        return []
+    if target is not None and not _is_positive_int(target):
+        return []
+    if not _is_reasoning_text(reasoning) or not _is_reasoning_text(thought):
+        return []
+    return [{
+        "event_type": "night_thought",
+        "payload": {
+            "round_number": round_number, "seat": seat,
+            "action_type": public_type, "target_seat": target,
+            "reasoning": reasoning,
+        },
+    }]
+
+
+def _public_audience_action_event(record: dict[str, Any], round_number: int) -> list[dict]:
+    """Project one audience_action log record into a closed audience event."""
+    data = record.get("data")
+    if not isinstance(data, dict):
+        return []
+    event_type = data.get("event_type")
+    payload = data.get("payload")
+    if not isinstance(event_type, str):
+        return []
+    if event_type in ("WOLF_CHAT_MESSAGE", "WITCH_THOUGHT", "SEER_THOUGHT"):
+        if not isinstance(payload, dict):
+            return []
+        seat = payload.get("seat"); text = payload.get("text")
+        if not _is_positive_int(seat) or not isinstance(text, str) or not text or len(text) > 200:
+            return []
+        public_type = {"WOLF_CHAT_MESSAGE": "wolf_chat_message",
+                       "WITCH_THOUGHT": "witch_thought",
+                       "SEER_THOUGHT": "seer_thought"}[event_type]
+        return [{"event_type": public_type, "payload": {
+            "round_number": round_number, "seat": seat, "text": text}}]
+    if event_type == "WOLF_VOTE":
+        if not isinstance(payload, dict):
+            return []
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        reasoning = payload.get("reasoning")
+        if (not _is_positive_int(seat)
+                or (target is not None and not _is_positive_int(target))
+                or not _is_reasoning_text(reasoning)):
+            return []
+        return [{"event_type": "wolf_vote", "payload": {
+            "round_number": round_number, "seat": seat,
+            "target_seat": target, "reasoning": reasoning}}]
+    if event_type in _REASONING_EVENT_TYPES:
+        if not isinstance(payload, dict) or set(payload) != _REASONING_EVENT_SCHEMA:
+            return []
+        return _public_reasoning_event(event_type, payload, round_number)
+    if event_type not in _AUDIENCE_ACTION_SCHEMAS:
+        return []
+    if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+        return []
+    target = payload.get("target_seat")
+    if not _is_positive_int(target):
+        return []
+    public_payload: dict[str, Any] = {
+        "action_type": event_type.lower(),
+        "target_seat": target,
+        "round_number": round_number,
+    }
+    if event_type == "WEREWOLF_KILL":
+        votes = payload.get("vote_counts")
+        if not isinstance(votes, dict):
+            return []
+        for seat_key, count in votes.items():
+            if not isinstance(seat_key, str) or not seat_key.isdigit() or not _is_positive_int(count):
+                return []
+        public_payload["vote_counts"] = votes
+    if event_type == "SEER_CHECK":
+        result = payload.get("result")
+        if not isinstance(result, str) or result not in _PUBLIC_WINNING_CAMPS:
+            return []
+        public_payload["result"] = result
+    return [{"event_type": "night_action", "payload": public_payload}]
 
 
 def _public_operation_events(record: dict[str, Any]) -> list[dict]:
@@ -235,6 +355,9 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
             })
         return events
 
+    if operation == "audience_action":
+        return _public_audience_action_event(record, round_number)
+
     if operation == "phase_change":
         new_phase = data.get("new_phase")
         if not isinstance(new_phase, str) or new_phase not in _PUBLIC_GAME_PHASES:
@@ -243,6 +366,14 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
             "event_type": "phase",
             "payload": {"phase": new_phase, "round_number": round_number},
         }]
+
+    if operation == "narration":
+        title, text = data.get("title"), data.get("text")
+        if (not isinstance(title, str) or not isinstance(text, str)
+                or not title or not text or len(title) > 100 or len(text) > 200):
+            return []
+        return [{"event_type": "narration", "payload": {
+            "round_number": round_number, "title": title, "text": text}}]
 
     if operation == "game_over":
         winner = data.get("winner")
@@ -300,3 +431,47 @@ async def get_game_logs(game_id: str):
         game_id=game_id,
         events=_public_replay_events(conversations, operations),
     )
+
+
+def _camp_label(value: object) -> str:
+    """Normalize a stored camp value (plain str or str-Enum) into its label."""
+    return value.value if isinstance(value, Camp) else (value if isinstance(value, str) else "")
+
+
+@router.get("/{game_id}/memories", response_model=GameMemoriesResponse)
+async def get_game_memories(game_id: str):
+    """Audience god-view projection of each seat's persisted night memories."""
+    service = get_service()
+    state = service.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(404, "Game not found")
+    memory_service = getattr(service, "memory_service", None)
+    memories = []
+    for seat in sorted(state.players):
+        player = state.players[seat]
+        raw = None
+        if memory_service is not None:
+            raw = memory_service.load_memory(game_id, seat)
+        if raw is None:
+            memories.append(PlayerMemoryResponse(
+                seat_number=seat,
+                role=player.role,
+                camp=_camp_label(player.camp),
+                is_alive=player.is_alive,
+                private_knowledge={},
+                action_history=[],
+                witnessed_events=[],
+                last_updated="",
+            ))
+            continue
+        memories.append(PlayerMemoryResponse(
+            seat_number=raw.get("seat_number", seat),
+            role=raw.get("role", player.role),
+            camp=_camp_label(raw.get("camp", player.camp)),
+            is_alive=bool(raw.get("is_alive", player.is_alive)),
+            private_knowledge=raw.get("private_knowledge") or {},
+            action_history=raw.get("action_history") or [],
+            witnessed_events=raw.get("witnessed_events") or [],
+            last_updated=raw.get("last_updated", ""),
+        ))
+    return GameMemoriesResponse(game_id=game_id, memories=memories)
