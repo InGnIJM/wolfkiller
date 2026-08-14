@@ -73,7 +73,6 @@ class GameService:
         self._engines: dict[str, GameEngine] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._manifest = GameManifest(data_dir=data_dir)
-        self._director = None
 
         # Restore completed games so list / detail endpoints still work
         self._load_persisted_games()
@@ -252,7 +251,6 @@ class GameService:
             return content
 
         director = NightDirector(snapshot, _night_invoke)
-        self._director = director
 
         scheduler = Scheduler(
             snapshot,
@@ -272,6 +270,7 @@ class GameService:
             memory_service=self.memory_service,
             data_dir=self.data_dir,
             pipeline_scheduler=scheduler,
+            director=director,
         )
         # Stamp the pipeline snapshot version so archives can be validated
         # and migrated against the exact registry that ran the game.

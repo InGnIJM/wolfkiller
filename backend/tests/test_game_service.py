@@ -128,18 +128,6 @@ class TestGameService:
         create_roles.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_game_stores_night_director(self, monkeypatch):
-        from app.core.night_flow import NightDirector
-
-        service = GameService(WSManager(), EventBus())
-        service._manifest = MagicMock()
-        monkeypatch.setattr(GameEngine, "start", AsyncMock())
-
-        await service.create_game(num_werewolves=1, num_villagers=3)
-
-        assert isinstance(service._director, NightDirector)
-
-    @pytest.mark.asyncio
     async def test_night_invoke_requires_text_model_response(self, monkeypatch):
         import app.services.game_service as service_module
 
@@ -155,9 +143,9 @@ class TestGameService:
         ]
         monkeypatch.setattr(service_module, "LLMClient", lambda model: fake_llm)
 
-        await service.create_game(num_werewolves=1, num_villagers=3)
+        game_id = await service.create_game(num_werewolves=1, num_villagers=3)
 
-        invoke = service._director._invoke
+        invoke = service._engines[game_id]._director._invoke
         assert invoke([{"role": "user", "content": "x"}]) == "今晚刀2号"
         with pytest.raises(ValueError):
             invoke([{"role": "user", "content": "x"}])
