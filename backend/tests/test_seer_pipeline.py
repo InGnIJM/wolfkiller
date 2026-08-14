@@ -41,8 +41,8 @@ def test_spec_and_hooks_are_closed_and_role_agnostic() -> None:
     contract = SEER_SPEC.contracts[0]
     assert SEER_SPEC.role_id == "wolf-killer-seer"
     assert SEER_SPEC.initial_private_data == {"private_checks": ()}
-    assert SEER_SPEC.allowed_effects == {EffectKind.RECORD_PRIVATE_FACT}
-    assert contract.schedule_point is SchedulePoint.NIGHT_ACTION and contract.order == 30
+    assert SEER_SPEC.allowed_effects == {EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}
+    assert contract.schedule_point is SchedulePoint.NIGHT_SEER_ACTION and contract.order == 30
     assert contract.action_types == ("check", "pass")
     assert contract.selected_target_fact_namespaces == {"camp_label"}
     assert contract.per_window_limit == contract.per_round_limit == 1
@@ -65,6 +65,7 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
     )
     assert [effect.kind for effect in effects] == [
         EffectKind.ACCEPT_ACTION, EffectKind.RECORD_PRIVATE_FACT,
+        EffectKind.EMIT_EVENT,
     ]
     fact = effects[1]
     assert fact.target_seat == 1
@@ -75,7 +76,23 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
     assert fact.visibility == ("ACTOR",)
     assert fact.source_action_key == "a" and fact.expected_revision == 0
     assert fact.sort_key == (1,)
+    emit = effects[2]
+    assert emit.kind is EffectKind.EMIT_EVENT and emit.visibility == ("PUBLIC",)
+    assert emit.sort_key == (2,)
+    assert emit.payload == {
+        "event_type": "SEER_CHECK",
+        "payload": {"target_seat": 2, "result": "werewolf"},
+    }
     assert resolve_seer_action(context(target=None), command("pass")) == ()
+
+
+def test_seer_contract_moved_to_action_point_and_keeps_only_check_event() -> None:
+    contract = next(c for c in SEER_SPEC.contracts if c.contract_id == "seer_check")
+    assert contract.schedule_point is SchedulePoint.NIGHT_SEER_ACTION
+    assert SEER_SPEC.schema_version == 2
+    assert resolve_seer_action(context(target=None), command("pass")) == ()
+    effects = resolve_seer_action(context(), command("check", 2))
+    assert [e.payload["event_type"] for e in effects if e.kind is EffectKind.EMIT_EVENT] == ["SEER_CHECK"]
 
 
 def test_resolve_rejects_missing_mismatched_or_malformed_selected_fact() -> None:
@@ -113,20 +130,19 @@ def test_scheduler_persists_check_and_projects_it_only_to_same_actor_next_round(
         registry, ContextProjector(), ActionValidator(), ActionResolver(),
         EffectApplier(), provider,
     )
-    engine.run_point(game, SchedulePoint.NIGHT_ACTION)
+    engine.run_point(game, SchedulePoint.NIGHT_SEER_ACTION)
     assert game._pipeline_runtime.private_facts[1] == [{
         "namespace": "private_checks",
         "fact": {"target": 2, "camp": "werewolf"},
     }]
 
     game.round_number = 2
-    requests = engine.issue(game, SchedulePoint.NIGHT_ACTION, registry)
+    requests = engine.issue(game, SchedulePoint.NIGHT_SEER_ACTION, registry)
     seer_request = next(item for item in requests if item.role_id == SEER_SPEC.role_id)
     projected = ContextProjector().project(game, seer_request, registry)
     assert projected.facts["private_checks"] == ({"target": 2, "camp": "werewolf"},)
-    assert "private_checks" not in ContextProjector().project(
-        game, next(item for item in requests if item.role_id != SEER_SPEC.role_id), registry,
-    ).facts
+    wolf_request = next(iter(engine.issue(game, SchedulePoint.NIGHT_WOLF_VOTE, registry)))
+    assert "private_checks" not in ContextProjector().project(game, wolf_request, registry).facts
 
 
 def test_legacy_target_validation_helpers_remain_available() -> None:

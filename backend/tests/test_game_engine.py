@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -543,20 +544,137 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
         4: "wolf-killer-villager", 5: "wolf-killer-villager", 6: "wolf-killer-seer",
         7: "wolf-killer-witch", 8: "wolf-killer-hunter", 9: "wolf-killer-villager",
     }.items()}
-    bus = EventBus(); deaths = []
-    async def on_death(**kwargs): deaths.append(kwargs["death"])
-    bus.subscribe(BusEvent.PLAYER_DIED, on_death)
-    engine = GameEngine("e2e-night", roles=roles, event_bus=bus,
-                        pipeline_scheduler=scheduler, data_dir=str(tmp_path))
+    engine = GameEngine("e2e-night", roles=roles, pipeline_scheduler=scheduler, data_dir=str(tmp_path))
     engine._assign_roles()
     engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
-    engine.rule_engine.check_win = MagicMock(return_value=None)
-    engine.phase_delay = 0.01
-    await engine._execute_night()
+    engine._prepare_night()
+    result = await engine.run_schedule_points((
+        SchedulePoint.NIGHT_WOLF_VOTE, SchedulePoint.NIGHT_WITCH_ACTION,
+        SchedulePoint.NIGHT_SEER_ACTION, SchedulePoint.NIGHT_COMMIT,
+    ))
     assert engine.state.round_number == 1
-    assert [(d.player_seat, d.cause) for d in deaths] == [(4, "wolf_kill")]
-    assert engine.sm.get_state() is GamePhase.DAWN
     assert engine.state.players[4].is_alive is False
+    assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [(4, "wolf_kill")]
+    engine._log_audience_events(result, "night")
+
+    log_lines = (tmp_path / "games" / "e2e-night" / "game.log").read_text("utf-8").splitlines()
+    audience = [json.loads(line) for line in log_lines
+                if json.loads(line)["operation"] == "audience_action"]
+    by_type = {record["data"]["event_type"]: record["data"]["payload"] for record in audience}
+    assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
+    assert by_type["SEER_CHECK"] == {"target_seat": 1, "result": "werewolf"}
+    assert {record["round"] for record in audience} == {1}
+
+
+def test_pipeline_audience_events_keep_only_valid_public_non_death_events() -> None:
+    engine = GameEngine(game_id="test")
+    good = {"event_type": "SOME_ACTION", "payload": {"x": 1}, "visibility": ("PUBLIC",)}
+    result = PipelineResult(
+        (), (), "digest", (
+            {"event_type": "PLAYER_DIED", "payload": {"seat": 1, "cause": "wolf_kill", "round_number": 1}, "visibility": ("PUBLIC",)},
+            good,
+        ), PipelineMode.V2,
+    )
+    assert engine._pipeline_audience_events(result) == (("SOME_ACTION", {"x": 1}),)
+
+    for bad in (
+        {"event_type": "X", "payload": {"x": 1}},
+        {"event_type": "X", "payload": {"x": 1}, "visibility": ("ACTOR",)},
+        {"event_type": "X", "payload": {"x": 1}, "visibility": ("PUBLIC",), "extra": 1},
+        {"event_type": 3, "payload": {"x": 1}, "visibility": ("PUBLIC",)},
+        {"event_type": "", "payload": {"x": 1}, "visibility": ("PUBLIC",)},
+        {"event_type": "bad token", "payload": {"x": 1}, "visibility": ("PUBLIC",)},
+        {"event_type": "X", "payload": "not-a-mapping", "visibility": ("PUBLIC",)},
+        {"event_type": "X", "payload": {"x": 1}, "visibility": "PUBLIC"},
+        {"event_type": "X", "payload": {"x": 1}, "visibility": (1,)},
+    ):
+        with pytest.raises(PipelinePaused):
+            engine._pipeline_audience_events(
+                PipelineResult((), (), "digest", (bad,), PipelineMode.V2),
+            )
+
+    from types import SimpleNamespace
+    with pytest.raises(PipelinePaused):
+        engine._pipeline_audience_events(
+            SimpleNamespace(public_events=("not-a-mapping",)),
+        )
+    with pytest.raises(PipelinePaused):
+        engine._pipeline_audience_events(
+            SimpleNamespace(public_events=(
+                {"event_type": "\ud800", "payload": {"x": 1}, "visibility": ("PUBLIC",)},
+            )),
+        )
+
+
+def test_log_audience_events_writes_operation_records(tmp_path) -> None:
+    engine = GameEngine(game_id="aud", data_dir=str(tmp_path))
+    result = PipelineResult(
+        (), (), "digest", (
+            {"event_type": "SOME_ACTION", "payload": {"target_seat": 2, "nested": (1, 2)}, "visibility": ("PUBLIC",)},
+        ), PipelineMode.V2,
+    )
+    engine._log_audience_events(result, "night")
+
+    records = [json.loads(line) for line in (tmp_path / "games" / "aud" / "game.log").read_text("utf-8").splitlines()]
+    assert len(records) == 1
+    assert records[0]["operation"] == "audience_action"
+    assert records[0]["phase"] == "night"
+    assert records[0]["round"] == 0
+    assert records[0]["data"] == {
+        "event_type": "SOME_ACTION",
+        "payload": {"target_seat": 2, "nested": [1, 2]},
+    }
+
+
+def test_log_audience_events_writes_thought_and_werewolf_channel_sidecars(tmp_path) -> None:
+    engine = GameEngine(game_id="sidecar", data_dir=str(tmp_path))
+    engine.state.players = {1: PlayerState(1, "wolf-killer-witch", "good")}
+    result = PipelineResult(
+        (), (), "digest", (
+            {"event_type": "WITCH_REASONING", "payload": {
+                "seat": 1, "action_type": "save", "target_seat": 2,
+                "reasoning": "r", "thought": "决定使用解药救 2 号玩家：r",
+            }, "visibility": ("PUBLIC",)},
+            {"event_type": "WEREWOLF_DISCUSSION", "payload": {
+                "votes": [{"action_type": "kill", "target_seat": 2, "reasoning": "r"}],
+                "channel": "提议刀 2 号：r",
+            }, "visibility": ("PUBLIC",)},
+        ), PipelineMode.V2,
+    )
+    engine._log_audience_events(result, "night")
+
+    thoughts = engine.conversation_log.get_all_thoughts()
+    assert [(t.speaker_seat, t.speaker_role, t.content, t.phase) for t in thoughts] == [
+        (1, "wolf-killer-witch", "决定使用解药救 2 号玩家：r", "night"),
+    ]
+    channels = [
+        record for record in engine.conversation_log.get_all()
+        if record.scope.value == "werewolf"
+    ]
+    assert [(c.content, c.round_number, c.phase) for c in channels] == [
+        ("提议刀 2 号：r", 0, "night"),
+    ]
+
+
+def test_log_audience_events_skips_invalid_or_unknown_sidecars(tmp_path) -> None:
+    engine = GameEngine(game_id="sidecar-skip", data_dir=str(tmp_path))
+    engine.state.players = {}
+    result = PipelineResult(
+        (), (), "digest", (
+            {"event_type": "A", "payload": {"thought": 3, "seat": 1}, "visibility": ("PUBLIC",)},
+            {"event_type": "B", "payload": {"thought": "x", "seat": "1"}, "visibility": ("PUBLIC",)},
+            {"event_type": "C", "payload": {"thought": "x", "seat": 0}, "visibility": ("PUBLIC",)},
+            {"event_type": "D", "payload": {"thought": "x", "seat": 99}, "visibility": ("PUBLIC",)},
+            {"event_type": "E", "payload": {"channel": 3}, "visibility": ("PUBLIC",)},
+        ), PipelineMode.V2,
+    )
+    engine._log_audience_events(result, "night")
+
+    assert engine.conversation_log.get_all_thoughts() == []
+    assert all(
+        record.scope.value != "werewolf"
+        for record in engine.conversation_log.get_all()
+    )
 
 
 def make_mock_role(seat: int, role_name: str,
@@ -657,6 +775,22 @@ class TestGameEngine:
         ]
         exiled = engine.resolve_votes()
         assert exiled == 5
+
+    @pytest.mark.asyncio
+    async def test_resolve_votes_all_abstain_logs_vote_result(self, tmp_path):
+        engine = GameEngine(game_id="test", data_dir=str(tmp_path))
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=None),
+            VoteAction(voter_seat=2, target_seat=None),
+        ]
+        exiled = engine.resolve_votes()
+
+        assert exiled is None
+        records = [json.loads(line) for line in (tmp_path / "games" / "test" / "game.log").read_text("utf-8").splitlines()]
+        assert len(records) == 1
+        assert records[0]["operation"] == "vote_result"
+        assert records[0]["phase"] == "vote_resolution"
+        assert records[0]["data"] == {"exiled": None, "tally": {}}
 
     @pytest.mark.asyncio
     async def test_phase_delay(self):
@@ -1523,6 +1657,37 @@ class TestGameEngine:
 
         await engine._execute_vote_resolution()
 
+        assert engine.sm.get_state() is GamePhase.NIGHT
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_clears_ballot_bookkeeping_after_exile(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-werewolf"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+            3: make_mock_role(3, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="exile-clean", roles=roles, event_bus=EventBus(),
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+            3: PlayerState(3, "wolf-killer-villager", "good"),
+        }
+        engine.state.voted_seats = {1, 2, 3}
+        engine.state.votes = [
+            VoteAction(voter_seat=1, target_seat=1),
+            VoteAction(voter_seat=2, target_seat=1),
+            VoteAction(voter_seat=3, target_seat=2),
+        ]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.rule_engine.check_win = MagicMock(return_value=None)
+
+        await engine._execute_vote_resolution()
+
+        assert engine.state.players[1].is_alive is False
+        assert engine.state.voted_seats == set()
+        assert engine.state.vote_round == 1
+        assert engine.state.is_tiebreak is False
         assert engine.sm.get_state() is GamePhase.NIGHT
 
     @pytest.mark.asyncio
