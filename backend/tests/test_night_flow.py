@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.effect_applier import _Runtime
 from app.core.night_flow import (
     DiscussionTurn,
     NightDirector,
-    ThinkResult,
     WolfVote,
     _clean,
 )
 from app.models.game import GameConfig, GameState, PlayerState
 from app.models.pipeline import ActionCommand
-from app.roles.registry import RegistrySnapshot, builtin_registry
+from app.roles.registry import RegistrySnapshot
 
 
 def _state() -> GameState:
@@ -218,32 +216,6 @@ def test_wolf_vote_to_command_pass():
     assert command.reasoning == "理由"
 
 
-# ── ThinkResult ─────────────────────────────────────────────
-
-
-def test_think_result_valid():
-    result = ThinkResult(2, "今晚救谁呢")
-    assert result.seat == 2
-    assert result.text == "今晚救谁呢"
-
-
-def test_think_result_bad_seat():
-    with pytest.raises(ValueError):
-        ThinkResult(0, "思考")
-    with pytest.raises(ValueError):
-        ThinkResult(-1, "思考")
-
-
-def test_think_result_too_long():
-    with pytest.raises(ValueError):
-        ThinkResult(2, "t" * 201)
-
-
-def test_think_result_non_string():
-    with pytest.raises(ValueError):
-        ThinkResult(2, 123)  # type: ignore[arg-type]
-
-
 # ── NightDirector.__init__ ──────────────────────────────────
 
 
@@ -336,53 +308,13 @@ def test_vote_prompt_empty(state: GameState, director: NightDirector):
     assert "（还没有人出票）" in messages[1]["content"]
 
 
-def test_witch_think_prompt_with_target(state: GameState, director: NightDirector):
-    messages = director.witch_think_prompt(state, 2, 3)
-    assert "简体中文" in messages[0]["content"]
-    assert "Witch" in messages[0]["content"]
-    assert "昨夜狼人袭击了 3 号" in messages[1]["content"]
-
-
-def test_witch_think_prompt_no_target(state: GameState, director: NightDirector):
-    messages = director.witch_think_prompt(state, 2, None)
-    assert "昨夜没有袭击发生" in messages[1]["content"]
-
-
-def test_witch_think_prompt_reports_remaining_potions_from_runtime(state: GameState, director: NightDirector):
-    state._pipeline_runtime = _Runtime(role_resources={2: {"antidote": 0, "poison": 1}})
-    messages = director.witch_think_prompt(state, 2, 3)
-    assert "昨夜狼人袭击了 3 号" in messages[1]["content"]
-    assert "解药 0 瓶" in messages[1]["content"]
-    assert "毒药 1 瓶" in messages[1]["content"]
-
-
-def test_witch_think_prompt_defaults_to_initial_potions_without_runtime(state: GameState):
-    director = NightDirector(builtin_registry.freeze(), lambda _messages: "{}")
-    messages = director.witch_think_prompt(state, 2, None)
-    assert "解药 1 瓶" in messages[1]["content"]
-    assert "毒药 1 瓶" in messages[1]["content"]
-
-
-def test_witch_think_prompt_falls_back_to_spec_when_runtime_lacks_seat(state: GameState):
-    state._pipeline_runtime = _Runtime(role_resources={})
-    director = NightDirector(builtin_registry.freeze(), lambda _messages: "{}")
-    messages = director.witch_think_prompt(state, 2, None)
-    assert "解药 1 瓶" in messages[1]["content"]
-    assert "毒药 1 瓶" in messages[1]["content"]
-
-
-def test_witch_think_prompt_zero_potions_without_runtime_and_spec(state: GameState, director: NightDirector):
-    messages = director.witch_think_prompt(state, 2, None)
-    assert "解药 0 瓶" in messages[1]["content"]
-    assert "毒药 0 瓶" in messages[1]["content"]
-
-
-def test_seer_think_prompt(state: GameState, director: NightDirector):
-    messages = director.seer_think_prompt(state, 3)
-    assert "简体中文" in messages[0]["content"]
-    assert "Seer" in messages[0]["content"]
-    assert "第1晚" in messages[1]["content"]
-    assert "3号" in messages[1]["content"]
+def test_seer_think_prompt_removed_with_staged_night_refactor():
+    # NightDirector no longer drives witch/seer thoughts; the pipeline emits
+    # WITCH_REASONING / SEER_REASONING events from the accepted action command.
+    assert not hasattr(NightDirector, "witch_think")
+    assert not hasattr(NightDirector, "seer_think")
+    assert not hasattr(NightDirector, "witch_think_prompt")
+    assert not hasattr(NightDirector, "seer_think_prompt")
 
 
 # ── wolf_discussion_turn ────────────────────────────────────
@@ -532,48 +464,6 @@ def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
         1, "pass", None, "safe fallback"
     )
-
-
-# ── witch_think / seer_think ────────────────────────────────
-
-
-def test_witch_think_happy_with_target(state: GameState):
-    director = _director(lambda _messages: '{"text": "救3号"}')
-    result = director.witch_think(state, 2, 3)
-    assert result == ThinkResult(2, "救3号")
-
-
-def test_witch_think_happy_no_target(state: GameState):
-    director = _director(lambda _messages: '{"text": "平安夜"}')
-    result = director.witch_think(state, 2, None)
-    assert result == ThinkResult(2, "平安夜")
-
-
-def test_witch_think_fallback(state: GameState):
-    def invoke(_messages):
-        raise RuntimeError("boom")
-
-    director = _director(invoke)
-    assert director.witch_think(state, 2, 3) is None
-
-
-def test_witch_think_fallback_bad_text(state: GameState):
-    director = _director(lambda _messages: '{"text": 123}')
-    assert director.witch_think(state, 2, 3) is None
-
-
-def test_seer_think_happy(state: GameState):
-    director = _director(lambda _messages: '{"text": "查2号"}')
-    result = director.seer_think(state, 3)
-    assert result == ThinkResult(3, "查2号")
-
-
-def test_seer_think_fallback(state: GameState):
-    def invoke(_messages):
-        raise RuntimeError("boom")
-
-    director = _director(invoke)
-    assert director.seer_think(state, 3) is None
 
 
 # ── narration / dawn_narration ──────────────────────────────

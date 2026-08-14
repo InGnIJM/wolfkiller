@@ -10,7 +10,6 @@ from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
 
 _MAX_UTTERANCE = 200
-_MAX_THOUGHT = 200
 
 _CHINESE_DIRECTIVE = (
     "IMPORTANT: Every piece of text you produce (message, reasoning, thought) "
@@ -77,17 +76,6 @@ class WolfVote:
             target_seat=self.target_seat,
             reasoning=self.reasoning,
         )
-
-
-@dataclass(frozen=True)
-class ThinkResult:
-    seat: int
-    text: str
-
-    def __post_init__(self) -> None:
-        if type(self.seat) is not int or self.seat <= 0:
-            raise ValueError("invalid seat")
-        _clean(self.text, "text", _MAX_THOUGHT)
 
 
 class NightDirector:
@@ -176,48 +164,6 @@ class NightDirector:
         )
         return self._messages(system, human)
 
-    def _think_prompt(self, state: GameState, seat: int, role_display: str, extra: str) -> list[dict[str, str]]:
-        system = (
-            f"You are seat {seat}, the {role_display} in an AI Werewolf game. "
-            "Think out loud about tonight's decision. " + _CHINESE_DIRECTIVE
-        )
-        human = (
-            f"第{state.round_number}晚。场上存活玩家：{self._alive_text(state)}。\n"
-            f"{extra}\n"
-            '输出 JSON：{"text": "你的思考(≤200字)"}。'
-        )
-        return self._messages(system, human)
-
-    def witch_think_prompt(self, state: GameState, seat: int, wolf_target: Optional[int]) -> list[dict[str, str]]:
-        antidote, poison = self._witch_potions(state, seat)
-        extra = (
-            f"昨夜狼人袭击了 {wolf_target} 号。" if wolf_target is not None
-            else "昨夜没有袭击发生。"
-        ) + f"你目前剩余解药 {antidote} 瓶、毒药 {poison} 瓶。"
-        return self._think_prompt(state, seat, "Witch", extra)
-
-    def _witch_potions(self, state: GameState, seat: int) -> tuple[int, int]:
-        """Current witch potion counts from the pipeline resources.
-
-        Falls back to the registered witch spec's initial resources when the
-        pipeline runtime has not initialized this seat (e.g. early snapshots),
-        and to zero when no witch spec is available at all.
-        """
-        from app.core.role_runtime import role_resource_view
-
-        resources = dict(role_resource_view(state, seat))
-        if resources:
-            return resources.get("antidote", 0), resources.get("poison", 0)
-        spec = self._snapshot.specs.get("wolf-killer-witch")
-        if spec is None:
-            return 0, 0
-        return int(spec.initial_resources.get("antidote", 0)), int(
-            spec.initial_resources.get("poison", 0)
-        )
-
-    def seer_think_prompt(self, state: GameState, seat: int) -> list[dict[str, str]]:
-        return self._think_prompt(state, seat, "Seer", "你每晚可以查验一名玩家的阵营。")
-
     # ── LLM turns (failure always degrades to a safe fallback) ──
 
     def _invoke_json(self, messages: list[dict[str, str]]) -> Mapping[str, object]:
@@ -253,22 +199,6 @@ class NightDirector:
             return WolfVote(seat, "pass", None, _clean(value.get("reasoning"), "reasoning", 500))
         except Exception:
             return WolfVote(seat, "pass", None, "safe fallback")
-
-    def witch_think(self, state: GameState, seat: int, wolf_target: Optional[int]) -> ThinkResult | None:
-        try:
-            value = self._invoke_json(self.witch_think_prompt(state, seat, wolf_target))
-            text = _clean(value.get("text"), "text", _MAX_THOUGHT)
-            return ThinkResult(seat, text)
-        except Exception:
-            return None
-
-    def seer_think(self, state: GameState, seat: int) -> ThinkResult | None:
-        try:
-            value = self._invoke_json(self.seer_think_prompt(state, seat))
-            text = _clean(value.get("text"), "text", _MAX_THOUGHT)
-            return ThinkResult(seat, text)
-        except Exception:
-            return None
 
     # ── narration ──────────────────────────────────────────────
 
