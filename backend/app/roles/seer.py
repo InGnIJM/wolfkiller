@@ -51,6 +51,18 @@ def resolve_seer_action(
         target_seat=context.actor_seat,
         source_event_id=context.source_event_id,
         sort_key=(1,),
+    ), GameEffect(
+        derive_effect_id(context.action_key, 2),
+        EffectKind.EMIT_EVENT,
+        context.action_key,
+        payload={
+            "event_type": "SEER_CHECK",
+            "payload": {"target_seat": command.target_seat, "result": camp},
+        },
+        visibility=("PUBLIC",),
+        expected_revision=context.revision,
+        source_event_id=context.source_event_id,
+        sort_key=(2,),
     ),)
 
 
@@ -58,14 +70,15 @@ SEER_SPEC = RoleSpec(
     role_id="wolf-killer-seer",
     display_name="Seer",
     camp_id="good",
+    schema_version=2,
     contracts=(ActionContract(
         contract_id="seer_check",
-        schedule_point=SchedulePoint.NIGHT_ACTION,
+        schedule_point=SchedulePoint.NIGHT_SEER_ACTION,
         order=30,
         action_types=("check", "pass"),
         actions_requiring_target=frozenset({"check"}),
         fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT}),
+        allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
         selected_target_fact_namespaces=frozenset({"camp_label"}),
         per_window_limit=1,
@@ -75,7 +88,7 @@ SEER_SPEC = RoleSpec(
         resolve=resolve_seer_action,
     ),),
     initial_private_data={"private_checks": ()},
-    allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT}),
+    allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions="Check one other living player's camp during the night action window.",
 )

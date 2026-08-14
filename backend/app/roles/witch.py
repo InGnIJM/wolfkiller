@@ -41,6 +41,7 @@ def resolve_witch_action(
     if command.action_type == "poison":
         outcome_payload["cause"] = "poison"
     common = {"expected_revision": context.revision, "source_event_id": context.source_event_id}
+    emit_type = "WITCH_SAVE" if command.action_type == "save" else "WITCH_POISON"
     return (
         GameEffect(derive_effect_id(context.action_key, 1), EffectKind.CONSUME_RESOURCE,
             context.action_key, target_seat=context.actor_seat,
@@ -49,22 +50,27 @@ def resolve_witch_action(
             sort_key=(1,), **common),
         GameEffect(derive_effect_id(context.action_key, 2), outcome, context.action_key,
             target_seat=target, payload=outcome_payload, sort_key=(2,), **common),
+        GameEffect(derive_effect_id(context.action_key, 3), EffectKind.EMIT_EVENT,
+            context.action_key,
+            payload={"event_type": emit_type, "payload": {"target_seat": target}},
+            visibility=("PUBLIC",), sort_key=(3,), **common),
     )
 
 
 WITCH_SPEC = RoleSpec(
     role_id="wolf-killer-witch", display_name="Witch", camp_id="good",
+    schema_version=2,
     contracts=(ActionContract(
-        contract_id="witch_action", schedule_point=SchedulePoint.NIGHT_ACTION, order=20,
+        contract_id="witch_action", schedule_point=SchedulePoint.NIGHT_WITCH_ACTION, order=20,
         action_types=("save", "poison", "pass"),
         actions_requiring_target=frozenset({"save", "poison"}), fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE}),
+        allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}), per_window_limit=1, per_round_limit=1,
         is_applicable=witch_applicable, validate=validate_witch_action, resolve=resolve_witch_action,
     ),),
     initial_resources={"antidote": 1, "poison": 1},
     initial_private_data={"wolf_kill_target": None},
-    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE}),
+    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions="Use at most one available potion during the night action window.",
 )

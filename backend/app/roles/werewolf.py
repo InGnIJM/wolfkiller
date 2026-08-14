@@ -30,27 +30,43 @@ def aggregate_werewolf_votes(
     if not counts:
         return ()
     target = min(counts, key=lambda seat: (-counts[seat], seat))
+    common = {
+        "expected_revision": context.revision,
+        "source_event_id": context.source_event_id,
+    }
     return (GameEffect(
         derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_DAMAGE,
         context.action_key, target_seat=target,
         payload={"target": target, "amount": 1, "cause": "wolf_kill"},
-        expected_revision=context.revision, source_event_id=context.source_event_id,
-        sort_key=(1,),
+        sort_key=(1,), **common,
+    ), GameEffect(
+        derive_effect_id(context.action_key, 2), EffectKind.EMIT_EVENT,
+        context.action_key,
+        payload={
+            "event_type": "WEREWOLF_KILL",
+            "payload": {
+                "target_seat": target,
+                "vote_counts": {str(seat): count for seat, count in counts.items()},
+            },
+        },
+        visibility=("PUBLIC",),
+        sort_key=(2,), **common,
     ),)
 
 
 WEREWOLF_SPEC = RoleSpec(
     role_id="wolf-killer-werewolf", display_name="Werewolf", camp_id="werewolf",
+    schema_version=2,
     contracts=(ActionContract(
-        contract_id="werewolf_kill", schedule_point=SchedulePoint.NIGHT_ACTION,
+        contract_id="werewolf_kill", schedule_point=SchedulePoint.NIGHT_WOLF_VOTE,
         order=10, action_types=("kill", "pass"),
         actions_requiring_target=frozenset({"kill"}), fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE}),
+        allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
         is_applicable=werewolf_applicable, validate=validate_werewolf_action,
         aggregate=aggregate_werewolf_votes,
     ),),
-    allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE}),
+    allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     instructions="Choose a night kill target or pass.",
 )
