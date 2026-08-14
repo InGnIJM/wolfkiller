@@ -94,7 +94,7 @@ export interface ThoughtPayload {
 export interface NightThoughtPayload {
   round_number: number;
   seat: number;
-  action_type: 'hunter_reasoning';
+  action_type: 'hunter_reasoning' | 'witch_reasoning' | 'seer_reasoning';
   target_seat: number | null;
   reasoning: string;
 }
