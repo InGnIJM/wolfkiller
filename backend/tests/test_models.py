@@ -201,6 +201,15 @@ class TestGameState:
         assert public["game_id"] == "test"
         assert 1 in public["players"]
 
+    def test_public_state_exposes_viewer_roles_and_camps(self):
+        state = GameState(
+            game_id="g",
+            players={1: PlayerState(1, "wolf-killer-werewolf", "werewolf")},
+        )
+        public = state.get_public_state()
+        assert public["players"][1]["role"] == "wolf-killer-werewolf"
+        assert public["players"][1]["camp"] == "werewolf"
+
     def test_phase_enum(self):
         assert GamePhase.NIGHT.value == "night"
         assert GamePhase.SPEECH.value == "speech"

@@ -150,8 +150,10 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
                 "phase": "speech",
                 "round_number": 3,
                 "players": {
-                    1: {"seat_number": 1, "is_alive": True, "is_sheriff": False},
-                    2: {"seat_number": 2, "is_alive": False, "is_sheriff": True},
+                    1: {"seat_number": 1, "is_alive": True, "is_sheriff": False,
+                        "role": "wolf-killer-villager", "camp": "good"},
+                    2: {"seat_number": 2, "is_alive": False, "is_sheriff": True,
+                        "role": "wolf-killer-werewolf", "camp": "werewolf"},
                 },
                 "sheriff": 2,
                 "speeches": [{"player_seat": 1, "text": "public", "round_number": 3}],
@@ -167,12 +169,14 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
     response = await game_routes.get_game("present")
 
     detail = response.model_dump()
-    forbidden = {"role", "camp", "has_antidote", "has_poison", "has_gun", "check_results"}
+    forbidden = {"check_results", "has_antidote", "has_poison", "has_gun"}
     assert not (forbidden & _all_keys(detail))
-    assert "wolf-killer-villager" not in repr(detail)
     assert not state.players_read
     assert "votes" not in detail
-    assert detail["players"][1] == {"seat_number": 1, "is_alive": True, "is_sheriff": False}
+    assert detail["players"][1] == {
+        "seat_number": 1, "is_alive": True, "is_sheriff": False,
+        "role": "wolf-killer-villager", "camp": "good",
+    }
     assert detail["win_result"] == {"winning_camp": "good", "reason": "all_wolves_dead"}
 
 
@@ -190,7 +194,7 @@ async def test_get_game_accepts_initial_real_game_state_without_private_fields(m
     assert response.round_number == 0
     serialized = response.model_dump()
     assert serialized["phase"] == "waiting"
-    assert not {"role", "camp", "has_antidote", "has_poison", "has_gun"} & _all_keys(serialized)
+    assert not {"check_results", "has_antidote", "has_poison", "has_gun"} & _all_keys(serialized)
 
 
 def test_read_jsonl_handles_missing_valid_and_invalid_records(tmp_path):
