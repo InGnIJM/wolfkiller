@@ -19,8 +19,9 @@ from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier
+from app.core.night_flow import NightDirector
 from app.core.scheduler import Scheduler
-from app.models.pipeline import ActionCommand as PipelineActionCommand
+from app.models.pipeline import ActionCommand as PipelineActionCommand, SchedulePoint
 from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = (
     "You are a player in an AI Werewolf game. Follow the ROLE_CONTRACT exactly, "
     "reason from PROJECTED_CONTEXT and UNTRUSTED_HISTORY, and respond with only "
-    "the JSON described by OUTPUT_ACTION_COMMAND_SCHEMA."
+    "the JSON described by OUTPUT_ACTION_COMMAND_SCHEMA. IMPORTANT: write ALL "
+    "reasoning fields in Simplified Chinese (简体中文)."
 )
 
 PUBLIC_NIGHT_SUBSTEPS = frozenset({
@@ -61,14 +63,17 @@ class GameService:
         ws_manager: WSManager,
         event_bus: EventBus,
         memory_service=None,
+        data_dir: str = "data",
     ):
         self.ws_manager = ws_manager
         self.event_bus = event_bus
         self.memory_service = memory_service
+        self.data_dir = data_dir
         self._games: dict[str, GameState] = {}
         self._engines: dict[str, GameEngine] = {}
         self._tasks: dict[str, asyncio.Task] = {}
-        self._manifest = GameManifest()
+        self._manifest = GameManifest(data_dir=data_dir)
+        self._director = None
 
         # Restore completed games so list / detail endpoints still work
         self._load_persisted_games()
@@ -97,7 +102,7 @@ class GameService:
         self, game_id: str, meta: dict,
     ) -> Optional[GameState]:
         """Build a minimal GameState from manifest metadata + game.log."""
-        log_path = os.path.join("data", "games", game_id, "game.log")
+        log_path = os.path.join(self.data_dir, "games", game_id, "game.log")
         if not os.path.exists(log_path):
             return None
 
@@ -238,13 +243,24 @@ class GameService:
         snapshot = builtin_registry.freeze()
         renderer = PromptRenderer()
         llm_client = LLMClient(model=random.choice(models))
+
+        def _night_invoke(messages):
+            response = llm_client.get_model().invoke(messages)
+            content = response.content if hasattr(response, "content") else str(response)
+            if not isinstance(content, str):
+                raise ValueError("model response is not text")
+            return content
+
+        director = NightDirector(snapshot, _night_invoke)
+        self._director = director
+
         scheduler = Scheduler(
             snapshot,
             ContextProjector(),
             ActionValidator(),
             ActionResolver(),
             EffectApplier(),
-            self._command_provider(snapshot, renderer, llm_client),
+            self._command_provider(snapshot, renderer, llm_client, director),
         )
 
         # Create engine
@@ -254,6 +270,7 @@ class GameService:
             event_bus=self.event_bus,
             roles=roles,
             memory_service=self.memory_service,
+            data_dir=self.data_dir,
             pipeline_scheduler=scheduler,
         )
         # Stamp the pipeline snapshot version so archives can be validated
@@ -289,7 +306,7 @@ class GameService:
             llm_client_factory=lambda: LLMClient(model=random.choice(models)),
         )
 
-    def _command_provider(self, snapshot, renderer: PromptRenderer, llm_client: LLMClient):
+    def _command_provider(self, snapshot, renderer: PromptRenderer, llm_client: LLMClient, director):
         """LLM-backed command provider for the pipeline scheduler.
 
         Renders a prompt from the frozen registry spec, projected context and
@@ -298,6 +315,13 @@ class GameService:
         so a point never stalls on a malformed model response.
         """
         def provider(request, context, attempt):
+            if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
+                command = director.collected_vote(request.actor_seat)
+                return command if command is not None else PipelineActionCommand(
+                    action_type=request.contract.fallback_action_type,
+                    target_seat=None,
+                    reasoning="safe fallback",
+                )
             role_spec = snapshot.require(request.role_id)
             engine = self._engines.get(context.game_id)
             history = ""
