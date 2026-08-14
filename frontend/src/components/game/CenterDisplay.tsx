@@ -184,6 +184,22 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           </Typography>
         </Box>
       );
+    case 'night_thought': {
+      const { action_type, seat, target_seat, reasoning } = entry.payload;
+      const body = target_seat === null
+        ? `不行动：${reasoning || '（无理由）'}`
+        : `目标 ${target_seat}号：${reasoning || '（无理由）'}`;
+      return (
+        <Box sx={{ ...panelSx, py: 1.8 }}>
+          <Typography variant="subtitle1" color="info.light" gutterBottom>
+            {THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
+          </Typography>
+          <Typography variant="body2" color="grey.300" sx={{ whiteSpace: 'pre-wrap' }}>
+            {body}
+          </Typography>
+        </Box>
+      );
+    }
     case 'death':
       return (
         <Box sx={{ ...panelSx, py: 1.8 }}>

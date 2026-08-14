@@ -85,10 +85,18 @@ export interface WolfVotePayload {
   reasoning: string;
 }
 
-export interface NightThoughtPayload {
+export interface ThoughtPayload {
   round_number: number;
   seat: number;
   text: string;
+}
+
+export interface NightThoughtPayload {
+  round_number: number;
+  seat: number;
+  action_type: 'hunter_reasoning';
+  target_seat: number | null;
+  reasoning: string;
 }
 
 export interface PlayerMemory {
@@ -138,7 +146,8 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'narration', NarrationPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>
   | PublicReplayEnvelope<'wolf_vote', WolfVotePayload>
-  | PublicReplayEnvelope<'witch_thought' | 'seer_thought', NightThoughtPayload>
+  | PublicReplayEnvelope<'witch_thought' | 'seer_thought', ThoughtPayload>
+  | PublicReplayEnvelope<'night_thought', NightThoughtPayload>
   | PublicReplayEnvelope<'phase', { phase: GamePhase; round_number: number }>
   | PublicReplayEnvelope<'winner', WinResult>;
 
