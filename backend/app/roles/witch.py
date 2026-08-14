@@ -29,11 +29,41 @@ def validate_witch_action(
     return ()
 
 
+def _witch_reasoning_effect(
+    context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
+) -> GameEffect:
+    if command.action_type == "save" and command.target_seat is not None:
+        thought = f"决定使用解药救 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
+    elif command.action_type == "poison" and command.target_seat is not None:
+        thought = f"决定使用毒药毒杀 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
+    else:
+        thought = f"决定今晚不使用药水：{command.reasoning or '无理由'}"
+    return GameEffect(
+        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
+        context.action_key,
+        payload={
+            "event_type": "WITCH_REASONING",
+            "payload": {
+                "seat": context.actor_seat,
+                "action_type": command.action_type,
+                "target_seat": command.target_seat,
+                "reasoning": command.reasoning,
+                "thought": thought,
+            },
+        },
+        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    )
+
+
 def resolve_witch_action(
     context: ActionContext, command: ActionCommand,
 ) -> tuple[GameEffect, ...]:
     if command.action_type == "pass":
-        return ()
+        return (_witch_reasoning_effect(
+            context, command, 1,
+            expected_revision=context.revision,
+            source_event_id=context.source_event_id,
+        ),)
     resource = "antidote" if command.action_type == "save" else "poison"
     outcome = EffectKind.SUBMIT_PROTECTION if command.action_type == "save" else EffectKind.SUBMIT_DAMAGE
     target = command.target_seat
@@ -54,6 +84,7 @@ def resolve_witch_action(
             context.action_key,
             payload={"event_type": emit_type, "payload": {"target_seat": target}},
             visibility=("PUBLIC",), sort_key=(3,), **common),
+        _witch_reasoning_effect(context, command, 4, **common),
     )
 
 

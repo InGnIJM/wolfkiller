@@ -48,13 +48,13 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     poisoned = resolve_witch_action(context(), command("poison", 3))
     assert [item.kind for item in saved] == [
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
-        EffectKind.EMIT_EVENT,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert [item.kind for item in poisoned] == [
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
-        EffectKind.EMIT_EVENT,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
-    assert [item.sort_key for item in saved] == [(1,), (2,), (3,)]
+    assert [item.sort_key for item in saved] == [(1,), (2,), (3,), (4,)]
     assert saved[0].target_seat == 1 and saved[1].target_seat == 2
     assert saved[1].payload == {"target": 2, "amount": 1}
     assert poisoned[1].payload == {"target": 3, "amount": 1, "cause": "poison"}
@@ -62,18 +62,42 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     assert saved[2].payload == {"event_type": "WITCH_SAVE", "payload": {"target_seat": 2}}
     assert poisoned[2].payload == {"event_type": "WITCH_POISON", "payload": {"target_seat": 3}}
     assert saved[2].visibility == poisoned[2].visibility == ("PUBLIC",)
-    assert resolve_witch_action(context(), command("pass")) == ()
+    assert saved[3].payload["event_type"] == "WITCH_REASONING"
+    assert saved[3].payload["payload"] == {
+        "seat": 1, "action_type": "save", "target_seat": 2,
+        "reasoning": "ok", "thought": "决定使用解药救 2 号玩家：ok",
+    }
+    assert poisoned[3].payload["event_type"] == "WITCH_REASONING"
+    assert poisoned[3].payload["payload"]["thought"] == "决定使用毒药毒杀 3 号玩家：ok"
+
+
+def test_resolve_pass_emits_reasoning_event() -> None:
+    effects = resolve_witch_action(context(), command("pass"))
+    assert [item.kind for item in effects] == [EffectKind.EMIT_EVENT]
+    assert effects[0].payload == {
+        "event_type": "WITCH_REASONING",
+        "payload": {
+            "seat": 1, "action_type": "pass", "target_seat": None,
+            "reasoning": "ok", "thought": "决定今晚不使用药水：ok",
+        },
+    }
+    assert effects[0].visibility == ("PUBLIC",)
 
 
 def test_witch_contract_moved_to_action_point_and_keeps_only_save_poison_events() -> None:
     contract = next(c for c in WITCH_SPEC.contracts if c.contract_id == "witch_action")
     assert contract.schedule_point is SchedulePoint.NIGHT_WITCH_ACTION
     assert WITCH_SPEC.schema_version == 2
-    assert resolve_witch_action(context(), command("pass")) == ()
     saved = resolve_witch_action(context(), command("save", 2))
     poisoned = resolve_witch_action(context(), command("poison", 3))
-    assert [e.payload["event_type"] for e in saved if e.kind is EffectKind.EMIT_EVENT] == ["WITCH_SAVE"]
-    assert [e.payload["event_type"] for e in poisoned if e.kind is EffectKind.EMIT_EVENT] == ["WITCH_POISON"]
+    assert [e.payload["event_type"] for e in saved if e.kind is EffectKind.EMIT_EVENT] == [
+        "WITCH_SAVE", "WITCH_REASONING",
+    ]
+    assert [e.payload["event_type"] for e in poisoned if e.kind is EffectKind.EMIT_EVENT] == [
+        "WITCH_POISON", "WITCH_REASONING",
+    ]
+    assert [e.payload["event_type"] for e in resolve_witch_action(context(), command("pass"))
+            if e.kind is EffectKind.EMIT_EVENT] == ["WITCH_REASONING"]
 
 
 def test_validator_enforces_alive_target_and_once_per_round() -> None:
@@ -88,7 +112,7 @@ def test_resolver_adds_accept_and_registry_preserves_legacy() -> None:
     effects = ActionResolver().resolve_effects(context(), spec, spec.contracts[0], command("save", 2))
     assert [item.kind for item in effects] == [
         EffectKind.ACCEPT_ACTION, EffectKind.CONSUME_RESOURCE,
-        EffectKind.SUBMIT_PROTECTION, EffectKind.EMIT_EVENT,
+        EffectKind.SUBMIT_PROTECTION, EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert spec is WITCH_SPEC and spec.initial_resources == {"antidote": 1, "poison": 1}
     assert builtin_registry.require("wolf-killer-witch").role_factory is not None
