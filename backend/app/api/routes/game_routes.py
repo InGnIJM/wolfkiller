@@ -237,7 +237,7 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
     if not isinstance(event_type, str):
         return []
     if event_type in ("WOLF_CHAT_MESSAGE", "WITCH_THOUGHT", "SEER_THOUGHT"):
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
             return []
         seat = payload.get("seat"); text = payload.get("text")
         if not _is_positive_int(seat) or not isinstance(text, str) or not text or len(text) > 200:
@@ -248,7 +248,7 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         return [{"event_type": public_type, "payload": {
             "round_number": round_number, "seat": seat, "text": text}}]
     if event_type == "WOLF_VOTE":
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
             return []
         seat = payload.get("seat"); target = payload.get("target_seat")
         reasoning = payload.get("reasoning")
