@@ -456,8 +456,8 @@ def test_remaining_closed_payload_rejections(kind, payload, target) -> None:
     [
         (EffectKind.SET_PRIVATE_DATA, {"target": 1, "key": "k", "value": -1}, 1),
         (EffectKind.RECORD_PRIVATE_FACT, {"target": 1, "namespace": "n", "fact": {"x": 2_147_483_648}}, 1),
-        (EffectKind.EMIT_EVENT, {"event_type": "X", "payload": {"x": "a" * 257}}, None),
-        (EffectKind.EMIT_EVENT, {"event_type": "X", "payload": {"x": ["a" * 257]}}, None),
+        (EffectKind.EMIT_EVENT, {"event_type": "X", "payload": {"x": "a" * 2001}}, None),
+        (EffectKind.EMIT_EVENT, {"event_type": "X", "payload": {"x": ["a" * 2001]}}, None),
     ],
 )
 def test_nested_payload_values_have_bounded_strings_and_integers(kind, payload, target) -> None:
@@ -468,6 +468,26 @@ def test_nested_payload_values_have_bounded_strings_and_integers(kind, payload, 
     )
     with pytest.raises(EffectRejected):
         EffectApplier().apply(state(), effects, permission())
+
+
+def test_emit_event_payload_strings_accept_up_to_2000_chars() -> None:
+    action = "long-audience-text"
+    effects = (
+        GameEffect(derive_effect_id(action, 0), EffectKind.ACCEPT_ACTION, action, sort_key=(0,)),
+        GameEffect(
+            derive_effect_id(action, 1), EffectKind.EMIT_EVENT, action,
+            payload={
+                "event_type": "DISCUSSION",
+                "payload": {"channel": "a" * 2000, "cjk": "汉" * 300, "nested": ["b" * 1500]},
+            },
+            sort_key=(1,),
+        ),
+    )
+    result = EffectApplier().apply(state(), effects, permission())
+    event = result.events[0]
+    assert len(event["payload"]["channel"]) == 2000
+    assert len(event["payload"]["cjk"]) == 300
+    assert len(event["payload"]["nested"][0]) == 1500
 
 
 @pytest.mark.parametrize(

@@ -45,12 +45,18 @@ def test_point_key_and_cursor_are_exact_frozen_and_bounded() -> None:
     for call in (
         lambda: key(game_id=1), lambda: key(game_id=""), lambda: key(game_id="\ud800"),
         lambda: key(round_number=True), lambda: key(round_number=-1),
-        lambda: key(point="night_action"), lambda: key(registry_digest="x" * 257),
+        lambda: key(point="night_action"), lambda: key(registry_digest="x" * 2001),
         lambda: WorkCursor("unknown", 0, 0), lambda: WorkCursor("main", True, 0),
         lambda: WorkCursor("response", 0, -1),
     ):
         with pytest.raises((TypeError, ValueError)): call()
     assert WorkCursor("response", 2, 3) == WorkCursor("response", 2, 3)
+
+
+def test_checkpoint_event_strings_accept_up_to_2000_chars() -> None:
+    checkpoint(events=({"event_type": "E", "payload": {"channel": "a" * 2000, "cjk": "汉" * 300}},))
+    with pytest.raises(ValueError):
+        checkpoint(events=({"event_type": "E", "payload": {"channel": "a" * 2001}},))
 
 
 def test_pending_event_is_exact_frozen_and_bounded() -> None:

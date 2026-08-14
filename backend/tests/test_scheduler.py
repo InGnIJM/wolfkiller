@@ -632,6 +632,18 @@ def test_frozen_json_limits_and_scalar_paths() -> None:
     with pytest.raises(ValueError): DomainEvent("event:" + "e" * 16, "E", {str(i): i for i in range(10_001)})
 
 
+def test_event_payload_strings_accept_up_to_2000_chars() -> None:
+    event = DomainEvent("event:" + "e" * 16, "E", {"text": "a" * 2000, "cjk": "汉" * 300})
+    assert len(event.payload["text"]) == 2000
+    assert len(event.payload["cjk"]) == 300
+    result = PointResult((), (), ({"event_type": "E", "payload": {"text": "a" * 1500}},), "d")
+    assert len(result.events[0]["payload"]["text"]) == 1500
+    with pytest.raises(ValueError):
+        DomainEvent("event:" + "e" * 16, "E", {"text": "a" * 2001})
+    with pytest.raises(ValueError):
+        PointResult((), (), ({"event_type": "E", "payload": {"text": "a" * 2001}},), "d")
+
+
 def test_queue_strict_enqueue_pop_open_limits_and_reason_policy() -> None:
     registry = snapshot(spec("r", contract("react", responses=frozenset({"E"}))))
     queue = ResponseQueue(registry, max_events=1)
