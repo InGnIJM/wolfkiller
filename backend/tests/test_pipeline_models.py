@@ -79,6 +79,9 @@ def test_schedule_and_effect_enums_are_complete_and_stable() -> None:
     assert [point.value for point in SchedulePoint] == [
         "game_setup",
         "night_action",
+        "night_wolf_vote",
+        "night_witch_action",
+        "night_seer_action",
         "night_commit",
         "dawn_reaction",
         "day_action",
@@ -932,3 +935,10 @@ def test_module_documents_trusted_process_boundary() -> None:
     assert "accidental mutation" in doc
     assert "trusted" in doc
     assert "constructor" in doc
+
+
+def test_schedule_point_has_staged_night_members() -> None:
+    assert SchedulePoint.NIGHT_WOLF_VOTE.value == "night_wolf_vote"
+    assert SchedulePoint.NIGHT_WITCH_ACTION.value == "night_witch_action"
+    assert SchedulePoint.NIGHT_SEER_ACTION.value == "night_seer_action"
+    assert SchedulePoint.NIGHT_ACTION.value == "night_action"  # guard sample still uses it

@@ -29,6 +29,9 @@ MAX_JSON_DEPTH = 64
 class SchedulePoint(str, Enum):
     GAME_SETUP = "game_setup"
     NIGHT_ACTION = "night_action"
+    NIGHT_WOLF_VOTE = "night_wolf_vote"
+    NIGHT_WITCH_ACTION = "night_witch_action"
+    NIGHT_SEER_ACTION = "night_seer_action"
     NIGHT_COMMIT = "night_commit"
     DAWN_REACTION = "dawn_reaction"
     DAY_ACTION = "day_action"
