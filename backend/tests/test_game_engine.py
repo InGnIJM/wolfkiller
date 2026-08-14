@@ -676,7 +676,8 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
                     "payload": {"target_seat": 4, "vote_counts": {"1": 1}},
                     "visibility": ("PUBLIC",),
                 }
-                return PointResult((), (), (kill_event,), "wolf")
+                commit = CommitResult("wolf", ("effect",), 1, (kill_event,), "wolf")
+                return PointResult((), (commit,), commit.events, "wolf")
             if point is SchedulePoint.NIGHT_COMMIT:
                 state.players[4].is_alive = False
                 state.death_history.append(DeathReport(4, "wolf_kill", 1))
@@ -788,6 +789,16 @@ def test_pipeline_audience_events_keep_only_valid_public_non_death_events() -> N
                 {"event_type": "\ud800", "payload": {"x": 1}, "visibility": ("PUBLIC",)},
             )),
         )
+
+
+@pytest.mark.asyncio
+async def test_log_stage_audience_excludes_non_public_events(tmp_path) -> None:
+    event = {"event_type": "WOLF_INTERNAL", "payload": {"x": 1}, "visibility": ("ACTOR",)}
+    commit = CommitResult("wolf", (), 1, (event,), "digest")
+    result = PointResult((), (commit,), (event,), "digest")
+    engine = GameEngine(game_id="stage-aud", data_dir=str(tmp_path))
+    await engine._log_stage_audience(result)
+    assert not (tmp_path / "games" / "stage-aud" / "game.log").exists()
 
 
 def test_log_audience_events_writes_operation_records(tmp_path) -> None:

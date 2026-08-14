@@ -293,8 +293,9 @@ class GameEngine:
         self.game_logger.log_narration(self.game_id, self.state.round_number, "night", title, text)
 
     async def _log_stage_audience(self, result: PointResult) -> None:
+        observation = RolePipeline.observe_v2(result)
         self._log_audience_events(
-            PipelineResult((), (), result.state_digest, result.events, PipelineMode.V2),
+            PipelineResult((), (), observation.state_digest, observation.public_events, PipelineMode.V2),
             "night",
         )
 
