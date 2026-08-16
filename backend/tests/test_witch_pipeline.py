@@ -59,16 +59,16 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     assert saved[1].payload == {"target": 2, "amount": 1}
     assert poisoned[1].payload == {"target": 3, "amount": 1, "cause": "poison"}
     assert saved[0].preconditions["resource_equals"] == {"resource": "antidote", "value": 1}
-    assert saved[2].payload == {"event_type": "WITCH_SAVE", "payload": {"target_seat": 2}}
-    assert poisoned[2].payload == {"event_type": "WITCH_POISON", "payload": {"target_seat": 3}}
-    assert saved[2].visibility == poisoned[2].visibility == ("PUBLIC",)
-    assert saved[3].payload["event_type"] == "WITCH_REASONING"
-    assert saved[3].payload["payload"] == {
+    assert saved[2].payload["event_type"] == "WITCH_REASONING"
+    assert saved[2].payload["payload"] == {
         "seat": 1, "action_type": "save", "target_seat": 2,
         "reasoning": "ok", "thought": "决定使用解药救 2 号玩家：ok",
     }
-    assert poisoned[3].payload["event_type"] == "WITCH_REASONING"
-    assert poisoned[3].payload["payload"]["thought"] == "决定使用毒药毒杀 3 号玩家：ok"
+    assert poisoned[2].payload["event_type"] == "WITCH_REASONING"
+    assert poisoned[2].payload["payload"]["thought"] == "决定使用毒药毒杀 3 号玩家：ok"
+    assert saved[3].payload == {"event_type": "WITCH_SAVE", "payload": {"target_seat": 2}}
+    assert poisoned[3].payload == {"event_type": "WITCH_POISON", "payload": {"target_seat": 3}}
+    assert saved[3].visibility == poisoned[3].visibility == ("PUBLIC",)
 
 
 def test_resolve_pass_emits_reasoning_event() -> None:
@@ -91,10 +91,10 @@ def test_witch_contract_moved_to_action_point_and_keeps_only_save_poison_events(
     saved = resolve_witch_action(context(), command("save", 2))
     poisoned = resolve_witch_action(context(), command("poison", 3))
     assert [e.payload["event_type"] for e in saved if e.kind is EffectKind.EMIT_EVENT] == [
-        "WITCH_SAVE", "WITCH_REASONING",
+        "WITCH_REASONING", "WITCH_SAVE",
     ]
     assert [e.payload["event_type"] for e in poisoned if e.kind is EffectKind.EMIT_EVENT] == [
-        "WITCH_POISON", "WITCH_REASONING",
+        "WITCH_REASONING", "WITCH_POISON",
     ]
     assert [e.payload["event_type"] for e in resolve_witch_action(context(), command("pass"))
             if e.kind is EffectKind.EMIT_EVENT] == ["WITCH_REASONING"]

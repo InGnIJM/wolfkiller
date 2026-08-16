@@ -80,18 +80,18 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
     assert emit.kind is EffectKind.EMIT_EVENT and emit.visibility == ("PUBLIC",)
     assert emit.sort_key == (2,)
     assert emit.payload == {
-        "event_type": "SEER_CHECK",
-        "payload": {"target_seat": 2, "result": "werewolf"},
-    }
-    reasoning = effects[3]
-    assert reasoning.kind is EffectKind.EMIT_EVENT and reasoning.visibility == ("PUBLIC",)
-    assert reasoning.sort_key == (3,)
-    assert reasoning.payload == {
         "event_type": "SEER_REASONING",
         "payload": {
             "seat": 1, "action_type": "check", "target_seat": 2,
             "reasoning": "ok", "thought": "决定查验 2 号玩家：ok",
         },
+    }
+    result = effects[3]
+    assert result.kind is EffectKind.EMIT_EVENT and result.visibility == ("PUBLIC",)
+    assert result.sort_key == (3,)
+    assert result.payload == {
+        "event_type": "SEER_CHECK",
+        "payload": {"target_seat": 2, "result": "werewolf"},
     }
 
 
@@ -114,7 +114,7 @@ def test_seer_contract_moved_to_action_point_and_keeps_only_check_event() -> Non
     assert SEER_SPEC.schema_version == 2
     effects = resolve_seer_action(context(), command("check", 2))
     assert [e.payload["event_type"] for e in effects if e.kind is EffectKind.EMIT_EVENT] == [
-        "SEER_CHECK", "SEER_REASONING",
+        "SEER_REASONING", "SEER_CHECK",
     ]
     passed = resolve_seer_action(context(target=None), command("pass"))
     assert [e.payload["event_type"] for e in passed if e.kind is EffectKind.EMIT_EVENT] == [
