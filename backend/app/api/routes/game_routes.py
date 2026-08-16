@@ -24,7 +24,7 @@ _LEGACY_ROLE_COUNT_FIELDS = {
 _PUBLIC_GAME_PHASES = frozenset({
     "waiting", "role_deal", "night", "dawn", "last_words",
     "sheriff_election", "speech", "vote_casting", "vote_resolution",
-    "game_over",
+    "game_over", "error",
 })
 _PUBLIC_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot", "exile"})
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})

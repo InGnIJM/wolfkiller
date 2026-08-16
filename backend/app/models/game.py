@@ -19,6 +19,7 @@ class GamePhase(str, Enum):
     VOTE_CASTING = "vote_casting"
     VOTE_RESOLUTION = "vote_resolution"
     GAME_OVER = "game_over"
+    ERROR = "error"
 
 
 class Camp(str, Enum):

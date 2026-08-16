@@ -292,6 +292,40 @@ class GameService:
         task = asyncio.create_task(engine.start())
         self._tasks[game_id] = task
 
+        def _watch_engine(done: asyncio.Task) -> None:
+            """Surface engine crashes instead of silently freezing the game."""
+            if done.cancelled():
+                return
+            exc = done.exception()
+            if exc is None:
+                return
+            logger.error(
+                "Game engine crashed for %s",
+                game_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            state = self._games.get(game_id)
+            if state is None:
+                return
+            state.phase = GamePhase.ERROR
+            self._manifest.update_game(game_id, phase=GamePhase.ERROR.value)
+            engine.game_logger.log_phase_change(
+                game_id, GamePhase.ERROR.value, state.round_number,
+            )
+
+            async def _broadcast_error() -> None:
+                await self.event_bus.publish(
+                    BusEvent.PHASE_CHANGED,
+                    game_id=game_id,
+                    phase=GamePhase.ERROR.value,
+                    round_number=state.round_number,
+                    state=state,
+                )
+
+            asyncio.create_task(_broadcast_error())
+
+        task.add_done_callback(_watch_engine)
+
         logger.info(f"Game created: {game_id}, {config.total_players} players")
         return game_id
 
@@ -345,6 +379,13 @@ class GameService:
                     raise ValueError("model response is not text")
                 command = PipelineActionCommand.model_validate(json.loads(content))
             except Exception:
+                logger.warning(
+                    "LLM action command failed for seat=%s contract=%s point=%s; "
+                    "degrading to safe fallback",
+                    request.actor_seat, request.contract.contract_id,
+                    request.contract.schedule_point.value,
+                    exc_info=True,
+                )
                 command = None
             if command is None or command.action_type not in request.contract.action_types:
                 return PipelineActionCommand(
