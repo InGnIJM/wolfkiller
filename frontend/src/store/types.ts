@@ -189,3 +189,73 @@ export type WSMessage =
       round_number: number;
     }
   | { type: 'paused_state'; paused: boolean };
+
+// ── Model config & game creation catalog ──────────────────────
+
+export interface ModelConfig {
+  id: string;
+  name: string;
+  base_url: string;
+  model_id: string;
+  has_key: boolean;
+  api_key_masked: string | null;
+  key_invalid: boolean;
+  temperature: number | null;
+  strict_base_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelConfigInput {
+  name: string;
+  base_url: string;
+  model_id: string;
+  api_key?: string;
+  temperature?: number | null;
+  strict_base_url?: string | null;
+}
+
+export interface ModelTestResult {
+  ok: boolean;
+  latency_ms: number | null;
+  error: string | null;
+}
+
+export interface RoleCatalogItem {
+  role_id: string;
+  display_name: string;
+  name_zh: string;
+  camp: string;
+  icon: string;
+  description: string;
+  min_count: number;
+  max_count: number | null;
+  dependencies: string[];
+  exclusions: string[];
+}
+
+export interface GamePreset {
+  id: string;
+  name: string;
+  description: string;
+  role_counts: Record<string, number>;
+}
+
+export interface FieldConstraints {
+  min_players: number;
+  max_players: number;
+  min_werewolves: number;
+  min_good: number;
+}
+
+export interface ModelAssignment {
+  config_id: string | null;
+  count: number;
+}
+
+export interface ModelSnapshotEntry {
+  config_id: string | null;
+  name: string;
+  model_id: string;
+  base_url: string;
+}

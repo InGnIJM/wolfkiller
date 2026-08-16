@@ -1,5 +1,7 @@
 import type {
-  GameListResponse, GameLogs, GameMemories, PublicGameState,
+  FieldConstraints, GameListResponse, GameLogs, GameMemories, GamePreset,
+  ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
+  ModelTestResult, PublicGameState, RoleCatalogItem,
 } from '../store/types';
 
 function getApiBase(): string {
@@ -11,12 +13,9 @@ function getWsBase(): string {
 }
 
 export async function createGame(config?: {
-  num_werewolves?: number;
-  num_villagers?: number;
-  num_seers?: number;
-  num_witches?: number;
-  num_hunters?: number;
-}): Promise<{ game_id: string }> {
+  role_counts?: Record<string, number>;
+  model_assignments?: ModelAssignment[];
+}): Promise<{ game_id: string; model_snapshot?: ModelSnapshotEntry[] }> {
   const res = await fetch(`${getApiBase()}/api/games`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -64,4 +63,70 @@ export async function fetchGameMemories(gameId: string): Promise<GameMemories> {
 
 export function getWsUrl(gameId: string): string {
   return `${getWsBase()}/ws/game/${gameId}`;
+}
+
+export async function listModels(): Promise<ModelConfig[]> {
+  const res = await fetch(`${getApiBase()}/api/models`);
+  if (!res.ok) throw new Error(`List models failed: ${res.status}`);
+  return res.json();
+}
+
+export async function createModel(input: ModelConfigInput): Promise<ModelConfig> {
+  const res = await fetch(`${getApiBase()}/api/models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Create model failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateModel(id: string, input: ModelConfigInput): Promise<ModelConfig> {
+  const res = await fetch(`${getApiBase()}/api/models/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Update model failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteModel(id: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/models/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Delete model failed: ${res.status}`);
+}
+
+export async function testModelConnection(input: {
+  config_id?: string | null;
+  base_url?: string;
+  api_key?: string;
+  model_id?: string;
+}): Promise<ModelTestResult> {
+  const res = await fetch(`${getApiBase()}/api/models/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Test model failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchRoleCatalog(): Promise<RoleCatalogItem[]> {
+  const res = await fetch(`${getApiBase()}/api/catalog/roles`);
+  if (!res.ok) throw new Error(`Fetch roles failed: ${res.status}`);
+  const data = (await res.json()) as { roles: RoleCatalogItem[] };
+  return data.roles;
+}
+
+export async function fetchPresets(): Promise<GamePreset[]> {
+  const res = await fetch(`${getApiBase()}/api/catalog/presets`);
+  if (!res.ok) throw new Error(`Fetch presets failed: ${res.status}`);
+  const data = (await res.json()) as { presets: GamePreset[] };
+  return data.presets;
+}
+
+export async function fetchConstraints(): Promise<FieldConstraints> {
+  const res = await fetch(`${getApiBase()}/api/catalog/constraints`);
+  if (!res.ok) throw new Error(`Fetch constraints failed: ${res.status}`);
+  return res.json();
 }
