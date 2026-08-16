@@ -135,6 +135,8 @@ class PublicWinnerResponse(_PublicResponse):
 
 PublicThoughtActionType = Literal[
     "hunter_reasoning",
+    "witch_reasoning",
+    "seer_reasoning",
 ]
 
 

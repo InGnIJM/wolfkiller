@@ -80,6 +80,30 @@ class TestSchemas:
         with pytest.raises(ValidationError):
             GameLogsResponse(game_id="abc", events=[event])
 
+    @pytest.mark.parametrize(
+        "action_type",
+        ["hunter_reasoning", "witch_reasoning", "seer_reasoning"],
+    )
+    def test_night_thought_accepts_all_role_reasoning_types(self, action_type):
+        response = GameLogsResponse(game_id="abc", events=[{
+            "event_type": "night_thought", "timestamp": PUBLIC_TIMESTAMP,
+            "payload": {
+                "round_number": 2, "seat": 2, "action_type": action_type,
+                "target_seat": 4, "reasoning": "根据已有信息行动",
+            },
+        }])
+        assert response.events[0].payload.action_type == action_type
+
+    def test_night_thought_rejects_unknown_reasoning_type(self):
+        with pytest.raises(ValidationError):
+            GameLogsResponse(game_id="abc", events=[{
+                "event_type": "night_thought", "timestamp": PUBLIC_TIMESTAMP,
+                "payload": {
+                    "round_number": 2, "seat": 2, "action_type": "guard_reasoning",
+                    "target_seat": None, "reasoning": "未知类型",
+                },
+            }])
+
     @pytest.mark.parametrize("event", PUBLIC_REPLAY_EVENTS)
     @pytest.mark.parametrize(
         "timestamp",
