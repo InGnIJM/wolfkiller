@@ -18,6 +18,7 @@ const PHASE_LABELS: Record<string, string> = {
   vote_casting: '投票阶段',
   vote_resolution: '公布投票结果',
   game_over: '游戏结束',
+  error: '游戏异常结束',
 };
 
 const CAUSE_LABELS: Record<string, string> = {

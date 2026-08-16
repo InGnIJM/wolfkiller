@@ -16,6 +16,10 @@ const WINNER_META: Record<string, { label: string; color: 'success' | 'error' }>
   werewolf: { label: '狼人胜', color: 'error' },
 };
 
+const PHASE_LABELS: Record<string, string> = {
+  error: '异常终止',
+};
+
 export default function GameCard({ gameId, phase, roundNumber, playerCount, aliveCount, winner, onClick }: Props) {
   const win = winner ? WINNER_META[winner] : null;
 
@@ -41,7 +45,7 @@ export default function GameCard({ gameId, phase, roundNumber, playerCount, aliv
                 {gameId.slice(0, 8)}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3 }}>
-                {phase} · 第 {roundNumber} 轮
+                {PHASE_LABELS[phase] ?? phase} · 第 {roundNumber} 轮
               </Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>

@@ -12,7 +12,8 @@ export type GamePhase =
   | 'speech'
   | 'vote_casting'
   | 'vote_resolution'
-  | 'game_over';
+  | 'game_over'
+  | 'error';
 
 export type DeathCause = 'wolf_kill' | 'poison' | 'hunter_shot' | 'exile';
 export type WinningCamp = 'good' | 'werewolf';
