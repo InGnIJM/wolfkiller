@@ -19,8 +19,8 @@ afterEach(() => {
 });
 
 describe('model config api', () => {
-  it('lists models', async () => {
-    const fetchFn = mockFetch([{ id: 'a', name: 'n' }]);
+  it('lists models and unwraps the configs envelope', async () => {
+    const fetchFn = mockFetch({ configs: [{ id: 'a', name: 'n' }] });
     const result = await listModels();
     expect(fetchFn).toHaveBeenCalledWith(`${BASE}/api/models`);
     expect(result).toEqual([{ id: 'a', name: 'n' }]);

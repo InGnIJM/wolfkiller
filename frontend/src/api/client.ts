@@ -68,7 +68,8 @@ export function getWsUrl(gameId: string): string {
 export async function listModels(): Promise<ModelConfig[]> {
   const res = await fetch(`${getApiBase()}/api/models`);
   if (!res.ok) throw new Error(`List models failed: ${res.status}`);
-  return res.json();
+  const data = (await res.json()) as { configs: ModelConfig[] };
+  return data.configs;
 }
 
 export async function createModel(input: ModelConfigInput): Promise<ModelConfig> {
