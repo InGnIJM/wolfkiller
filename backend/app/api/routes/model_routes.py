@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from app.agents.llm_client import derive_strict_base_url
 from app.api.model_schemas import (
     ModelConfigRequest, ModelConfigResponse, ModelListResponse,
     ModelTestRequest, ModelTestResponse,
@@ -109,19 +110,29 @@ async def test_model(req: ModelTestRequest):
                 api_key = crypto.decrypt(config.api_key_encrypted)
             except KeyDecryptionError:
                 raise HTTPException(400, "stored api key cannot be decrypted") from None
+        strict_url = derive_strict_base_url(config.base_url, config.strict_base_url)
     else:
         if not req.base_url or not req.model_id:
             raise HTTPException(422, "base_url and model_id are required")
         base_url, model_id = req.base_url, req.model_id
         api_key = req.api_key or ""
+        strict_url = derive_strict_base_url(base_url)
+    # Probe the same endpoints the game will call: the regular endpoint and
+    # the derived strict-mode endpoint (they differ for official DeepSeek).
+    targets = (
+        [(base_url, ""), (strict_url, "strict:")]
+        if strict_url != base_url
+        else [(base_url, "")]
+    )
     start = time.monotonic()
-    try:
-        ChatOpenAI(
-            model=model_id, api_key=api_key, base_url=base_url,
-            temperature=0, max_tokens=1, timeout=10,
-        ).invoke([HumanMessage(content="ping")])
-    except Exception as error:
-        return ModelTestResponse(ok=False, error=type(error).__name__)
+    for endpoint, prefix in targets:
+        try:
+            ChatOpenAI(
+                model=model_id, api_key=api_key, base_url=endpoint,
+                temperature=0, max_tokens=1, timeout=10,
+            ).invoke([HumanMessage(content="ping")])
+        except Exception as error:
+            return ModelTestResponse(ok=False, error=f"{prefix}{type(error).__name__}")
     return ModelTestResponse(
         ok=True, latency_ms=int((time.monotonic() - start) * 1000),
     )

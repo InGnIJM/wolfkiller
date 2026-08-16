@@ -204,9 +204,12 @@ async def test_connection_test_by_id_uses_stored_key(store, monkeypatch):
 
     assert response.ok is True
     assert isinstance(response.latency_ms, int)
-    kwargs = mock_chat.call_args.kwargs
-    assert kwargs["api_key"] == "sk-stored-key"
-    assert kwargs["base_url"] == "https://api.deepseek.com/v1"
+    calls = mock_chat.call_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs["base_url"] == "https://api.deepseek.com/v1"
+    assert calls[1].kwargs["base_url"] == "https://api.deepseek.com/beta"
+    assert calls[0].kwargs["api_key"] == "sk-stored-key"
+    assert calls[1].kwargs["api_key"] == "sk-stored-key"
 
 
 @pytest.mark.asyncio
@@ -220,9 +223,9 @@ async def test_connection_test_by_id_with_provided_key_overrides_stored_key(stor
         await model_routes.test_model(ModelTestRequest(
             config_id=cfg.id, api_key="sk-provided-key",
         ))
-    kwargs = mock_chat.call_args.kwargs
-    assert kwargs["api_key"] == "sk-provided-key"
-    assert kwargs["base_url"] == "https://api.deepseek.com/v1"
+    calls = mock_chat.call_args_list
+    assert calls[0].kwargs["api_key"] == "sk-provided-key"
+    assert calls[1].kwargs["api_key"] == "sk-provided-key"
 
 
 @pytest.mark.asyncio
@@ -241,7 +244,7 @@ async def test_connection_test_by_id_without_stored_key_uses_blank(store, monkey
     cfg = _stored(store, api_key_encrypted="")
     with patch.object(model_routes, "ChatOpenAI") as mock_chat:
         await model_routes.test_model(ModelTestRequest(config_id=cfg.id))
-    assert mock_chat.call_args.kwargs["api_key"] == ""
+    assert mock_chat.call_args_list[0].kwargs["api_key"] == ""
 
 
 @pytest.mark.asyncio
@@ -291,6 +294,41 @@ async def test_connection_test_maps_provider_errors(store, monkeypatch):
     assert response.ok is False
     assert response.error == "TimeoutError"
     assert response.latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_connection_test_by_id_reports_strict_endpoint_failure(store, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
+    with patch.object(model_routes, "ChatOpenAI") as mock_chat:
+        mock_chat.return_value.invoke.side_effect = [None, TimeoutError("slow")]
+        response = await model_routes.test_model(ModelTestRequest(config_id=cfg.id))
+
+    assert response.ok is False
+    assert response.error == "strict:TimeoutError"
+    assert response.latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_connection_test_by_id_non_deepseek_config_uses_single_endpoint(store, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = ModelConfig.new(
+        name="MiMo", base_url="https://api.xiaomimimo.com/v1",
+        model_id="mimo-v2.5", api_key_encrypted=crypto.encrypt("sk-x"),
+    )
+    store.upsert(cfg)
+    with patch.object(model_routes, "ChatOpenAI") as mock_chat:
+        await model_routes.test_model(ModelTestRequest(config_id=cfg.id))
+
+    calls = mock_chat.call_args_list
+    assert len(calls) == 1
+    assert calls[0].kwargs["base_url"] == "https://api.xiaomimimo.com/v1"
 
 
 @pytest.mark.asyncio
