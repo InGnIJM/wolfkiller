@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from app.agents.llm_client import (
-    LLMClient, LLMClientConfig, env_default_client_config,
+    LLMClient, LLMClientConfig, derive_strict_base_url, env_default_client_config,
 )
 from app.models.contracts import ActionContract
 from app.models.game import GamePhase
@@ -136,3 +136,33 @@ def test_get_model_with_action_tool_uses_strict_base_url():
 def test_llm_client_config_is_frozen():
     with pytest.raises(FrozenInstanceError):
         _config().base_url = "x"
+
+
+def test_derive_strict_base_url_prefers_explicit_value():
+    assert derive_strict_base_url(
+        "https://api.xiaomimimo.com/v1", "https://custom.test/strict",
+    ) == "https://custom.test/strict"
+
+
+def test_derive_strict_base_url_uses_beta_for_official_deepseek():
+    assert derive_strict_base_url("https://api.deepseek.com/v1") == (
+        "https://api.deepseek.com/beta"
+    )
+
+
+def test_derive_strict_base_url_reuses_base_url_for_other_providers():
+    assert derive_strict_base_url("https://api.xiaomimimo.com/v1") == (
+        "https://api.xiaomimimo.com/v1"
+    )
+
+
+def test_derive_strict_base_url_ignores_port_when_matching_deepseek_host():
+    assert derive_strict_base_url("https://api.deepseek.com:443/v1") == (
+        "https://api.deepseek.com/beta"
+    )
+
+
+def test_derive_strict_base_url_keeps_other_deepseek_like_hosts_on_base_url():
+    assert derive_strict_base_url("https://proxy.deepseek.example/v1") == (
+        "https://proxy.deepseek.example/v1"
+    )

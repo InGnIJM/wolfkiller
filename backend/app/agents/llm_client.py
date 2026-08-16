@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
@@ -9,6 +10,25 @@ from openai import BadRequestError, UnprocessableEntityError
 from app.config import config as app_config
 from app.agents.output_parser import StrictCapabilityError
 from app.models.contracts import ActionContract
+
+
+_DEEPSEEK_STRICT_HOST = "api.deepseek.com"
+
+
+def derive_strict_base_url(
+    base_url: str, explicit_strict_base_url: str | None = None,
+) -> str:
+    """Return the strict-mode endpoint for a configured model.
+
+    The official DeepSeek endpoint serves strict tool calling from its
+    dedicated beta host; every other provider reuses its base URL. An
+    explicitly configured strict address always wins.
+    """
+    if explicit_strict_base_url:
+        return explicit_strict_base_url
+    if urlparse(base_url).hostname == _DEEPSEEK_STRICT_HOST:
+        return "https://api.deepseek.com/beta"
+    return base_url
 
 
 @dataclass(frozen=True)
