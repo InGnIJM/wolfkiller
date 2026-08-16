@@ -18,7 +18,7 @@ Wolf Killer 目前所有 LLM 调用都走 `backend/.env` 里的全局单一配�
 |---|---|---|
 | 1 | 模型配置存储 | JSON 文件起步（`backend/data/models.json`）+ 存储接口抽象，预留 SQLite |
 | 2 | API Key 处理 | 本地密钥（机器指纹派生）可逆加密存储；API 返回永远脱敏；编辑留空=保留原 key |
-| 3 | 模型配置字段 | 三字段 url / 模型 id / apikey + 可选高级项（temperature、严格模式地址，留空=沿用 .env 的 strict 地址） |
+| 3 | 模型配置字段 | 三字段 url / 模型 id / apikey + 可选高级项（temperature、严格模式地址，留空=按厂商推导：DeepSeek 官方 → /beta，其它厂商 → base_url 本身；2026-08-17 由根因修复修订，原"沿用 .env"规则会跨厂商误调 DeepSeek） |
 | 4 | 角色/预设数据来源 | 后端 API 驱动（角色目录 + 标准场预设 + 硬约束都从后端下发） |
 | 5 | 模型分配方式 | 按数量随机落座（二期）；一期整局一个模型 |
 | 6 | 前端导航 | 引入 react-router |
@@ -77,7 +77,7 @@ Wolf Killer 目前所有 LLM 调用都走 `backend/.env` 里的全局单一配�
 | model_id | str | 非空 |
 | api_key_encrypted | str | Fernet token（密文落盘，非明文） |
 | temperature | float \| None | 可选，0~2 |
-| strict_base_url | str \| None | 可选，留空=沿用 .env 的 strict 地址（见风险 1） |
+| strict_base_url | str \| None | 可选，留空=按厂商推导（DeepSeek 官方 → /beta，其它厂商 → base_url 本身；见风险 1） |
 | created_at / updated_at | str | ISO8601 UTC |
 
 ### 存储文件
@@ -112,7 +112,7 @@ class ModelConfigStore(Protocol):
 | GET | `/api/models/{id}` | 详情（脱敏） |
 | PUT | `/api/models/{id}` | 更新；`api_key` 缺省/空 = 保留原 key |
 | DELETE | `/api/models/{id}` | 删除；不影响运行中/历史游戏（快照已物化） |
-| POST | `/api/models/test` | 连接测试：`max_tokens=1` 最小补全请求 + 10s 超时；入参二选一：`{id}`（key 用已存密文）或 `{base_url, api_key, model_id}`（未保存的表单试连）；返回 `{ok, latency_ms, error}` |
+| POST | `/api/models/test` | 连接测试：探测游戏真实调用的两个端点（普通端点 + 按厂商推导的 strict 端点，DeepSeek 官方二者不同），`max_tokens=1` + 10s 超时；入参二选一：`{id}`（key 用已存密文）或 `{base_url, api_key, model_id}`（未保存的表单试连）；strict 失败时 error 带 `strict:` 前缀；返回 `{ok, latency_ms, error}` |
 
 `ModelConfigResponse`：`id, name, base_url, model_id, has_key, api_key_masked, key_invalid, temperature, strict_base_url, created_at, updated_at`。**响应绝不包含明文 key**（隐私扫描测试强制）。
 
@@ -153,6 +153,7 @@ class CreateGameRequest(BaseModel):
 - 配置卡片列表：名称、model_id、base_url、key 脱敏状态（`sk-***abcd` / 未设置 / 密钥失效）、更新时间；操作：测试 / 编辑 / 删除
 - 空状态说明：「环境默认 (.env)」始终可在创建游戏时选用
 - 新建/编辑对话框 `ModelConfigDialog`：名称 / Base URL / 模型 ID / API Key（password，占位提示"留空=保留原 key"）/ 高级选项折叠（temperature、严格模式地址）；按钮：测试连接 / 取消 / 保存；连接测试失败不阻止保存
+- **保存强制（2026-08-17 修订）**：「保存」在连接测试通过前禁用（提示"保存前需通过连接测试"）；测试通过后若改动 Base URL / 模型 ID / API Key / 严格模式地址任一连通性字段，需重新测试才能保存
 
 ### 创建向导 `/create`（两步 Stepper）
 - **第 1 步 RoleStep**：三张预设卡片（九人场/十人场/自定义场，来自 `/api/presets`）→ 角色加减列表（来自 `/api/roles`：图标、中文名、阵营 chip、`− n +`，按角色 min/max 与全局约束禁用按钮）；**选标准场后再加减角色 = 自动切换为"自定义场"**；底部显示"共 N 人"+「下一步」
@@ -190,7 +191,7 @@ class CreateGameRequest(BaseModel):
 
 ## 11. 风险与潜在问题
 
-1. **strict 地址缺省回退**：留空时沿用 `.env` 的 strict_base_url（不自动推导），跨厂商/代理场景可能不符，用户手动填才覆盖；引擎已有 StrictCapabilityError → JSON 降级兜底 🟢
+1. **strict 地址缺省回退（2026-08-17 已修）**：原规则"留空沿用 .env strict 地址"会在非 DeepSeek 厂商配置上把请求误发到 DeepSeek beta（实测 401）→ 改为按厂商推导（DeepSeek 官方 → /beta，其它 → base_url 本身），连接测试同步探测 strict 端点；引擎仍有 StrictCapabilityError → JSON 降级兜底 🟢
 2. **key 加密机器绑定**：换机器/改主机名后 key 解不开需重输 🟡（文档写明）
 3. **多进程并发写 models.json**：单 uvicorn 进程无碍；多 worker 时靠预留的 SQLite 实现 🟢
 4. **泄露面**：GET 脱敏 + 日志禁打 key + 错误不回显 key 🟢
