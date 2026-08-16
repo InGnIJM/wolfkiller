@@ -59,6 +59,14 @@ def test_spec_declares_bounded_death_response_and_gun() -> None:
     assert contract.per_window_limit == contract.per_game_limit == 1
 
 
+def test_spec_instructions_state_shooting_is_optional() -> None:
+    text = HUNTER_SPEC.instructions
+    assert "可选" in text
+    assert "pass" in text
+    assert "自行判断" in text
+    assert "误伤" in text
+
+
 def test_applicable_requires_bound_allowed_own_death_and_gun() -> None:
     assert hunter_applicable(context()) is True
     assert hunter_applicable(context(reason="exile")) is True

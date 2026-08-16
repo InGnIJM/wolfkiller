@@ -108,7 +108,12 @@ HUNTER_SPEC = RoleSpec(
     ),), initial_resources={"gun": 1},
     allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-    instructions="After an eligible death, shoot one living player or pass.",
+    instructions=(
+        "你出局（被狼刀、被放逐或被猎人带走）时触发开枪权。开枪是可选的，"
+        "不是强制的：你可以 shoot 一名存活玩家将其带走，也可以 pass 不开枪。"
+        "是否开枪完全由你根据当前局势自行判断——只有当你对某名存活玩家的"
+        "狼人身份有较高把握时才开枪；没有把握或担心误伤好人时，应选择 pass。"
+    ),
 )
 
 
