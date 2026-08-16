@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Optional
@@ -9,12 +10,32 @@ from app.models.game import GameState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
 
+logger = logging.getLogger(__name__)
+
 _MAX_UTTERANCE = 200
 
 _CHINESE_DIRECTIVE = (
     "IMPORTANT: Every piece of text you produce (message, reasoning, thought) "
     "MUST be written in Simplified Chinese (简体中文)."
 )
+
+_NO_FABRICATION_RULE = (
+    "Base every claim ONLY on the information given in this prompt: the alive "
+    "players and the discussion log. You have no knowledge of any player's past "
+    "behavior, speeches, or identity. NEVER invent or imply prior behavior "
+    '(for example claiming that someone is "active" or "talkative"); if no such '
+    "information exists, reason from objective facts only. "
+)
+
+_FIRST_NIGHT_NOTICE = (
+    "注意：这是第 1 晚，白天尚未开始，所有玩家都没有任何发言记录。"
+    "不要引用或暗示任何玩家此前的行为特征（如\"活跃\"\"话多\"\"像有身份\"），"
+    "只能依据座位位置等客观信息选择目标。\n"
+)
+
+
+def _night_notice(state: GameState) -> str:
+    return _FIRST_NIGHT_NOTICE if state.round_number == 1 else ""
 
 _NARRATIONS: dict[str, tuple[str, str]] = {
     "wolf_open": ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。"),
@@ -40,16 +61,25 @@ class DiscussionTurn:
     seat: int
     spoke: bool
     text: str = ""
+    preferred_target: Optional[int] = None
 
     def __post_init__(self) -> None:
         if type(self.seat) is not int or self.seat <= 0:
             raise ValueError("invalid seat")
         if type(self.spoke) is not bool:
             raise TypeError("spoke must be bool")
+        if self.preferred_target is not None and (
+            type(self.preferred_target) is not int
+            or not 1 <= self.preferred_target <= 2_147_483_647
+        ):
+            raise ValueError("invalid preferred target")
         if self.spoke:
             _clean(self.text, "text", _MAX_UTTERANCE)
-        elif self.text != "":
-            raise ValueError("skipped turn cannot carry text")
+        else:
+            if self.text != "":
+                raise ValueError("skipped turn cannot carry text")
+            if self.preferred_target is not None:
+                raise ValueError("skipped turn cannot carry target")
 
 
 @dataclass(frozen=True)
@@ -127,18 +157,28 @@ class NightDirector:
     def discussion_prompt(self, state: GameState, seat: int, history: Sequence[str]) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
+        total_turns = 3 * len(wolves)
+        turn_number = len(history) + 1
+        remaining = max(total_turns - len(history) - 1, 0)
         system = (
             f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Discuss tonight's kill target with your teammates. You may speak "
             "or stay silent on your turn. Never reveal that you are a werewolf. "
+            + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
         human = (
             f"第{state.round_number}晚狼队讨论。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
             f"已进行的讨论：\n{self._history_text(history) or '（尚无发言）'}\n\n"
-            '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤200字)"} 表示发言，'
-            '{"speak": false} 表示跳过本轮发言。'
+            f"当前为第 {turn_number}/{total_turns} 轮发言，最多还可继续 {remaining} 轮。\n"
+            "讨论要求：\n"
+            "- 不要复述队友已经说过的内容；如果团队已达成一致而你没有新信息，请跳过本轮。\n"
+            "- 如果你有倾向的刀人目标，把该座位号填入 preferred_target；没有倾向就填 null。\n"
+            "- 当所有狼队友都认可同一个目标后，讨论会提前结束。\n"
+            + _night_notice(state)
+            + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤200字)", '
+            '"preferred_target": 座位号或null} 表示发言，{"speak": false} 表示跳过本轮发言。'
         )
         return self._messages(system, human)
 
@@ -151,14 +191,17 @@ class NightDirector:
         system = (
             f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Cast your kill vote. You can see the discussion and the votes cast "
-            "before you. Never reveal that you are a werewolf. " + _CHINESE_DIRECTIVE
+            "before you. Never reveal that you are a werewolf. "
+            + _NO_FABRICATION_RULE
+            + _CHINESE_DIRECTIVE
         )
         human = (
             f"第{state.round_number}晚狼队投票。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
             f"讨论记录：\n{self._history_text(discussion) or '（无）'}\n"
             f"已出票：\n{self._prior_votes_text(prior_votes)}\n\n"
-            '输出 JSON：{"schema_version": 1, "action_type": "kill", "target_seat": 目标座位号, '
+            + _night_notice(state)
+            + '输出 JSON：{"schema_version": 1, "action_type": "kill", "target_seat": 目标座位号, '
             '"reasoning": "中文理由(≤500字)"} 或 {"schema_version": 1, "action_type": "pass", '
             '"target_seat": null, "reasoning": "中文理由(≤500字)"}。'
         )
@@ -181,8 +224,20 @@ class NightDirector:
             if value.get("speak") is not True:
                 return DiscussionTurn(seat, False)
             text = _clean(value.get("text"), "text", _MAX_UTTERANCE)
-            return DiscussionTurn(seat, True, text)
+            target = value.get("preferred_target")
+            if target is None:
+                preferred = None
+            elif type(target) is int and target in state.players:
+                preferred = target
+            else:
+                preferred = None
+            return DiscussionTurn(seat, True, text, preferred)
         except Exception:
+            logger.warning(
+                "Wolf discussion LLM failed for seat %s round %s; treating as skip",
+                seat, state.round_number,
+                exc_info=True,
+            )
             return DiscussionTurn(seat, False)
 
     def wolf_vote_turn(
@@ -198,6 +253,11 @@ class NightDirector:
                 return WolfVote(seat, "kill", target, _clean(value.get("reasoning"), "reasoning", 500))
             return WolfVote(seat, "pass", None, _clean(value.get("reasoning"), "reasoning", 500))
         except Exception:
+            logger.warning(
+                "Wolf vote LLM failed for seat %s round %s; degrading to safe pass",
+                seat, state.round_number,
+                exc_info=True,
+            )
             return WolfVote(seat, "pass", None, "safe fallback")
 
     # ── narration ──────────────────────────────────────────────

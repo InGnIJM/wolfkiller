@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from app.core.night_flow import (
@@ -131,6 +133,19 @@ def test_discussion_turn_spoke_too_long():
 def test_discussion_turn_spoke_non_string_text():
     with pytest.raises(ValueError):
         DiscussionTurn(1, True, 123)  # type: ignore[arg-type]
+
+
+def test_discussion_turn_preferred_target():
+    assert DiscussionTurn(1, True, "刀4号", 4).preferred_target == 4
+    assert DiscussionTurn(1, True, "刀4号").preferred_target is None
+    for bad in (0, -1, 2_147_483_648, "4", 1.5):
+        with pytest.raises(ValueError):
+            DiscussionTurn(1, True, "刀4号", bad)  # type: ignore[arg-type]
+
+
+def test_discussion_turn_skip_cannot_carry_target():
+    with pytest.raises(ValueError):
+        DiscussionTurn(1, False, "", 4)
 
 
 # ── WolfVote ────────────────────────────────────────────────
@@ -281,11 +296,13 @@ def test_discussion_prompt(state: GameState, director: NightDirector):
     assert messages[0]["role"] == "system"
     assert "简体中文" in messages[0]["content"]
     assert "seat 1" in messages[0]["content"]
+    assert "NEVER invent" in messages[0]["content"]
     assert messages[1]["role"] == "user"
     assert "第1晚" in messages[1]["content"]
     assert "1号" in messages[1]["content"]
     assert "5号" in messages[1]["content"]
     assert "狼1：刀3号" in messages[1]["content"]
+    assert "白天尚未开始" in messages[1]["content"]
 
 
 def test_discussion_prompt_empty_history(state: GameState, director: NightDirector):
@@ -293,19 +310,49 @@ def test_discussion_prompt_empty_history(state: GameState, director: NightDirect
     assert "（尚无发言）" in messages[1]["content"]
 
 
+def test_discussion_prompt_later_night_omits_first_night_notice(state: GameState, director: NightDirector):
+    state.round_number = 2
+    messages = director.discussion_prompt(state, 1, [])
+    assert "白天尚未开始" not in messages[1]["content"]
+    assert "第2晚" in messages[1]["content"]
+
+
+def test_discussion_prompt_tracks_turn_progress_and_consensus_rules(state: GameState, director: NightDirector):
+    messages = director.discussion_prompt(state, 1, ["狼1：刀4号"])
+    human = messages[1]["content"]
+    assert "第 2/3 轮发言" in human
+    assert "preferred_target" in human
+    assert "跳过" in human
+    assert "复述" in human
+
+
+def test_discussion_prompt_empty_history_starts_first_turn(state: GameState, director: NightDirector):
+    messages = director.discussion_prompt(state, 1, [])
+    assert "第 1/3 轮发言" in messages[1]["content"]
+
+
 def test_vote_prompt(state: GameState, director: NightDirector):
     prior = [WolfVote(1, "kill", 2, "可疑")]
     messages = director.vote_prompt(state, 1, ["狼1：刀3号"], prior)
     assert messages[0]["role"] == "system"
     assert "简体中文" in messages[0]["content"]
+    assert "NEVER invent" in messages[0]["content"]
     assert "第1晚" in messages[1]["content"]
     assert "刀 2 号" in messages[1]["content"]
+    assert "白天尚未开始" in messages[1]["content"]
 
 
 def test_vote_prompt_empty(state: GameState, director: NightDirector):
     messages = director.vote_prompt(state, 1, [], [])
     assert "（无）" in messages[1]["content"]
     assert "（还没有人出票）" in messages[1]["content"]
+
+
+def test_vote_prompt_later_night_omits_first_night_notice(state: GameState, director: NightDirector):
+    state.round_number = 3
+    messages = director.vote_prompt(state, 1, [], [])
+    assert "白天尚未开始" not in messages[1]["content"]
+    assert "第3晚" in messages[1]["content"]
 
 
 def test_seer_think_prompt_removed_with_staged_night_refactor():
@@ -366,6 +413,31 @@ def test_wolf_discussion_turn_fallback_bad_text(state: GameState):
     assert director.wolf_discussion_turn(state, 1, []) == DiscussionTurn(1, False)
 
 
+def test_wolf_discussion_turn_parses_preferred_target(state: GameState):
+    director = _director(lambda _messages: '{"speak": true, "text": "刀4号", "preferred_target": 4}')
+    turn = director.wolf_discussion_turn(state, 1, [])
+    assert turn == DiscussionTurn(1, True, "刀4号", 4)
+
+
+@pytest.mark.parametrize("payload", [
+    '{"speak": true, "text": "刀99号", "preferred_target": 99}',
+    '{"speak": true, "text": "刀", "preferred_target": "4"}',
+    '{"speak": true, "text": "刀", "preferred_target": -1}',
+    '{"speak": true, "text": "刀", "preferred_target": null}',
+    '{"speak": true, "text": "刀"}',
+])
+def test_wolf_discussion_turn_ignores_invalid_preferred_target(state: GameState, payload: str):
+    director = _director(lambda _messages: payload)
+    turn = director.wolf_discussion_turn(state, 1, [])
+    assert turn.spoke is True and turn.preferred_target is None
+
+
+def test_wolf_discussion_turn_skip_drops_preferred_target(state: GameState):
+    director = _director(lambda _messages: '{"speak": false, "preferred_target": 4}')
+    turn = director.wolf_discussion_turn(state, 1, [])
+    assert turn == DiscussionTurn(1, False)
+
+
 def test_wolf_discussion_turn_fallback_too_long_text(state: GameState):
     director = _director(
         lambda _messages: '{"speak": true, "text": "' + "x" * 201 + '"}'
@@ -392,14 +464,17 @@ def test_wolf_vote_turn_pass(state: GameState):
     assert vote == WolfVote(1, "pass", None, "先看")
 
 
-def test_wolf_vote_turn_fallback_invoke_raises(state: GameState):
+def test_wolf_vote_turn_fallback_invoke_raises(state: GameState, caplog):
     def invoke(_messages):
         raise RuntimeError("boom")
 
     director = _director(invoke)
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
-    )
+    with caplog.at_level(logging.WARNING, logger="app.core.night_flow"):
+        assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
+            1, "pass", None, "safe fallback"
+        )
+    assert any("degrading to safe pass" in record.message for record in caplog.records)
+    assert any("boom" in record.exc_text for record in caplog.records)
 
 
 def test_wolf_vote_turn_fallback_non_str(state: GameState):
