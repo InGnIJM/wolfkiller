@@ -15,7 +15,7 @@ from app.models.contracts import ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
-from app.core.night_flow import WolfVote
+from app.core.night_flow import WolfVote, build_briefing
 from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
@@ -362,7 +362,8 @@ class GameEngine:
                 max_turns = 3 * len(wolves)
                 while len(history) < max_turns:
                     seat = wolves[len(history) % len(wolves)]
-                    result = await asyncio.to_thread(director.wolf_discussion_turn, state, seat, tuple(history))
+                    briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    result = await asyncio.to_thread(director.wolf_discussion_turn, state, seat, tuple(history), briefing)
                     if result.spoke:
                         history.append(f"{seat}号：{result.text}")
                         if result.preferred_target is not None:
@@ -388,7 +389,8 @@ class GameEngine:
                 votes = list(pending.wolf_votes)
                 discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
                 for seat in wolves[len(votes):]:
-                    result = await asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(votes))
+                    briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    result = await asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(votes), briefing)
                     votes.append(result)
                     self.game_logger.log_audience_action(
                         self.game_id, state.round_number, "night", "WOLF_VOTE",

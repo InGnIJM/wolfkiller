@@ -11,7 +11,7 @@ from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import VoteAction, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
-from app.core.night_flow import DiscussionTurn, WolfVote
+from app.core.night_flow import DiscussionTurn, NightBriefing, WolfVote
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult
@@ -57,12 +57,16 @@ class _FakeDirector:
         self.speak, self.vote = speak, vote
         self.votes: list[WolfVote] = []
         self.vote_calls: list[int] = []
+        self.discussion_briefings: list[object] = []
+        self.vote_briefings: list[object] = []
     def narration(self, kind): return ("标题", "正文")
     def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
-    def wolf_discussion_turn(self, state, seat, history):
+    def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing()):
+        self.discussion_briefings.append(briefing)
         return DiscussionTurn(seat, self.speak, "我怀疑2号" if self.speak else "")
-    def wolf_vote_turn(self, state, seat, discussion, prior):
+    def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing()):
         self.vote_calls.append(seat)
+        self.vote_briefings.append(briefing)
         if self.vote is None:
             return WolfVote(seat, "pass", None, "观望")
         return WolfVote(seat, "kill", self.vote, "像神")
@@ -758,7 +762,7 @@ class _TargetDirector(_FakeDirector):
         self.targets = targets
         self.discussion_calls: list[int] = []
 
-    def wolf_discussion_turn(self, state, seat, history):
+    def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing()):
         self.discussion_calls.append(seat)
         target = self.targets.get(seat)
         if target is None:
@@ -834,6 +838,39 @@ async def test_staged_night_continues_discussion_without_unanimous_target(tmp_pa
     director, chats = await _run_discussion_game(tmp_path, {1: 2, 2: 3, 3: 4}, seats)
     assert director.discussion_calls == [1, 2, 3, 1, 2, 3, 1, 2, 3]
     assert len(chats) == 9
+
+
+@pytest.mark.asyncio
+async def test_staged_night_passes_day_and_channel_briefing_into_director(tmp_path) -> None:
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        2: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director = _FakeDirector()
+    engine = GameEngine(
+        "briefing", pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")),
+        director=director, data_dir=str(tmp_path),
+    )
+    engine.state.players = {
+        seat: PlayerState(seat, role, camp) for seat, (role, camp) in seats.items()
+    }
+    engine.conversation_log.add_public_speech(4, "wolf-killer-villager", "我觉得2号可疑", 1, "speech")
+    engine.conversation_log.add_werewolf_channel("1号：昨晚刀4号", 1)
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine.state.round_number = 1
+    engine._prepare_night()  # night 2
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+
+    assert director.discussion_briefings
+    assert any("我觉得2号可疑" in line for line in director.discussion_briefings[0].public_lines)
+    assert any("昨晚刀4号" in line for line in director.discussion_briefings[0].wolf_lines)
+    assert director.vote_briefings
+    assert any("我觉得2号可疑" in line for line in director.vote_briefings[0].public_lines)
 
 
 @pytest.mark.asyncio
