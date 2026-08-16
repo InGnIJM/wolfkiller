@@ -771,8 +771,8 @@ class _TargetDirector(_FakeDirector):
         return DiscussionTurn(seat, True, f"我建议刀{target}号", target)
 
 
-async def _run_discussion_game(tmp_path, targets: dict[int, int | None], seats: dict[int, tuple[str, str]]):
-    director = _TargetDirector(targets)
+async def _run_discussion_game(tmp_path, targets: dict[int, int | None], seats: dict[int, tuple[str, str]], director=None):
+    director = _TargetDirector(targets) if director is None else director
     engine = GameEngine("discuss", pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")), director=director, data_dir=str(tmp_path))
     engine.state.players = {
         seat: PlayerState(seat, role, camp) for seat, (role, camp) in seats.items()
@@ -862,6 +862,43 @@ async def test_staged_night_writes_wolf_chat_into_conversation_log(tmp_path) -> 
     assert [record.content for record in wolf_records] == [
         "我建议刀4号", "我建议刀4号", "我建议刀4号",
     ]
+
+
+@pytest.mark.asyncio
+async def test_staged_night_stores_day_plan_in_channel_and_discussion(tmp_path) -> None:
+    class PlanDirector(_TargetDirector):
+        def __init__(self, targets):
+            super().__init__(targets)
+            self.received_discussion = None
+
+        def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing()):
+            self.discussion_calls.append(seat)
+            target = self.targets.get(seat)
+            if target is None:
+                return DiscussionTurn(seat, False)
+            return DiscussionTurn(
+                seat, True, f"我建议刀{target}号", target, "明天白天带节奏踩9号",
+            )
+
+        def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing()):
+            self.received_discussion = discussion
+            return super().wolf_vote_turn(state, seat, discussion, prior, briefing)
+
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        2: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director, chats, engine = await _run_discussion_game(
+        tmp_path, {1: 4, 2: 4}, seats, director=PlanDirector({1: 4, 2: 4}),
+    )
+    wolf_records = [
+        record for record in engine.conversation_log.get_all()
+        if record.scope is ConversationScope.WEREWOLF
+    ]
+    assert len(wolf_records) == 2
+    assert all("明天白天带节奏踩9号" in record.content for record in wolf_records)
+    assert any("明天白天带节奏踩9号" in line for line in director.received_discussion)
 
 
 @pytest.mark.asyncio

@@ -365,11 +365,16 @@ class GameEngine:
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
                     result = await asyncio.to_thread(director.wolf_discussion_turn, state, seat, tuple(history), briefing)
                     if result.spoke:
-                        history.append(f"{seat}号：{result.text}")
+                        line = f"{seat}号：{result.text}"
+                        channel = result.text
+                        if result.day_plan:
+                            line += f"（次日计划：{result.day_plan}）"
+                            channel += f"｜次日计划：{result.day_plan}"
+                        history.append(line)
                         if result.preferred_target is not None:
                             leads[seat] = result.preferred_target
                         self.conversation_log.add_werewolf_channel(
-                            result.text, self.state.round_number,
+                            channel, self.state.round_number,
                             speaker_seat=seat, speaker_role="wolf-killer-werewolf",
                         )
                         self.game_logger.log_audience_action(
