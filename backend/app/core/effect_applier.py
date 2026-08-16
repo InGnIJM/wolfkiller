@@ -330,9 +330,9 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
         alive[target] = False
         events.append({"event_type": "PLAYER_DIED", "payload": {"seat": target, "cause": payload["cause"]}, "visibility": effect.visibility})
 class EffectApplier:
-    def settle_pending(self, state: GameState, *, round_number: int) -> CommitResult | None:
+    def settle_pending(self, state: GameState, *, round_number: int, batch: int = 0) -> CommitResult | None:
         if type(state) is not GameState: raise TypeError("state must be GameState")  # pragma: no branch
-        action_key = settlement_key(state.game_id, round_number)
+        action_key = settlement_key(state.game_id, round_number, batch)
         with state_transaction_lock(state):
             current = _runtime(state); simulated = current.clone()
             if action_key in current.commits: return current.commits[action_key]  # pragma: no branch

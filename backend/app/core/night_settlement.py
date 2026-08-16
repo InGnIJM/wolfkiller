@@ -7,14 +7,18 @@ from collections.abc import Mapping
 _INT32 = 2_147_483_647
 
 
-def settlement_key(game_id: str, round_number: int) -> str:
+def settlement_key(game_id: str, round_number: int, batch: int = 0) -> str:
     if type(game_id) is not str or not game_id:
         raise ValueError("invalid game id")
     try: game_id.encode("utf-8", errors="strict")
     except UnicodeEncodeError: raise ValueError("invalid game id") from None
     if type(round_number) is not int: raise TypeError("round_number must be an integer")
     if not 0 <= round_number <= _INT32: raise ValueError("round_number out of range")
-    return hashlib.sha256(f"night-commit\0{game_id}\0{round_number}".encode()).hexdigest()
+    if type(batch) is not int: raise TypeError("batch must be an integer")
+    if not 0 <= batch <= _INT32: raise ValueError("batch out of range")
+    label = f"night-commit\0{game_id}\0{round_number}"
+    if batch: label += f"\0{batch}"
+    return hashlib.sha256(label.encode()).hexdigest()
 
 
 def settle(

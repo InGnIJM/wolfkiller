@@ -1012,3 +1012,48 @@ def test_settle_pending_is_concurrently_idempotent() -> None:
     for thread in threads: thread.join()
     assert results[0] is results[1]
     assert len(s.death_history) == 1 and s._pipeline_runtime.revision == 2
+
+
+def test_settlement_key_batch_is_distinct_and_validated() -> None:
+    from app.core.night_settlement import settlement_key
+
+    assert settlement_key("g", 1, batch=0) == settlement_key("g", 1)
+    assert settlement_key("g", 1, batch=1) == settlement_key("g", 1, batch=1)
+    assert settlement_key("g", 1, batch=1) != settlement_key("g", 1, batch=0)
+    assert settlement_key("g", 1, batch=1) != settlement_key("g", 2, batch=1)
+    for batch in (True, -1, 2_147_483_648, "1"):
+        with pytest.raises((TypeError, ValueError)):
+            settlement_key("g", 1, batch=batch)
+
+
+def test_settle_pending_batch_settles_followup_damage_in_same_round() -> None:
+    s = state()
+    EffectApplier().apply(s, batch([
+        (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "wolf_kill"}, 2),
+    ]), permission())
+    first = EffectApplier().settle_pending(s, round_number=3)
+    assert first is not None and s.players[2].is_alive is False
+
+    EffectApplier().apply(s, batch([
+        (EffectKind.SUBMIT_DAMAGE, {"target": 3, "amount": 1, "cause": "hunter_shot"}, 3),
+    ], action="b", revision=first.revision), permission())
+    second = EffectApplier().settle_pending(s, round_number=3, batch=1)
+    assert second is not None and second is not first
+    assert second.action_key != first.action_key
+    assert second.revision > first.revision
+    assert s.players[3].is_alive is False
+    assert [(item.player_seat, item.cause, item.round_number) for item in s.death_history] == [
+        (2, "wolf_kill", 3), (3, "hunter_shot", 3),
+    ]
+    assert s._pipeline_runtime.pending_damage == ()
+
+    again = EffectApplier().settle_pending(s, round_number=3, batch=1)
+    assert again is second and s._pipeline_runtime.revision == second.revision
+
+
+@pytest.mark.parametrize("batch", [True, -1, 2_147_483_648])
+def test_settle_pending_rejects_bad_batch(batch) -> None:
+    s = state()
+    with pytest.raises((TypeError, ValueError)):
+        EffectApplier().settle_pending(s, round_number=1, batch=batch)
+    assert not hasattr(s, "_pipeline_runtime")
