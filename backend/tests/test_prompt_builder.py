@@ -264,6 +264,13 @@ class TestPromptBuilderHelpers:
         assert "alive_seats" in block
         assert "dead_seats" not in block  # empty sequences are skipped
 
+    def test_camp_cooperation_block_ignores_malformed_facts(self):
+        builder = PromptBuilder()
+        assert builder._camp_cooperation_block({"facts": {"camp_members": "1,2"}}) == ""
+        assert builder._camp_cooperation_block(
+            {"facts": {"camp_members": [1, 2], "alive_seats": "x"}}
+        ) == ""
+
     def test_conversations_render_scopes_and_empty_state(self):
         from app.models.conversation import Conversation, ConversationScope
         log = ConversationLog()

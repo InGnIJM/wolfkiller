@@ -372,6 +372,16 @@ def test_build_briefing_excludes_current_round_and_other_seat_thoughts():
     assert briefing.thoughts == ()
 
 
+def test_build_briefing_truncates_long_public_lines_with_ellipsis():
+    log = ConversationLog()
+    log.add_public_speech(4, "wolf-killer-villager", "长" * 300, 1, "speech")
+
+    briefing = build_briefing(log, 2, 2)
+
+    assert briefing.public_lines[0].endswith("...")
+    assert len(briefing.public_lines[0]) == len("第1轮公开 系统：") + 203
+
+
 def test_build_briefing_rejects_invalid_log_seat_and_round():
     with pytest.raises(TypeError):
         build_briefing(object(), 1, 2)  # type: ignore[arg-type]
