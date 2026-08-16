@@ -44,12 +44,17 @@ def _isolated_data(tmp_path, monkeypatch):
 class ScheduleStub:
     def __init__(self, result, mutate=None, digest="stub"):
         self.result, self.mutate, self.calls, self.digest = result, mutate, [], digest
+        self.settles = []
         self.registry = MagicMock(digest=digest)
 
     def run_point(self, state, point):
         self.calls.append((state, point))
         if self.mutate is not None: self.mutate(state)
         return self.result
+
+    def settle_pending(self, state):
+        self.settles.append(state)
+        return None
 
 
 class _FakeDirector:
@@ -1412,10 +1417,15 @@ class TestGameEngine:
     async def test_exile_reaction_injects_commit_and_runs_dawn_point(self):
         calls = []
         class Scheduler:
-            def __init__(self): self.registry = MagicMock(digest="d" * 64)
+            def __init__(self):
+                self.registry = MagicMock(digest="d" * 64)
+                self.settles = []
             def run_point(self, state, point):
                 calls.append((state, point))
                 return PointResult((), (), (), "done")
+            def settle_pending(self, state):
+                self.settles.append(state)
+                return None
         scheduler = Scheduler()
         roles = {1: make_mock_role(1, "wolf-killer-villager"), 2: make_mock_role(2, "wolf-killer-villager")}
         engine = GameEngine("exile-react", roles=roles, pipeline_scheduler=scheduler)
@@ -1427,12 +1437,91 @@ class TestGameEngine:
         engine.state.death_history.append(DeathReport(1, "exile", 2))
         await engine._run_exile_reaction(1)
         assert calls == [(engine.state, SchedulePoint.DAWN_REACTION)]
+        assert scheduler.settles == [engine.state]
         from app.core.point_journal import PointKey, point_journal
         key = PointKey("exile-react", 2, "vote_resolution", SchedulePoint.DAWN_REACTION, "d" * 64)
         saved = point_journal(engine.state).get(key)
         assert saved is not None and saved.cursor.kind == "response"
         assert saved.commits[0].events[0]["event_type"] == "PLAYER_DIED"
         assert saved.commits[0].events[0]["payload"]["cause"] == "exile"
+
+    @pytest.mark.asyncio
+    async def test_exile_reaction_settles_reaction_damage_immediately(self):
+        from app.core.action_resolver import ActionResolver
+        from app.core.action_validator import ActionValidator
+        from app.core.context_projector import ContextProjector
+        from app.core.effect_applier import EffectApplier, _Runtime
+        from app.core.scheduler import Scheduler
+        from app.models.pipeline import ActionCommand as PipelineActionCommand
+        from app.roles.registry import builtin_registry
+
+        registry = builtin_registry.freeze()
+        provider_calls = []
+        def provider(request, context, attempt):
+            provider_calls.append(request.contract.contract_id)
+            return PipelineActionCommand(action_type="shoot", target_seat=2, reasoning="怀疑2号")
+        scheduler = Scheduler(registry, ContextProjector(), ActionValidator(),
+                              ActionResolver(), EffectApplier(), provider)
+        bus = EventBus()
+        published = []
+        async def on_player_died(**kwargs):
+            published.append(kwargs["death"])
+        bus.subscribe(BusEvent.PLAYER_DIED, on_player_died)
+
+        engine = GameEngine("exile-shot", event_bus=bus, pipeline_scheduler=scheduler)
+        engine.state = GameState(
+            "exile-shot", phase=GamePhase.VOTE_RESOLUTION, round_number=2,
+            players={
+                1: PlayerState(1, "wolf-killer-hunter", "good", is_alive=False),
+                2: PlayerState(2, "wolf-killer-villager", "good"),
+            },
+        )
+        engine.state._pipeline_runtime = _Runtime(role_resources={1: {"gun": 1}})
+        engine.state.death_history.append(DeathReport(1, "exile", 2))
+
+        await engine._run_exile_reaction(1)
+
+        assert provider_calls == ["hunter_shoot"]
+        assert engine.state.players[2].is_alive is False
+        assert engine.state._pipeline_runtime.pending_damage == ()
+        assert engine.state._pipeline_runtime.role_resources[1]["gun"] == 0
+        assert [(d.player_seat, d.cause, d.round_number) for d in engine.state.death_history] == [
+            (1, "exile", 2), (2, "hunter_shot", 2),
+        ]
+        assert [(d.player_seat, d.cause) for d in published] == [(2, "hunter_shot")]
+
+    @pytest.mark.asyncio
+    async def test_exile_reaction_pass_leaves_no_pending_damage(self):
+        from app.core.action_resolver import ActionResolver
+        from app.core.action_validator import ActionValidator
+        from app.core.context_projector import ContextProjector
+        from app.core.effect_applier import EffectApplier, _Runtime
+        from app.core.scheduler import Scheduler
+        from app.models.pipeline import ActionCommand as PipelineActionCommand
+        from app.roles.registry import builtin_registry
+
+        registry = builtin_registry.freeze()
+        def provider(request, context, attempt):
+            return PipelineActionCommand(action_type="pass", target_seat=None, reasoning="没有把握")
+        scheduler = Scheduler(registry, ContextProjector(), ActionValidator(),
+                              ActionResolver(), EffectApplier(), provider)
+        engine = GameEngine("exile-pass", event_bus=EventBus(), pipeline_scheduler=scheduler)
+        engine.state = GameState(
+            "exile-pass", phase=GamePhase.VOTE_RESOLUTION, round_number=2,
+            players={
+                1: PlayerState(1, "wolf-killer-hunter", "good", is_alive=False),
+                2: PlayerState(2, "wolf-killer-villager", "good"),
+            },
+        )
+        engine.state._pipeline_runtime = _Runtime(role_resources={1: {"gun": 1}})
+        engine.state.death_history.append(DeathReport(1, "exile", 2))
+
+        await engine._run_exile_reaction(1)
+
+        assert engine.state.players[2].is_alive is True
+        assert engine.state._pipeline_runtime.pending_damage == ()
+        assert engine.state._pipeline_runtime.role_resources[1]["gun"] == 1
+        assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [(1, "exile")]
 
     @pytest.mark.asyncio
     async def test_speak_no_role(self):

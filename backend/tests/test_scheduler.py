@@ -668,6 +668,70 @@ def test_followup_batch_detects_next_unused_batch_and_cap() -> None:
     assert Scheduler._followup_batch(game, []) == 1
 
 
+def test_settle_pending_rejects_non_game_state() -> None:
+    engine = scheduler(builtin_registry.freeze())
+    with pytest.raises(TypeError, match="state must be GameState"):
+        engine.settle_pending(object())  # type: ignore[arg-type]
+
+
+def test_settle_pending_returns_none_without_pending_effects() -> None:
+    registry = builtin_registry.freeze()
+    game = GameState("settle-none", phase=GamePhase.VOTE_RESOLUTION, round_number=2, players={
+        1: PlayerState(1, "wolf-killer-villager", "good"),
+    })
+    engine = scheduler(registry)
+    assert engine.settle_pending(game) is None
+    game._pipeline_runtime = _Runtime()
+    assert engine.settle_pending(game) is None
+
+
+def test_settle_pending_uses_next_free_batch_and_is_idempotent() -> None:
+    from app.core.night_settlement import settlement_key
+    registry = builtin_registry.freeze()
+    game = GameState("settle-day", phase=GamePhase.VOTE_RESOLUTION, round_number=2, players={
+        1: PlayerState(1, "wolf-killer-villager", "good"),
+        2: PlayerState(2, "wolf-killer-villager", "good"),
+    })
+    key0 = settlement_key("settle-day", 2, 0)
+    stale = CommitResult(key0, ("e",), 0, (), "digest")
+    game._pipeline_runtime = _Runtime(
+        commits={key0: stale},
+        pending_damage=({"target": 2, "amount": 1, "cause": "hunter_shot"},),
+    )
+    engine = scheduler(registry)
+    settlement = engine.settle_pending(game)
+    assert settlement is not None
+    assert settlement.action_key == settlement_key("settle-day", 2, 1)
+    assert game.players[2].is_alive is False
+    assert game._pipeline_runtime.pending_damage == ()
+    assert [(item.player_seat, item.cause, item.round_number) for item in game.death_history] == [
+        (2, "hunter_shot", 2),
+    ]
+    assert engine.settle_pending(game) is None
+
+
+def test_settle_pending_raises_when_settlement_batches_are_exhausted() -> None:
+    from app.core.night_settlement import settlement_key
+    registry = builtin_registry.freeze()
+    game = GameState("settle-cap", phase=GamePhase.VOTE_RESOLUTION, round_number=2, players={
+        1: PlayerState(1, "wolf-killer-villager", "good"),
+        2: PlayerState(2, "wolf-killer-villager", "good"),
+    })
+    commits = {
+        settlement_key("settle-cap", 2, batch): CommitResult(
+            settlement_key("settle-cap", 2, batch), ("e",), 0, (), "digest",
+        )
+        for batch in range(1, 9)
+    }
+    game._pipeline_runtime = _Runtime(
+        commits=commits,
+        pending_damage=({"target": 2, "amount": 1, "cause": "hunter_shot"},),
+    )
+    engine = scheduler(registry)
+    with pytest.raises(PipelinePaused, match="settlement batch cap exceeded"):
+        engine.settle_pending(game)
+
+
 def test_night_commit_followup_settles_reaction_damage_in_chain() -> None:
     registry = snapshot(_chain_spec())
     game = _chain_game(3, ({"target": 1, "amount": 1, "cause": "wolf_kill"},))
