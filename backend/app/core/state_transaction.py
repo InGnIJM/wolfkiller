@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import weakref
-from threading import Lock, RLock
+from threading import RLock
 
 from app.models.game import GameState
 
-_GUARD = Lock()
+# Reentrant: the weakref callback can fire synchronously on the thread that
+# already holds the guard while replacing a reused identity's entry.
+_GUARD = RLock()
 _LOCKS: dict[int, tuple[weakref.ReferenceType[GameState], RLock]] = {}
 
 
