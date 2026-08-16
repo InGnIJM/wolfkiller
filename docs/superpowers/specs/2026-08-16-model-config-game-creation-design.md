@@ -192,11 +192,12 @@ class CreateGameRequest(BaseModel):
 ## 11. 风险与潜在问题
 
 1. **strict 地址缺省回退（2026-08-17 已修）**：原规则"留空沿用 .env strict 地址"会在非 DeepSeek 厂商配置上把请求误发到 DeepSeek beta（实测 401）→ 改为按厂商推导（DeepSeek 官方 → /beta，其它 → base_url 本身），连接测试同步探测 strict 端点；引擎仍有 StrictCapabilityError → JSON 降级兜底 🟢
-2. **key 加密机器绑定**：换机器/改主机名后 key 解不开需重输 🟡（文档写明）
-3. **多进程并发写 models.json**：单 uvicorn 进程无碍；多 worker 时靠预留的 SQLite 实现 🟢
-4. **泄露面**：GET 脱敏 + 日志禁打 key + 错误不回显 key 🟢
-5. **二期兼容**：`model_assignments` 一期就是数组结构，二期放宽为多条；manifest 模型快照同为数组——无迁移 🟢
-6. **路由引入冲击现有测试**：GameList 等组件用 Link/useNavigate 后单测需 Router 包裹，可控工作量 🟡
+2. **推理型模型需更大输出预算（2026-08-17 实测）**：小米 MiMo 等推理模型思考消耗大量 token，`LLM_MAX_TOKENS`=1024 时真实讨论提示词下实测 5/5 `finish_reason=length`（输出空或截断 → JSONDecodeError，引擎降级为狼跳过/弃权）；调到 4096 后 3/3 正常。`.env` 已设 `LLM_MAX_TOKENS=4096`；配置推理型模型时必须留足思考预算 🟢
+3. **key 加密机器绑定**：换机器/改主机名后 key 解不开需重输 🟡（文档写明）
+4. **多进程并发写 models.json**：单 uvicorn 进程无碍；多 worker 时靠预留的 SQLite 实现 🟢
+5. **泄露面**：GET 脱敏 + 日志禁打 key + 错误不回显 key 🟢
+6. **二期兼容**：`model_assignments` 一期就是数组结构，二期放宽为多条；manifest 模型快照同为数组——无迁移 🟢
+7. **路由引入冲击现有测试**：GameList 等组件用 Link/useNavigate 后单测需 Router 包裹，可控工作量 🟡
 7. **核心模块门禁**：`llm_client.py` / `game_service.py` 不在 5 个核心 blob 门禁内，改造不触犯 `test_guard_extension.py`；实施时跑全量门禁确认 🟢
 8. **旧存档兼容**：不动 registry / effect schema，旧档继续可回放；旧档缺模型快照字段显示"未知" 🟢
 9. **图标规范冲突**：全局规范要求 Material Symbols 禁 emoji，现有 `RoleIcon` 用 emoji；实施时二选一（迁移图标库或维持现状豁免），不阻塞本设计 🟡
