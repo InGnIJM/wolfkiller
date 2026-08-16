@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { Box, Typography, Button, Stack, Container } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import GameCard from './GameCard';
-import CreateGame from './CreateGame';
-import { listGames, createGame } from '../../api/client';
+import { listGames } from '../../api/client';
 
 interface GameInfo {
   game_id: string;
@@ -16,6 +15,7 @@ interface GameInfo {
 
 interface Props {
   onJoinGame: (gameId: string) => void;
+  onCreateClick: () => void;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -30,10 +30,8 @@ const PHASE_LABELS: Record<string, string> = {
   game_over: '已结束',
 };
 
-export default function GameList({ onJoinGame }: Props) {
+export default function GameList({ onJoinGame, onCreateClick }: Props) {
   const [games, setGames] = useState<GameInfo[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -54,18 +52,6 @@ export default function GameList({ onJoinGame }: Props) {
     };
   }, []);
 
-  const handleCreate = async (config: Record<string, number>) => {
-    setLoading(true);
-    try {
-      const res = await createGame(config);
-      setShowCreate(false);
-      onJoinGame(res.game_id);
-    } catch (e) {
-      console.error('Failed to create game:', e);
-    }
-    setLoading(false);
-  };
-
   return (
     <Container maxWidth="sm" sx={{ py: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
@@ -80,8 +66,7 @@ export default function GameList({ onJoinGame }: Props) {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={() => setShowCreate(true)}
-          disabled={loading}
+          onClick={onCreateClick}
           disableElevation
         >
           创建游戏
@@ -113,12 +98,6 @@ export default function GameList({ onJoinGame }: Props) {
           />
         ))}
       </Stack>
-
-      <CreateGame
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        onCreate={handleCreate}
-      />
     </Container>
   );
 }
