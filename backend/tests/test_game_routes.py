@@ -47,7 +47,7 @@ async def test_create_game_passes_dynamic_role_counts_and_returns_canonical_conf
 
     response = await game_routes.create_game(CreateGameRequest(role_counts=counts))
 
-    service.create_game.assert_awaited_once_with(role_counts=counts)
+    service.create_game.assert_awaited_once_with(role_counts=counts, model_assignments=None)
     assert response.config == {
         "role_counts": counts,
         "num_werewolves": 1,
@@ -86,6 +86,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
         num_seers=1,
         num_witches=0,
         num_hunters=0,
+        model_assignments=None,
     )
     assert response.config["role_counts"] == counts
 

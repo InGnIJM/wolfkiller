@@ -62,16 +62,27 @@ def get_service() -> GameService:
 @router.post("", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest = CreateGameRequest()):
     service = get_service()
-    if req.role_counts is not None:
-        game_id = await service.create_game(role_counts=req.role_counts)
-    else:
-        game_id = await service.create_game(
-            num_werewolves=req.num_werewolves,
-            num_villagers=req.num_villagers,
-            num_seers=req.num_seers,
-            num_witches=req.num_witches,
-            num_hunters=req.num_hunters,
-        )
+    assignments = (
+        [item.model_dump() for item in req.model_assignments]
+        if req.model_assignments is not None
+        else None
+    )
+    try:
+        if req.role_counts is not None:
+            game_id = await service.create_game(
+                role_counts=req.role_counts, model_assignments=assignments,
+            )
+        else:
+            game_id = await service.create_game(
+                num_werewolves=req.num_werewolves,
+                num_villagers=req.num_villagers,
+                num_seers=req.num_seers,
+                num_witches=req.num_witches,
+                num_hunters=req.num_hunters,
+                model_assignments=assignments,
+            )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
     state = service.get_game_state(game_id)
     if state is None:
         raise HTTPException(404, "Game not found after creation")
@@ -85,6 +96,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 for field, role_id in _LEGACY_ROLE_COUNT_FIELDS.items()
             },
         },
+        model_snapshot=service.get_game_model_snapshot(game_id),
     )
 
 

@@ -206,7 +206,10 @@ class GameManifest:
             self._persist()
         return dict(self._entries)
 
-    def add_game(self, game_id: str, config: dict) -> None:
+    def add_game(
+        self, game_id: str, config: dict,
+        model_snapshot: Optional[list] = None,
+    ) -> None:
         entry = self._entries.get(game_id, {})
         role_counts = config.get("role_counts")
         player_count = (
@@ -224,6 +227,8 @@ class GameManifest:
             "winner": None,
             "finished_at": None,
         })
+        if model_snapshot is not None:
+            entry["model_snapshot"] = model_snapshot
         self._entries[game_id] = entry
         self._persist()
 
@@ -240,6 +245,7 @@ class GameManifest:
         effect_schema_version: Optional[int] = None,
         state_revision: Optional[int] = None,
         last_consistent_checkpoint: Optional[str] = None,
+        model_snapshot: Optional[list] = None,
     ) -> None:
         entry = self._entries.get(game_id)
         if entry is None:
@@ -267,6 +273,8 @@ class GameManifest:
             entry["state_revision"] = state_revision
         if last_consistent_checkpoint is not None:
             entry["last_consistent_checkpoint"] = last_consistent_checkpoint
+        if model_snapshot is not None:
+            entry["model_snapshot"] = model_snapshot
         self._persist()
 
     # ── Internals ──────────────────────────────────────────────────

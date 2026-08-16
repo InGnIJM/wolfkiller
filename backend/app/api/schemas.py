@@ -3,6 +3,8 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from app.api.model_schemas import ModelAssignment
+
 
 class CreateGameRequest(BaseModel):
     role_counts: Optional[dict[str, int]] = None
@@ -11,6 +13,7 @@ class CreateGameRequest(BaseModel):
     num_seers: int = 1
     num_witches: int = 1
     num_hunters: int = 1
+    model_assignments: Optional[list[ModelAssignment]] = None
 
     @model_validator(mode="after")
     def reject_mixed_role_count_formats(self):
@@ -30,6 +33,7 @@ class CreateGameResponse(BaseModel):
     game_id: str
     player_count: int
     config: dict
+    model_snapshot: list[dict] = []
 
 
 class GameListItem(BaseModel):
