@@ -112,7 +112,8 @@ class BaseRole:
         except Exception as e:
             logger.error(
                 f"Seat {self.seat}: LLM invocation failed with exception for "
-                f"context={context} (attempt 1): {e}"
+                f"context={context} (attempt 1): {e}",
+                exc_info=True,
             )
             tool_result = None
 
@@ -134,7 +135,8 @@ class BaseRole:
             except Exception as e:
                 logger.error(
                     f"Seat {self.seat}: LLM invocation failed with exception for "
-                    f"context={context} (attempt 2): {e}"
+                    f"context={context} (attempt 2): {e}",
+                    exc_info=True,
                 )
                 tool_result = None
 
@@ -144,7 +146,8 @@ class BaseRole:
         except Exception as e:
             logger.error(
                 f"Seat {self.seat}: Unexpected error validating tool result for "
-                f"context={context}: {e}. Falling back to generated speech."
+                f"context={context}: {e}. Falling back to generated speech.",
+                exc_info=True,
             )
             return self._generate_fallback_speech(state, context)
 
@@ -360,7 +363,12 @@ class BaseRole:
             try:
                 command = await invoke(active_messages, request)
                 return self._accept_command(state, request, command)
-            except ActionValidationError:
+            except ActionValidationError as error:
+                logger.warning(
+                    f"Seat {self.seat}: action validation failed for "
+                    f"contract={request.contract.contract_id} "
+                    f"(attempt {attempt + 1}/2): {error}"
+                )
                 if attempt == 1:
                     fallback = ActionCommand(
                         action_type=request.contract.fallback_action_type,

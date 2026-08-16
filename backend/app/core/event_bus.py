@@ -46,7 +46,10 @@ class EventBus:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
-                logger.error(f"Event handler error for {key}: {result}")
+                logger.error(
+                    f"Event handler error for {key}: {result}",
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
     def clear(self) -> None:
         self._subscribers.clear()

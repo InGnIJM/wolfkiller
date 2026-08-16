@@ -77,6 +77,9 @@ class WSHandler:
             data = json.loads(raw)
             msg_type = data.get("type", "")
         except json.JSONDecodeError:
+            logger.warning(
+                f"WS message parse error (game={game_id}): %r", raw[:200],
+            )
             return
 
         if msg_type == "set_speed":
