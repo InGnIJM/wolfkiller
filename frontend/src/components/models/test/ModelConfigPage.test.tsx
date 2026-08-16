@@ -178,7 +178,7 @@ describe('ModelConfigPage', () => {
     );
   });
 
-  it('dialog saves advanced options as numbers and nulls', async () => {
+  it('dialog saves advanced options as number and string', async () => {
     vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'b3', name: 'Adv' });
     render(<ModelConfigPage />);
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
@@ -195,6 +195,25 @@ describe('ModelConfigPage', () => {
     await waitFor(() =>
       expect(createModel).toHaveBeenCalledWith(expect.objectContaining({
         temperature: 0.5, strict_base_url: 'https://x/beta',
+      })),
+    );
+  });
+
+  it('dialog saves blank advanced options as nulls', async () => {
+    vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'b4', name: 'NoAdv' });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'NoAdv' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(createModel).toHaveBeenCalledWith(expect.objectContaining({
+        temperature: null, strict_base_url: null,
       })),
     );
   });

@@ -122,8 +122,10 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             <>
               <TextField
                 label="Temperature（可选，0~2）"
+                type="number"
                 value={temperature}
                 onChange={(e) => setTemperature(e.target.value)}
+                slotProps={{ htmlInput: { min: 0, max: 2, step: 0.1 } }}
                 size="small"
                 fullWidth
               />
