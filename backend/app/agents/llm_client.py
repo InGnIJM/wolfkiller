@@ -1,51 +1,84 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from openai import BadRequestError, UnprocessableEntityError
+
 from app.config import config as app_config
 from app.agents.output_parser import StrictCapabilityError
 from app.models.contracts import ActionContract
 
 
+@dataclass(frozen=True)
+class LLMClientConfig:
+    """Explicit per-client model configuration (reads no global state)."""
+
+    base_url: str
+    api_key: str
+    model_id: str
+    temperature: float
+    max_tokens: int
+    strict_base_url: str
+
+
+def env_default_client_config() -> LLMClientConfig:
+    """Materialize the .env fallback configuration."""
+    llm_cfg = app_config.llm
+    return LLMClientConfig(
+        base_url=llm_cfg.base_url,
+        api_key=llm_cfg.api_key,
+        model_id=llm_cfg.models[0],
+        temperature=llm_cfg.temperature,
+        max_tokens=llm_cfg.max_tokens,
+        strict_base_url=llm_cfg.strict_base_url,
+    )
+
+
 class LLMClient:
-    """Thin wrapper around LangChain ChatModel for DeepSeek (OpenAI-compatible)."""
+    """Thin wrapper around LangChain ChatModel (OpenAI-compatible).
 
-    def __init__(self, model: str | None = None, temperature: float | None = None):
-        llm_cfg = app_config.llm
-        self.model_name = model or llm_cfg.models[0]
-        self.temperature = temperature if temperature is not None else llm_cfg.temperature
-        self.max_tokens = llm_cfg.max_tokens
+    Configuration comes from an explicit LLMClientConfig; when omitted the
+    .env defaults are used so existing callers keep working.
+    """
 
-    def get_model(self) -> BaseChatModel:
-        llm_cfg = app_config.llm
+    def __init__(
+        self,
+        model: str | None = None,
+        temperature: float | None = None,
+        config: LLMClientConfig | None = None,
+    ):
+        self._config = config if config is not None else env_default_client_config()
+        self.model_name = model or self._config.model_id
+        self.temperature = (
+            temperature if temperature is not None else self._config.temperature
+        )
+        self.max_tokens = self._config.max_tokens
+
+    def _build(self) -> ChatOpenAI:
         return ChatOpenAI(
             model=self.model_name,
-            api_key=llm_cfg.api_key,
-            base_url=llm_cfg.base_url,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
 
+    def get_model(self) -> BaseChatModel:
+        return self._build()
+
     def get_model_with_temperature(self, temperature: float) -> BaseChatModel:
-        llm_cfg = app_config.llm
         return ChatOpenAI(
             model=self.model_name,
-            api_key=llm_cfg.api_key,
-            base_url=llm_cfg.base_url,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
             temperature=temperature,
             max_tokens=self.max_tokens,
         )
 
     def get_model_with_tools(self, tools: list[dict]) -> BaseChatModel:
-        """Return a model with function-calling tools bound."""
-        llm_cfg = app_config.llm
-        model = ChatOpenAI(
-            model=self.model_name,
-            api_key=llm_cfg.api_key,
-            base_url=llm_cfg.base_url,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
-        return model.bind_tools(tools)
+        return self._build().bind_tools(tools)
 
     @staticmethod
     def map_strict_capability_error(error: Exception) -> Exception:
@@ -83,11 +116,10 @@ class LLMClient:
 
     def get_model_with_action_tool(self, contract: ActionContract) -> BaseChatModel:
         """Return a strict model bound to the one action tool issued by a contract."""
-        llm_cfg = app_config.llm
         model = ChatOpenAI(
             model=self.model_name,
-            api_key=llm_cfg.api_key,
-            base_url=llm_cfg.strict_base_url,
+            api_key=self._config.api_key,
+            base_url=self._config.strict_base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
