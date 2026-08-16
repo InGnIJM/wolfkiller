@@ -16,6 +16,12 @@ def test_main_exposes_app_routes_and_services():
     assert "/api/config" in paths
     assert "/ws/game/{game_id}" in paths
     assert "/api/games" in paths
+    assert "/api/models" in paths
+    assert "/api/models/{config_id}" in paths
+    assert "/api/models/test" in paths
+    assert "/api/catalog/roles" in paths
+    assert "/api/catalog/presets" in paths
+    assert "/api/catalog/constraints" in paths
 
 
 @pytest.mark.asyncio
