@@ -152,6 +152,33 @@ def test_discussion_turn_skip_cannot_carry_target():
         DiscussionTurn(1, False, "", 4)
 
 
+# ── DiscussionTurn day_plan ─────────────────────────────────
+
+
+def test_discussion_turn_day_plan_defaults_empty():
+    assert DiscussionTurn(1, True, "刀4号").day_plan == ""
+
+
+def test_discussion_turn_day_plan_boundary_150():
+    turn = DiscussionTurn(1, True, "刀4号", 4, "p" * 150)
+    assert turn.day_plan == "p" * 150
+
+
+def test_discussion_turn_day_plan_too_long():
+    with pytest.raises(ValueError):
+        DiscussionTurn(1, True, "刀4号", 4, "p" * 151)
+
+
+def test_discussion_turn_day_plan_non_string():
+    with pytest.raises(TypeError):
+        DiscussionTurn(1, True, "刀4号", 4, 123)  # type: ignore[arg-type]
+
+
+def test_discussion_turn_skip_cannot_carry_day_plan():
+    with pytest.raises(ValueError):
+        DiscussionTurn(1, False, "", None, "计划")
+
+
 # ── WolfVote ────────────────────────────────────────────────
 
 
@@ -411,6 +438,14 @@ def test_discussion_prompt_renders_empty_briefing_placeholders(state: GameState,
     assert "（暂无思考记录）" in human
 
 
+def test_discussion_prompt_asks_for_day_plan(state: GameState, director: NightDirector):
+    messages = director.discussion_prompt(state, 1, [], NightBriefing())
+    human = messages[1]["content"]
+    assert "day_plan" in human
+    assert "次日" in human
+    assert "嫁祸" in human
+
+
 def test_vote_prompt_renders_briefing_sections(state: GameState, director: NightDirector):
     briefing = NightBriefing(("第1轮公开 4号：我觉得3号可疑",), (), ("第1轮[night]：我怀疑女巫",))
     messages = director.vote_prompt(state, 1, [], [], briefing)
@@ -552,6 +587,24 @@ def test_wolf_discussion_turn_skip_drops_preferred_target(state: GameState):
     director = _director(lambda _messages: '{"speak": false, "preferred_target": 4}')
     turn = director.wolf_discussion_turn(state, 1, [])
     assert turn == DiscussionTurn(1, False)
+
+
+def test_wolf_discussion_turn_parses_day_plan(state: GameState):
+    director = _director(lambda _messages: '{"speak": true, "text": "刀4号", "preferred_target": 4, "day_plan": "明天白天带节奏踩9号"}')
+    turn = director.wolf_discussion_turn(state, 1, [])
+    assert turn == DiscussionTurn(1, True, "刀4号", 4, "明天白天带节奏踩9号")
+
+
+@pytest.mark.parametrize("payload", [
+    '{"speak": true, "text": "刀4号", "day_plan": 123}',
+    '{"speak": true, "text": "刀4号", "day_plan": "' + "x" * 151 + '"}',
+    '{"speak": true, "text": "刀4号"}',
+    '{"speak": false, "day_plan": "计划"}',
+])
+def test_wolf_discussion_turn_ignores_invalid_day_plan(state: GameState, payload: str):
+    director = _director(lambda _messages: payload)
+    turn = director.wolf_discussion_turn(state, 1, [])
+    assert turn.day_plan == ""
 
 
 def test_wolf_discussion_turn_fallback_too_long_text(state: GameState):

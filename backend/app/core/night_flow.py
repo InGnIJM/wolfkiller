@@ -15,6 +15,7 @@ from app.roles.registry import RegistrySnapshot
 logger = logging.getLogger(__name__)
 
 _MAX_UTTERANCE = 200
+_MAX_DAY_PLAN = 150
 
 _CHINESE_DIRECTIVE = (
     "IMPORTANT: Every piece of text you produce (message, reasoning, thought) "
@@ -131,6 +132,7 @@ class DiscussionTurn:
     spoke: bool
     text: str = ""
     preferred_target: Optional[int] = None
+    day_plan: str = ""
 
     def __post_init__(self) -> None:
         if type(self.seat) is not int or self.seat <= 0:
@@ -142,6 +144,10 @@ class DiscussionTurn:
             or not 1 <= self.preferred_target <= 2_147_483_647
         ):
             raise ValueError("invalid preferred target")
+        if type(self.day_plan) is not str:
+            raise TypeError("day_plan must be a string")
+        if len(self.day_plan) > _MAX_DAY_PLAN:
+            raise ValueError("day_plan is too long")
         if self.spoke:
             _clean(self.text, "text", _MAX_UTTERANCE)
         else:
@@ -149,6 +155,8 @@ class DiscussionTurn:
                 raise ValueError("skipped turn cannot carry text")
             if self.preferred_target is not None:
                 raise ValueError("skipped turn cannot carry target")
+            if self.day_plan != "":
+                raise ValueError("skipped turn cannot carry day plan")
 
 
 @dataclass(frozen=True)
@@ -254,10 +262,13 @@ class NightDirector:
             "讨论要求：\n"
             "- 不要复述队友已经说过的内容；如果团队已达成一致而你没有新信息，请跳过本轮。\n"
             "- 如果你有倾向的刀人目标，把该座位号填入 preferred_target；没有倾向就填 null。\n"
+            "- 除了今晚的刀人目标，还应商定明天白天的配合计划：带节奏方向、嫁祸对象等，"
+            "用 day_plan 字段（≤150字，没有计划则填空串）提交，计划会同步给全体队友。\n"
             "- 当所有狼队友都认可同一个目标后，讨论会提前结束。\n"
             + _night_notice(state)
             + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤200字)", '
-            '"preferred_target": 座位号或null} 表示发言，{"speak": false} 表示跳过本轮发言。'
+            '"preferred_target": 座位号或null, "day_plan": "次日白天配合计划(≤150字，可空)"} '
+            '表示发言，{"speak": false} 表示跳过本轮发言。'
         )
         return self._messages(system, human)
 
@@ -317,7 +328,10 @@ class NightDirector:
                 preferred = target
             else:
                 preferred = None
-            return DiscussionTurn(seat, True, text, preferred)
+            day_plan = value.get("day_plan")
+            if type(day_plan) is not str or len(day_plan) > _MAX_DAY_PLAN:
+                day_plan = ""
+            return DiscussionTurn(seat, True, text, preferred, day_plan)
         except Exception:
             logger.warning(
                 "Wolf discussion LLM failed for seat %s round %s; treating as skip",
