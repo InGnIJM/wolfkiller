@@ -8,10 +8,11 @@ from app.stores.model_key_crypto import ModelKeyCrypto
 
 
 def _store_with(tmp_path, monkeypatch, **fields):
-    cfg = ModelConfig.new(
-        name="DeepSeek Pro", base_url="https://cfg.test/v1",
-        model_id="cfg-model", **fields,
+    values = dict(
+        name="DeepSeek Pro", base_url="https://cfg.test/v1", model_id="cfg-model",
     )
+    values.update(fields)
+    cfg = ModelConfig.new(**values)
     store = JsonModelConfigStore(str(tmp_path / "models.json"))
     store.upsert(cfg)
     monkeypatch.setattr(game_service, "get_model_config_store", lambda: store)
@@ -108,6 +109,30 @@ def test_config_with_invalid_key_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="invalid"):
         resolve_model_config([{"config_id": cfg.id, "count": 9}], 9)
+
+
+def test_configured_model_derives_strict_url_for_non_deepseek_provider(tmp_path, monkeypatch):
+    crypto = ModelKeyCrypto()
+    cfg, _ = _store_with(
+        tmp_path, monkeypatch, api_key_encrypted=crypto.encrypt("sk-cfg-key"),
+    )
+
+    client_config, _ = resolve_model_config([{"config_id": cfg.id, "count": 9}], 9)
+
+    assert client_config.strict_base_url == "https://cfg.test/v1"
+
+
+def test_configured_model_derives_beta_strict_url_for_official_deepseek(tmp_path, monkeypatch):
+    crypto = ModelKeyCrypto()
+    cfg, _ = _store_with(
+        tmp_path, monkeypatch,
+        base_url="https://api.deepseek.com/v1",
+        api_key_encrypted=crypto.encrypt("sk-cfg-key"),
+    )
+
+    client_config, _ = resolve_model_config([{"config_id": cfg.id, "count": 9}], 9)
+
+    assert client_config.strict_base_url == "https://api.deepseek.com/beta"
 
 
 @pytest.mark.asyncio

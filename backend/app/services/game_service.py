@@ -11,7 +11,9 @@ from app.config import config as app_config
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
-from app.agents.llm_client import LLMClient, LLMClientConfig, env_default_client_config
+from app.agents.llm_client import (
+    LLMClient, LLMClientConfig, derive_strict_base_url, env_default_client_config,
+)
 from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
@@ -102,7 +104,9 @@ def resolve_model_config(
             else env_config.temperature
         ),
         max_tokens=env_config.max_tokens,
-        strict_base_url=config.strict_base_url or env_config.strict_base_url,
+        strict_base_url=derive_strict_base_url(
+            config.base_url, config.strict_base_url,
+        ),
     )
     snapshot = [{
         "config_id": config.id,
