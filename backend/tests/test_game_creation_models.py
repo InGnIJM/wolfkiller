@@ -157,3 +157,24 @@ async def test_create_game_route_maps_resolution_errors_to_400(monkeypatch):
             model_assignments=[{"config_id": "missing", "count": 2}],
         ))
     assert exc.value.status_code == 400
+
+
+def test_manifest_update_game_persists_model_snapshot(tmp_path):
+    from app.services.game_manifest import GameManifest
+
+    manifest = GameManifest(data_dir=str(tmp_path))
+    manifest.add_game(
+        "g1", {"role_counts": {"wolf-killer-werewolf": 1, "wolf-killer-villager": 1}},
+    )
+    manifest.update_game(
+        "g1", model_snapshot=[{"config_id": None, "name": "环境默认 (.env)"}],
+    )
+    # load_or_rebuild() drops entries whose game directory is missing,
+    # so create it (matching the other manifest persistence tests).
+    (tmp_path / "games" / "g1").mkdir(parents=True, exist_ok=True)
+
+    entries = manifest.load_or_rebuild()
+
+    assert entries["g1"]["model_snapshot"] == [
+        {"config_id": None, "name": "环境默认 (.env)"},
+    ]
