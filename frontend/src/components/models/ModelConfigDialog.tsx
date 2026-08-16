@@ -35,10 +35,16 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     : '';
   const modelError = !modelId.trim() ? '模型 ID 必填' : '';
   const hasErrors = Boolean(nameError || urlError || modelError);
+  const tested = testResult?.ok === true;
+  const canSave = !hasErrors && tested && !saving;
+
+  const invalidateTest = () => {
+    setTestResult((prev) => (prev?.ok ? null : prev));
+  };
 
   const handleSave = async () => {
     setTouched(true);
-    if (hasErrors) return;
+    if (hasErrors || !tested) return;
     setSaving(true);
     await onSave({
       name: name.trim(),
@@ -52,6 +58,8 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   };
 
   const handleTest = async () => {
+    setTouched(true);
+    if (hasErrors) return;
     setTesting(true);
     try {
       const result = initial
@@ -78,6 +86,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             label="名称"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => setTouched(true)}
             error={touched && Boolean(nameError)}
             helperText={touched ? nameError : ''}
             size="small"
@@ -87,7 +96,11 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             label="Base URL"
             placeholder="https://api.deepseek.com/v1"
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            onChange={(e) => {
+              setBaseUrl(e.target.value);
+              invalidateTest();
+            }}
+            onBlur={() => setTouched(true)}
             error={touched && Boolean(urlError)}
             helperText={touched ? urlError : ''}
             size="small"
@@ -97,7 +110,11 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             label="模型 ID"
             placeholder="deepseek-v4-flash"
             value={modelId}
-            onChange={(e) => setModelId(e.target.value)}
+            onChange={(e) => {
+              setModelId(e.target.value);
+              invalidateTest();
+            }}
+            onBlur={() => setTouched(true)}
             error={touched && Boolean(modelError)}
             helperText={touched ? modelError : ''}
             size="small"
@@ -107,7 +124,10 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             label={initial?.has_key ? 'API Key（留空 = 保留原 key）' : 'API Key'}
             type="password"
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              invalidateTest();
+            }}
             size="small"
             fullWidth
           />
@@ -130,9 +150,12 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                 fullWidth
               />
               <TextField
-                label="严格模式地址（可选，留空沿用 .env）"
+                label="严格模式地址（可选，留空按厂商自动推导）"
                 value={strictUrl}
-                onChange={(e) => setStrictUrl(e.target.value)}
+                onChange={(e) => {
+                  setStrictUrl(e.target.value);
+                  invalidateTest();
+                }}
                 size="small"
                 fullWidth
               />
@@ -148,10 +171,19 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                 : `连接失败：${testResult.error}`}
             </Typography>
           )}
+          {!tested && !hasErrors && (
+            <Typography variant="body2" color="text.secondary">
+              保存前需通过连接测试
+            </Typography>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button color="inherit" onClick={() => void handleTest()} disabled={testing}>
+        <Button
+          color="inherit"
+          onClick={() => void handleTest()}
+          disabled={testing || hasErrors}
+        >
           测试连接
         </Button>
         <Button color="inherit" onClick={onClose}>取消</Button>
@@ -159,7 +191,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
           variant="contained"
           disableElevation
           onClick={() => void handleSave()}
-          disabled={saving}
+          disabled={!canSave}
         >
           保存
         </Button>

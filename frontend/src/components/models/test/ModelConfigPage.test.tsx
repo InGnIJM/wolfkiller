@@ -55,6 +55,7 @@ describe('ModelConfigPage', () => {
 
   it('creates a new config through the dialog', async () => {
     vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'b2', name: 'New Model' });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     render(<ModelConfigPage />);
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
 
@@ -63,6 +64,8 @@ describe('ModelConfigPage', () => {
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
     fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
     fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-new' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() =>
@@ -77,10 +80,12 @@ describe('ModelConfigPage', () => {
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.blur(screen.getByLabelText('名称'));
 
-    expect(createModel).not.toHaveBeenCalled();
     expect(screen.getByText('名称必填')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    expect(createModel).not.toHaveBeenCalled();
+    expect(testModelConnection).not.toHaveBeenCalled();
   });
 
   it('rejects save when base url has no http scheme', async () => {
@@ -90,14 +95,15 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'ftp://x' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.blur(screen.getByLabelText('Base URL'));
 
-    expect(createModel).not.toHaveBeenCalled();
     expect(screen.getByText(/必须以 http/)).toBeInTheDocument();
+    expect(createModel).not.toHaveBeenCalled();
   });
 
   it('edits an existing config with prefilled values', async () => {
     vi.mocked(updateModel).mockResolvedValue({ ...sample, name: 'Renamed' });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     render(<ModelConfigPage />);
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
 
@@ -106,6 +112,8 @@ describe('ModelConfigPage', () => {
     expect(nameInput.value).toBe('DeepSeek Pro');
 
     fireEvent.change(nameInput, { target: { value: 'Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() =>
@@ -166,6 +174,7 @@ describe('ModelConfigPage', () => {
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
     fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
     fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-f' } });
@@ -180,6 +189,7 @@ describe('ModelConfigPage', () => {
 
   it('dialog saves advanced options as number and string', async () => {
     vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'b3', name: 'Adv' });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     render(<ModelConfigPage />);
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
 
@@ -190,6 +200,8 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
     fireEvent.change(screen.getByLabelText(/Temperature/), { target: { value: '0.5' } });
     fireEvent.change(screen.getByLabelText(/严格模式地址/), { target: { value: 'https://x/beta' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() =>
@@ -201,6 +213,7 @@ describe('ModelConfigPage', () => {
 
   it('dialog saves blank advanced options as nulls', async () => {
     vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'b4', name: 'NoAdv' });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     render(<ModelConfigPage />);
     await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
 
@@ -209,6 +222,8 @@ describe('ModelConfigPage', () => {
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
     fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() =>
@@ -216,5 +231,40 @@ describe('ModelConfigPage', () => {
         temperature: null, strict_base_url: null,
       })),
     );
+  });
+
+  it('disables save until the connection test passes', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+
+    expect(screen.getByText('保存前需通过连接测试')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
+  });
+
+  it('re-disables save when a connectivity field changes after a successful test', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm2' } });
+
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
   });
 });

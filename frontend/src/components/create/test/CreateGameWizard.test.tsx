@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CreateGameWizard from '../CreateGameWizard';
 import {
   createGame, createModel, fetchConstraints, fetchPresets, fetchRoleCatalog,
-  listModels,
+  listModels, testModelConnection,
 } from '../../../api/client';
 import type { GamePreset } from '../../../store/types';
 
@@ -153,12 +153,15 @@ describe('CreateGameWizard step 2 and submission', () => {
 
   it('creates a model config inline and selects it', async () => {
     vi.mocked(createModel).mockResolvedValue({ ...MODEL, id: 'm2', name: 'New Model' });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     await goToStep2();
     fireEvent.click(screen.getByText('当场新建模型配置'));
 
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'New Model' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
     fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() =>
