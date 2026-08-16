@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import uuid
@@ -8,6 +9,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -55,12 +58,13 @@ class JsonModelConfigStore:
         self._lock = threading.RLock()
 
     def list_all(self) -> list[ModelConfig]:
-        raw = self._read()
-        return [
-            ModelConfig(**entry)
-            for entry in raw.get("configs", [])
-            if isinstance(entry, dict)
-        ]
+        with self._lock:
+            raw = self._read()
+            return [
+                ModelConfig(**entry)
+                for entry in raw.get("configs", [])
+                if isinstance(entry, dict)
+            ]
 
     def get(self, config_id: str) -> Optional[ModelConfig]:
         return next(
@@ -93,9 +97,18 @@ class JsonModelConfigStore:
         try:
             with open(self._path, "r", encoding="utf-8") as handle:
                 raw = json.load(handle)
-        except (OSError, json.JSONDecodeError):
+        except OSError as error:
+            logger.warning(
+                "Failed to load model config store, starting empty: %s", error,
+            )
+            return {"version": self.VERSION, "configs": []}
+        except json.JSONDecodeError as error:
+            logger.warning(
+                "Failed to load model config store, starting empty: %s", error,
+            )
             return {"version": self.VERSION, "configs": []}
         if not isinstance(raw, dict):
+            logger.warning("Model config store root is not an object, starting empty")
             return {"version": self.VERSION, "configs": []}
         return raw
 

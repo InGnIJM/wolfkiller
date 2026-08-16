@@ -1,4 +1,5 @@
 import json
+import logging
 
 import pytest
 
@@ -86,6 +87,18 @@ def test_non_dict_root_returns_empty_list(tmp_path):
     path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     store = JsonModelConfigStore(str(path))
     assert store.list_all() == []
+
+
+def test_corrupt_file_logs_warning(tmp_path, caplog):
+    path = tmp_path / "models.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    store = JsonModelConfigStore(str(path))
+    with caplog.at_level(logging.WARNING, logger="app.stores.model_config_store"):
+        assert store.list_all() == []
+    assert any(
+        record.levelno == logging.WARNING
+        for record in caplog.records
+    )
 
 
 def test_persisted_file_has_version_field_and_no_tmp_left(tmp_path):
