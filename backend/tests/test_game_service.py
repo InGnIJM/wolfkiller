@@ -1,10 +1,12 @@
 import pytest
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch, PropertyMock
 from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
+from app.models.game import GamePhase
 from app.api.websocket.ws_handler import WSManager
 from app.roles.registry import builtin_registry
 from app.services.game_manifest import GameManifest
@@ -60,6 +62,63 @@ class TestGameService:
         state = service.get_game_state(game_id)
         assert state is not None
         assert state.config.total_players == 9
+
+    @pytest.mark.asyncio
+    async def test_engine_crash_marks_game_error_and_logs(self, monkeypatch):
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+
+        async def boom(self):
+            raise RuntimeError("engine exploded")
+
+        monkeypatch.setattr(GameEngine, "start", boom)
+        game_id = await service.create_game()
+        task = service._tasks[game_id]
+        with pytest.raises(RuntimeError, match="engine exploded"):
+            await task
+        await asyncio.sleep(0)  # let the done callback run
+
+        state = service.get_game_state(game_id)
+        assert state is not None
+        assert state.phase == GamePhase.ERROR
+        service._manifest.update_game.assert_any_call(game_id, phase="error")
+
+    @pytest.mark.asyncio
+    async def test_engine_clean_completion_does_not_mark_error(self, monkeypatch):
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+
+        async def run_cleanly(self):
+            return None
+
+        monkeypatch.setattr(GameEngine, "start", run_cleanly)
+        game_id = await service.create_game()
+        await service._tasks[game_id]
+        await asyncio.sleep(0)
+
+        state = service.get_game_state(game_id)
+        assert state is not None
+        assert state.phase != GamePhase.ERROR
+        assert all(
+            call.kwargs.get("phase") != "error"
+            for call in service._manifest.update_game.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_engine_crash_with_missing_state_is_ignored(self, monkeypatch):
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+
+        async def boom(self):
+            raise RuntimeError("engine exploded")
+
+        monkeypatch.setattr(GameEngine, "start", boom)
+        game_id = await service.create_game()
+        task = service._tasks[game_id]
+        service._games.pop(game_id)  # state vanished before the callback ran
+        with pytest.raises(RuntimeError, match="engine exploded"):
+            await task
+        await asyncio.sleep(0)  # callback must not raise
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_game(self):
@@ -156,6 +215,7 @@ class TestGameService:
         counts = {"wolf-killer-werewolf": 1, "wolf-killer-villager": 3}
 
         manifest.add_game("game-1", {"role_counts": counts})
+        (tmp_path / "games" / "game-1").mkdir(parents=True, exist_ok=True)
 
         entry = manifest.load_or_rebuild()["game-1"]
         assert entry["player_count"] == 4
@@ -173,6 +233,7 @@ class TestGameService:
             alive_count=3,
             winner="good",
         )
+        (tmp_path / "games" / "game-1").mkdir(parents=True, exist_ok=True)
 
         entry = GameManifest(str(tmp_path)).load_or_rebuild()["game-1"]
 
@@ -333,6 +394,8 @@ class TestGameService:
             {"game_id": "older", "created_at": "2025-01-01T00:00:00+00:00"},
         ]
         (games / "index.json").write_text(json.dumps(entries), encoding="utf-8")
+        for entry in entries:
+            (games / entry["game_id"]).mkdir()
 
         restored = GameManifest(str(tmp_path)).load_or_rebuild()
         persisted = json.loads((games / "index.json").read_text(encoding="utf-8"))
@@ -401,6 +464,7 @@ class TestGameService:
         (games / "index.json").write_text(
             json.dumps([invalid_entry, valid_entry]), encoding="utf-8"
         )
+        (games / "indexed").mkdir()
         recovered = games / "recovered"
         recovered.mkdir()
         (recovered / "game.log").write_text(
@@ -1111,6 +1175,7 @@ class TestPipelineSnapshotVersioning:
             state_revision=5,
             last_consistent_checkpoint="checkpoint-id",
         )
+        (tmp_path / "games" / "v2-game").mkdir(parents=True, exist_ok=True)
 
         saved = GameManifest(str(tmp_path)).load_or_rebuild()["v2-game"]
         assert saved["pipeline_version"] == "v2"
@@ -1170,6 +1235,7 @@ class TestPipelineSnapshotVersioning:
         manifest.add_game("legacy", {"role_counts": {"wolf-killer-villager": 1}})
         # Simulate an archive written before pipeline versioning.
         manifest._entries["legacy"].pop("pipeline_version", None)
+        (tmp_path / "games" / "legacy").mkdir(parents=True, exist_ok=True)
 
         entries = GameManifest(str(tmp_path)).load_or_rebuild(registry=self._registry())
         migrated = entries["legacy"]
@@ -1184,6 +1250,7 @@ class TestPipelineSnapshotVersioning:
         manifest._entries["bad"]["pipeline_version"] = "v2"
         manifest._entries["bad"]["spec_versions"] = {"wolf-killer-guard": 99}
         manifest._persist()
+        (tmp_path / "games" / "bad").mkdir(parents=True, exist_ok=True)
 
         entries = GameManifest(str(tmp_path)).load_or_rebuild(registry=self._registry())
         assert "bad" not in entries
@@ -1236,14 +1303,16 @@ class TestCommandProvider:
         assert command.action_type == "check"
         assert command.target_seat == 2
 
-    def test_provider_falls_back_on_bad_json_or_network_error(self):
+    def test_provider_falls_back_on_bad_json_or_network_error(self, caplog):
         service = GameService(WSManager(), EventBus())
         from unittest.mock import MagicMock
-        for content in ("not json", "[]", Exception("network")):
-            provider, _ = self._provider(service, content)
-            command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
-            assert command.action_type == "pass"
-            assert command.target_seat is None
+        with caplog.at_level(logging.WARNING, logger="app.services.game_service"):
+            for content in ("not json", "[]", Exception("network")):
+                provider, _ = self._provider(service, content)
+                command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+                assert command.action_type == "pass"
+                assert command.target_seat is None
+        assert any("degrading to safe fallback" in record.message for record in caplog.records)
 
     def test_provider_falls_back_on_non_text_or_disallowed_action(self):
         service = GameService(WSManager(), EventBus())
@@ -1435,8 +1504,18 @@ class TestManifestVersionEdgeCases:
 
         with open(manifest._path, "w", encoding="utf-8") as f:
             json.dump([{"no-game-id": 1}, {"game_id": "valid"}], f)
+        (manifest._dir / "valid").mkdir(parents=True, exist_ok=True)
         entries = GameManifest(str(tmp_path)).load_or_rebuild()
         assert list(entries) == ["valid"]
+
+    def test_load_drops_stale_entries_without_directory(self, tmp_path):
+        import os
+        manifest = GameManifest(str(tmp_path))
+        manifest.add_game("gone", {"role_counts": {"wolf-killer-villager": 1}})
+        manifest.add_game("alive", {"role_counts": {"wolf-killer-villager": 1}})
+        os.makedirs(os.path.join(str(tmp_path), "games", "alive"))
+        entries = GameManifest(str(tmp_path)).load_or_rebuild()
+        assert list(entries) == ["alive"]
 
     def test_load_without_games_dir_returns_empty(self, tmp_path):
         assert GameManifest(str(tmp_path)).load_or_rebuild() == {}
@@ -1449,6 +1528,7 @@ class TestManifestVersionEdgeCases:
         manifest = GameManifest(str(tmp_path))
         manifest.add_game("g", {"role_counts": {"wolf-killer-villager": 1}})
         manifest.update_game("g", round_number=3, alive_count=1)
+        (tmp_path / "games" / "g").mkdir(parents=True, exist_ok=True)
         entry = GameManifest(str(tmp_path)).load_or_rebuild()["g"]
         assert entry["round_number"] == 3
         assert entry["alive_count"] == 1
