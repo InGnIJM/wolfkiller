@@ -291,3 +291,42 @@ async def test_connection_test_maps_provider_errors(store, monkeypatch):
     assert response.ok is False
     assert response.error == "TimeoutError"
     assert response.latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_update_to_own_name_does_not_conflict(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store, name="Keep")
+
+    response = await model_routes.update_model(
+        cfg.id, ModelConfigRequest(name="Keep", base_url="https://x", model_id="m"),
+    )
+
+    assert response.name == "Keep"
+
+
+@pytest.mark.asyncio
+async def test_connection_test_by_fields_requires_model_id(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    with pytest.raises(HTTPException) as exc:
+        await model_routes.test_model(ModelTestRequest(base_url="https://x"))
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_created_at_and_refreshes_updated_at(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig(
+        id="fixed-id-1", name="Old", base_url="https://x", model_id="m",
+        api_key_encrypted="", temperature=None, strict_base_url=None,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    store.upsert(cfg)
+
+    response = await model_routes.update_model(
+        "fixed-id-1", ModelConfigRequest(name="New", base_url="https://x", model_id="m"),
+    )
+
+    assert response.created_at == "2026-01-01T00:00:00+00:00"
+    assert response.updated_at != "2026-01-01T00:00:00+00:00"
