@@ -124,6 +124,28 @@ class TestPromptBuilder:
         assert "camp_members" in wolf_prompt
         assert "camp_members" not in villager_prompt
 
+    def test_speech_prompt_gives_cooperation_guide_to_multi_member_camps(self):
+        builder = PromptBuilder()
+        state = make_state()
+        wolf_prompt = builder.build_speech_prompt(
+            state, 1, "wolf-killer-werewolf", make_log(), "day_speech"
+        )
+        villager_prompt = builder.build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "阵营配合要求" in wolf_prompt
+        assert "1号、2号、3号" in wolf_prompt
+        assert "不要投同阵营成员的票" in wolf_prompt
+        assert "阵营配合要求" not in villager_prompt
+
+    def test_vote_prompt_also_carries_cooperation_guide_for_wolves(self):
+        builder = PromptBuilder()
+        state = make_state()
+        prompt = builder.build_vote_prompt(
+            state, 1, "wolf-killer-werewolf", make_log(), "exile_vote"
+        )
+        assert "阵营配合要求" in prompt
+
     def test_day_speech_first_speaker_gets_opening_framework_instruction(self):
         builder = PromptBuilder()
         state = make_state()

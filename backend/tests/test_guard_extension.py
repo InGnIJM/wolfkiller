@@ -25,7 +25,7 @@ CORE_BLOBS_BEFORE_GUARD = (
     "cc351e5b196d4faf459de7b0fd82158c9c466c94",
     "2420b709c39c38958b21518033baabd08fe4bf9d",
     "7e85ba15f8277a9d5b7d3424c53e3e3dca9f9422",
-    "dc3e07f19ba90824d87b485563b39fdee41ad529",
+    "0bf8b97c7dfc08ac761be6bcceed62db6febfb49",
     "bc509cfd7d80c12ea2a341fb08080a312e687d1e",
 )
 
