@@ -356,7 +356,7 @@ class GameEngine:
             pending = replace(pending, stage=1); self._pending_night_batch = pending
 
         if pending.stage == 1:
-            if wolves:
+            if len(wolves) > 1:
                 history = list(pending.discussion_history)
                 leads = dict(pending.discussion_leads)
                 max_turns = 3 * len(wolves)

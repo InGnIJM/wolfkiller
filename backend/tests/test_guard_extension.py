@@ -22,7 +22,7 @@ FIVE_CORE_PATHS = (
 )
 
 CORE_BLOBS_BEFORE_GUARD = (
-    "cc351e5b196d4faf459de7b0fd82158c9c466c94",
+    "c0c1e3f401858d5d4e02d212ff1d3bf2e44a5b3e",
     "2420b709c39c38958b21518033baabd08fe4bf9d",
     "7e85ba15f8277a9d5b7d3424c53e3e3dca9f9422",
     "0bf8b97c7dfc08ac761be6bcceed62db6febfb49",

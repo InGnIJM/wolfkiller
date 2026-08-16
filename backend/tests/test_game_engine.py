@@ -720,9 +720,6 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
 
     assert night_ops == [
         ("narration", "标题"),
-        ("audience_action", "WOLF_CHAT_MESSAGE"),
-        ("audience_action", "WOLF_CHAT_MESSAGE"),
-        ("audience_action", "WOLF_CHAT_MESSAGE"),
         ("audience_action", "WOLF_VOTE"),
         ("audience_action", "WEREWOLF_KILL"),
         ("narration", "标题"),
@@ -818,14 +815,15 @@ async def test_staged_night_skipped_wolves_count_as_consent(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_staged_night_single_wolf_consensus_ends_after_one_message(tmp_path) -> None:
+async def test_staged_night_single_wolf_skips_discussion_and_votes_directly(tmp_path) -> None:
     seats = {
         1: ("wolf-killer-werewolf", "werewolf"),
         4: ("wolf-killer-villager", "good"),
     }
     director, chats, engine = await _run_discussion_game(tmp_path, {1: 4}, seats)
-    assert director.discussion_calls == [1]
-    assert len(chats) == 1
+    assert director.discussion_calls == []
+    assert len(chats) == 0
+    assert director.vote_calls == [1]
 
 
 @pytest.mark.asyncio
