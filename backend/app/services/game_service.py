@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import uuid
 from typing import Optional
 
@@ -12,7 +11,9 @@ from app.config import config as app_config
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
-from app.agents.llm_client import LLMClient
+from app.agents.llm_client import LLMClient, LLMClientConfig, env_default_client_config
+from app.stores.model_config_store import get_model_config_store
+from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.prompt_renderer import PromptRenderer
 from app.core.action_resolver import ActionResolver
@@ -50,6 +51,68 @@ PUBLIC_NIGHT_SUBSTEPS = frozenset({
 })
 
 
+def resolve_model_config(
+    model_assignments: Optional[list[dict]],
+    total_players: int,
+) -> tuple[LLMClientConfig, list[dict]]:
+    """Resolve stage-one model assignment into an explicit client config.
+
+    Stage one accepts exactly one assignment whose count equals the total
+    player count. `config_id=None` selects the .env environment default.
+    Returns (client_config, display_snapshot); the snapshot never contains
+    the api key.
+    """
+    env_config = env_default_client_config()
+    if model_assignments is None:
+        return env_config, []
+    if not isinstance(model_assignments, list) or len(model_assignments) != 1:
+        raise ValueError("model assignments must contain exactly one entry")
+    entry = model_assignments[0]
+    if not isinstance(entry, dict):
+        raise ValueError("model assignment entry must be an object")
+    config_id = entry.get("config_id")
+    count = entry.get("count")
+    if not isinstance(count, int) or isinstance(count, bool) or count != total_players:
+        raise ValueError("model assignment count must equal total players")
+    if config_id is None:
+        return env_config, [{
+            "config_id": None,
+            "name": "环境默认 (.env)",
+            "model_id": env_config.model_id,
+            "base_url": env_config.base_url,
+        }]
+    config = get_model_config_store().get(config_id)
+    if config is None:
+        raise ValueError("unknown model config")
+    crypto = ModelKeyCrypto()
+    if config.api_key_encrypted:
+        try:
+            api_key = crypto.decrypt(config.api_key_encrypted)
+        except KeyDecryptionError:
+            raise ValueError("model config api key is invalid") from None
+    else:
+        api_key = env_config.api_key
+    client_config = LLMClientConfig(
+        base_url=config.base_url,
+        api_key=api_key,
+        model_id=config.model_id,
+        temperature=(
+            config.temperature
+            if config.temperature is not None
+            else env_config.temperature
+        ),
+        max_tokens=env_config.max_tokens,
+        strict_base_url=config.strict_base_url or env_config.strict_base_url,
+    )
+    snapshot = [{
+        "config_id": config.id,
+        "name": config.name,
+        "model_id": config.model_id,
+        "base_url": config.base_url,
+    }]
+    return client_config, snapshot
+
+
 class GameService:
     """Manages game lifecycle: creation, execution, state access, and event broadcasting.
 
@@ -72,6 +135,7 @@ class GameService:
         self._games: dict[str, GameState] = {}
         self._engines: dict[str, GameEngine] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        self._model_snapshots: dict[str, list[dict]] = {}
         self._manifest = GameManifest(data_dir=data_dir)
 
         # Restore completed games so list / detail endpoints still work
@@ -221,6 +285,7 @@ class GameService:
         num_witches: Optional[int] = None,
         num_hunters: Optional[int] = None,
         role_counts: Optional[dict[str, int]] = None,
+        model_assignments: Optional[list[dict]] = None,
     ) -> str:
         game_id = str(uuid.uuid4())[:8]
         config = GameConfig(
@@ -232,16 +297,23 @@ class GameService:
             num_hunters=num_hunters,
         )
 
-        # Create role instances with random model assignment
-        models = app_config.llm.models
+        # Resolve the stage-one model assignment into an explicit client config
+        client_config, model_snapshot = resolve_model_config(
+            model_assignments, config.total_players,
+        )
+        self._model_snapshots[game_id] = model_snapshot
+
+        def client_provider(seat: int) -> LLMClient:
+            return LLMClient(config=client_config)
+
         prompt_builder = PromptBuilder()
-        roles = self._create_roles(config, prompt_builder, models)
+        roles = self._create_roles(config, prompt_builder, client_provider)
 
         # Build the registry-driven pipeline scheduler for night actions and
         # day death reactions; a single per-game model answers all pipeline calls.
         snapshot = builtin_registry.freeze()
         renderer = PromptRenderer()
-        llm_client = LLMClient(model=random.choice(models))
+        llm_client = client_provider(0)
 
         def _night_invoke(messages):
             response = llm_client.get_model().invoke(messages)
@@ -258,7 +330,7 @@ class GameService:
             ActionValidator(),
             ActionResolver(),
             EffectApplier(),
-            self._command_provider(snapshot, renderer, llm_client, director),
+            self._command_provider(snapshot, renderer, client_provider, director),
         )
 
         # Create engine
@@ -285,9 +357,11 @@ class GameService:
         self._games[game_id] = engine.state
 
         # Persist to disk immediately so the game shows up after restart
-        self._manifest.add_game(game_id, {
-            "role_counts": dict(config.role_counts),
-        })
+        self._manifest.add_game(
+            game_id,
+            {"role_counts": dict(config.role_counts)},
+            model_snapshot=model_snapshot,
+        )
 
         task = asyncio.create_task(engine.start())
         self._tasks[game_id] = task
@@ -330,16 +404,16 @@ class GameService:
         return game_id
 
     def _create_roles(
-        self, config: GameConfig, prompt_builder: PromptBuilder, models: list[str],
+        self, config: GameConfig, prompt_builder: PromptBuilder, client_provider,
     ) -> dict:
         return builtin_registry.create_roles(
             config.role_counts,
             config.total_players,
             prompt_builder,
-            llm_client_factory=lambda: LLMClient(model=random.choice(models)),
+            llm_client_factory=lambda: client_provider(0),
         )
 
-    def _command_provider(self, snapshot, renderer: PromptRenderer, llm_client: LLMClient, director):
+    def _command_provider(self, snapshot, renderer: PromptRenderer, client_provider, director):
         """LLM-backed command provider for the pipeline scheduler.
 
         Renders a prompt from the frozen registry spec, projected context and
@@ -373,6 +447,7 @@ class GameService:
                 HumanMessage(content=prompt),
             ]
             try:
+                llm_client = client_provider(request.actor_seat)
                 response = llm_client.get_model().invoke(messages)
                 content = response.content if hasattr(response, "content") else str(response)
                 if not isinstance(content, str):
@@ -395,6 +470,10 @@ class GameService:
                 )
             return command
         return provider
+
+    def get_game_model_snapshot(self, game_id: str) -> list[dict]:
+        """Return the persisted model snapshot for a game (display-only)."""
+        return self._model_snapshots.get(game_id, [])
 
     def get_game_state(self, game_id: str) -> Optional[GameState]:
         return self._games.get(game_id)

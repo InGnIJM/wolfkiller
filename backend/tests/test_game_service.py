@@ -162,7 +162,7 @@ class TestGameService:
 
         assert service.get_game_state(game_id).config.role_counts == counts
         service._manifest.add_game.assert_called_once_with(
-            game_id, {"role_counts": counts}
+            game_id, {"role_counts": counts}, model_snapshot=[],
         )
 
     @pytest.mark.asyncio
@@ -200,7 +200,10 @@ class TestGameService:
             MagicMock(content=123),
             object(),
         ]
-        monkeypatch.setattr(service_module, "LLMClient", lambda model: fake_llm)
+        monkeypatch.setattr(
+            service_module, "LLMClient",
+            lambda model=None, temperature=None, config=None: fake_llm,
+        )
 
         game_id = await service.create_game(num_werewolves=1, num_villagers=3)
 
@@ -1290,7 +1293,7 @@ class TestCommandProvider:
             response.content = response_content
             llm.get_model.return_value.invoke.return_value = response
         director = NightDirector(snapshot, lambda messages: None)
-        return service._command_provider(snapshot, renderer, llm, director), renderer
+        return service._command_provider(snapshot, renderer, lambda seat: llm, director), renderer
 
     def test_provider_returns_parsed_command(self):
         service = GameService(WSManager(), EventBus())
@@ -1366,7 +1369,7 @@ class TestCommandProvider:
         director.record_votes((WolfVote(1, "kill", 2, "怀疑2号"),))
 
         llm = MagicMock()
-        provider = service._command_provider(snapshot, PromptRenderer(), llm, director)
+        provider = service._command_provider(snapshot, PromptRenderer(), lambda seat: llm, director)
 
         request = self._request()
         assert request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE
@@ -1390,7 +1393,7 @@ class TestCommandProvider:
         director = NightDirector(snapshot, raise_invoke)
 
         llm = MagicMock()
-        provider = service._command_provider(snapshot, PromptRenderer(), llm, director)
+        provider = service._command_provider(snapshot, PromptRenderer(), lambda seat: llm, director)
 
         request = self._request()
         command = provider(request, MagicMock(game_id="g"), 0)
@@ -1551,3 +1554,30 @@ class TestManifestVersionEdgeCases:
         # config is invalid; an empty extracted config leaves it unchanged.
         assert entries["bare"]["phase"] == "waiting"
         assert entries["bare"]["config"] == "invalid-config"
+
+
+class TestModelAssignmentIntegration:
+    @pytest.mark.asyncio
+    async def test_create_game_persists_env_snapshot_and_uses_config_client(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import app.services.game_service as service_module
+
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        with patch.object(service_module, "LLMClient") as mock_client:
+            game_id = await service.create_game(
+                num_werewolves=3, num_villagers=3,
+                num_seers=1, num_witches=1, num_hunters=1,
+            )
+
+        assert service.get_game_model_snapshot(game_id) == []
+        service._manifest.add_game.assert_called_once()
+        kwargs = service._manifest.add_game.call_args.kwargs
+        assert kwargs["model_snapshot"] == []
+        assert any(
+            call.kwargs.get("config") is not None
+            for call in mock_client.call_args_list
+        )
