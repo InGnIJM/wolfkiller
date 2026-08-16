@@ -750,6 +750,168 @@ async def test_staged_night_skip_discussion_and_no_thought_logs() -> None:
     assert engine._pending_night_completion is not None
 
 
+class _TargetDirector(_FakeDirector):
+    """Deterministic director whose discussion turns carry a kill target."""
+
+    def __init__(self, targets: dict[int, int | None]):
+        super().__init__()
+        self.targets = targets
+        self.discussion_calls: list[int] = []
+
+    def wolf_discussion_turn(self, state, seat, history):
+        self.discussion_calls.append(seat)
+        target = self.targets.get(seat)
+        if target is None:
+            return DiscussionTurn(seat, False)
+        return DiscussionTurn(seat, True, f"我建议刀{target}号", target)
+
+
+async def _run_discussion_game(tmp_path, targets: dict[int, int | None], seats: dict[int, tuple[str, str]]):
+    director = _TargetDirector(targets)
+    engine = GameEngine("discuss", pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")), director=director, data_dir=str(tmp_path))
+    engine.state.players = {
+        seat: PlayerState(seat, role, camp) for seat, (role, camp) in seats.items()
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+    records = [json.loads(line) for line in (tmp_path / "games" / "discuss" / "game.log").read_text("utf-8").splitlines()]
+    chats = [record for record in records
+             if record["operation"] == "audience_action" and record["data"]["event_type"] == "WOLF_CHAT_MESSAGE"]
+    return director, chats
+
+
+@pytest.mark.asyncio
+async def test_staged_night_ends_discussion_when_wolves_unanimous(tmp_path) -> None:
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        2: ("wolf-killer-werewolf", "werewolf"),
+        3: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director, chats = await _run_discussion_game(tmp_path, {1: 4, 2: 4, 3: 4}, seats)
+    assert director.discussion_calls == [1, 2, 3]
+    assert len(chats) == 3
+    assert [record["data"]["payload"]["seat"] for record in chats] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_staged_night_skipped_wolves_count_as_consent(tmp_path) -> None:
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        2: ("wolf-killer-werewolf", "werewolf"),
+        3: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director, chats = await _run_discussion_game(tmp_path, {1: 4, 2: None, 3: 4}, seats)
+    assert director.discussion_calls == [1, 2, 3]
+    assert len(chats) == 2
+
+
+@pytest.mark.asyncio
+async def test_staged_night_single_wolf_consensus_ends_after_one_message(tmp_path) -> None:
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director, chats = await _run_discussion_game(tmp_path, {1: 4}, seats)
+    assert director.discussion_calls == [1]
+    assert len(chats) == 1
+
+
+@pytest.mark.asyncio
+async def test_staged_night_continues_discussion_without_unanimous_target(tmp_path) -> None:
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        2: ("wolf-killer-werewolf", "werewolf"),
+        3: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director, chats = await _run_discussion_game(tmp_path, {1: 2, 2: 3, 3: 4}, seats)
+    assert director.discussion_calls == [1, 2, 3, 1, 2, 3, 1, 2, 3]
+    assert len(chats) == 9
+
+
+@pytest.mark.asyncio
+async def test_staged_night_logs_night_commit_audience_events(tmp_path) -> None:
+    hunter_event = {
+        "event_type": "HUNTER_REASONING",
+        "payload": {
+            "seat": 3, "action_type": "shoot", "target_seat": 9,
+            "reasoning": "怀疑9号", "thought": "决定开枪带走 9 号玩家：怀疑9号",
+        },
+        "visibility": ("PUBLIC",),
+    }
+
+    class CommitScheduler:
+        def run_point(self, state, point):
+            if point is SchedulePoint.NIGHT_COMMIT:
+                commit = CommitResult("hunter", ("effect",), 1, (hunter_event,), "final")
+                return PointResult((), (commit,), commit.events, "final")
+            return PointResult((), (), (), "other")
+
+    engine = GameEngine("commit-aud", pipeline_scheduler=CommitScheduler(), director=_FakeDirector(), data_dir=str(tmp_path))
+    engine.state.players = {
+        3: PlayerState(3, "wolf-killer-hunter", "good"),
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+
+    records = [json.loads(line) for line in (tmp_path / "games" / "commit-aud" / "game.log").read_text("utf-8").splitlines()]
+    audience = [record for record in records if record["operation"] == "audience_action"]
+    assert [record["data"]["event_type"] for record in audience] == ["HUNTER_REASONING"]
+    assert audience[0]["phase"] == "night"
+
+
+@pytest.mark.parametrize("leads,error", [
+    (("a", 1), TypeError),
+    ((1,), TypeError),
+    ((1, 2, 3), TypeError),
+    ((1, "4"), TypeError),
+    ("not-a-tuple", TypeError),
+    (((0, 1),), ValueError),
+    (((1, 0),), ValueError),
+])
+def test_pending_night_batch_rejects_invalid_discussion_leads(leads, error) -> None:
+    with pytest.raises(error):
+        game_engine_module._PendingNightBatch(1, 0, (), (), (), leads)
+
+
+def test_pending_night_batch_accepts_valid_discussion_leads() -> None:
+    batch = game_engine_module._PendingNightBatch(1, 0, (), (), (), ((1, 4), (8, 4)))
+    assert batch.discussion_leads == ((1, 4), (8, 4))
+
+
+@pytest.mark.asyncio
+async def test_staged_night_resumes_final_stage_without_rerunning_points() -> None:
+    raw = PointResult((), (), (), "d")
+    engine = GameEngine("stage-12", pipeline_scheduler=ScheduleStub(raw), director=_FakeDirector())
+    engine.state.players = {4: PlayerState(4, "wolf-killer-villager", "good")}
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(
+        engine.state.round_number, 12, (), (), (raw, raw, raw, raw),
+    )
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+    assert engine._pending_night_batch is None
+    assert engine._pending_night_completion is not None
+    assert engine._pending_night_completion.result.accepted_actions == ()
+    assert engine._pending_night_completion.result.state_digest == "d"
+
+
 def test_pipeline_audience_events_keep_only_valid_public_non_death_events() -> None:
     engine = GameEngine(game_id="test")
     good = {"event_type": "SOME_ACTION", "payload": {"x": 1}, "visibility": ("PUBLIC",)}

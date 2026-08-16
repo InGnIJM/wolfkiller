@@ -66,6 +66,20 @@ def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
     return None
 
 
+def _discussion_consensus(wolves: list[int], history: list[str], leads: dict[int, int]) -> bool:
+    """True when every wolf has voiced (or skipped) and all voiced targets agree."""
+    if not leads:
+        return False
+    skipped = {
+        seat for seat in wolves
+        if any(line == f"{seat}号：（跳过）" for line in history)
+    }
+    return (
+        all(seat in leads or seat in skipped for seat in wolves)
+        and len(set(leads.values())) == 1
+    )
+
+
 @dataclass(frozen=True)
 class _PendingDeath:
     seat: int
@@ -118,6 +132,7 @@ class _PendingNightBatch:
     discussion_history: tuple[str, ...]
     wolf_votes: tuple[WolfVote, ...]
     raw_results: tuple[PointResult, ...]
+    discussion_leads: tuple[tuple[int, int], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
@@ -130,6 +145,13 @@ class _PendingNightBatch:
             raise TypeError("invalid wolf votes")
         if type(self.raw_results) is not tuple or any(type(item) is not PointResult for item in self.raw_results):
             raise TypeError("invalid batch results")
+        if type(self.discussion_leads) is not tuple:
+            raise TypeError("invalid discussion leads")
+        for pair in self.discussion_leads:
+            if type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not int or type(pair[1]) is not int:
+                raise TypeError("invalid discussion leads")
+            if not 1 <= pair[0] <= 2_147_483_647 or not 1 <= pair[1] <= 2_147_483_647:
+                raise ValueError("invalid discussion lead bounds")
         points_done = sum(
             1 for point_stage in _NIGHT_POINT_STAGES if self.stage > point_stage
         )
@@ -336,22 +358,28 @@ class GameEngine:
         if pending.stage == 1:
             if wolves:
                 history = list(pending.discussion_history)
+                leads = dict(pending.discussion_leads)
                 max_turns = 3 * len(wolves)
                 while len(history) < max_turns:
                     seat = wolves[len(history) % len(wolves)]
                     result = await asyncio.to_thread(director.wolf_discussion_turn, state, seat, tuple(history))
                     if result.spoke:
                         history.append(f"{seat}号：{result.text}")
+                        if result.preferred_target is not None:
+                            leads[seat] = result.preferred_target
                         self.game_logger.log_audience_action(
                             self.game_id, state.round_number, "night",
                             "WOLF_CHAT_MESSAGE", {"seat": seat, "text": result.text},
                         )
                     else:
                         history.append(f"{seat}号：（跳过）")
-                    pending = replace(pending, discussion_history=tuple(history))
+                    pending = replace(pending, discussion_history=tuple(history),
+                                      discussion_leads=tuple(sorted(leads.items())))
                     self._pending_night_batch = pending
                     if (len(history) >= len(wolves)
                             and all(line.endswith("（跳过）") for line in history[-len(wolves):])):
+                        break
+                    if _discussion_consensus(wolves, history, leads):
                         break
             pending = replace(pending, stage=2); self._pending_night_batch = pending
 
@@ -407,6 +435,7 @@ class GameEngine:
             raw = await self._execute_v2_point(_NIGHT_POINTS[3])
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=9)
             self._pending_night_batch = pending
+            await self._log_stage_audience(raw)
 
         if pending.stage == 9:
             deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
@@ -881,7 +910,7 @@ class GameEngine:
         try:
             result = await role.speak(self.state, self.conversation_log, context)
         except Exception as e:
-            logger.error(f"Speech error (seat={seat}, context={context}): {e}")
+            logger.error(f"Speech error (seat={seat}, context={context}): {e}", exc_info=True)
             result = None
 
         if not result:
@@ -952,7 +981,7 @@ class GameEngine:
                 reasoning=accepted.command.reasoning,
             )
         except Exception as e:
-            logger.error(f"Vote error (seat={seat}): {e}")
+            logger.error(f"Vote error (seat={seat}): {e}", exc_info=True)
             return None
 
     async def _check_game_over(self) -> bool:
