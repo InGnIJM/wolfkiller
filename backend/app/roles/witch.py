@@ -80,11 +80,11 @@ def resolve_witch_action(
             sort_key=(1,), **common),
         GameEffect(derive_effect_id(context.action_key, 2), outcome, context.action_key,
             target_seat=target, payload=outcome_payload, sort_key=(2,), **common),
-        GameEffect(derive_effect_id(context.action_key, 3), EffectKind.EMIT_EVENT,
+        _witch_reasoning_effect(context, command, 3, **common),
+        GameEffect(derive_effect_id(context.action_key, 4), EffectKind.EMIT_EVENT,
             context.action_key,
             payload={"event_type": emit_type, "payload": {"target_seat": target}},
-            visibility=("PUBLIC",), sort_key=(3,), **common),
-        _witch_reasoning_effect(context, command, 4, **common),
+            visibility=("PUBLIC",), sort_key=(4,), **common),
     )
 
 

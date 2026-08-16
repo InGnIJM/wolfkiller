@@ -79,8 +79,12 @@ def resolve_seer_action(
         target_seat=context.actor_seat,
         source_event_id=context.source_event_id,
         sort_key=(1,),
+    ), _seer_reasoning_effect(
+        context, command, 2,
+        expected_revision=context.revision,
+        source_event_id=context.source_event_id,
     ), GameEffect(
-        derive_effect_id(context.action_key, 2),
+        derive_effect_id(context.action_key, 3),
         EffectKind.EMIT_EVENT,
         context.action_key,
         payload={
@@ -90,11 +94,7 @@ def resolve_seer_action(
         visibility=("PUBLIC",),
         expected_revision=context.revision,
         source_event_id=context.source_event_id,
-        sort_key=(2,),
-    ), _seer_reasoning_effect(
-        context, command, 3,
-        expected_revision=context.revision,
-        source_event_id=context.source_event_id,
+        sort_key=(3,),
     ),)
 
 
