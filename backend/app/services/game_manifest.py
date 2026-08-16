@@ -153,6 +153,16 @@ class GameManifest:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load game manifest, rebuilding: {e}")
 
+        # Drop manifest entries whose game directory no longer exists on
+        # disk (e.g. games deleted while the server was offline).
+        for gid in list(self._entries):
+            if not (self._dir / gid).is_dir():
+                logger.info(
+                    "Dropping stale manifest entry without game directory: %s",
+                    gid,
+                )
+                self._entries.pop(gid)
+
         # Rebuild from disk for any directories not in the index
         if self._dir.exists():
             for child in sorted(self._dir.iterdir()):
