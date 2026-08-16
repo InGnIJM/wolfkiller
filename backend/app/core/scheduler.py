@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from collections import deque
@@ -18,6 +19,7 @@ from app.core.context_projector import ContextProjector
 from app.core.effect_applier import (
     CommitResult, EffectApplier, EffectPermission, initialize_role_resources,
 )
+from app.core.night_settlement import settlement_key
 from app.core.state_transaction import state_transaction_lock
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
@@ -31,6 +33,8 @@ _EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _INT32 = 2_147_483_647
 _RULE_SLOTS = Semaphore(32)
+
+logger = logging.getLogger(__name__)
 
 
 class ResponseLimitExceeded(RuntimeError): pass
@@ -213,13 +217,21 @@ class Scheduler:
             finally: _RULE_SLOTS.release()
         started = monotonic(); Thread(target=invoke, daemon=True).start()
         try: successful, value = output.get(timeout=self.hook_hard_ms / 1000)
-        except Empty: raise PipelinePaused("rule execution timed out") from None
+        except Empty:
+            logger.warning(
+                "Rule execution timed out after %dms: %s", self.hook_hard_ms, label,
+            )
+            raise PipelinePaused("rule execution timed out") from None
         elapsed = (monotonic() - started) * 1000
         if elapsed > self.hook_soft_ms and (faults := self._faults.get()) is not None:
             faults.append({"code": "slow_rule", "label": label, "elapsed_bucket": "soft_exceeded"})
         if successful: return value
         if not isinstance(value, Exception): raise value
         if isinstance(value, RuleExecutionError): raise value
+        logger.error(
+            "Rule failed: %s", label,
+            exc_info=(type(value), value, value.__traceback__),
+        )
         raise PipelinePaused(f"{label} rule failed") from None
 
     @staticmethod
@@ -273,7 +285,14 @@ class Scheduler:
                  context: ActionContext) -> tuple[ActionCommand, ActionContext]:
         for attempt in (0, 1):
             try: command = self.command_provider(request, context, attempt)
-            except Exception: raise PipelinePaused("command provider failed") from None
+            except Exception:
+                logger.error(
+                    "Command provider failed: seat=%s contract=%s point=%s attempt=%d",
+                    request.actor_seat, request.contract.contract_id,
+                    request.contract.schedule_point.value, attempt,
+                    exc_info=True,
+                )
+                raise PipelinePaused("command provider failed") from None
             if type(command) is not ActionCommand: raise TypeError("provider must return ActionCommand")
             rule_context = self.projector.project_selected_target(
                 state, request, context, command, self.registry
@@ -290,7 +309,12 @@ class Scheduler:
             state, request, context, command, self.registry
         )
         violations = self._rule_call("validation", lambda: self.validator.validate(rule_context, contract, command))
-        if violations: raise PipelinePaused("fallback command invalid")
+        if violations:
+            logger.error(
+                "Fallback command invalid: seat=%s contract=%s violation=%s",
+                request.actor_seat, contract.contract_id, violations[0].message,
+            )
+            raise PipelinePaused("fallback command invalid")
         return command, rule_context
 
     def _resolve_with_fallback(self, state: GameState, request: IssuedActionRequest,
@@ -298,12 +322,28 @@ class Scheduler:
                                command: ActionCommand):
         contract = request.contract
         try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(context, role, contract, command))
-        except RuleExecutionError:
-            if command.action_type == contract.fallback_action_type: raise PipelinePaused("rule execution failed") from None
+        except RuleExecutionError as error:
+            if command.action_type == contract.fallback_action_type:
+                logger.error(
+                    "Resolve failed for fallback command: seat=%s contract=%s",
+                    request.actor_seat, contract.contract_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+                raise PipelinePaused("rule execution failed") from None
+            logger.warning(
+                "Resolve failed: seat=%s contract=%s action=%s error=%s; retrying with fallback command",
+                request.actor_seat, contract.contract_id, command.action_type, error,
+            )
             base_context = self.projector.project(state, request, self.registry)
             fallback, fallback_context = self._fallback(state, request, base_context)
             try: return self._rule_call("resolve", lambda: self.resolver.resolve_effects(fallback_context, role, contract, fallback))
-            except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
+            except RuleExecutionError as error:
+                logger.error(
+                    "Resolve failed for retried fallback: seat=%s contract=%s",
+                    request.actor_seat, contract.contract_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+                raise PipelinePaused("rule execution failed") from None
 
     @staticmethod
     def _permission(context: ActionContext, role: RoleSpec, contract: ActionContract) -> EffectPermission:
@@ -324,7 +364,24 @@ class Scheduler:
             if "seat" in payload and "target_seat" not in payload: payload["target_seat"] = payload.pop("seat")
             reason = payload.get("cause") if type(payload.get("cause")) is str else None
             return DomainEvent("event:" + _digest(commit.action_key, ordinal), raw["event_type"], payload, reason)
-        except Exception: raise PipelinePaused("invalid internal event") from None
+        except Exception:
+            logger.error(
+                "Invalid internal event from commit %s ordinal %s",
+                getattr(commit, "action_key", "<unknown>"), ordinal,
+                exc_info=True,
+            )
+            raise PipelinePaused("invalid internal event") from None
+
+    _FOLLOWUP_CAP = 8
+
+    @staticmethod
+    def _followup_batch(state: GameState, commits: list[CommitResult]) -> int:
+        """Next unused same-round settlement batch index, or CAP+1 when capped."""
+        for batch in range(1, Scheduler._FOLLOWUP_CAP + 1):
+            key = settlement_key(state.game_id, state.round_number, batch)
+            if not any(commit.action_key == key for commit in commits):
+                return batch
+        return Scheduler._FOLLOWUP_CAP + 1
 
     def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
@@ -399,42 +456,63 @@ class Scheduler:
             journal.put(key, saved)
         event_index, subindex = saved.cursor.index, saved.cursor.subindex
         queue = ResponseQueue(self.registry)
-        while event_index < len(pending):
-            item = pending[event_index]; commit = commits[item.commit_index]
-            event = self._domain(commit, item.ordinal, commit.events[item.ordinal])
-            windows = queue.open(state, event, depth=item.depth)
-            while subindex < len(windows):
-                window = windows[subindex]
-                player = state.players.get(window.actor_seat); role = None if player is None else self.registry.specs.get(player.role)
-                contract = None if role is None else next((item for item in role.contracts if item.contract_id == window.contract_id), None)
-                if contract is None: raise PipelinePaused("invalid response window")
-                base = IssuedActionRequest(window.actor_seat, role.role_id, contract, self._revision(state), state.round_number,
-                    state.phase.value if hasattr(state.phase, "value") else state.phase, window.window_id, window.window_id)
-                trigger = {"event_id": event.event_id, "type": event.event_type, **{name: event.payload[name] for name in ("source_seat", "target_seat", "cause", "round_number", "phase") if name in event.payload}}
-                try: context = self.projector.project(state, base, self.registry, source_event_id=event.event_id, trigger_event=trigger, trigger_reason=event.reason)
-                except Exception: raise PipelinePaused("invalid response context") from None
-                if self._limit_reached(context, contract):
+        follow_batch = self._followup_batch(state, commits)
+        while True:
+            while event_index < len(pending):
+                item = pending[event_index]; commit = commits[item.commit_index]
+                event = self._domain(commit, item.ordinal, commit.events[item.ordinal])
+                windows = queue.open(state, event, depth=item.depth)
+                while subindex < len(windows):
+                    window = windows[subindex]
+                    player = state.players.get(window.actor_seat); role = None if player is None else self.registry.specs.get(player.role)
+                    contract = None if role is None else next((item for item in role.contracts if item.contract_id == window.contract_id), None)
+                    if contract is None: raise PipelinePaused("invalid response window")
+                    base = IssuedActionRequest(window.actor_seat, role.role_id, contract, self._revision(state), state.round_number,
+                        state.phase.value if hasattr(state.phase, "value") else state.phase, window.window_id, window.window_id)
+                    trigger = {"event_id": event.event_id, "type": event.event_type, **{name: event.payload[name] for name in ("source_seat", "target_seat", "cause", "round_number", "phase") if name in event.payload}}
+                    try: context = self.projector.project(state, base, self.registry, source_event_id=event.event_id, trigger_event=trigger, trigger_reason=event.reason)
+                    except Exception:
+                        logger.error(
+                            "Invalid response context: event=%s type=%s window=%s seat=%s",
+                            event.event_id, event.event_type, window.contract_id, window.actor_seat,
+                            exc_info=True,
+                        )
+                        raise PipelinePaused("invalid response context") from None
+                    if self._limit_reached(context, contract):
+                        subindex += 1
+                        saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
+                            tuple(pending), WorkCursor("response", event_index, subindex), work_count=work_count)
+                        journal.put(key, saved); continue
+                    if contract.react is not None:
+                        try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
+                        except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
+                    else:
+                        command, rule_context = self._command(state, base, context)
+                        effects = self._resolve_with_fallback(state, base, rule_context, role, command); context = rule_context
+                    actual.append(base); new_commit = self._apply(state, context, role, contract, effects, commits, events)
+                    commit_index = len(commits) - 1
+                    pending.extend(PendingEvent(commit_index, ordinal, item.depth + 1)
+                                   for ordinal, _ in enumerate(new_commit.events))
                     subindex += 1
                     saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
                         tuple(pending), WorkCursor("response", event_index, subindex), work_count=work_count)
-                    journal.put(key, saved); continue
-                if contract.react is not None:
-                    try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
-                    except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
-                else:
-                    command, rule_context = self._command(state, base, context)
-                    effects = self._resolve_with_fallback(state, base, rule_context, role, command); context = rule_context
-                actual.append(base); new_commit = self._apply(state, context, role, contract, effects, commits, events)
-                commit_index = len(commits) - 1
-                pending.extend(PendingEvent(commit_index, ordinal, item.depth + 1)
-                               for ordinal, _ in enumerate(new_commit.events))
-                subindex += 1
+                    journal.put(key, saved)
+                event_index += 1; subindex = 0
                 saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
-                    tuple(pending), WorkCursor("response", event_index, subindex), work_count=work_count)
+                    tuple(pending), WorkCursor("response", event_index, 0), work_count=work_count)
                 journal.put(key, saved)
-            event_index += 1; subindex = 0
+            if point is not SchedulePoint.NIGHT_COMMIT: break
+            runtime = getattr(state, "_pipeline_runtime", None)
+            if runtime is None or (not runtime.pending_damage and not runtime.pending_protection): break
+            if follow_batch > Scheduler._FOLLOWUP_CAP: break
+            follow = self.applier.settle_pending(state, round_number=state.round_number, batch=follow_batch)
+            if follow is None: break  # pragma: no cover - emptiness was checked under the point lock
+            commits.append(follow); events.extend(follow.events)
+            pending.extend(PendingEvent(len(commits) - 1, ordinal, follow_batch)
+                           for ordinal, _ in enumerate(follow.events))
+            follow_batch += 1
             saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
-                tuple(pending), WorkCursor("response", event_index, 0), work_count=work_count)
+                                    tuple(pending), WorkCursor("response", event_index, 0), work_count=work_count)
             journal.put(key, saved)
         digest = commits[-1].state_digest if commits else _digest(state.game_id, self._revision(state))
         done = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults), (),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import FrozenInstanceError
 import traceback
 from threading import Barrier, Event, Lock, Thread
@@ -490,7 +491,7 @@ def test_invalid_utf8_and_rule_execution_pause_are_sanitized() -> None:
     assert "secret" not in str(caught.value)
 
 
-def test_validation_once_per_attempt_and_provider_failure_is_sanitized() -> None:
+def test_validation_once_per_attempt_and_provider_failure_is_sanitized(caplog) -> None:
     registry = snapshot(spec("r", contract("c")))
     engine = scheduler(registry)
     calls = 0
@@ -502,9 +503,12 @@ def test_validation_once_per_attempt_and_provider_failure_is_sanitized() -> None
     engine.validator.validate = counted
     engine.run_point(state("r"), SchedulePoint.NIGHT_ACTION)
     assert calls == 1
-    with pytest.raises(PipelinePaused) as caught:
-        scheduler(registry, lambda *args: (_ for _ in ()).throw(RuntimeError("secret"))).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    with caplog.at_level(logging.ERROR, logger="app.core.scheduler"):
+        with pytest.raises(PipelinePaused) as caught:
+            scheduler(registry, lambda *args: (_ for _ in ()).throw(RuntimeError("secret"))).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
     assert "secret" not in str(caught.value)
+    assert any("Command provider failed" in record.message for record in caplog.records)
+    assert any("secret" in record.exc_text for record in caplog.records)
 
 
 def test_nonaggregate_reprojects_each_actor_at_current_revision() -> None:
@@ -594,10 +598,147 @@ def test_night_commit_routes_public_deaths_through_response_queue(cause, reacts)
         return ActionCommand(action_type="shoot", target_seat=2, reasoning="ok")
     result = scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_COMMIT)
     assert bool(calls) is reacts
-    assert len(result.commits) == (2 if reacts else 1)
+    assert len(result.commits) == (3 if reacts else 1)
     assert calls in ([], [(1, 1)])
-    expected = ({"target": 2, "amount": 1, "cause": "hunter_shot"},) if reacts else ()
-    assert game._pipeline_runtime.pending_damage == expected
+    if reacts:
+        # The hunter's reaction damage is settled by a same-point follow-up
+        # settlement: the victim dies this night instead of lingering pending.
+        assert game._pipeline_runtime.pending_damage == ()
+        assert game.players[2].is_alive is False
+        assert [(item.player_seat, item.cause) for item in game.death_history] == [
+            (1, cause), (2, "hunter_shot"),
+        ]
+        assert [event["event_type"] for event in result.events] == [
+            "PLAYER_DIED", "HUNTER_SHOT", "HUNTER_REASONING", "PLAYER_DIED",
+        ]
+    else:
+        assert game._pipeline_runtime.pending_damage == ()
+    assert result.state_digest == result.commits[-1].state_digest
+
+
+def _chain_damage(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
+    if command.action_type != "hit" or command.target_seat is None:
+        return ()
+    return (GameEffect(
+        derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_DAMAGE,
+        context.action_key, target_seat=command.target_seat,
+        payload={"target": command.target_seat, "amount": 1, "cause": "bomb"},
+        expected_revision=context.revision, source_event_id=context.source_event_id,
+        sort_key=(1,),
+    ),)
+
+
+def _chain_contract() -> ActionContract:
+    return ActionContract(
+        contract_id="chain", schedule_point=SchedulePoint.DAWN_REACTION, order=1,
+        action_types=("hit", "pass"), actions_requiring_target=frozenset({"hit"}),
+        fallback_action_type="pass", allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE}),
+        visibility_namespaces=frozenset({"PUBLIC"}),
+        response_event_types=frozenset({"PLAYER_DIED"}),
+        response_reasons=frozenset({"wolf_kill", "bomb"}),
+        resolve=_chain_damage,
+    )
+
+
+def _chain_spec() -> RoleSpec:
+    return RoleSpec(
+        role_id="bomb", camp_id="good", contracts=(_chain_contract(),),
+        allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE}),
+        visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+
+
+def _chain_game(size: int, pending: tuple[dict[str, object], ...]) -> GameState:
+    game = GameState("bomb-game", phase=GamePhase.NIGHT, round_number=1, players={
+        i: PlayerState(i, "bomb", "good") for i in range(1, size + 1)
+    })
+    game._pipeline_runtime = _Runtime(pending_damage=pending)
+    return game
+
+
+def test_followup_batch_detects_next_unused_batch_and_cap() -> None:
+    from app.core.night_settlement import settlement_key
+    game = state("r")
+    commits = [
+        CommitResult(settlement_key(game.game_id, 1, batch), (), 0, (), "digest")
+        for batch in range(1, 9)
+    ]
+    assert Scheduler._followup_batch(game, commits) == 9
+    assert Scheduler._followup_batch(game, commits[:3]) == 4
+    assert Scheduler._followup_batch(game, []) == 1
+
+
+def test_night_commit_followup_settles_reaction_damage_in_chain() -> None:
+    registry = snapshot(_chain_spec())
+    game = _chain_game(3, ({"target": 1, "amount": 1, "cause": "wolf_kill"},))
+    calls = []
+    def provider(request, context, attempt):
+        calls.append(request.actor_seat)
+        if request.actor_seat == 3:
+            return ActionCommand(action_type="pass", target_seat=None, reasoning="stop")
+        return ActionCommand(action_type="hit", target_seat=request.actor_seat + 1, reasoning="chain")
+    result = scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_COMMIT)
+    assert calls == [1, 2, 3]
+    assert [(item.player_seat, item.cause) for item in game.death_history] == [
+        (1, "wolf_kill"), (2, "bomb"), (3, "bomb"),
+    ]
+    assert game._pipeline_runtime.pending_damage == ()
+    assert [event["event_type"] for event in result.events] == [
+        "PLAYER_DIED", "PLAYER_DIED", "PLAYER_DIED",
+    ]
+    # settlement + 3 responses (the last is a pass) + 2 follow-up settlements
+    assert len(result.commits) == 6
+
+
+def test_night_commit_followup_chain_stops_at_settlement_cap() -> None:
+    registry = snapshot(_chain_spec())
+    game = _chain_game(10, ({"target": 1, "amount": 1, "cause": "wolf_kill"},))
+    calls = []
+    def provider(request, context, attempt):
+        calls.append(request.actor_seat)
+        return ActionCommand(action_type="hit", target_seat=request.actor_seat + 1, reasoning="chain")
+    scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_COMMIT)
+    assert [player.is_alive for player in game.players.values()] == [False] * 9 + [True]
+    assert [(item.player_seat, item.cause) for item in game.death_history] == [
+        (1, "wolf_kill"),
+        *[(seat, "bomb") for seat in range(2, 10)],
+    ]
+    assert len(calls) == 9
+    assert game._pipeline_runtime.pending_damage == (
+        {"target": 10, "amount": 1, "cause": "bomb"},
+    )
+
+
+def test_night_commit_followup_settlement_resumes_without_repeat(monkeypatch) -> None:
+    registry = snapshot(_chain_spec())
+    game = _chain_game(3, ({"target": 1, "amount": 1, "cause": "wolf_kill"},))
+    calls = []
+    def provider(request, context, attempt):
+        calls.append(request.actor_seat)
+        if request.actor_seat == 3:
+            return ActionCommand(action_type="pass", target_seat=None, reasoning="stop")
+        return ActionCommand(action_type="hit", target_seat=request.actor_seat + 1, reasoning="chain")
+    engine = scheduler(registry, provider)
+    settle_batches = []
+    original_settle = engine.applier.settle_pending
+    def counted_settle(*args, **kwargs):
+        settle_batches.append(kwargs.get("batch", 0))
+        return original_settle(*args, **kwargs)
+    engine.applier.settle_pending = counted_settle
+    original_domain = engine._domain; failed = [False]
+    def flaky_domain(commit, ordinal, raw):
+        if raw.get("payload", {}).get("seat") == 2 and not failed[0]:
+            failed[0] = True; raise PipelinePaused("follow-up domain")
+        return original_domain(commit, ordinal, raw)
+    monkeypatch.setattr(engine, "_domain", flaky_domain)
+    with pytest.raises(PipelinePaused, match="follow-up domain"):
+        engine.run_point(game, SchedulePoint.NIGHT_COMMIT)
+    result = engine.run_point(game, SchedulePoint.NIGHT_COMMIT)
+    assert settle_batches == [0, 1, 2]
+    assert calls == [1, 2, 3]
+    assert [(item.player_seat, item.cause) for item in game.death_history] == [
+        (1, "wolf_kill"), (2, "bomb"), (3, "bomb"),
+    ]
     assert result.state_digest == result.commits[-1].state_digest
 
 
