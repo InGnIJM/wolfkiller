@@ -1,0 +1,167 @@
+import { useState } from 'react';
+import {
+  Button, Dialog, DialogActions, DialogContent, DialogTitle,
+  Stack, TextField, Typography,
+} from '@mui/material';
+
+import { testModelConnection } from '../../api/client';
+import type { ModelConfig, ModelConfigInput, ModelTestResult } from '../../store/types';
+
+interface Props {
+  open: boolean;
+  initial: ModelConfig | null;
+  onClose: () => void;
+  onSave: (input: ModelConfigInput) => Promise<void>;
+}
+
+export default function ModelConfigDialog({ open, initial, onClose, onSave }: Props) {
+  const [name, setName] = useState(initial?.name ?? '');
+  const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? '');
+  const [modelId, setModelId] = useState(initial?.model_id ?? '');
+  const [apiKey, setApiKey] = useState('');
+  const [temperature, setTemperature] = useState(
+    initial?.temperature != null ? String(initial.temperature) : '',
+  );
+  const [strictUrl, setStrictUrl] = useState(initial?.strict_base_url ?? '');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const nameError = !name.trim() ? '名称必填' : '';
+  const urlError = !/^https?:\/\//.test(baseUrl.trim())
+    ? '必须以 http:// 或 https:// 开头'
+    : '';
+  const modelError = !modelId.trim() ? '模型 ID 必填' : '';
+  const hasErrors = Boolean(nameError || urlError || modelError);
+
+  const handleSave = async () => {
+    setTouched(true);
+    if (hasErrors) return;
+    setSaving(true);
+    await onSave({
+      name: name.trim(),
+      base_url: baseUrl.trim(),
+      model_id: modelId.trim(),
+      api_key: apiKey,
+      temperature: temperature.trim() ? Number(temperature) : null,
+      strict_base_url: strictUrl.trim() || null,
+    });
+    setSaving(false);
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    try {
+      const result = initial
+        ? await testModelConnection({ config_id: initial.id, api_key: apiKey })
+        : await testModelConnection({
+            base_url: baseUrl.trim(), api_key: apiKey, model_id: modelId.trim(),
+          });
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({
+        ok: false, latency_ms: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    setTesting(false);
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>{initial ? '编辑模型配置' : '新建模型配置'}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          <TextField
+            label="名称"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            error={touched && Boolean(nameError)}
+            helperText={touched ? nameError : ''}
+            size="small"
+            fullWidth
+          />
+          <TextField
+            label="Base URL"
+            placeholder="https://api.deepseek.com/v1"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            error={touched && Boolean(urlError)}
+            helperText={touched ? urlError : ''}
+            size="small"
+            fullWidth
+          />
+          <TextField
+            label="模型 ID"
+            placeholder="deepseek-v4-flash"
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            error={touched && Boolean(modelError)}
+            helperText={touched ? modelError : ''}
+            size="small"
+            fullWidth
+          />
+          <TextField
+            label={initial?.has_key ? 'API Key（留空 = 保留原 key）' : 'API Key'}
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            size="small"
+            fullWidth
+          />
+          <Typography
+            component="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            sx={{ alignSelf: 'flex-start', cursor: 'pointer', bgcolor: 'transparent', border: 'none', color: 'primary.main', p: 0 }}
+          >
+            {showAdvanced ? '▾ 高级选项' : '▸ 高级选项（可选）'}
+          </Typography>
+          {showAdvanced && (
+            <>
+              <TextField
+                label="Temperature（可选，0~2）"
+                value={temperature}
+                onChange={(e) => setTemperature(e.target.value)}
+                size="small"
+                fullWidth
+              />
+              <TextField
+                label="严格模式地址（可选，留空沿用 .env）"
+                value={strictUrl}
+                onChange={(e) => setStrictUrl(e.target.value)}
+                size="small"
+                fullWidth
+              />
+            </>
+          )}
+          {testResult && (
+            <Typography
+              variant="body2"
+              color={testResult.ok ? 'success.main' : 'error.main'}
+            >
+              {testResult.ok
+                ? `连接成功（${testResult.latency_ms}ms）`
+                : `连接失败：${testResult.error}`}
+            </Typography>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" onClick={() => void handleTest()} disabled={testing}>
+          测试连接
+        </Button>
+        <Button color="inherit" onClick={onClose}>取消</Button>
+        <Button
+          variant="contained"
+          disableElevation
+          onClick={() => void handleSave()}
+          disabled={saving}
+        >
+          保存
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
