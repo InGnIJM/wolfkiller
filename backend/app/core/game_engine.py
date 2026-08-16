@@ -368,6 +368,10 @@ class GameEngine:
                         history.append(f"{seat}号：{result.text}")
                         if result.preferred_target is not None:
                             leads[seat] = result.preferred_target
+                        self.conversation_log.add_werewolf_channel(
+                            result.text, self.state.round_number,
+                            speaker_seat=seat, speaker_role="wolf-killer-werewolf",
+                        )
                         self.game_logger.log_audience_action(
                             self.game_id, state.round_number, "night",
                             "WOLF_CHAT_MESSAGE", {"seat": seat, "text": result.text},

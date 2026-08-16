@@ -12,6 +12,7 @@ from app.models.actions import VoteAction, DeathReport, WinResult
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.night_flow import DiscussionTurn, NightBriefing, WolfVote
+from app.models.conversation import ConversationScope
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult
@@ -786,7 +787,7 @@ async def _run_discussion_game(tmp_path, targets: dict[int, int | None], seats: 
     records = [json.loads(line) for line in (tmp_path / "games" / "discuss" / "game.log").read_text("utf-8").splitlines()]
     chats = [record for record in records
              if record["operation"] == "audience_action" and record["data"]["event_type"] == "WOLF_CHAT_MESSAGE"]
-    return director, chats
+    return director, chats, engine
 
 
 @pytest.mark.asyncio
@@ -797,7 +798,7 @@ async def test_staged_night_ends_discussion_when_wolves_unanimous(tmp_path) -> N
         3: ("wolf-killer-werewolf", "werewolf"),
         4: ("wolf-killer-villager", "good"),
     }
-    director, chats = await _run_discussion_game(tmp_path, {1: 4, 2: 4, 3: 4}, seats)
+    director, chats, engine = await _run_discussion_game(tmp_path, {1: 4, 2: 4, 3: 4}, seats)
     assert director.discussion_calls == [1, 2, 3]
     assert len(chats) == 3
     assert [record["data"]["payload"]["seat"] for record in chats] == [1, 2, 3]
@@ -811,7 +812,7 @@ async def test_staged_night_skipped_wolves_count_as_consent(tmp_path) -> None:
         3: ("wolf-killer-werewolf", "werewolf"),
         4: ("wolf-killer-villager", "good"),
     }
-    director, chats = await _run_discussion_game(tmp_path, {1: 4, 2: None, 3: 4}, seats)
+    director, chats, engine = await _run_discussion_game(tmp_path, {1: 4, 2: None, 3: 4}, seats)
     assert director.discussion_calls == [1, 2, 3]
     assert len(chats) == 2
 
@@ -822,7 +823,7 @@ async def test_staged_night_single_wolf_consensus_ends_after_one_message(tmp_pat
         1: ("wolf-killer-werewolf", "werewolf"),
         4: ("wolf-killer-villager", "good"),
     }
-    director, chats = await _run_discussion_game(tmp_path, {1: 4}, seats)
+    director, chats, engine = await _run_discussion_game(tmp_path, {1: 4}, seats)
     assert director.discussion_calls == [1]
     assert len(chats) == 1
 
@@ -835,9 +836,32 @@ async def test_staged_night_continues_discussion_without_unanimous_target(tmp_pa
         3: ("wolf-killer-werewolf", "werewolf"),
         4: ("wolf-killer-villager", "good"),
     }
-    director, chats = await _run_discussion_game(tmp_path, {1: 2, 2: 3, 3: 4}, seats)
+    director, chats, engine = await _run_discussion_game(tmp_path, {1: 2, 2: 3, 3: 4}, seats)
     assert director.discussion_calls == [1, 2, 3, 1, 2, 3, 1, 2, 3]
     assert len(chats) == 9
+
+
+@pytest.mark.asyncio
+async def test_staged_night_writes_wolf_chat_into_conversation_log(tmp_path) -> None:
+    seats = {
+        1: ("wolf-killer-werewolf", "werewolf"),
+        2: ("wolf-killer-werewolf", "werewolf"),
+        3: ("wolf-killer-werewolf", "werewolf"),
+        4: ("wolf-killer-villager", "good"),
+    }
+    director, chats, engine = await _run_discussion_game(tmp_path, {1: 4, 2: 4, 3: 4}, seats)
+    assert len(chats) == 3
+    wolf_records = [
+        record for record in engine.conversation_log.get_all()
+        if record.scope is ConversationScope.WEREWOLF
+    ]
+    assert [(record.speaker_seat, record.round_number) for record in wolf_records] == [
+        (1, 1), (2, 1), (3, 1),
+    ]
+    assert all(record.speaker_role == "wolf-killer-werewolf" for record in wolf_records)
+    assert [record.content for record in wolf_records] == [
+        "我建议刀4号", "我建议刀4号", "我建议刀4号",
+    ]
 
 
 @pytest.mark.asyncio
