@@ -84,12 +84,20 @@ describe('CreateGameWizard step 1', () => {
   });
 
   it('stops decrementing wolves at the min_werewolves constraint', async () => {
-    vi.mocked(fetchConstraints).mockResolvedValue({ ...CONSTRAINTS, min_players: 9 });
+    vi.mocked(fetchConstraints).mockResolvedValue({
+      ...CONSTRAINTS, min_players: 4, min_werewolves: 3,
+    });
     await renderStep1();
     const minusWolf = screen.getByRole('button', { name: '减少狼人' });
-    fireEvent.click(minusWolf);
-    fireEvent.click(minusWolf);
     expect(minusWolf).toBeDisabled();
+  });
+
+  it('stops decrementing good roles at the min_good constraint', async () => {
+    vi.mocked(fetchConstraints).mockResolvedValue({
+      ...CONSTRAINTS, min_players: 4, min_good: 9,
+    });
+    await renderStep1();
+    expect(screen.getByRole('button', { name: '减少平民' })).toBeDisabled();
   });
 
   it('stops decrementing when total would drop below min_players', async () => {
@@ -155,6 +163,14 @@ describe('CreateGameWizard step 2 and submission', () => {
 
     await waitFor(() =>
       expect(createModel).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Model' })),
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        model_assignments: [{ config_id: 'm2', count: 9 }],
+      })),
     );
   });
 
