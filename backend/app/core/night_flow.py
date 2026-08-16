@@ -6,6 +6,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
+from app.core.conversation_log import ConversationLog
+from app.models.conversation import ConversationScope
 from app.models.game import GameState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
@@ -20,9 +22,10 @@ _CHINESE_DIRECTIVE = (
 )
 
 _NO_FABRICATION_RULE = (
-    "Base every claim ONLY on the information given in this prompt: the alive "
-    "players and the discussion log. You have no knowledge of any player's past "
-    "behavior, speeches, or identity. NEVER invent or imply prior behavior "
+    "Base every claim ONLY on the information provided in this prompt: the "
+    "alive players, the discussion log, the day recap, the wolf channel "
+    "history and your own thoughts. You have no knowledge beyond this prompt. "
+    "NEVER invent or imply facts that are not provided "
     '(for example claiming that someone is "active" or "talkative"); if no such '
     "information exists, reason from objective facts only. "
 )
@@ -32,6 +35,72 @@ _FIRST_NIGHT_NOTICE = (
     "不要引用或暗示任何玩家此前的行为特征（如\"活跃\"\"话多\"\"像有身份\"），"
     "只能依据座位位置等客观信息选择目标。\n"
 )
+
+
+_MAX_BRIEFING_LINES = 20
+_MAX_BRIEFING_THOUGHTS = 5
+_MAX_BRIEFING_LINE = 200
+
+
+@dataclass(frozen=True)
+class NightBriefing:
+    """Frozen context lines handed to the wolves' nightly prompts.
+
+    Lines are pre-formatted plain text derived from the conversation log:
+    prior rounds' public day records, prior nights' wolf channel records and
+    the acting wolf's own thoughts.
+    """
+
+    public_lines: tuple[str, ...] = ()
+    wolf_lines: tuple[str, ...] = ()
+    thoughts: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("public_lines", "wolf_lines", "thoughts"):
+            value = getattr(self, name)
+            if type(value) is not tuple or any(type(item) is not str for item in value):
+                raise TypeError(f"{name} must be a tuple of strings")
+
+
+def _briefing_line(record: object, label: str) -> str:
+    speaker = f"{record.speaker_seat}号" if record.speaker_seat else "系统"
+    content = record.content
+    if len(content) > _MAX_BRIEFING_LINE:
+        content = content[:_MAX_BRIEFING_LINE] + "..."
+    return f"第{record.round_number}轮{label} {speaker}：{content}"
+
+
+def build_briefing(log: ConversationLog, seat: int, round_num: int) -> NightBriefing:
+    """Build the wolves' nightly briefing from prior conversation records.
+
+    Only records strictly before the current round are included so the live
+    discussion history (passed separately) is never duplicated; thoughts are
+    always the acting wolf's own.
+    """
+    if type(log) is not ConversationLog:
+        raise TypeError("log must be a ConversationLog")
+    if type(seat) is not int or seat <= 0:
+        raise ValueError("seat must be a positive integer")
+    if type(round_num) is not int or round_num < 0:
+        raise ValueError("round_num must be a non-negative integer")
+    public: list[str] = []
+    wolf: list[str] = []
+    for record in log.get_all():
+        if record.round_number >= round_num:
+            continue
+        if record.scope is ConversationScope.PUBLIC:
+            public.append(_briefing_line(record, "公开"))
+        elif record.scope is ConversationScope.WEREWOLF:
+            wolf.append(_briefing_line(record, "狼队频道"))
+    thoughts = [
+        f"第{thought.round_number}轮[{thought.phase}]：{thought.content[:_MAX_BRIEFING_LINE]}"
+        for thought in log.get_thoughts_for_seat(seat)[-_MAX_BRIEFING_THOUGHTS:]
+    ]
+    return NightBriefing(
+        tuple(public[-_MAX_BRIEFING_LINES:]),
+        tuple(wolf[-_MAX_BRIEFING_LINES:]),
+        tuple(thoughts),
+    )
 
 
 def _night_notice(state: GameState) -> str:
@@ -146,6 +215,10 @@ class NightDirector:
     def _history_text(self, history: Sequence[str]) -> str:
         return "\n".join(f"{index + 1}. {line}" for index, line in enumerate(history))
 
+    @staticmethod
+    def _briefing_text(lines: Sequence[str], empty: str) -> str:
+        return "\n".join(lines) if lines else empty
+
     def _prior_votes_text(self, votes: Sequence[WolfVote]) -> str:
         if not votes:
             return "（还没有人出票）"
@@ -154,7 +227,10 @@ class NightDirector:
             for vote in votes
         )
 
-    def discussion_prompt(self, state: GameState, seat: int, history: Sequence[str]) -> list[dict[str, str]]:
+    def discussion_prompt(
+        self, state: GameState, seat: int, history: Sequence[str],
+        briefing: NightBriefing = NightBriefing(),
+    ) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
         total_turns = 3 * len(wolves)
@@ -170,6 +246,9 @@ class NightDirector:
         human = (
             f"第{state.round_number}晚狼队讨论。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
+            f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
+            f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
+            f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
             f"已进行的讨论：\n{self._history_text(history) or '（尚无发言）'}\n\n"
             f"当前为第 {turn_number}/{total_turns} 轮发言，最多还可继续 {remaining} 轮。\n"
             "讨论要求：\n"
@@ -185,6 +264,7 @@ class NightDirector:
     def vote_prompt(
         self, state: GameState, seat: int,
         discussion: Sequence[str], prior_votes: Sequence[WolfVote],
+        briefing: NightBriefing = NightBriefing(),
     ) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
@@ -198,6 +278,9 @@ class NightDirector:
         human = (
             f"第{state.round_number}晚狼队投票。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
+            f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
+            f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
+            f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
             f"讨论记录：\n{self._history_text(discussion) or '（无）'}\n"
             f"已出票：\n{self._prior_votes_text(prior_votes)}\n\n"
             + _night_notice(state)
@@ -218,9 +301,12 @@ class NightDirector:
             raise ValueError("model response is not an object")
         return value
 
-    def wolf_discussion_turn(self, state: GameState, seat: int, history: Sequence[str]) -> DiscussionTurn:
+    def wolf_discussion_turn(
+        self, state: GameState, seat: int, history: Sequence[str],
+        briefing: NightBriefing = NightBriefing(),
+    ) -> DiscussionTurn:
         try:
-            value = self._invoke_json(self.discussion_prompt(state, seat, history))
+            value = self._invoke_json(self.discussion_prompt(state, seat, history, briefing))
             if value.get("speak") is not True:
                 return DiscussionTurn(seat, False)
             text = _clean(value.get("text"), "text", _MAX_UTTERANCE)
@@ -243,9 +329,10 @@ class NightDirector:
     def wolf_vote_turn(
         self, state: GameState, seat: int,
         discussion: Sequence[str], prior_votes: Sequence[WolfVote],
+        briefing: NightBriefing = NightBriefing(),
     ) -> WolfVote:
         try:
-            value = self._invoke_json(self.vote_prompt(state, seat, discussion, prior_votes))
+            value = self._invoke_json(self.vote_prompt(state, seat, discussion, prior_votes, briefing))
             if value.get("action_type") == "kill":
                 target = value.get("target_seat")
                 if type(target) is not int or target <= 0 or target not in state.players:

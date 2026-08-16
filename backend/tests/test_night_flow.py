@@ -6,10 +6,14 @@ import pytest
 
 from app.core.night_flow import (
     DiscussionTurn,
+    NightBriefing,
     NightDirector,
     WolfVote,
     _clean,
+    build_briefing,
 )
+from app.core.conversation_log import ConversationLog
+from app.models.conversation import ConversationScope
 from app.models.game import GameConfig, GameState, PlayerState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
@@ -288,6 +292,84 @@ def test_wolf_team():
     assert director._wolf_team(state) == [1]
 
 
+# ── NightBriefing / build_briefing ──────────────────────────
+
+
+def test_night_briefing_defaults_empty():
+    briefing = NightBriefing()
+    assert briefing.public_lines == ()
+    assert briefing.wolf_lines == ()
+    assert briefing.thoughts == ()
+
+
+def test_night_briefing_holds_lines():
+    briefing = NightBriefing(("公开行",), ("频道行",), ("思考行",))
+    assert briefing.public_lines == ("公开行",)
+    assert briefing.wolf_lines == ("频道行",)
+    assert briefing.thoughts == ("思考行",)
+
+
+@pytest.mark.parametrize("field", ["public_lines", "wolf_lines", "thoughts"])
+def test_night_briefing_rejects_non_tuple_strings(field):
+    with pytest.raises(TypeError):
+        NightBriefing(**{field: "not-a-tuple"})  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        NightBriefing(**{field: (1, 2)})  # type: ignore[arg-type]
+
+
+def test_build_briefing_includes_prior_public_wolf_channel_and_own_thoughts():
+    log = ConversationLog()
+    log.add_public_speech(4, "wolf-killer-villager", "我觉得3号可疑。", 1, "speech")
+    log.add_werewolf_channel("1号：刀4号", 1)
+    log.add_thought(2, "wolf-killer-werewolf", "先苟着观察", 1, "night")
+    log.add_thought(1, "wolf-killer-werewolf", "别人的思考", 1, "night")
+
+    briefing = build_briefing(log, 2, 2)
+
+    assert len(briefing.public_lines) == 1
+    assert "我觉得3号可疑" in briefing.public_lines[0]
+    assert briefing.wolf_lines == ("第1轮狼队频道 系统：1号：刀4号",)
+    assert briefing.thoughts == ("第1轮[night]：先苟着观察",)
+
+
+def test_build_briefing_excludes_current_round_and_other_seat_thoughts():
+    log = ConversationLog()
+    log.add_public_speech(4, "wolf-killer-villager", "本轮发言", 2, "speech")
+    log.add_werewolf_channel("今晚的讨论", 2)
+    log.add_thought(1, "wolf-killer-werewolf", "别人的思考", 2, "night")
+
+    briefing = build_briefing(log, 2, 2)
+
+    assert briefing.public_lines == ()
+    assert briefing.wolf_lines == ()
+    assert briefing.thoughts == ()
+
+
+def test_build_briefing_rejects_invalid_log_seat_and_round():
+    with pytest.raises(TypeError):
+        build_briefing(object(), 1, 2)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        build_briefing(ConversationLog(), 0, 2)
+    with pytest.raises(ValueError):
+        build_briefing(ConversationLog(), 1, -1)
+
+
+def test_build_briefing_caps_lines_and_content():
+    log = ConversationLog()
+    for index in range(25):
+        log.add_public_speech(4, "wolf-killer-villager", f"第{index}条发言", 1, "speech")
+    log.add_thought(2, "wolf-killer-werewolf", "x" * 300, 1, "night")
+
+    briefing = build_briefing(log, 2, 2)
+
+    assert len(briefing.public_lines) == 20
+    assert "第24条发言" in briefing.public_lines[-1]
+    assert "第4条发言" not in "\n".join(briefing.public_lines)
+    # thought content is truncated to 200 chars plus the "第1轮[night]：" prefix
+    assert len(briefing.thoughts[0]) <= 211
+    assert "x" * 250 not in briefing.thoughts[0]
+
+
 # ── prompt builders ─────────────────────────────────────────
 
 
@@ -303,6 +385,40 @@ def test_discussion_prompt(state: GameState, director: NightDirector):
     assert "5号" in messages[1]["content"]
     assert "狼1：刀3号" in messages[1]["content"]
     assert "白天尚未开始" in messages[1]["content"]
+
+
+def test_discussion_prompt_renders_briefing_sections(state: GameState, director: NightDirector):
+    briefing = NightBriefing(
+        ("第1轮公开 4号：我觉得3号可疑",),
+        ("第1轮狼队频道 系统：1号：刀4号",),
+        ("第1轮[night]：我怀疑女巫",),
+    )
+    messages = director.discussion_prompt(state, 1, [], briefing)
+    human = messages[1]["content"]
+    assert "白天公开信息回顾" in human
+    assert "我觉得3号可疑" in human
+    assert "狼队频道记录" in human
+    assert "刀4号" in human
+    assert "思考回顾" in human
+    assert "我怀疑女巫" in human
+
+
+def test_discussion_prompt_renders_empty_briefing_placeholders(state: GameState, director: NightDirector):
+    messages = director.discussion_prompt(state, 1, [], NightBriefing())
+    human = messages[1]["content"]
+    assert "（暂无白天公开信息）" in human
+    assert "（暂无狼队频道记录）" in human
+    assert "（暂无思考记录）" in human
+
+
+def test_vote_prompt_renders_briefing_sections(state: GameState, director: NightDirector):
+    briefing = NightBriefing(("第1轮公开 4号：我觉得3号可疑",), (), ("第1轮[night]：我怀疑女巫",))
+    messages = director.vote_prompt(state, 1, [], [], briefing)
+    human = messages[1]["content"]
+    assert "白天公开信息回顾" in human
+    assert "我觉得3号可疑" in human
+    assert "（暂无狼队频道记录）" in human
+    assert "我怀疑女巫" in human
 
 
 def test_discussion_prompt_empty_history(state: GameState, director: NightDirector):
