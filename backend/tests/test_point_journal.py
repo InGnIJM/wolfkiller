@@ -167,3 +167,24 @@ def test_journal_is_per_state_weak_and_rejects_nonstate() -> None:
     stale._state = __import__("weakref").ref(first)
     del first; gc.collect()
     assert identity not in journal_module._JOURNALS
+
+
+def test_journal_drop_is_reentrant_under_guard() -> None:
+    """The weakref callback may fire synchronously while the guard is held;
+    it must not deadlock the calling thread."""
+    from threading import Thread
+    from weakref import ref
+
+    state = GameState("reentrant-drop")
+    identity = id(state); reference = ref(state)
+    journal_module._JOURNALS[identity] = (reference, journal_module.PointJournal(state))
+    results: list[bool] = []
+
+    def work() -> None:
+        with journal_module._GUARD:
+            journal_module._drop(identity, reference)
+        results.append(identity not in journal_module._JOURNALS)
+
+    thread = Thread(target=work, daemon=True); thread.start(); thread.join(timeout=5)
+    assert not thread.is_alive(), "journal drop deadlocked while guard was held"
+    assert results == [True]

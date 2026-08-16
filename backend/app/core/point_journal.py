@@ -4,7 +4,7 @@ import math
 import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass
-from threading import Lock
+from threading import RLock
 from types import MappingProxyType
 
 from app.core.effect_applier import CommitResult
@@ -13,7 +13,9 @@ from app.models.game import GameState
 from app.models.pipeline import IssuedActionRequest, SchedulePoint
 
 _INT32 = 2_147_483_647
-_GUARD = Lock()
+# Reentrant: the weakref callback can fire synchronously on the thread that
+# already holds the guard while replacing a reused identity's entry.
+_GUARD = RLock()
 _JOURNALS: dict[int, tuple[weakref.ReferenceType[GameState], "PointJournal"]] = {}
 
 
