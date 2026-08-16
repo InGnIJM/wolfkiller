@@ -124,6 +124,42 @@ class TestPromptBuilder:
         assert "camp_members" in wolf_prompt
         assert "camp_members" not in villager_prompt
 
+    def test_day_speech_first_speaker_gets_opening_framework_instruction(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.speaking_order = [4, 5, 6, 8, 9]
+        prompt = builder.build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "第 1 位发言者" in prompt
+        assert "开场分析框架" in prompt
+        assert "具体观点" not in prompt
+
+    def test_day_speech_later_speaker_must_react_and_add_new_points(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.speaking_order = [4, 5, 6, 8, 9]
+        prompt = builder.build_speech_prompt(
+            state, 6, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "已有 2 位玩家发过言" in prompt
+        assert "具体观点" in prompt
+        assert "新的论点" in prompt
+        assert "复述" in prompt
+
+    def test_day_speech_without_speaking_order_still_asks_for_own_analysis(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.speaking_order = []
+        prompt = builder.build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "个人分析" in prompt
+
+    def test_system_prompt_forbids_echoing_previous_speakers(self):
+        prompt = PromptBuilder.get_system_prompt()
+        assert "雷同" in prompt or "复述" in prompt
+
     def test_last_words_prompt_uses_last_words_task(self):
         builder = PromptBuilder()
         state = make_state()
