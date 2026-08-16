@@ -145,4 +145,57 @@ describe('ModelConfigPage', () => {
 
     await waitFor(() => expect(screen.getByText(/连接失败：TimeoutError/)).toBeInTheDocument());
   });
+
+  it('dialog tests connection in edit mode with config_id and entered key', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 7, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-typed' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith({ config_id: 'a1', api_key: 'sk-typed' }),
+    );
+  });
+
+  it('dialog tests connection in create mode with form fields', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 7, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-f' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith({
+        base_url: 'https://x/v1', api_key: 'sk-f', model_id: 'm',
+      }),
+    );
+  });
+
+  it('dialog saves advanced options as numbers and nulls', async () => {
+    vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'b3', name: 'Adv' });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Adv' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.change(screen.getByLabelText(/Temperature/), { target: { value: '0.5' } });
+    fireEvent.change(screen.getByLabelText(/严格模式地址/), { target: { value: 'https://x/beta' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(createModel).toHaveBeenCalledWith(expect.objectContaining({
+        temperature: 0.5, strict_base_url: 'https://x/beta',
+      })),
+    );
+  });
 });
