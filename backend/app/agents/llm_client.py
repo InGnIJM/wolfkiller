@@ -29,7 +29,7 @@ def env_default_client_config() -> LLMClientConfig:
     return LLMClientConfig(
         base_url=llm_cfg.base_url,
         api_key=llm_cfg.api_key,
-        model_id=llm_cfg.models[0],
+        model_id=llm_cfg.models[0] if llm_cfg.models else "deepseek-v4-pro",
         temperature=llm_cfg.temperature,
         max_tokens=llm_cfg.max_tokens,
         strict_base_url=llm_cfg.strict_base_url,
@@ -40,7 +40,9 @@ class LLMClient:
     """Thin wrapper around LangChain ChatModel (OpenAI-compatible).
 
     Configuration comes from an explicit LLMClientConfig; when omitted the
-    .env defaults are used so existing callers keep working.
+    .env defaults are used so existing callers keep working. The ``model``
+    and ``temperature`` arguments, when provided, override the corresponding
+    config values.
     """
 
     def __init__(
@@ -78,6 +80,7 @@ class LLMClient:
         )
 
     def get_model_with_tools(self, tools: list[dict]) -> BaseChatModel:
+        """Return a model with function-calling tools bound."""
         return self._build().bind_tools(tools)
 
     @staticmethod

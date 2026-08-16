@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -45,6 +46,32 @@ def test_env_default_client_config_materializes_app_config(monkeypatch):
         base_url="http://env.test/v1", api_key="env-key", model_id="env-model",
         temperature=1.1, max_tokens=2048, strict_base_url="http://env.test/beta",
     )
+
+
+def _patch_empty_models(mod, monkeypatch):
+    monkeypatch.setattr(
+        mod.app_config, "llm",
+        SimpleNamespace(
+            base_url="http://env.test/v1", api_key="env-key",
+            models=[], temperature=1.0, max_tokens=512,
+            strict_base_url="http://env.test/beta",
+        ),
+    )
+
+
+def test_env_default_client_config_falls_back_when_models_empty(monkeypatch):
+    import app.agents.llm_client as mod
+
+    _patch_empty_models(mod, monkeypatch)
+    assert env_default_client_config().model_id == "deepseek-v4-pro"
+
+
+def test_llm_client_with_explicit_model_tolerates_empty_models(monkeypatch):
+    import app.agents.llm_client as mod
+
+    _patch_empty_models(mod, monkeypatch)
+    client = LLMClient(model="custom-model")
+    assert client.model_name == "custom-model"
 
 
 def test_get_model_uses_explicit_config_kwargs():
@@ -107,5 +134,5 @@ def test_get_model_with_action_tool_uses_strict_base_url():
 
 
 def test_llm_client_config_is_frozen():
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         _config().base_url = "x"
