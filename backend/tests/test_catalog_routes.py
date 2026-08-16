@@ -85,3 +85,36 @@ def test_schema_models_accept_catalog_shapes():
     assert preset.id
     constraints = ConstraintsResponse(**FIELD_CONSTRAINTS)
     assert constraints.min_players == 4
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_list_roles_endpoint_returns_six_roles():
+    from app.api.routes import catalog_routes
+
+    response = await catalog_routes.list_roles()
+
+    assert len(response.roles) == 6
+    assert response.roles[0].role_id
+
+
+@pytest.mark.asyncio
+async def test_list_presets_endpoint_returns_standards():
+    from app.api.routes import catalog_routes
+
+    response = await catalog_routes.list_presets()
+
+    assert len(response.presets) == 2
+    assert response.presets[0].name == "九人标准场"
+
+
+@pytest.mark.asyncio
+async def test_get_constraints_endpoint_matches_constants():
+    from app.api.routes import catalog_routes
+
+    response = await catalog_routes.get_constraints()
+
+    assert response.min_players == FIELD_CONSTRAINTS["min_players"]
+    assert response.max_players == FIELD_CONSTRAINTS["max_players"]
