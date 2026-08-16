@@ -104,13 +104,18 @@ class ConversationLog:
         self._persist(record)
         return record
 
-    def add_werewolf_channel(self, content: str, round_num: int) -> Conversation:
+    def add_werewolf_channel(
+        self, content: str, round_num: int,
+        speaker_seat: Optional[int] = None, speaker_role: Optional[str] = None,
+    ) -> Conversation:
         """Record one message in the wolves' private night channel."""
         record = Conversation(
             scope=ConversationScope.WEREWOLF,
             content=content,
             round_number=round_num,
             phase="night",
+            speaker_seat=speaker_seat,
+            speaker_role=speaker_role,
         )
         self.records.append(record)
         self._persist(record)

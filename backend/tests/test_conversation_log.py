@@ -51,6 +51,18 @@ class TestConversationLogLifecycle:
         villager_view = log.get_conversations_for_role(2, "wolf-killer-villager")
         assert villager_view == []
 
+    def test_add_werewolf_channel_carries_speaker(self):
+        log = ConversationLog()
+        record = log.add_werewolf_channel(
+            "刀4号", 3, speaker_seat=2, speaker_role="wolf-killer-werewolf",
+        )
+        assert record.speaker_seat == 2
+        assert record.speaker_role == "wolf-killer-werewolf"
+
+        anonymous = log.add_werewolf_channel("系统消息", 3)
+        assert anonymous.speaker_seat is None
+        assert anonymous.speaker_role is None
+
     def test_get_all_get_public_and_get_by_round(self):
         log = ConversationLog()
         log.add_public_speech(1, "wolf-killer-villager", "第一轮", 1, "speech")
