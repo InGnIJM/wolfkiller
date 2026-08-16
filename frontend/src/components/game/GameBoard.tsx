@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Box, Typography, Button, CircularProgress } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
-import { fetchGameLogs, fetchGameDetail } from '../../api/client';
+import { fetchGameLogs, fetchGameDetail, GameNotFoundError } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
@@ -63,7 +63,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
   // Poll for new logs while game is in progress
   useEffect(() => {
-    if (loading || winResult) return;
+    if (loading || winResult || error) return;
 
     let active = true;
     let inFlight = false;
@@ -76,8 +76,23 @@ export default function GameBoard({ onBack, gameId }: Props) {
           fetchGameDetail(gameId),
           fetchGameLogs(gameId),
         ]);
-        if (detailResult.status === 'rejected' || logsResult.status === 'rejected') return;
-        if (active) {
+        let failure: unknown = null;
+        if (detailResult.status === 'rejected') {
+          failure = detailResult.reason;
+        } else if (logsResult.status === 'rejected') {
+          failure = logsResult.reason;
+        }
+        if (failure !== null) {
+          // A 404 means the game disappeared (e.g. server restarted);
+          // other failures are transient and silently retried.
+          if (active && failure instanceof GameNotFoundError) {
+            setError(failure.message);
+          }
+          return;
+        }
+        if (active
+          && detailResult.status === 'fulfilled'
+          && logsResult.status === 'fulfilled') {
           initPlayersFromDetail(detailResult.value.players);
           mergeLogs(logsResult.value);
         }
@@ -94,7 +109,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
       active = false;
       clearInterval(interval);
     };
-  }, [gameId, loading, winResult, initPlayersFromDetail, mergeLogs]);
+  }, [gameId, loading, winResult, error, initPlayersFromDetail, mergeLogs]);
 
   const aliveCount = Object.values(players).filter((p) => p.is_alive).length;
 

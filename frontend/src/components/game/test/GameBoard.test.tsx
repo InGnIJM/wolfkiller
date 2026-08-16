@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchGameDetail, fetchGameLogs } from '../../../api/client';
+import { fetchGameDetail, fetchGameLogs, GameNotFoundError } from '../../../api/client';
 import { useGameStore } from '../../../store/gameStore';
 import type { GameLogs, PublicGameState } from '../../../store/types';
 import GameBoard from '../GameBoard';
@@ -19,6 +19,12 @@ const { connect, disconnect } = vi.hoisted(() => ({
 vi.mock('../../../api/client', () => ({
   fetchGameDetail: vi.fn(),
   fetchGameLogs: vi.fn(),
+  GameNotFoundError: class GameNotFoundError extends Error {
+    constructor() {
+      super('对局不存在或已失效');
+      this.name = 'GameNotFoundError';
+    }
+  },
 }));
 
 vi.mock('../../../api/websocket', () => ({
@@ -224,6 +230,39 @@ describe('GameBoard public replay', () => {
     expect(fetchGameDetail).toHaveBeenCalledTimes(4);
     expect(fetchGameLogs).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId('seat-map')).toBeInTheDocument();
+  });
+
+  it('shows a friendly notice and stops polling when the game disappears', async () => {
+    vi.useFakeTimers();
+    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    const activeLogs: GameLogs = {
+      game_id: 'game-1',
+      events: [{ ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } }],
+    };
+    vi.mocked(fetchGameDetail)
+      .mockResolvedValueOnce(activeDetail)
+      .mockRejectedValueOnce(new GameNotFoundError());
+    vi.mocked(fetchGameLogs)
+      .mockResolvedValueOnce(activeLogs)
+      .mockRejectedValueOnce(new GameNotFoundError());
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('seat-map')).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText('对局不存在或已失效')).toBeVisible();
+
+    const callsAfterError = vi.mocked(fetchGameDetail).mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(9000));
+    expect(vi.mocked(fetchGameDetail).mock.calls.length).toBe(callsAfterError);
   });
 
   it('refreshes the public player snapshot before merging each successful poll', async () => {

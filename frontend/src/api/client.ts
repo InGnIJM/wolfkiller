@@ -32,21 +32,33 @@ export async function listGames(): Promise<GameListResponse> {
   return res.json();
 }
 
+export class GameNotFoundError extends Error {
+  constructor() {
+    super('对局不存在或已失效');
+    this.name = 'GameNotFoundError';
+  }
+}
+
+function throwHttpError(res: Response, fallback: string): never {
+  if (res.status === 404) throw new GameNotFoundError();
+  throw new Error(`${fallback}: ${res.status}`);
+}
+
 export async function fetchGameLogs(gameId: string): Promise<GameLogs> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}/logs`);
-  if (!res.ok) throw new Error(`Fetch logs failed: ${res.status}`);
+  if (!res.ok) throwHttpError(res, 'Fetch logs failed');
   return res.json();
 }
 
 export async function fetchGameDetail(gameId: string): Promise<PublicGameState> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}`);
-  if (!res.ok) throw new Error(`Fetch game detail failed: ${res.status}`);
+  if (!res.ok) throwHttpError(res, 'Fetch game detail failed');
   return res.json();
 }
 
 export async function fetchGameMemories(gameId: string): Promise<GameMemories> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}/memories`);
-  if (!res.ok) throw new Error(`Fetch game memories failed: ${res.status}`);
+  if (!res.ok) throwHttpError(res, 'Fetch game memories failed');
   return res.json();
 }
 
