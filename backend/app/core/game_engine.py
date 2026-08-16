@@ -900,6 +900,18 @@ class GameEngine:
         pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
         result = await asyncio.to_thread(pipeline.run_point, self.state, SchedulePoint.DAWN_REACTION)
         self._log_audience_events(result, self.state.phase.value)
+        # 放逐反应产生的待结算伤害立即结算（如开枪带走），不得留到下一晚。
+        settlement = scheduler.settle_pending(self.state)
+        if settlement is not None:
+            deaths = tuple(
+                DeathReport(event["payload"]["seat"], event["payload"]["cause"],
+                            event["payload"]["round_number"])
+                for event in settlement.events
+            )
+            for death in deaths:
+                await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
+            self.game_logger.log_deaths(self.game_id, self.state.round_number,
+                                        [death.to_dict() for death in deaths])
 
     # =================================================================
     # Day Operation Functions

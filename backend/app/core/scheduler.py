@@ -383,6 +383,22 @@ class Scheduler:
                 return batch
         return Scheduler._FOLLOWUP_CAP + 1
 
+    def settle_pending(self, state: GameState) -> CommitResult | None:
+        """Settle all pending damage/protection immediately (e.g. after a
+        daytime exile reaction) using the next unused same-round settlement
+        batch, so an earlier same-round NIGHT_COMMIT settlement is never
+        replayed and the reaction damage never lingers into the next night."""
+        if type(state) is not GameState: raise TypeError("state must be GameState")
+        with state_transaction_lock(state):
+            runtime = getattr(state, "_pipeline_runtime", None)
+            if runtime is None or (not runtime.pending_damage and not runtime.pending_protection):
+                return None
+            commits = list(runtime.commits.values())
+            batch = self._followup_batch(state, commits)
+            if batch > Scheduler._FOLLOWUP_CAP:
+                raise PipelinePaused("settlement batch cap exceeded")
+            return self.applier.settle_pending(state, round_number=state.round_number, batch=batch)
+
     def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
         with state_transaction_lock(state):
