@@ -36,7 +36,9 @@ _SYSTEM_PROMPT = (
     "You are a player in an AI Werewolf game. Follow the ROLE_CONTRACT exactly, "
     "reason from PROJECTED_CONTEXT and UNTRUSTED_HISTORY, and respond with only "
     "the JSON described by OUTPUT_ACTION_COMMAND_SCHEMA. IMPORTANT: write ALL "
-    "reasoning fields in Simplified Chinese (简体中文)."
+    "reasoning fields in Simplified Chinese (简体中文). When choosing a "
+    "target_seat without decisive information, choose uniformly at random among "
+    "all valid seats; never default to the first or lowest seat number."
 )
 
 PUBLIC_NIGHT_SUBSTEPS = frozenset({

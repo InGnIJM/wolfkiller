@@ -34,7 +34,16 @@ _NO_FABRICATION_RULE = (
 _FIRST_NIGHT_NOTICE = (
     "注意：这是第 1 晚，白天尚未开始，所有玩家都没有任何发言记录。"
     "不要引用或暗示任何玩家此前的行为特征（如\"活跃\"\"话多\"\"像有身份\"），"
-    "只能依据座位位置等客观信息选择目标。\n"
+    "只能依据座位位置等客观信息选择目标。"
+    "没有更多依据时，请在全部存活玩家中均匀随机选择，"
+    "严禁固定选择1号或最小的座位号——列表中的第一个座位不是随机选择，而是已知偏见。\n"
+)
+
+_TARGET_RULE = (
+    "目标选择规则：preferred_target / target_seat 必须是场上存活玩家；"
+    "没有确凿依据时，请在全部存活玩家中均匀随机选择，"
+    "严禁默认选择1号或最小的座位号，也不要机械重复上一轮或队友提出的目标；"
+    "第一个座位不是随机选择，而是已知偏见。"
 )
 
 
@@ -260,7 +269,8 @@ class NightDirector:
             f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
             f"已进行的讨论：\n{self._history_text(history) or '（尚无发言）'}\n\n"
             f"当前为第 {turn_number}/{total_turns} 轮发言，最多还可继续 {remaining} 轮。\n"
-            "讨论要求：\n"
+            + _TARGET_RULE
+            + "\n讨论要求：\n"
             "- 不要复述队友已经说过的内容；如果团队已达成一致而你没有新信息，请跳过本轮。\n"
             "- 如果你有倾向的刀人目标，把该座位号填入 preferred_target；没有倾向就填 null。\n"
             "- 除了今晚的刀人目标，还应商定明天白天的配合计划：带节奏方向、嫁祸对象等，"
@@ -296,7 +306,8 @@ class NightDirector:
             f"讨论记录：\n{self._history_text(discussion) or '（无）'}\n"
             f"已出票：\n{self._prior_votes_text(prior_votes)}\n\n"
             + _night_notice(state)
-            + '输出 JSON：{"schema_version": 1, "action_type": "kill", "target_seat": 目标座位号, '
+            + _TARGET_RULE
+            + '\n输出 JSON：{"schema_version": 1, "action_type": "kill", "target_seat": 目标座位号, '
             '"reasoning": "中文理由(≤500字)"} 或 {"schema_version": 1, "action_type": "pass", '
             '"target_seat": null, "reasoning": "中文理由(≤500字)"}。'
         )
