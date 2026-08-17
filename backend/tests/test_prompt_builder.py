@@ -168,6 +168,54 @@ class TestPromptBuilder:
         assert "具体观点" in prompt
         assert "新的论点" in prompt
         assert "复述" in prompt
+        assert "盲从" in prompt
+
+    def test_speech_prompt_contains_night_timeline_education(self):
+        builder = PromptBuilder()
+        state = make_state()
+        prompt = builder.build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "游戏时序常识" in prompt
+        assert "天亮" in prompt
+        assert "死亡" in prompt
+        assert "座次" in prompt
+        assert "随机" in prompt
+
+    def test_vote_prompt_also_contains_night_timeline_education(self):
+        builder = PromptBuilder()
+        state = make_state()
+        prompt = builder.build_vote_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "exile_vote"
+        )
+        assert "游戏时序常识" in prompt
+
+    def test_conversation_previous_speaker_reminder_only_for_non_first_speakers(self):
+        builder = PromptBuilder()
+        state = make_state({
+            8: "wolf-killer-villager", 9: "wolf-killer-villager", 10: "wolf-killer-villager",
+        })
+        state.speaking_order = [8, 9, 10]
+        last_prompt = builder.build_speech_prompt(
+            state, 10, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "前一位发言者是 9 号" in last_prompt
+        assert "独立" in last_prompt
+
+        first_prompt = builder.build_speech_prompt(
+            state, 8, "wolf-killer-villager", make_log(), "day_speech"
+        )
+        assert "前一位发言者" not in first_prompt
+
+    def test_conversations_render_round_headers_for_multiple_rounds(self):
+        log = ConversationLog()
+        log.add_public_speech(4, "wolf-killer-villager", "第一轮的话", 1, "speech")
+        log.add_public_speech(4, "wolf-killer-villager", "第二轮的话", 2, "speech")
+        out = PromptBuilder()._format_conversations(log, 2, 4, "wolf-killer-villager")
+        assert "第1轮" in out
+        assert "第2轮" in out
+        assert "第一轮的话" in out
+        assert "第二轮的话" in out
 
     def test_day_speech_without_speaking_order_still_asks_for_own_analysis(self):
         builder = PromptBuilder()
