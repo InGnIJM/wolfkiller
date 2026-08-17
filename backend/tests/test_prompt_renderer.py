@@ -31,6 +31,15 @@ def values():
     return spec, contract, context
 
 
+def test_renderer_includes_anti_anchoring_target_rule() -> None:
+    spec, contract, context = values(); renderer = PromptRenderer()
+    rendered = renderer.render(spec, contract, context, "")
+    assert "TARGET_SELECTION_RULE=" in rendered
+    assert "均匀随机" in rendered
+    assert "alive_seats" in rendered
+    assert "target whitelist" not in rendered.lower()
+
+
 def test_renderer_is_deterministic_closed_and_contains_only_projected_context() -> None:
     spec, contract, context = values(); renderer = PromptRenderer()
     first = renderer.render(spec, contract, context, "player said hello")

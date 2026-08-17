@@ -410,6 +410,22 @@ def test_build_briefing_caps_lines_and_content():
 # ── prompt builders ─────────────────────────────────────────
 
 
+def test_discussion_prompt_anti_anchoring_target_rule(state: GameState, director: NightDirector):
+    messages = director.discussion_prompt(state, 1, [])
+    human = messages[1]["content"]
+    assert "均匀随机" in human
+    assert "最小" in human
+    assert "1号" in human
+
+
+def test_vote_prompt_anti_anchoring_target_rule(state: GameState, director: NightDirector):
+    messages = director.vote_prompt(state, 1, [], [])
+    human = messages[1]["content"]
+    assert "均匀随机" in human
+    assert "最小" in human
+    assert "1号" in human
+
+
 def test_discussion_prompt(state: GameState, director: NightDirector):
     messages = director.discussion_prompt(state, 1, ["狼1：刀3号"])
     assert messages[0]["role"] == "system"
