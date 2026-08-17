@@ -725,6 +725,7 @@ def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
 
 def test_narration_known():
     assert NightDirector.narration("wolf_open") == ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。")
+    assert NightDirector.narration("guard_open") == ("守卫请睁眼", "请选择今晚要守护的玩家。")
     assert NightDirector.narration("witch_open") == ("女巫请睁眼", "昨晚有人被袭击。")
     assert NightDirector.narration("seer_open") == ("预言家请睁眼", "请查验一名玩家的身份。")
 

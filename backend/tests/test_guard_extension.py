@@ -22,10 +22,10 @@ FIVE_CORE_PATHS = (
 )
 
 CORE_BLOBS_BEFORE_GUARD = (
-    "876ba811059f211c44745ae0e640b256b919f779",
+    "ed643597e6aed30a24c054150870f204886333e8",
     "2420b709c39c38958b21518033baabd08fe4bf9d",
     "7e85ba15f8277a9d5b7d3424c53e3e3dca9f9422",
-    "0bf8b97c7dfc08ac761be6bcceed62db6febfb49",
+    "8de17dbdbc10ba67f6d79f928a3e31fc87e91d32",
     "bc509cfd7d80c12ea2a341fb08080a312e687d1e",
 )
 
@@ -89,6 +89,7 @@ def test_guard_uses_only_existing_effects() -> None:
     effects = resolve_guard_action(context, guard_command(3))
     assert tuple(effect.kind for effect in effects) == (
         EffectKind.SUBMIT_PROTECTION, EffectKind.SET_PRIVATE_DATA,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     )
     assert effects[0].target_seat == 3
     assert effects[0].payload == {"target": 3, "amount": 1}
@@ -96,7 +97,38 @@ def test_guard_uses_only_existing_effects() -> None:
     assert effects[1].payload == {"target": 1, "key": "last_guarded", "value": 3}
     assert effects[0].effect_id == derive_effect_id(context.action_key, 1)
     assert effects[1].effect_id == derive_effect_id(context.action_key, 2)
-    assert resolve_guard_action(context, guard_command(None)) == ()
+
+
+def test_guard_action_emits_reasoning_and_protect_audience_events() -> None:
+    context = guard_context(last_guarded=2)
+    effects = resolve_guard_action(context, guard_command(3))
+    reasoning, protect = effects[2], effects[3]
+    assert reasoning.kind is EffectKind.EMIT_EVENT
+    assert reasoning.payload["event_type"] == "GUARD_REASONING"
+    assert reasoning.payload["payload"]["seat"] == 1
+    assert reasoning.payload["payload"]["action_type"] == "guard"
+    assert reasoning.payload["payload"]["target_seat"] == 3
+    assert reasoning.payload["payload"]["reasoning"] == "protect a suspicious player"
+    assert "守护 3 号" in reasoning.payload["payload"]["thought"]
+    assert reasoning.visibility == ("PUBLIC",)
+    assert protect.kind is EffectKind.EMIT_EVENT
+    assert protect.payload == {"event_type": "GUARD_PROTECT", "payload": {"target_seat": 3}}
+    assert protect.visibility == ("PUBLIC",)
+
+
+def test_guard_pass_emits_reasoning_event_only() -> None:
+    effects = resolve_guard_action(guard_context(), guard_command(None))
+    assert tuple(effect.kind for effect in effects) == (EffectKind.EMIT_EVENT,)
+    reasoning = effects[0]
+    assert reasoning.payload["event_type"] == "GUARD_REASONING"
+    assert reasoning.payload["payload"]["action_type"] == "pass"
+    assert reasoning.payload["payload"]["target_seat"] is None
+    assert "不守护" in reasoning.payload["payload"]["thought"]
+
+
+def test_guard_contract_and_spec_allow_emit_event() -> None:
+    assert EffectKind.EMIT_EVENT in guard_contract().allowed_effects
+    assert EffectKind.EMIT_EVENT in GUARD_SPEC.allowed_effects
 
 
 def test_guard_is_applicable_only_while_alive() -> None:
@@ -111,6 +143,81 @@ def test_guard_spec_is_registered_with_pipeline() -> None:
     assert spec.camp_id == "good"
 
 
+def test_ten_player_standard_board_creates_roles_via_legacy_registry() -> None:
+    role_counts = {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-villager": 3,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-hunter": 1,
+        "wolf-killer-guard": 1,
+    }
+    roles = builtin_registry.create_roles(
+        role_counts, 10, object(), lambda: object(),
+    )
+    assert sorted(roles) == list(range(1, 11))
+    assert sorted(role.role_name for role in roles.values()) == [
+        "wolf-killer-guard",
+        "wolf-killer-hunter",
+        "wolf-killer-seer",
+        "wolf-killer-villager",
+        "wolf-killer-villager",
+        "wolf-killer-villager",
+        "wolf-killer-werewolf",
+        "wolf-killer-werewolf",
+        "wolf-killer-werewolf",
+        "wolf-killer-witch",
+    ]
+
+
 def test_guard_addition_did_not_modify_five_core_modules() -> None:
     current = tuple(_git_blob_sha(path) for path in FIVE_CORE_PATHS)
     assert current == CORE_BLOBS_BEFORE_GUARD
+
+
+def test_guard_night_action_point_issues_request_and_submits_protection() -> None:
+    from app.core.action_resolver import ActionResolver
+    from app.core.action_validator import ActionValidator
+    from app.core.context_projector import ContextProjector
+    from app.core.effect_applier import EffectApplier
+    from app.core.role_runtime import role_private_data_view
+    from app.core.scheduler import Scheduler
+    from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+    from app.models.pipeline import ActionCommand as PipelineActionCommand
+
+    snapshot = builtin_registry.freeze()
+    state = GameState(game_id="guard-night", config=GameConfig(role_counts={
+        "wolf-killer-guard": 1,
+        "wolf-killer-villager": 2,
+    }))
+    specs = snapshot.specs
+    state.players[1] = PlayerState(1, "wolf-killer-guard", "good")
+    state.players[2] = PlayerState(2, "wolf-killer-villager", "good")
+    state.players[3] = PlayerState(3, "wolf-killer-villager", "good")
+    state.phase = GamePhase.NIGHT
+
+    requests = []
+
+    def provider(request, context, attempt):
+        requests.append(request)
+        return PipelineActionCommand(
+            action_type="guard", target_seat=2, reasoning="protect the talkative one",
+        )
+
+    scheduler = Scheduler(
+        snapshot, ContextProjector(), ActionValidator(),
+        ActionResolver(), EffectApplier(), provider,
+    )
+    result = scheduler.run_point(state, SchedulePoint.NIGHT_ACTION)
+
+    assert [request.contract.contract_id for request in requests] == ["guard_action"]
+    assert len(result.commits) == 1
+    commit = result.commits[0]
+    action_key = requests[0].action_key
+    assert derive_effect_id(action_key, 1) in commit.effect_ids  # SUBMIT_PROTECTION
+    assert derive_effect_id(action_key, 2) in commit.effect_ids  # SET_PRIVATE_DATA
+    assert derive_effect_id(action_key, 3) in commit.effect_ids  # GUARD_REASONING
+    assert derive_effect_id(action_key, 4) in commit.effect_ids  # GUARD_PROTECT
+    assert role_private_data_view(state, 1)["last_guarded"] == 2
+    event_types = [event["event_type"] for event in commit.events]
+    assert event_types == ["GUARD_REASONING", "GUARD_PROTECT"]
