@@ -38,6 +38,7 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WITCH_POISON": frozenset({"target_seat"}),
     "SEER_CHECK": frozenset({"target_seat", "result"}),
     "HUNTER_SHOT": frozenset({"target_seat"}),
+    "GUARD_PROTECT": frozenset({"target_seat"}),
     "WOLF_CHAT_MESSAGE": frozenset({"seat", "text"}),
     "WOLF_VOTE": frozenset({"seat", "target_seat", "reasoning"}),
     "WITCH_THOUGHT": frozenset({"seat", "text"}),
@@ -51,6 +52,7 @@ _REASONING_EVENT_TYPES = {
     "HUNTER_REASONING": ("hunter_reasoning", frozenset({"shoot", "pass"})),
     "WITCH_REASONING": ("witch_reasoning", frozenset({"save", "poison", "pass"})),
     "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
+    "GUARD_REASONING": ("guard_reasoning", frozenset({"guard", "pass"})),
 }
 
 

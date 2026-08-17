@@ -512,6 +512,16 @@ def test_public_audience_action_projects_each_supported_event_shape():
         },
     }]
 
+    guard = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "GUARD_PROTECT", "payload": {"target_seat": 6}},
+    }
+    assert game_routes._public_operation_events(guard) == [{
+        "event_type": "night_action",
+        "payload": {"action_type": "guard_protect", "target_seat": 6, "round_number": 2},
+    }]
+
 
 @pytest.mark.parametrize(
     ("record",),
@@ -655,6 +665,8 @@ def test_public_reasoning_event_projects_closed_night_thought():
         ("WITCH_REASONING", "pass", None, "witch_reasoning"),
         ("SEER_REASONING", "check", 5, "seer_reasoning"),
         ("SEER_REASONING", "pass", None, "seer_reasoning"),
+        ("GUARD_REASONING", "guard", 6, "guard_reasoning"),
+        ("GUARD_REASONING", "pass", None, "guard_reasoning"),
     ],
 )
 def test_public_reasoning_event_projects_witch_and_seer_thoughts(
@@ -707,6 +719,12 @@ def test_public_reasoning_event_projects_witch_and_seer_thoughts(
                             "reasoning": "r", "thought": "t"}),
         ("SEER_REASONING", {"seat": 0, "action_type": "check", "target_seat": 2,
                             "reasoning": "r", "thought": "t"}),
+        ("GUARD_REASONING", {"seat": 1, "action_type": "shoot", "target_seat": 2,
+                             "reasoning": "r", "thought": "t"}),
+        ("GUARD_REASONING", {"seat": 1, "action_type": "guard", "target_seat": 2,
+                             "reasoning": "r", "thought": "t", "extra": 1}),
+        ("GUARD_PROTECT", {"target_seat": 2, "extra": 1}),
+        ("GUARD_PROTECT", {"target_seat": "x"}),
     ],
 )
 def test_public_reasoning_event_rejects_malformed_records(event_type, payload):
