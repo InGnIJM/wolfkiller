@@ -452,6 +452,14 @@ class BaseRole:
             if mapped is not error:
                 raise mapped from error
             raise
+        if not getattr(response, "tool_calls", None):
+            # The provider ignored the forced tool call (e.g. answers with the
+            # tool call as plain text instead of native tool_calls). The strict
+            # contract is not honored, so degrade to the JSON transport instead
+            # of retrying the same broken strict path.
+            raise StrictCapabilityError(
+                "strict transport returned no native tool call"
+            )
         return self.output_parser.parse_strict_action_response(response, request.contract)
 
     async def _invoke_json_action(self, messages, request):

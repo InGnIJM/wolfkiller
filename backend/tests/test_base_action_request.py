@@ -108,6 +108,30 @@ async def test_request_action_falls_back_to_strict_json_only_for_capability_erro
 
 
 @pytest.mark.asyncio
+async def test_request_action_falls_back_to_json_when_strict_response_lacks_native_tool_call():
+    state = make_state()
+    xml_like = AIMessage(
+        content=(
+            "<tool_call><function=exile_vote>"
+            "<parameter=target_seat>2</parameter></function></tool_call>"
+        ),
+        tool_calls=[],
+    )
+    client = ClientStub(
+        [xml_like, xml_like],
+        [AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}')],
+    )
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
+
+    accepted = await role.request_action(state, object(), request_for(state))
+
+    assert accepted.command.action_type == "vote"
+    assert accepted.command.target_seat == 2
+    assert len(client.strict_model.messages) == 1
+    assert len(client.json_model.messages) == 1
+
+
+@pytest.mark.asyncio
 async def test_request_action_retries_invalid_strict_action_once_with_generic_correction():
     state = make_state()
     client = ClientStub([action_tool_response(target=None), action_tool_response(target=2)])
