@@ -5,10 +5,10 @@ from app.api.schemas import (
     CreateGameRequest, CreateGameResponse, GameListItem,
     GameListResponse, GameDetailResponse, GameLogsResponse,
     GameMemoriesResponse, PlayerMemoryResponse,
-    PublicDeathResponse, PublicNarrationResponse, PublicNightThoughtResponse,
-    PublicPhaseResponse, PublicPlayerResponse, PublicSeerThoughtResponse,
-    PublicSpeechResponse, PublicVoteResponse, PublicVoteResultResponse,
-    PublicWinnerResponse, PublicWitchThoughtResponse,
+    PublicDeathResponse, PublicNarrationResponse, PublicNightActionResponse,
+    PublicNightThoughtResponse, PublicPhaseResponse, PublicPlayerResponse,
+    PublicSeerThoughtResponse, PublicSpeechResponse, PublicVoteResponse,
+    PublicVoteResultResponse, PublicWinnerResponse, PublicWitchThoughtResponse,
     PublicWolfChatMessageResponse, PublicWolfVoteResponse,
     SetSpeedRequest, WSMessage,
 )
@@ -82,7 +82,7 @@ class TestSchemas:
 
     @pytest.mark.parametrize(
         "action_type",
-        ["hunter_reasoning", "witch_reasoning", "seer_reasoning"],
+        ["hunter_reasoning", "witch_reasoning", "seer_reasoning", "guard_reasoning"],
     )
     def test_night_thought_accepts_all_role_reasoning_types(self, action_type):
         response = GameLogsResponse(game_id="abc", events=[{
@@ -99,7 +99,7 @@ class TestSchemas:
             GameLogsResponse(game_id="abc", events=[{
                 "event_type": "night_thought", "timestamp": PUBLIC_TIMESTAMP,
                 "payload": {
-                    "round_number": 2, "seat": 2, "action_type": "guard_reasoning",
+                    "round_number": 2, "seat": 2, "action_type": "wolf_reasoning",
                     "target_seat": None, "reasoning": "未知类型",
                 },
             }])
@@ -403,6 +403,17 @@ class TestSchemas:
                 round_number=1, seat=1, action_type="wolf_reasoning",
                 target_seat=None, reasoning="r",
             )
+
+    def test_guard_night_action_and_thought_types_are_accepted(self):
+        action = PublicNightActionResponse(
+            action_type="guard_protect", target_seat=6, round_number=1,
+        )
+        assert action.action_type == "guard_protect"
+        thought = PublicNightThoughtResponse(
+            round_number=1, seat=5, action_type="guard_reasoning",
+            target_seat=6, reasoning="守一下",
+        )
+        assert thought.action_type == "guard_reasoning"
 
     def test_staged_night_payload_models_enforce_route_boundaries(self):
         assert PublicNarrationResponse(

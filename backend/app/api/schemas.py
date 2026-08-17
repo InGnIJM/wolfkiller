@@ -116,6 +116,7 @@ class PublicVoteResultResponse(_PublicResponse):
 
 PublicNightActionType = Literal[
     "werewolf_kill", "witch_save", "witch_poison", "seer_check", "hunter_shot",
+    "guard_protect",
 ]
 
 
@@ -141,6 +142,7 @@ PublicThoughtActionType = Literal[
     "hunter_reasoning",
     "witch_reasoning",
     "seer_reasoning",
+    "guard_reasoning",
 ]
 
 
