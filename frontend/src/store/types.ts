@@ -57,7 +57,8 @@ export type NightActionType =
   | 'witch_save'
   | 'witch_poison'
   | 'seer_check'
-  | 'hunter_shot';
+  | 'hunter_shot'
+  | 'guard_protect';
 
 export interface NightActionRecord {
   action_type: NightActionType;
@@ -95,7 +96,7 @@ export interface ThoughtPayload {
 export interface NightThoughtPayload {
   round_number: number;
   seat: number;
-  action_type: 'hunter_reasoning' | 'witch_reasoning' | 'seer_reasoning';
+  action_type: 'hunter_reasoning' | 'witch_reasoning' | 'seer_reasoning' | 'guard_reasoning';
   target_seat: number | null;
   reasoning: string;
 }

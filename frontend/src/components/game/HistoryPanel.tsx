@@ -22,12 +22,14 @@ const NIGHT_ACTION_LABELS: Record<string, string> = {
   witch_poison: '女巫毒人',
   seer_check: '预言家查验',
   hunter_shot: '猎人开枪',
+  guard_protect: '守卫守护',
 };
 
 const THOUGHT_LABELS: Record<string, string> = {
   witch_reasoning: '女巫思考',
   seer_reasoning: '预言家思考',
   hunter_reasoning: '猎人思考',
+  guard_reasoning: '守卫思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
