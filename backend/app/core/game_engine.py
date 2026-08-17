@@ -40,6 +40,7 @@ VOTE_CONTRACT = ActionContract(
 _EVENT_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 
 _NIGHT_POINTS = (
+    SchedulePoint.NIGHT_ACTION,
     SchedulePoint.NIGHT_WOLF_VOTE,
     SchedulePoint.NIGHT_WITCH_ACTION,
     SchedulePoint.NIGHT_SEER_ACTION,
@@ -48,7 +49,7 @@ _NIGHT_POINTS = (
 
 # Staged night batch stages at which each pipeline point executes; a batch
 # with `stage > point_stage` must carry that point's result in raw_results.
-_NIGHT_POINT_STAGES = (3, 5, 7, 8)
+_NIGHT_POINT_STAGES = (1, 5, 7, 9, 10)
 
 
 def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
@@ -351,11 +352,23 @@ class GameEngine:
         ]
 
         if pending.stage == 0:
-            title, text = director.narration("wolf_open")
-            await self._narrate(title, text)
+            if state.config.role_counts.get("wolf-killer-guard", 0) > 0:
+                title, text = director.narration("guard_open")
+                await self._narrate(title, text)
             pending = replace(pending, stage=1); self._pending_night_batch = pending
 
         if pending.stage == 1:
+            raw = await self._execute_v2_point(_NIGHT_POINTS[0])
+            await self._log_stage_audience(raw)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=2)
+            self._pending_night_batch = pending
+
+        if pending.stage == 2:
+            title, text = director.narration("wolf_open")
+            await self._narrate(title, text)
+            pending = replace(pending, stage=3); self._pending_night_batch = pending
+
+        if pending.stage == 3:
             if len(wolves) > 1:
                 history = list(pending.discussion_history)
                 leads = dict(pending.discussion_leads)
@@ -391,9 +404,9 @@ class GameEngine:
                         break
                     if _discussion_consensus(wolves, history, leads):
                         break
-            pending = replace(pending, stage=2); self._pending_night_batch = pending
+            pending = replace(pending, stage=4); self._pending_night_batch = pending
 
-        if pending.stage == 2:
+        if pending.stage == 4:
             if wolves:
                 votes = list(pending.wolf_votes)
                 discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
@@ -409,30 +422,19 @@ class GameEngine:
                 director.record_votes(tuple(votes))
             else:
                 director.record_votes(())
-            pending = replace(pending, stage=3); self._pending_night_batch = pending
-
-        if pending.stage == 3:
-            raw = await self._execute_v2_point(_NIGHT_POINTS[0])
-            await self._log_stage_audience(raw)
-            runtime = getattr(state, "_pipeline_runtime", None)
-            if runtime is not None:
-                state.last_wolf_kill_target = _wolf_kill_target(tuple(runtime.pending_damage))
-            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=4)
-            self._pending_night_batch = pending
-
-        if pending.stage == 4:
-            title, text = director.narration("witch_open")
-            await self._narrate(title, text)
             pending = replace(pending, stage=5); self._pending_night_batch = pending
 
         if pending.stage == 5:
             raw = await self._execute_v2_point(_NIGHT_POINTS[1])
             await self._log_stage_audience(raw)
+            runtime = getattr(state, "_pipeline_runtime", None)
+            if runtime is not None:
+                state.last_wolf_kill_target = _wolf_kill_target(tuple(runtime.pending_damage))
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=6)
             self._pending_night_batch = pending
 
         if pending.stage == 6:
-            title, text = director.narration("seer_open")
+            title, text = director.narration("witch_open")
             await self._narrate(title, text)
             pending = replace(pending, stage=7); self._pending_night_batch = pending
 
@@ -443,12 +445,23 @@ class GameEngine:
             self._pending_night_batch = pending
 
         if pending.stage == 8:
+            title, text = director.narration("seer_open")
+            await self._narrate(title, text)
+            pending = replace(pending, stage=9); self._pending_night_batch = pending
+
+        if pending.stage == 9:
             raw = await self._execute_v2_point(_NIGHT_POINTS[3])
-            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=9)
+            await self._log_stage_audience(raw)
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=10)
+            self._pending_night_batch = pending
+
+        if pending.stage == 10:
+            raw = await self._execute_v2_point(_NIGHT_POINTS[4])
+            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=11)
             self._pending_night_batch = pending
             await self._log_stage_audience(raw)
 
-        if pending.stage == 9:
+        if pending.stage == 11:
             deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
             title, text = director.dawn_narration(deaths)
             await self._narrate(title, text, phase="dawn")

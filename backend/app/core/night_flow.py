@@ -108,6 +108,7 @@ def _night_notice(state: GameState) -> str:
     return _FIRST_NIGHT_NOTICE if state.round_number == 1 else ""
 
 _NARRATIONS: dict[str, tuple[str, str]] = {
+    "guard_open": ("守卫请睁眼", "请选择今晚要守护的玩家。"),
     "wolf_open": ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。"),
     "witch_open": ("女巫请睁眼", "昨晚有人被袭击。"),
     "seer_open": ("预言家请睁眼", "请查验一名玩家的身份。"),
