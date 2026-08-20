@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from langchain_core.messages import AIMessage
@@ -348,6 +350,76 @@ class TestBaseRoleAccept:
             phase=GamePhase.VOTE_CASTING, round_id=state.round_number,
             idempotency_key="1:vote_casting:1:1:exile_vote",
         )
+
+    @pytest.mark.asyncio
+    async def test_vote_request_emits_non_secret_telemetry(self):
+        class TelemetryLogger:
+            def __init__(self):
+                self.records = []
+
+            def log_vote_telemetry(self, game_id, round_num, seat, **data):
+                self.records.append((game_id, round_num, seat, data))
+
+        client = ClientStub(strict=[AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "exile_vote",
+                "args": {"action_type": "vote", "target_seat": 2, "reasoning": "private"},
+                "id": "call_1",
+            }],
+        )])
+        logger = TelemetryLogger()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        await role.request_action(state, ConversationLog(logger=logger, game_id="g"), self._vote_request(state))
+
+        assert len(logger.records) == 1
+        game_id, round_num, seat, data = logger.records[0]
+        assert (game_id, round_num, seat) == ("g", 1, 1)
+        assert data["transport"] == "strict"
+        assert data["attempt"] == 1
+        assert data["retried"] is False
+        assert data["parse_result"] == "accepted"
+        assert data["prompt_chars"] > 0 and data["elapsed_ms"] >= 0
+        assert "reasoning" not in data and "response" not in data
+
+    @pytest.mark.asyncio
+    async def test_vote_timeout_records_safe_non_secret_telemetry(self):
+        class TelemetryLogger:
+            def __init__(self):
+                self.records = []
+
+            def log_vote_telemetry(self, game_id, round_num, seat, **data):
+                self.records.append(data)
+
+        class SlowModel:
+            async def ainvoke(self, messages):
+                await asyncio.sleep(0.05)
+
+        class SlowClient:
+            action_timeout_seconds = 0.001
+
+            def get_model_with_action_tool(self, contract):
+                return SlowModel()
+
+            def get_model(self):
+                return SlowModel()
+
+        logger = TelemetryLogger()
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), SlowClient())
+
+        command = await role.request_action(
+            state, ConversationLog(logger=logger, game_id="g"), self._vote_request(state),
+        )
+
+        assert command.command.action_type == "abstain"
+        assert len(logger.records) == 1
+        assert logger.records[0]["transport"] == "strict"
+        assert logger.records[0]["attempt"] == 1
+        assert logger.records[0]["retried"] is False
+        assert logger.records[0]["parse_result"] == "timeout_fallback"
 
     @pytest.mark.asyncio
     async def test_accept_command_records_commit_through_applier(self):

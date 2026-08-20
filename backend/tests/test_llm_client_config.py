@@ -87,6 +87,14 @@ def test_get_model_uses_explicit_config_kwargs():
     assert kwargs["max_tokens"] == 512
 
 
+def test_get_model_configures_action_timeout():
+    with patch("app.agents.llm_client.ChatOpenAI") as mock_chat:
+        client = LLMClient(config=_config(action_timeout_seconds=45))
+        client.get_model()
+
+    assert mock_chat.call_args.kwargs["timeout"] == 45
+
+
 def test_model_and_temperature_params_override_config():
     with patch("app.agents.llm_client.ChatOpenAI") as mock_chat:
         client = LLMClient(model="custom", temperature=0.1, config=_config())
