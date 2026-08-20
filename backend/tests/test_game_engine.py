@@ -67,10 +67,10 @@ class _FakeDirector:
         self.vote_briefings: list[object] = []
     def narration(self, kind): return ("标题", "正文")
     def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
-    def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing()):
+    def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing(), random_hint=None):
         self.discussion_briefings.append(briefing)
         return DiscussionTurn(seat, self.speak, "我怀疑2号" if self.speak else "")
-    def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing()):
+    def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing(), random_hint=None):
         self.vote_calls.append(seat)
         self.vote_briefings.append(briefing)
         if self.vote is None:
@@ -392,6 +392,7 @@ def test_pending_batch_is_frozen_exact_and_start_resets_checkpoints() -> None:
         lambda: game_engine_module._PendingNightBatch(1, 7, (), (), (result,)),
         lambda: game_engine_module._PendingNightBatch(1, 10, (), (), (result, result)),
         lambda: game_engine_module._PendingNightBatch(1, 2, (), (), (sub,)),
+        lambda: game_engine_module._PendingNightBatch(1, 0, (), (), (), (), 0),
     ):
         with pytest.raises((TypeError, ValueError)): call()
 
@@ -847,7 +848,7 @@ class _TargetDirector(_FakeDirector):
         self.targets = targets
         self.discussion_calls: list[int] = []
 
-    def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing()):
+    def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing(), random_hint=None):
         self.discussion_calls.append(seat)
         target = self.targets.get(seat)
         if target is None:
@@ -956,7 +957,7 @@ async def test_staged_night_stores_day_plan_in_channel_and_discussion(tmp_path) 
             super().__init__(targets)
             self.received_discussion = None
 
-        def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing()):
+        def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing(), random_hint=None):
             self.discussion_calls.append(seat)
             target = self.targets.get(seat)
             if target is None:
@@ -965,7 +966,7 @@ async def test_staged_night_stores_day_plan_in_channel_and_discussion(tmp_path) 
                 seat, True, f"我建议刀{target}号", target, "明天白天带节奏踩9号",
             )
 
-        def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing()):
+        def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing(), random_hint=None):
             self.received_discussion = discussion
             return super().wolf_vote_turn(state, seat, discussion, prior, briefing)
 
@@ -2257,6 +2258,31 @@ class TestGameEngine:
 
         assert len(engine.state.speeches) == 1
         assert engine.sm.get_state() is GamePhase.VOTE_CASTING
+
+    @pytest.mark.asyncio
+    async def test_vote_casting_starts_all_votes_concurrently_and_keeps_seat_order(self):
+        engine = GameEngine(game_id="parallel-votes", event_bus=EventBus())
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        started: set[int] = set()
+        release = asyncio.Event()
+
+        async def vote(seat: int):
+            started.add(seat)
+            if len(started) == 2:
+                release.set()
+            await asyncio.wait_for(release.wait(), timeout=0.1)
+            return VoteAction(seat, 2)
+
+        engine.vote = vote
+        await engine._execute_vote_casting()
+
+        assert started == {1, 2}
+        assert [item.voter_seat for item in engine.state.votes] == [1, 2]
 
     @pytest.mark.asyncio
     async def test_vote_casting_skips_none_votes(self):

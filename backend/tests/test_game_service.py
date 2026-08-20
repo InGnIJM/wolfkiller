@@ -1398,7 +1398,38 @@ class TestCommandProvider:
         provider(self._request("wolf-killer-seer"), context, 0)
         rendered_context = renderer.render.call_args.args[2]
         hint = rendered_context.facts["RANDOM_HINT"]
-        assert isinstance(hint, int) and 0 <= hint < 5
+        assert hint in {1, 2, 3, 4, 5}
+
+    def test_provider_omits_random_hint_when_prior_round_has_evidence(self):
+        from app.models.pipeline import ActionContext
+        service = GameService(WSManager(), EventBus())
+        provider, renderer = self._provider(
+            service, '{"action_type":"check","target_seat":2,"reasoning":"x"}'
+        )
+        contract = builtin_registry.freeze().require("wolf-killer-seer").contracts[0]
+        context = ActionContext(
+            game_id="g", revision=0, facts={"alive_seats": (1, 2, 3)},
+            contract_id=contract.contract_id, contract_version=contract.schema_version,
+            contract_digest=contract.stable_digest(), round_number=2, phase="night",
+            window_id="w", schedule_point=contract.schedule_point, actor_seat=9,
+            actor_role_id="wolf-killer-seer", actor_alive=True, action_key="k",
+        )
+
+        provider(self._request("wolf-killer-seer"), context, 0)
+
+        assert "RANDOM_HINT" not in renderer.render.call_args.args[2].facts
+
+    def test_fallback_target_requires_tuple_seats_and_targeting_contract(self):
+        from unittest.mock import MagicMock
+
+        service = GameService(WSManager(), EventBus())
+        context = MagicMock(round_number=1, facts={"alive_seats": [1, 2]})
+        assert service._fallback_target(self._request("wolf-killer-seer"), context, "") is None
+
+        context = MagicMock(round_number=1, facts={"alive_seats": (1, 2)})
+        request = MagicMock()
+        request.contract.actions_requiring_target = frozenset()
+        assert service._fallback_target(request, context, "") is None
 
     def test_provider_dispatches_collected_wolf_vote_without_llm(self):
         from unittest.mock import MagicMock

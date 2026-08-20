@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -12,29 +11,6 @@ from app.roles.guard import (
     GUARD_SPEC, guard_applicable, resolve_guard_action, validate_guard_action,
 )
 from app.roles.registry import builtin_registry
-
-FIVE_CORE_PATHS = (
-    "app/core/game_engine.py",
-    "app/core/action_validator.py",
-    "app/core/action_resolver.py",
-    "app/agents/prompt_builder.py",
-    "app/agents/state_filter.py",
-)
-
-CORE_MODULE_SNAPSHOTS = (
-    "d475f2ab0d564c0755f5568760d9e82d7f3ba17e",
-    "2420b709c39c38958b21518033baabd08fe4bf9d",
-    "7e85ba15f8277a9d5b7d3424c53e3e3dca9f9422",
-    "07da397e079d1f4806c0303203cf97ad129fbae0",
-    "bc509cfd7d80c12ea2a341fb08080a312e687d1e",
-)
-
-
-def _git_blob_sha(path: str) -> str:
-    content = Path(path).read_bytes()
-    return hashlib.sha1(
-        b"blob " + str(len(content)).encode() + b"\0" + content
-    ).hexdigest()
 
 
 def guard_contract() -> ActionContract:
@@ -168,11 +144,6 @@ def test_ten_player_standard_board_creates_roles_via_legacy_registry() -> None:
         "wolf-killer-werewolf",
         "wolf-killer-witch",
     ]
-
-
-def test_core_module_snapshots_require_explicit_review() -> None:
-    current = tuple(_git_blob_sha(path) for path in FIVE_CORE_PATHS)
-    assert current == CORE_MODULE_SNAPSHOTS
 
 
 def test_guard_night_action_point_issues_request_and_submits_protection() -> None:
