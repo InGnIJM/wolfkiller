@@ -166,6 +166,27 @@ class TestGameService:
         )
 
     @pytest.mark.asyncio
+    async def test_create_game_accepts_ten_player_standard_board(self, monkeypatch):
+        counts = {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-villager": 3,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
+        }
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        game_id = await service.create_game(role_counts=counts)
+
+        state = service.get_game_state(game_id)
+        assert state is not None
+        assert state.config.role_counts == counts
+        assert state.config.total_players == 10
+
+    @pytest.mark.asyncio
     async def test_create_game_uses_registry_role_factory(self, monkeypatch):
         service = GameService(WSManager(), EventBus())
         service._manifest = MagicMock()
@@ -1353,6 +1374,31 @@ class TestCommandProvider:
         from unittest.mock import MagicMock
         provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
         assert renderer.render.call_args.args[3] == ""
+
+    def test_provider_injects_server_random_hint_into_rendered_context(self):
+        from unittest.mock import MagicMock
+        from app.models.pipeline import ActionContext
+        service = GameService(WSManager(), EventBus())
+        provider, renderer = self._provider(
+            service, '{"action_type":"check","target_seat":2,"reasoning":"x"}'
+        )
+        snapshot = builtin_registry.freeze()
+        contract = snapshot.require("wolf-killer-seer").contracts[0]
+        context = ActionContext(
+            game_id="g", revision=0,
+            facts={"alive_seats": (1, 2, 3, 4, 5)},
+            contract_id=contract.contract_id,
+            contract_version=contract.schema_version,
+            contract_digest=contract.stable_digest(),
+            round_number=1, phase="night", window_id="w",
+            schedule_point=contract.schedule_point,
+            actor_seat=9, actor_role_id="wolf-killer-seer",
+            actor_alive=True, action_key="k",
+        )
+        provider(self._request("wolf-killer-seer"), context, 0)
+        rendered_context = renderer.render.call_args.args[2]
+        hint = rendered_context.facts["RANDOM_HINT"]
+        assert isinstance(hint, int) and 0 <= hint < 5
 
     def test_provider_dispatches_collected_wolf_vote_without_llm(self):
         from unittest.mock import MagicMock

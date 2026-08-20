@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import random
 import uuid
+from collections.abc import Mapping
+from dataclasses import replace
 from typing import Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -18,6 +21,8 @@ from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.prompt_renderer import PromptRenderer
+from app.agents.output_parser import extract_json_object
+from app.agents.game_rules import NIGHT_SYSTEM_PROMPT as _SYSTEM_PROMPT
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
@@ -31,15 +36,6 @@ from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = (
-    "You are a player in an AI Werewolf game. Follow the ROLE_CONTRACT exactly, "
-    "reason from PROJECTED_CONTEXT and UNTRUSTED_HISTORY, and respond with only "
-    "the JSON described by OUTPUT_ACTION_COMMAND_SCHEMA. IMPORTANT: write ALL "
-    "reasoning fields in Simplified Chinese (简体中文). When choosing a "
-    "target_seat without decisive information, choose uniformly at random among "
-    "all valid seats; never default to the first or lowest seat number."
-)
 
 PUBLIC_NIGHT_SUBSTEPS = frozenset({
     "werewolf_open",
@@ -447,6 +443,14 @@ class GameService:
                     f"{record.speaker_seat if record.speaker_seat is not None else ''}] {record.content}"
                     for record in records[-120:]
                 )
+            # Server-side randomness: models cannot sample uniformly, so when a
+            # random pick is needed we hand them a true random index into the
+            # ascending alive-seat list instead of letting them "choose randomly".
+            alive_seats = context.facts.get("alive_seats") if isinstance(context.facts, Mapping) else None
+            if isinstance(alive_seats, tuple) and alive_seats:
+                context = replace(context, facts={
+                    **context.facts, "RANDOM_HINT": random.randrange(len(alive_seats)),
+                })
             prompt = renderer.render(role_spec, request.contract, context, history)
             messages = [
                 SystemMessage(content=_SYSTEM_PROMPT),
@@ -458,7 +462,10 @@ class GameService:
                 content = response.content if hasattr(response, "content") else str(response)
                 if not isinstance(content, str):
                     raise ValueError("model response is not text")
-                command = PipelineActionCommand.model_validate(json.loads(content))
+                parsed = extract_json_object(content)
+                if parsed is None:
+                    raise ValueError("model response contains no JSON object")
+                command = PipelineActionCommand.model_validate(parsed)
             except Exception:
                 logger.warning(
                     "LLM action command failed for seat=%s contract=%s point=%s; "
