@@ -10,8 +10,9 @@ class RuleEngine:
         alive_seers = len([p for p in state.alive_players().values() if "seer" in p.role])
         alive_witches = len([p for p in state.alive_players().values() if "witch" in p.role])
         alive_hunters = len([p for p in state.alive_players().values() if "hunter" in p.role])
+        alive_guards = len([p for p in state.alive_players().values() if "guard" in p.role])
         alive_villagers = len([p for p in state.alive_players().values() if "villager" in p.role])
-        alive_gods = alive_seers + alive_witches + alive_hunters
+        alive_gods = alive_seers + alive_witches + alive_hunters + alive_guards
 
         # 狼刀在先: check wolf win conditions first
         if alive_gods == 0:
@@ -19,6 +20,13 @@ class RuleEngine:
 
         if alive_villagers == 0:
             return WinResult(winning_camp=Camp.WEREWOLF.value, reason="all_villagers_dead")
+
+        alive_good = len(state.alive_players()) - alive_wolves
+        if alive_wolves > alive_good:
+            return WinResult(
+                winning_camp=Camp.WEREWOLF.value,
+                reason="wolves_outnumber_good",
+            )
 
         if alive_wolves == 0:
             return WinResult(winning_camp=Camp.GOOD.value, reason="all_wolves_dead")

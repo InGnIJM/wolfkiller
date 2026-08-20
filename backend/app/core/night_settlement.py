@@ -33,7 +33,9 @@ def settle(
         raise ValueError("invalid alive map")
     settlement_key("validation", round_number)
     damage_totals, protection_totals = {}, {}
+    protection_sources: dict[int, set[str]] = {}
     causes: dict[int, str] = {}
+    damage_causes: dict[int, set[str]] = {}
     for record in damage:
         target, amount = _record(record, seats, frozenset({"target", "amount", "cause"}))
         cause = record["cause"]
@@ -42,19 +44,27 @@ def settle(
         ): raise ValueError("invalid pending damage cause")
         _add(damage_totals, target, amount)
         causes.setdefault(target, cause)
+        damage_causes.setdefault(target, set()).add(cause)
     for record in protection:
         target, amount = _record(record, seats, frozenset({"target", "amount"}))
         _add(protection_totals, target, amount)
+        source = _protection_source(record)
+        if source is not None:
+            protection_sources.setdefault(target, set()).add(source)
     resulting_alive = dict(alive); deaths = []
     for target in sorted(damage_totals):
-        if resulting_alive[target] and damage_totals[target] > protection_totals.get(target, 0):
+        double_save = (
+            "wolf_kill" in damage_causes[target]
+            and {"guard", "witch_antidote"}.issubset(protection_sources.get(target, set()))
+        )
+        if resulting_alive[target] and (double_save or damage_totals[target] > protection_totals.get(target, 0)):
             resulting_alive[target] = False
             deaths.append({"seat": target, "cause": causes[target], "round_number": round_number})
     return tuple(deaths), resulting_alive
 
 
 def _record(record: object, seats: set[int], fields: frozenset[str]) -> tuple[int, int]:
-    if not isinstance(record, Mapping) or frozenset(record) != fields:
+    if not isinstance(record, Mapping) or not fields.issubset(record) or frozenset(record) - fields - {"source"}:
         raise ValueError("invalid pending effect")
     target, amount = record["target"], record["amount"]
     if type(target) is not int or target not in seats:
@@ -62,6 +72,17 @@ def _record(record: object, seats: set[int], fields: frozenset[str]) -> tuple[in
     if type(amount) is not int or not 1 <= amount <= _INT32:
         raise ValueError("invalid pending amount")
     return target, amount
+
+
+def _protection_source(record: object) -> str | None:
+    if not isinstance(record, Mapping):
+        raise ValueError("invalid pending effect")
+    source = record.get("source")
+    if source is None:
+        return None
+    if source not in {"guard", "witch_antidote"}:
+        raise ValueError("invalid protection source")
+    return source
 
 
 def _add(totals: dict[int, int], target: int, amount: int) -> None:

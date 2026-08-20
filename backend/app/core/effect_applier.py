@@ -215,11 +215,18 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
         **{kind: frozenset({"target", "relation", "other_seat"}) for kind in (EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION)},
         EffectKind.RECORD_PRIVATE_FACT: frozenset({"target", "namespace", "fact"}),
         EffectKind.SUBMIT_DAMAGE: frozenset({"target", "amount", "cause"}),
-        EffectKind.SUBMIT_PROTECTION: frozenset({"target", "amount"}),
+        EffectKind.SUBMIT_PROTECTION: frozenset({"target", "amount", "source"}),
         EffectKind.MARK_DEATH: frozenset({"target", "cause"}),
         EffectKind.EMIT_EVENT: frozenset({"event_type", "payload"}),
     }
-    _exact(payload, schemas[kind], "payload")
+    if kind is EffectKind.SUBMIT_PROTECTION:
+        if frozenset(payload) not in {
+            frozenset({"target", "amount"}),
+            frozenset({"target", "amount", "source"}),
+        }:
+            raise EffectRejected("invalid protection payload")
+    else:
+        _exact(payload, schemas[kind], "payload")
     if kind is EffectKind.ACCEPT_ACTION:
         if effect.target_seat is not None: raise EffectRejected("accept action cannot have target")
         return payload
@@ -247,6 +254,8 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
     elif kind in {EffectKind.SUBMIT_DAMAGE, EffectKind.SUBMIT_PROTECTION}:
         _int_field(payload, "amount", positive=True)
         if kind is EffectKind.SUBMIT_DAMAGE: _token_field(payload, "cause")
+        if kind is EffectKind.SUBMIT_PROTECTION and "source" in payload and payload["source"] not in {"guard", "witch_antidote"}:
+            raise EffectRejected("invalid protection source")
     else:
         try:
             _utf8(payload["cause"], "cause")
@@ -324,7 +333,10 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
     elif kind is EffectKind.SUBMIT_DAMAGE:
         runtime.pending_damage += ({key: payload[key] for key in payload},)
     elif kind is EffectKind.SUBMIT_PROTECTION:
-        runtime.pending_protection += ({"target": target, "amount": payload["amount"]},)
+        record = {"target": target, "amount": payload["amount"]}
+        if "source" in payload:
+            record["source"] = payload["source"]
+        runtime.pending_protection += (record,)
     else:
         if not alive[target]: raise EffectRejected("player already dead")
         alive[target] = False
