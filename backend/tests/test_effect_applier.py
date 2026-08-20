@@ -944,6 +944,23 @@ def test_damage_payload_requires_closed_cause() -> None:
     assert not hasattr(legacy, "_pipeline_runtime") and legacy.players[2].is_alive
 
 
+def test_protection_payload_allows_legacy_shape_and_rejects_invalid_source() -> None:
+    legacy = state()
+    EffectApplier().apply(legacy, batch([
+        (EffectKind.SUBMIT_PROTECTION, {"target": 2, "amount": 1}, 2),
+    ]), permission())
+    assert legacy._pipeline_runtime.pending_protection == ({"target": 2, "amount": 1},)
+
+    for payload in (
+        {"target": 2, "amount": 1, "source": "not-a-source"},
+        {"target": 2, "amount": 1, "source": "guard", "extra": 1},
+    ):
+        with pytest.raises(EffectRejected):
+            EffectApplier().apply(state(), batch([
+                (EffectKind.SUBMIT_PROTECTION, payload, 2),
+            ]), permission())
+
+
 @pytest.mark.parametrize("round_number", [True, -1, 2_147_483_648])
 def test_settle_pending_rejects_bad_input_and_runtime_atomically(round_number) -> None:
     s = state()
