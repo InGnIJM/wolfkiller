@@ -57,7 +57,7 @@ def resolve_guard_action(
         GameEffect(
             derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_PROTECTION,
             context.action_key, target_seat=command.target_seat,
-            payload={"target": command.target_seat, "amount": 1},
+            payload={"target": command.target_seat, "amount": 1, "source": "guard"},
             sort_key=(1,), **common,
         ),
         GameEffect(
@@ -97,7 +97,11 @@ GUARD_SPEC = RoleSpec(
     initial_private_data={"last_guarded": None},
     allowed_effects=frozenset({EffectKind.SUBMIT_PROTECTION, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-    instructions="Guard one living player each night; the same seat cannot be guarded twice in a row.",
+    instructions=(
+        "Each night Guard may protect one living player or pass; the same seat cannot be "
+        "protected on consecutive nights. If Guard protection and Witch antidote both target "
+        "the same werewolf-kill target, that target dies by double-save penetration."
+    ),
 )
 
 

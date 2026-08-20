@@ -68,7 +68,11 @@ WEREWOLF_SPEC = RoleSpec(
     ),),
     allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
-    instructions="Choose a night kill target or pass.",
+    instructions=(
+        "Living Werewolves use their private channel and the registered vote to choose one "
+        "living nightly kill target, or pass when the contract permits. The engine alone "
+        "resolves the selected target and every night effect."
+    ),
 )
 
 

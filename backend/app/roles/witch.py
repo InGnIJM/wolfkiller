@@ -68,6 +68,8 @@ def resolve_witch_action(
     outcome = EffectKind.SUBMIT_PROTECTION if command.action_type == "save" else EffectKind.SUBMIT_DAMAGE
     target = command.target_seat
     outcome_payload = {"target": target, "amount": 1}
+    if command.action_type == "save":
+        outcome_payload["source"] = "witch_antidote"
     if command.action_type == "poison":
         outcome_payload["cause"] = "poison"
     common = {"expected_revision": context.revision, "source_event_id": context.source_event_id}
@@ -103,7 +105,12 @@ WITCH_SPEC = RoleSpec(
     initial_private_data={"wolf_kill_target": None},
     allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-    instructions="Use at most one available potion during the night action window.",
+    instructions=(
+        "The Witch has one antidote and one poison. Each night use at most one potion: "
+        "the antidote may save only that night's werewolf-kill target, while poison may "
+        "target one living player. If the antidote and Guard protection both target that "
+        "werewolf-kill target, the target dies by double-save penetration."
+    ),
 )
 
 
