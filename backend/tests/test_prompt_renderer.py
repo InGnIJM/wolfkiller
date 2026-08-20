@@ -35,7 +35,8 @@ def test_renderer_includes_anti_anchoring_target_rule() -> None:
     spec, contract, context = values(); renderer = PromptRenderer()
     rendered = renderer.render(spec, contract, context, "")
     assert "TARGET_SELECTION_RULE=" in rendered
-    assert "均匀随机" in rendered
+    assert "自主判断" in rendered
+    assert "随机选择" in rendered
     assert "alive_seats" in rendered
     assert "target whitelist" not in rendered.lower()
 

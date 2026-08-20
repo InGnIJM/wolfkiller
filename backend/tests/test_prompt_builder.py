@@ -245,8 +245,13 @@ class TestPromptBuilder:
             state, 4, "wolf-killer-villager", make_log(), "exile_vote"
         )
         assert "你的任务：放逐投票" in prompt
-        example = json.loads(re.search(r"JSON字段：(\{.*?\})。", prompt, re.S).group(1))
-        assert example == {"action_type": "abstain", "target_seat": None, "reasoning": "基于当前可见事实作出选择"}
+        example = json.loads(re.search(r"投票示例.*?：(\{.*?\})\n", prompt, re.S).group(1))
+        assert example == {
+            "action_type": "vote",
+            "target_seat": 3,
+            "reasoning": "3号发言前后矛盾，我投3号",
+        }
+        assert "弃权示例" in prompt
 
     def test_tiebreak_vote_prompt_mentions_candidates_and_resume(self):
         builder = PromptBuilder()
