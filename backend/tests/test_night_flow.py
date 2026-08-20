@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import pytest
 
@@ -410,20 +411,37 @@ def test_build_briefing_caps_lines_and_content():
 # ── prompt builders ─────────────────────────────────────────
 
 
-def test_discussion_prompt_anti_anchoring_target_rule(state: GameState, director: NightDirector):
+def test_discussion_prompt_target_rule_mentions_judgment_and_random(state: GameState, director: NightDirector):
     messages = director.discussion_prompt(state, 1, [])
     human = messages[1]["content"]
-    assert "均匀随机" in human
-    assert "最小" in human
-    assert "1号" in human
+    assert "自主判断" in human
+    assert "随机选择" in human
+    assert "回应队友" in human
+    assert "自刀" in human
+    assert re.search(r"RANDOM_HINT=\d+", human)
 
 
-def test_vote_prompt_anti_anchoring_target_rule(state: GameState, director: NightDirector):
+def test_vote_prompt_target_rule_mentions_judgment_and_random(state: GameState, director: NightDirector):
     messages = director.vote_prompt(state, 1, [], [])
     human = messages[1]["content"]
-    assert "均匀随机" in human
-    assert "最小" in human
-    assert "1号" in human
+    assert "自主判断" in human
+    assert "随机选择" in human
+    assert "自刀" in human
+    assert re.search(r"RANDOM_HINT=\d+", human)
+
+
+def test_random_hint_stays_in_alive_seat_range(state: GameState, director: NightDirector) -> None:
+    alive_count = len(state.alive_players())
+    for _ in range(20):
+        messages = director.vote_prompt(state, 1, [], [])
+        match = re.search(r"RANDOM_HINT=(\d+)", messages[1]["content"])
+        assert match is not None
+        assert 0 <= int(match.group(1)) < alive_count
+
+
+def test_random_hint_with_no_alive_players_returns_zero(state: GameState, director: NightDirector) -> None:
+    state.players = {}
+    assert director._random_hint(state) == "RANDOM_HINT=0"
 
 
 def test_discussion_prompt(state: GameState, director: NightDirector):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import logging
+import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Optional
@@ -11,6 +11,8 @@ from app.models.conversation import ConversationScope
 from app.models.game import GameState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
+from app.agents.game_rules import TARGET_SELECTION_RULE
+from app.agents.output_parser import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +37,10 @@ _FIRST_NIGHT_NOTICE = (
     "注意：这是第 1 晚，白天尚未开始，所有玩家都没有任何发言记录。"
     "不要引用或暗示任何玩家此前的行为特征（如\"活跃\"\"话多\"\"像有身份\"），"
     "只能依据座位位置等客观信息选择目标。"
-    "没有更多依据时，请在全部存活玩家中均匀随机选择，"
-    "严禁固定选择1号或最小的座位号——列表中的第一个座位不是随机选择，而是已知偏见。\n"
+    "首夜没有信息也没有倾向，直接选择一个目标即可；没有思路时随机选一个。\n"
 )
 
-_TARGET_RULE = (
-    "目标选择规则：preferred_target / target_seat 必须是场上存活玩家；"
-    "没有确凿依据时，请在全部存活玩家中均匀随机选择，"
-    "严禁默认选择1号或最小的座位号，也不要机械重复上一轮或队友提出的目标；"
-    "第一个座位不是随机选择，而是已知偏见。"
-)
+_TARGET_RULE = TARGET_SELECTION_RULE
 
 
 _MAX_BRIEFING_LINES = 20
@@ -245,6 +241,14 @@ class NightDirector:
             for vote in votes
         )
 
+    @staticmethod
+    def _random_hint(state: GameState) -> str:
+        """Server-side random target index into the ascending alive-seat list."""
+        alive = sorted(state.alive_players())
+        if not alive:
+            return "RANDOM_HINT=0"
+        return f"RANDOM_HINT={random.randrange(len(alive))}"
+
     def discussion_prompt(
         self, state: GameState, seat: int, history: Sequence[str],
         briefing: NightBriefing = NightBriefing(),
@@ -256,14 +260,19 @@ class NightDirector:
         remaining = max(total_turns - len(history) - 1, 0)
         system = (
             f"You are seat {seat}, a werewolf in an AI Werewolf game. "
-            "Discuss tonight's kill target with your teammates. You may speak "
-            "or stay silent on your turn. Never reveal that you are a werewolf. "
+            "Discuss tonight's kill target with your teammates in a natural "
+            "private chat: reply to what your teammates just said (agree, "
+            "add, or push back) and then state your own view. Never reveal "
+            "that you are a werewolf. Speak like a real player — do not quote "
+            "or reference the rules of this prompt. "
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
         human = (
             f"第{state.round_number}晚狼队讨论。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
+            + self._random_hint(state)
+            + "\n"
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
             f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
             f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
@@ -271,7 +280,10 @@ class NightDirector:
             f"当前为第 {turn_number}/{total_turns} 轮发言，最多还可继续 {remaining} 轮。\n"
             + _TARGET_RULE
             + "\n讨论要求：\n"
-            "- 不要复述队友已经说过的内容；如果团队已达成一致而你没有新信息，请跳过本轮。\n"
+            "- 这是与队友的实时对话：先简要回应队友刚提出的观点（同意、补充或反对），"
+            "再给出你的新想法；不要自说自话，也不要复述队友已经说过的内容。\n"
+            "- 听完队友发言后，如果没有新的、不重复的想法，请直接跳过本轮（输出 {\"speak\": false}），"
+            "不要为了说话而说话。\n"
             "- 如果你有倾向的刀人目标，把该座位号填入 preferred_target；没有倾向就填 null。\n"
             "- 除了今晚的刀人目标，还应商定明天白天的配合计划：带节奏方向、嫁祸对象等，"
             "用 day_plan 字段（≤150字，没有计划则填空串）提交，计划会同步给全体队友。\n"
@@ -300,6 +312,8 @@ class NightDirector:
         human = (
             f"第{state.round_number}晚狼队投票。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
+            + self._random_hint(state)
+            + "\n"
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
             f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
             f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
@@ -319,7 +333,7 @@ class NightDirector:
         raw = self._invoke(messages)
         if type(raw) is not str:
             raise ValueError("model response is not text")
-        value = json.loads(raw)
+        value = extract_json_object(raw)
         if not isinstance(value, Mapping):
             raise ValueError("model response is not an object")
         return value
