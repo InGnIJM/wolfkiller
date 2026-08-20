@@ -315,6 +315,34 @@ async def test_staged_night_resumes_wolf_voting_from_checkpointed_cursor() -> No
 
 
 @pytest.mark.asyncio
+async def test_staged_night_resume_with_all_wolves_voted_keeps_checkpointed_votes() -> None:
+    scheduler = ScheduleStub(PointResult((), (), (), "d"))
+    director = _FakeDirector()
+    engine = GameEngine("wolf-vote-resume-all", pipeline_scheduler=scheduler, director=director)
+    engine.state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+        2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        3: PlayerState(3, "wolf-killer-werewolf", "werewolf"),
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    prior = (
+        WolfVote(1, "kill", 4, "a"),
+        WolfVote(2, "kill", 4, "b"),
+        WolfVote(3, "kill", 4, "c"),
+    )
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(
+        engine.state.round_number, 4, (), prior,
+        (PointResult((), (), (), "d"),),
+    )
+    engine._resume_pipeline_night = AsyncMock()
+    await engine._execute_staged_night()
+    assert director.vote_calls == []
+    assert director.votes == list(prior)
+
+
+@pytest.mark.asyncio
 async def test_staged_night_point_that_commits_then_raises_is_retried_without_reprepare() -> None:
     points = game_engine_module._NIGHT_POINTS
     class Scheduler:
@@ -1461,6 +1489,53 @@ class TestGameEngine:
         assert engine.state.players[1].is_alive is False
 
     @pytest.mark.asyncio
+    async def test_vote_resolution_resume_does_not_duplicate_existing_exile(self):
+        engine = GameEngine(
+            game_id="resume-exile", roles=make_9_mock_roles(),
+            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")),
+        )
+        engine._assign_roles()
+        engine.state.players[1].mark_dead("exile")
+        engine.state.death_history.append(DeathReport(1, "exile", engine.state.round_number))
+        engine.state.votes = [VoteAction(voter_seat=seat, target_seat=1) for seat in range(2, 10)]
+        engine._run_exile_reaction = AsyncMock()
+        engine.give_last_words = AsyncMock(return_value=None)
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+
+        await engine._execute_vote_resolution()
+
+        assert [
+            death for death in engine.state.death_history
+            if death.player_seat == 1 and death.cause == "exile"
+        ] == [DeathReport(1, "exile", engine.state.round_number)]
+        engine._run_exile_reaction.assert_awaited_once_with(1)
+        engine.give_last_words.assert_awaited_once_with(1, "exile", engine.state.round_number)
+
+    @pytest.mark.asyncio
+    async def test_tiebreak_resume_does_not_duplicate_existing_exile(self):
+        engine = GameEngine(game_id="resume-tiebreak", roles=make_9_mock_roles())
+        engine._assign_roles()
+        engine.state.players[1].mark_dead("exile")
+        engine.state.death_history.append(DeathReport(1, "exile", engine.state.round_number))
+        alive = set(engine.state.alive_players())
+        engine.state.is_tiebreak = True
+        engine.state.supplemental_speakers = set(alive)
+        engine.state.voted_seats = set(alive)
+        engine.resolve_votes = MagicMock(return_value=1)
+        engine._run_exile_reaction = AsyncMock()
+        engine.give_last_words = AsyncMock(return_value=None)
+        engine._check_game_over = AsyncMock(return_value=True)
+
+        await engine._execute_tiebreak([1, 2])
+
+        assert [
+            death for death in engine.state.death_history
+            if death.player_seat == 1 and death.cause == "exile"
+        ] == [DeathReport(1, "exile", engine.state.round_number)]
+        engine._run_exile_reaction.assert_awaited_once_with(1)
+        engine.give_last_words.assert_awaited_once_with(1, "exile", engine.state.round_number)
+
+    @pytest.mark.asyncio
     async def test_exile_reaction_requires_scheduler(self):
         roles = {1: make_mock_role(1, "wolf-killer-villager")}
         engine = GameEngine(game_id="test", roles=roles)
@@ -1498,6 +1573,50 @@ class TestGameEngine:
         assert saved is not None and saved.cursor.kind == "response"
         assert saved.commits[0].events[0]["event_type"] == "PLAYER_DIED"
         assert saved.commits[0].events[0]["payload"]["cause"] == "exile"
+
+    @pytest.mark.asyncio
+    async def test_exile_reaction_keeps_an_existing_response_checkpoint(self):
+        from app.core.point_journal import PointCheckpoint, PointKey, WorkCursor, point_journal
+
+        scheduler = ScheduleStub(PointResult((), (), (), "done"), digest="d" * 64)
+        engine = GameEngine("exile-resume", pipeline_scheduler=scheduler)
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        engine.state.phase = GamePhase.VOTE_RESOLUTION
+        engine.state.round_number = 2
+        key = PointKey("exile-resume", 2, "vote_resolution", SchedulePoint.DAWN_REACTION, "d" * 64)
+        previous = PointCheckpoint(
+            (), (), (CommitResult("response", (), 1, (), "saved"),), (), (), (),
+            WorkCursor("done", 0, 0), {"state_digest": "saved"}, work_count=0,
+        )
+        point_journal(engine.state).put(key, previous)
+
+        await engine._run_exile_reaction(1)
+
+        assert point_journal(engine.state).get(key) is previous
+
+    @pytest.mark.asyncio
+    async def test_vote_resolution_retry_does_not_duplicate_exile_death(self, monkeypatch):
+        roles = make_9_mock_roles()
+        engine = GameEngine("exile-retry", roles=roles,
+                            pipeline_scheduler=ScheduleStub(PointResult((), (), (), "done")))
+        engine._assign_roles()
+        engine.state.votes = [VoteAction(voter_seat=seat, target_seat=1) for seat in range(2, 10)]
+        engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+        original = engine._run_exile_reaction
+        failed = [False]
+
+        async def interrupted(seat):
+            if not failed[0]:
+                failed[0] = True
+                raise PipelinePaused("retry after exile")
+            await original(seat)
+
+        monkeypatch.setattr(engine, "_run_exile_reaction", interrupted)
+        with pytest.raises(PipelinePaused, match="retry after exile"):
+            await engine._execute_vote_resolution()
+        await engine._execute_vote_resolution()
+
+        assert [(item.player_seat, item.cause) for item in engine.state.death_history] == [(1, "exile")]
 
     @pytest.mark.asyncio
     async def test_exile_reaction_settles_reaction_damage_immediately(self):

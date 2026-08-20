@@ -372,11 +372,16 @@ class GameEngine:
             if len(wolves) > 1:
                 history = list(pending.discussion_history)
                 leads = dict(pending.discussion_leads)
+                # Serial discussion rounds: each wolf speaks in turn and sees
+                # everything said before, so the channel reads like a real
+                # conversation. Stops early on consensus or a full skipped round.
                 max_turns = 3 * len(wolves)
                 while len(history) < max_turns:
                     seat = wolves[len(history) % len(wolves)]
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
-                    result = await asyncio.to_thread(director.wolf_discussion_turn, state, seat, tuple(history), briefing)
+                    result = await asyncio.to_thread(
+                        director.wolf_discussion_turn, state, seat, tuple(history), briefing,
+                    )
                     if result.spoke:
                         line = f"{seat}号：{result.text}"
                         channel = result.text
@@ -408,17 +413,27 @@ class GameEngine:
 
         if pending.stage == 4:
             if wolves:
-                votes = list(pending.wolf_votes)
                 discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
-                for seat in wolves[len(votes):]:
-                    briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
-                    result = await asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(votes), briefing)
-                    votes.append(result)
-                    self.game_logger.log_audience_action(
-                        self.game_id, state.round_number, "night", "WOLF_VOTE",
-                        {"seat": seat, "target_seat": result.target_seat, "reasoning": result.reasoning},
-                    )
-                    pending = replace(pending, wolf_votes=tuple(votes)); self._pending_night_batch = pending
+                # Resume-safe parallel voting: wolves that already voted in a
+                # checkpointed batch are skipped, and prior votes are shown to
+                # the remaining voters instead of being re-collected.
+                already_voted = {vote.seat for vote in pending.wolf_votes}
+                remaining = [seat for seat in wolves if seat not in already_voted]
+                if remaining:
+                    briefings = {seat: build_briefing(self.conversation_log, seat, self.state.round_number) for seat in remaining}
+                    results = await asyncio.gather(*(
+                        asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(pending.wolf_votes), briefings[seat])
+                        for seat in remaining
+                    ))
+                    for seat, result in zip(remaining, results):
+                        self.game_logger.log_audience_action(
+                            self.game_id, state.round_number, "night", "WOLF_VOTE",
+                            {"seat": seat, "target_seat": result.target_seat, "reasoning": result.reasoning},
+                        )
+                    votes = list(pending.wolf_votes) + list(results)
+                else:
+                    votes = list(pending.wolf_votes)
+                pending = replace(pending, wolf_votes=tuple(votes)); self._pending_night_batch = pending
                 director.record_votes(tuple(votes))
             else:
                 director.record_votes(())
@@ -802,12 +817,18 @@ class GameEngine:
         exiled_seat = self.resolve_votes()
         if exiled_seat is not None:
             player = self.state.players.get(exiled_seat)
-            if player:
-                player.mark_dead("exile")
-                self.state.death_history.append(DeathReport(
-                    player_seat=exiled_seat, cause="exile",
-                    round_number=self.state.round_number,
-                ))
+            already_exiled = any(
+                death.player_seat == exiled_seat and death.cause == "exile"
+                and death.round_number == self.state.round_number
+                for death in self.state.death_history
+            )
+            if player and (player.is_alive or already_exiled):
+                if not already_exiled:
+                    player.mark_dead("exile")
+                    self.state.death_history.append(DeathReport(
+                        player_seat=exiled_seat, cause="exile",
+                        round_number=self.state.round_number,
+                    ))
                 await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(
                     exiled_seat, "exile", self.state.round_number,
@@ -846,12 +867,18 @@ class GameEngine:
 
         if exiled_seat is not None:
             player = self.state.players.get(exiled_seat)
-            if player:
-                player.mark_dead("exile")
-                self.state.death_history.append(DeathReport(
-                    player_seat=exiled_seat, cause="exile",
-                    round_number=self.state.round_number,
-                ))
+            already_exiled = any(
+                death.player_seat == exiled_seat and death.cause == "exile"
+                and death.round_number == self.state.round_number
+                for death in self.state.death_history
+            )
+            if player and (player.is_alive or already_exiled):
+                if not already_exiled:
+                    player.mark_dead("exile")
+                    self.state.death_history.append(DeathReport(
+                        player_seat=exiled_seat, cause="exile",
+                        round_number=self.state.round_number,
+                    ))
                 await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(exiled_seat, "exile", self.state.round_number)
 
@@ -906,10 +933,12 @@ class GameEngine:
             self.state.game_id, self.state.round_number, self.state.phase.value,
             SchedulePoint.DAWN_REACTION, scheduler.registry.digest,
         )
-        point_journal(self.state).put(key, PointCheckpoint(
-            (), (), (commit,), commit.events, (), (PendingEvent(0, 0, 0),),
-            WorkCursor("response", 0, 0), work_count=0,
-        ))
+        journal = point_journal(self.state)
+        if journal.get(key) is None:
+            journal.put(key, PointCheckpoint(
+                (), (), (commit,), commit.events, (), (PendingEvent(0, 0, 0),),
+                WorkCursor("response", 0, 0), work_count=0,
+            ))
         pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
         result = await asyncio.to_thread(pipeline.run_point, self.state, SchedulePoint.DAWN_REACTION)
         self._log_audience_events(result, self.state.phase.value)
