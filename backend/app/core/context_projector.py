@@ -135,7 +135,7 @@ class ContextProjector:
             raise ValueError(f"unknown visibility namespace: {min(unknown)}")
         visible = spec.visibility_namespaces & request.contract.visibility_namespaces
 
-        facts = self._public_facts(state)
+        facts = self._public_facts(state, registry)
         resources: dict[str, object] = {}
         if "ACTOR" in visible:
             facts["actor_identity"] = {
@@ -226,7 +226,7 @@ class ContextProjector:
         spec = registry.require(actor.role)
         if actor.camp != spec.camp_id:
             raise ValueError("actor camp does not match registered role")
-        facts = self._public_facts(state)
+        facts = self._public_facts(state, registry)
         facts["actor_identity"] = {
             "seat": actor.seat_number,
             "role_id": actor.role,
@@ -342,7 +342,7 @@ class ContextProjector:
         return actor
 
     @classmethod
-    def _public_facts(cls, state: GameState) -> dict[str, object]:
+    def _public_facts(cls, state: GameState, registry: RegistrySnapshot) -> dict[str, object]:
         cls._nonnegative_int(state.round_number, "state round")
         seats = tuple(state.players)
         for seat in seats:
@@ -360,6 +360,16 @@ class ContextProjector:
             "sheriff": sheriff,
             "phase": state.phase.value if hasattr(state.phase, "value") else state.phase,
             "round_number": state.round_number,
+            "public_role_rules": tuple(
+                {
+                    "id": role_id,
+                    "count": count,
+                    "display_name": registry.specs[role_id].display_name,
+                    "instructions": registry.specs[role_id].instructions,
+                }
+                for role_id, count in sorted(state.config.role_counts.items())
+                if count and role_id in registry.specs
+            ),
             "speeches": tuple(
                 projected
                 for record in state.speeches[-20:]

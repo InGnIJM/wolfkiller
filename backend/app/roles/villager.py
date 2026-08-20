@@ -9,7 +9,10 @@ VILLAGER_SPEC = RoleSpec(
     contracts=(),
     allowed_effects=frozenset(),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-    instructions="Use public discussion and voting; this role has no private action.",
+    instructions=(
+        "Villagers have no private night action. Use only public discussion, public results, "
+        "and voting to identify the opposing camp."
+    ),
 )
 
 

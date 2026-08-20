@@ -122,7 +122,10 @@ SEER_SPEC = RoleSpec(
     initial_private_data={"private_checks": ()},
     allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-    instructions="Check one other living player's camp during the night action window.",
+    instructions=(
+        "Each night the Seer may check one other living player's camp. The engine returns "
+        "only that checked camp result as the Seer's private fact."
+    ),
 )
 
 
