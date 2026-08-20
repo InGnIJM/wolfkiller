@@ -1419,6 +1419,28 @@ class TestCommandProvider:
 
         assert "RANDOM_HINT" not in renderer.render.call_args.args[2].facts
 
+    def test_provider_never_injects_random_hint_for_witch_potions(self):
+        from app.models.pipeline import ActionContext
+
+        service = GameService(WSManager(), EventBus())
+        provider, renderer = self._provider(
+            service, '{"action_type":"pass","target_seat":null,"reasoning":"没有依据"}'
+        )
+        contract = builtin_registry.freeze().require("wolf-killer-witch").contracts[0]
+        context = ActionContext(
+            game_id="g", revision=0,
+            facts={"alive_seats": (1, 2, 3), "wolf_kill_target": 2},
+            contract_id=contract.contract_id, contract_version=contract.schema_version,
+            contract_digest=contract.stable_digest(), round_number=1, phase="night",
+            window_id="w", schedule_point=contract.schedule_point, actor_seat=1,
+            actor_role_id="wolf-killer-witch", actor_alive=True,
+            resources={"antidote": 1, "poison": 1}, action_key="k",
+        )
+
+        provider(self._request("wolf-killer-witch"), context, 0)
+
+        assert "RANDOM_HINT" not in renderer.render.call_args.args[2].facts
+
     def test_fallback_target_requires_tuple_seats_and_targeting_contract(self):
         from unittest.mock import MagicMock
 

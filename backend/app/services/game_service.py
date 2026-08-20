@@ -419,7 +419,11 @@ class GameService:
     @staticmethod
     def _fallback_target(request, context, history: str) -> int | None:
         """Choose one contract-valid first-night fallback target, if needed."""
-        if context.round_number != 1 or history.strip():
+        if (
+            context.round_number != 1
+            or history.strip()
+            or request.role_id == "wolf-killer-witch"
+        ):
             return None
         alive = context.facts.get("alive_seats") if isinstance(context.facts, Mapping) else None
         if type(alive) is not tuple:

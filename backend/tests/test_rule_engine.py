@@ -108,6 +108,21 @@ class TestRuleEngine:
         result = engine.check_win(state)
         assert result is None  # game continues
 
+    def test_wolves_win_when_alive_wolves_outnumber_alive_good_players(self):
+        players = [
+            make_player(1, "wolf-killer-werewolf", "werewolf"),
+            make_player(2, "wolf-killer-werewolf", "werewolf"),
+            make_player(3, "wolf-killer-werewolf", "werewolf"),
+            make_player(4, "wolf-killer-villager", "good"),
+            make_player(5, "wolf-killer-seer", "good"),
+        ]
+
+        result = RuleEngine().check_win(make_state(players))
+
+        assert result is not None
+        assert result.winning_camp == "werewolf"
+        assert result.reason == "wolves_outnumber_good"
+
     def test_only_hunter_god(self):
         engine = RuleEngine()
         players = [
@@ -131,3 +146,12 @@ class TestRuleEngine:
         # Only hunter was god, now dead → all gods dead
         assert result is not None
         assert result.winning_camp == "werewolf"
+
+    def test_living_guard_prevents_all_gods_dead_win(self):
+        players = [
+            make_player(1, "wolf-killer-werewolf", "werewolf"),
+            make_player(2, "wolf-killer-villager", "good"),
+            make_player(3, "wolf-killer-guard", "good"),
+        ]
+
+        assert RuleEngine().check_win(make_state(players)) is None
