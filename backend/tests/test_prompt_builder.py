@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.agents.prompt_builder import PromptBuilder
+from app.agents.game_rules import DAY_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT
 from app.core.conversation_log import ConversationLog
 from app.core.game_engine import VOTE_CONTRACT
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
@@ -45,6 +46,19 @@ def test_legacy_sources_have_no_builtin_role_names() -> None:
     assert not re.search(
         r"witch|hunter|werewolf|seer|has_antidote|has_gun", sources
     )
+
+
+def test_system_prompts_define_shared_rules_without_builtin_roles() -> None:
+    for prompt in (DAY_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT):
+        assert "游戏引擎" in prompt
+        assert "不得编造" in prompt
+        assert "不可信" in prompt
+        for role_name in ("预言家", "女巫", "猎人", "守卫", "平民"):
+            assert role_name not in prompt
+    assert "ROLE_CONTRACT" not in DAY_SYSTEM_PROMPT
+    assert "PROJECTED_CONTEXT" not in DAY_SYSTEM_PROMPT
+    assert "ROLE_CONTRACT" in NIGHT_SYSTEM_PROMPT
+    assert "PROJECTED_CONTEXT" in NIGHT_SYSTEM_PROMPT
 
 
 def test_prompt_builder_delegates_action_rendering() -> None:
@@ -164,11 +178,9 @@ class TestPromptBuilder:
         prompt = builder.build_speech_prompt(
             state, 6, "wolf-killer-villager", make_log(), "day_speech"
         )
-        assert "已有 2 位玩家发过言" in prompt
-        assert "具体观点" in prompt
-        assert "新的论点" in prompt
-        assert "复述" in prompt
-        assert "盲从" in prompt
+        assert "选择1至2个" in prompt
+        assert "逐一独立评估" not in prompt
+        assert "必须提出至少一个新论点" not in prompt
 
     def test_speech_prompt_contains_night_timeline_education(self):
         builder = PromptBuilder()
@@ -343,6 +355,23 @@ class TestPromptBuilderHelpers:
         log.add_thought(1, "wolf-killer-werewolf", "思考内容", 1, "night")
         out = PromptBuilder._format_thoughts(log, 1, 1)
         assert "思考内容" in out and "第1轮" in out
+
+    def test_day_speech_prompt_keeps_private_thoughts_out_of_public_speaking_task(self):
+        prompt = PromptBuilder().build_speech_prompt(
+            make_state(), 1, "wolf-killer-werewolf", make_log(), "day_speech",
+        )
+
+        assert "\u4eca\u665a\u5148\u89c2\u5bdf\u4e00\u4e0b" not in prompt
+        assert "\u81ea\u7136\u53e3\u8bed" in prompt
+
+    def test_later_speaker_is_not_forced_to_evaluate_every_previous_player(self):
+        state = make_state()
+        state.speaking_order = [1, 2, 3]
+
+        rules = PromptBuilder._day_speech_rules(state, 3)
+
+        assert "\u9010\u4e00\u72ec\u7acb\u8bc4\u4f30" not in rules
+        assert "1\u81f32\u4e2a" in rules
 
     def test_task_instruction_default_context(self):
         assert PromptBuilder._task_instruction("unknown_context", make_state()) == "请根据你的身份和当前局势做出合理决策。"

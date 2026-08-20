@@ -412,36 +412,29 @@ def test_build_briefing_caps_lines_and_content():
 
 
 def test_discussion_prompt_target_rule_mentions_judgment_and_random(state: GameState, director: NightDirector):
-    messages = director.discussion_prompt(state, 1, [])
+    messages = director.discussion_prompt(state, 1, [], random_hint=2)
     human = messages[1]["content"]
-    assert "自主判断" in human
-    assert "随机选择" in human
-    assert "回应队友" in human
-    assert "自刀" in human
-    assert re.search(r"RANDOM_HINT=\d+", human)
+    assert "Use evidence" in human
+    assert "RANDOM_HINT=2" in human
 
 
 def test_vote_prompt_target_rule_mentions_judgment_and_random(state: GameState, director: NightDirector):
-    messages = director.vote_prompt(state, 1, [], [])
+    messages = director.vote_prompt(state, 1, [], [], random_hint=2)
     human = messages[1]["content"]
-    assert "自主判断" in human
-    assert "随机选择" in human
-    assert "自刀" in human
-    assert re.search(r"RANDOM_HINT=\d+", human)
+    assert "Use evidence" in human
+    assert "RANDOM_HINT=2" in human
 
 
 def test_random_hint_stays_in_alive_seat_range(state: GameState, director: NightDirector) -> None:
-    alive_count = len(state.alive_players())
-    for _ in range(20):
-        messages = director.vote_prompt(state, 1, [], [])
-        match = re.search(r"RANDOM_HINT=(\d+)", messages[1]["content"])
-        assert match is not None
-        assert 0 <= int(match.group(1)) < alive_count
+    target = max(state.alive_players())
+    messages = director.vote_prompt(state, 1, [], [], random_hint=target)
+    assert f"RANDOM_HINT={target}" in messages[1]["content"]
 
 
 def test_random_hint_with_no_alive_players_returns_zero(state: GameState, director: NightDirector) -> None:
-    state.players = {}
-    assert director._random_hint(state) == "RANDOM_HINT=0"
+    assert director._fallback_hint(None) == ""
+    with pytest.raises(ValueError):
+        director._fallback_hint(0)
 
 
 def test_discussion_prompt(state: GameState, director: NightDirector):
@@ -535,6 +528,14 @@ def test_vote_prompt(state: GameState, director: NightDirector):
     assert "第1晚" in messages[1]["content"]
     assert "刀 2 号" in messages[1]["content"]
     assert "白天尚未开始" in messages[1]["content"]
+
+
+def test_wolf_prompts_allow_deliberate_team_target_strategy(state: GameState, director: NightDirector):
+    discussion = director.discussion_prompt(state, 1, [])
+    vote = director.vote_prompt(state, 1, [], [])
+
+    assert "including yourself" in discussion[0]["content"]
+    assert "including yourself" in vote[0]["content"]
 
 
 def test_vote_prompt_empty(state: GameState, director: NightDirector):
@@ -790,6 +791,23 @@ def test_record_and_collect(state: GameState):
     assert command.target_seat == 2
     assert command.reasoning == "可疑"
     assert director.collected_vote(3).action_type == "pass"  # type: ignore[union-attr]
+
+
+def test_wolf_prompts_share_an_explicit_fallback_hint(state: GameState, director: NightDirector):
+    discussion = director.discussion_prompt(state, 1, [], random_hint=2)
+    vote = director.vote_prompt(state, 1, [], [], random_hint=2)
+
+    assert "RANDOM_HINT=2" in discussion[1]["content"]
+    assert "RANDOM_HINT=2" in vote[1]["content"]
+
+
+def test_wolf_prompt_omits_random_hint_when_server_has_evidence(state: GameState, director: NightDirector):
+    state.round_number = 2
+    briefing = NightBriefing(("prior public evidence",), (), ())
+
+    prompt = director.discussion_prompt(state, 1, [], briefing, random_hint=None)
+
+    assert "RANDOM_HINT=" not in prompt[1]["content"]
 
 
 def test_collect_unknown_seat(state: GameState):
