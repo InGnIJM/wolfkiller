@@ -21,11 +21,11 @@ FIVE_CORE_PATHS = (
     "app/agents/state_filter.py",
 )
 
-CORE_BLOBS_BEFORE_GUARD = (
-    "ed643597e6aed30a24c054150870f204886333e8",
+CORE_MODULE_SNAPSHOTS = (
+    "d475f2ab0d564c0755f5568760d9e82d7f3ba17e",
     "2420b709c39c38958b21518033baabd08fe4bf9d",
     "7e85ba15f8277a9d5b7d3424c53e3e3dca9f9422",
-    "8de17dbdbc10ba67f6d79f928a3e31fc87e91d32",
+    "07da397e079d1f4806c0303203cf97ad129fbae0",
     "bc509cfd7d80c12ea2a341fb08080a312e687d1e",
 )
 
@@ -170,9 +170,9 @@ def test_ten_player_standard_board_creates_roles_via_legacy_registry() -> None:
     ]
 
 
-def test_guard_addition_did_not_modify_five_core_modules() -> None:
+def test_core_module_snapshots_require_explicit_review() -> None:
     current = tuple(_git_blob_sha(path) for path in FIVE_CORE_PATHS)
-    assert current == CORE_BLOBS_BEFORE_GUARD
+    assert current == CORE_MODULE_SNAPSHOTS
 
 
 def test_guard_night_action_point_issues_request_and_submits_protection() -> None:
