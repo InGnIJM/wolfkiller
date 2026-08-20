@@ -19,6 +19,10 @@ class ConversationLog:
         if self._logger and self._game_id:
             self._logger.log_conversation(self._game_id, record.to_dict())
 
+    def log_vote_telemetry(self, round_num: int, seat: int, **data: object) -> None:
+        if self._logger and self._game_id:
+            self._logger.log_vote_telemetry(self._game_id, round_num, seat, **data)
+
     # ── Add methods ──────────────────────────────────────────────
 
     def add_public_speech(

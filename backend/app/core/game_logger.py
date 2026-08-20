@@ -86,6 +86,20 @@ class GameLogger:
         self.log_operation(game_id, "vote", round_num, "vote_casting", seat=seat,
                            data={"target": target})
 
+    def log_vote_telemetry(
+        self, game_id: str, round_num: int, seat: int, *, transport: str,
+        attempt: int, prompt_chars: int, elapsed_ms: int, retried: bool,
+        parse_result: str,
+    ) -> None:
+        self.log_operation(
+            game_id, "vote_telemetry", round_num, "vote_casting", seat=seat,
+            data={
+                "transport": transport, "attempt": attempt,
+                "prompt_chars": prompt_chars, "elapsed_ms": elapsed_ms,
+                "retried": retried, "parse_result": parse_result,
+            },
+        )
+
     def log_vote_result(
         self, game_id: str, round_num: int, exiled: Optional[int], tally: dict,
     ) -> None:
