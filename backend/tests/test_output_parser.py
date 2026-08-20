@@ -1,9 +1,49 @@
 import pytest
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
-from app.agents.output_parser import OutputParser, ToolCallError, ToolCallResult
+from app.agents.output_parser import OutputParser, ToolCallError, ToolCallResult, extract_json_object
 from app.core.action_validator import ActionValidationError
 from app.roles.registry import builtin_registry
+
+
+class TestExtractJsonObject:
+    def test_plain_json_object(self):
+        assert extract_json_object('{"action_type": "kill", "target_seat": 3}') == {
+            "action_type": "kill", "target_seat": 3,
+        }
+
+    def test_json_with_surrounding_whitespace(self):
+        assert extract_json_object('  \n {"a": 1} \t') == {"a": 1}
+
+    def test_json_with_bom(self):
+        assert extract_json_object('\ufeff{"a": 1}') == {"a": 1}
+
+    def test_markdown_fence_with_language_tag(self):
+        assert extract_json_object('```json\n{"a": 1}\n```') == {"a": 1}
+
+    def test_markdown_fence_without_language_tag(self):
+        assert extract_json_object('```\n{"a": 1}\n```') == {"a": 1}
+
+    def test_markdown_fence_with_invalid_json_returns_none(self):
+        assert extract_json_object('```json\n{not valid}\n```') is None
+
+    def test_prose_around_json_returns_none(self):
+        assert extract_json_object('I choose {"a": 1}') is None
+        assert extract_json_object('文本前缀 {"a": 1} 文本后缀') is None
+
+    def test_empty_and_non_string_returns_none(self):
+        assert extract_json_object("") is None
+        assert extract_json_object("   ") is None
+        assert extract_json_object(None) is None
+        assert extract_json_object(42) is None
+
+    def test_parse_action_payload_accepts_fenced_json(self):
+        contract = builtin_registry.require("wolf-killer-werewolf").contracts[0]
+        command = OutputParser().parse_action_payload(
+            '```json\n{"action_type": "kill", "target_seat": 3, "reasoning": "x"}\n```',
+            contract,
+        )
+        assert command.target_seat == 3
 
 
 class TestOutputParser:
@@ -139,12 +179,12 @@ class TestOutputParser:
         assert action.target_seat == 5
         assert action.player_seat == 1
 
-    def test_parse_night_action_rejects_code_block_json(self):
+    def test_parse_night_action_accepts_code_block_json(self):
         parser = OutputParser()
         raw = '```json\n{"action_type": "check", "target_seat": 3, "reasoning": "need info"}\n```'
         action = parser.parse_night_action(raw, player_seat=1)
-        assert action.action_type == "pass"
-        assert action.target_seat is None
+        assert action.action_type == "check"
+        assert action.target_seat == 3
 
     def test_parse_night_action_malformed_defaults_to_pass(self):
         parser = OutputParser()

@@ -34,6 +34,34 @@ class StrictCapabilityError(RuntimeError):
     """The configured provider explicitly rejects strict tool support."""
 
 
+def extract_json_object(raw: object) -> object:
+    """Extract one JSON object from a model response, tolerating only the
+    common markdown code-fence wrapper.
+
+    Reasoning models frequently wrap the payload in ```json ... ``` fences;
+    accepting that wrapper is the safe fallback. Anything else — prose before
+    or after the JSON, multiple objects, invalid JSON — returns None so the
+    caller degrades instead of accidentally trusting model thinking text.
+    """
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lstrip("\ufeff")
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1).strip()
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 class NightActionModel(BaseModel):
     action_type: str
     target_seat: int | None = None
@@ -58,10 +86,9 @@ class OutputParser:
     ) -> ActionCommand:
         """Strictly parse one action payload issued for ``contract``."""
         if isinstance(payload, str):
-            try:
-                payload = json.loads(payload)
-            except json.JSONDecodeError as error:
-                raise ToolCallError("action payload must be a JSON object") from error
+            payload = extract_json_object(payload)
+            if payload is None:
+                raise ToolCallError("action payload must be a JSON object")
 
         if not isinstance(payload, dict):
             raise ToolCallError("action payload must be a JSON object")
@@ -205,10 +232,5 @@ class OutputParser:
         return None
 
     def _extract_json(self, raw: str) -> dict | None:
-        raw = raw.strip()
-
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
+        parsed = extract_json_object(raw)
         return parsed if isinstance(parsed, dict) else None
