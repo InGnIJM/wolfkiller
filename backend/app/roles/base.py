@@ -1,5 +1,7 @@
 from __future__ import annotations
+import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 from app.models.game import GameState
 from app.models.actions import VoteAction
@@ -336,11 +338,13 @@ class BaseRole:
         ]
         try:
             return await self._request_action_with_transport(
-                state, request, messages, self._invoke_strict_action
+                state, request, messages, self._invoke_strict_action,
+                conversation_log, "strict", 1,
             )
         except StrictCapabilityError:
             return await self._request_action_with_transport(
-                state, request, messages, self._invoke_json_action
+                state, request, messages, self._invoke_json_action,
+                conversation_log, "json", 2,
             )
 
     def _build_contract_action_prompt(
@@ -355,15 +359,61 @@ class BaseRole:
             state, self.seat, self.role_name, conversation_log, "exile_vote"
         )
 
+    def _vote_telemetry(
+        self, conversation_log: ConversationLog, request: ActionRequest, *,
+        transport: str, attempt: int, prompt_chars: int, elapsed_ms: int,
+        retried: bool, parse_result: str,
+    ) -> None:
+        log_telemetry = getattr(conversation_log, "log_vote_telemetry", None)
+        if request.contract.contract_id == "exile_vote" and callable(log_telemetry):
+            log_telemetry(
+                request.round_id, self.seat, transport=transport, attempt=attempt,
+                prompt_chars=prompt_chars, elapsed_ms=elapsed_ms, retried=retried,
+                parse_result=parse_result,
+            )
+
+    def _action_timeout_seconds(self) -> float:
+        value = getattr(self.llm_client, "action_timeout_seconds", 45.0)
+        return float(value) if isinstance(value, (int, float)) and value > 0 else 45.0
+
     async def _request_action_with_transport(
-        self, state, request, messages, invoke
+        self, state, request, messages, invoke, conversation_log: ConversationLog,
+        transport: str, first_attempt: int,
     ) -> AcceptedAction:
         active_messages = messages
         for attempt in range(2):
+            attempt_number = first_attempt + attempt
+            prompt_chars = sum(len(message.content) for message in active_messages)
+            started = time.monotonic()
             try:
-                command = await invoke(active_messages, request)
-                return self._accept_command(state, request, command)
+                command = await asyncio.wait_for(
+                    invoke(active_messages, request), timeout=self._action_timeout_seconds(),
+                )
+                accepted = self._accept_command(state, request, command)
+            except asyncio.TimeoutError:
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1, parse_result="timeout_fallback",
+                )
+                fallback = ActionCommand(
+                    action_type=request.contract.fallback_action_type,
+                    target_seat=None, reasoning="timeout fallback",
+                )
+                return self._accept_command(state, request, fallback)
+            except StrictCapabilityError:
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1, parse_result="strict_capability_fallback",
+                )
+                raise
             except ActionValidationError as error:
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1, parse_result="invalid",
+                )
                 logger.warning(
                     f"Seat {self.seat}: action validation failed for "
                     f"contract={request.contract.contract_id} "
@@ -385,6 +435,20 @@ class BaseRole:
                         )
                     ),
                 ]
+            except Exception:
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1, parse_result="invoke_error",
+                )
+                raise
+            else:
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1, parse_result="accepted",
+                )
+                return accepted
         raise AssertionError("unreachable")  # pragma: no cover - transport always returns or re-raises within two attempts
 
     def _accept_command(self, state: GameState, request: ActionRequest,

@@ -42,7 +42,8 @@ class LLMConfig:
         return ["deepseek-v4-pro"]
 
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.2"))
-    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "768"))
+    action_timeout_seconds: float = float(os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "45"))
 
 
 class GameConfig:

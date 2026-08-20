@@ -41,6 +41,7 @@ class LLMClientConfig:
     temperature: float
     max_tokens: int
     strict_base_url: str
+    action_timeout_seconds: float = 45.0
 
 
 def env_default_client_config() -> LLMClientConfig:
@@ -53,6 +54,7 @@ def env_default_client_config() -> LLMClientConfig:
         temperature=llm_cfg.temperature,
         max_tokens=llm_cfg.max_tokens,
         strict_base_url=llm_cfg.strict_base_url,
+        action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 45.0),
     )
 
 
@@ -77,6 +79,7 @@ class LLMClient:
             temperature if temperature is not None else self._config.temperature
         )
         self.max_tokens = self._config.max_tokens
+        self.action_timeout_seconds = self._config.action_timeout_seconds
 
     def _build(self) -> ChatOpenAI:
         return ChatOpenAI(
@@ -85,6 +88,7 @@ class LLMClient:
             base_url=self._config.base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            timeout=self.action_timeout_seconds,
         )
 
     def get_model(self) -> BaseChatModel:
@@ -97,6 +101,7 @@ class LLMClient:
             base_url=self._config.base_url,
             temperature=temperature,
             max_tokens=self.max_tokens,
+            timeout=self.action_timeout_seconds,
         )
 
     def get_model_with_tools(self, tools: list[dict]) -> BaseChatModel:
@@ -145,6 +150,7 @@ class LLMClient:
             base_url=self._config.strict_base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            timeout=self.action_timeout_seconds,
         )
         tool = {
             "type": "function",
