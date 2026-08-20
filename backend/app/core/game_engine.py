@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
 import re
 import uuid
 from collections.abc import Mapping
@@ -134,6 +135,7 @@ class _PendingNightBatch:
     wolf_votes: tuple[WolfVote, ...]
     raw_results: tuple[PointResult, ...]
     discussion_leads: tuple[tuple[int, int], ...] = ()
+    wolf_random_hint: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.round_number) is not int or not 1 <= self.round_number <= 2_147_483_647:
@@ -153,6 +155,10 @@ class _PendingNightBatch:
                 raise TypeError("invalid discussion leads")
             if not 1 <= pair[0] <= 2_147_483_647 or not 1 <= pair[1] <= 2_147_483_647:
                 raise ValueError("invalid discussion lead bounds")
+        if self.wolf_random_hint is not None and (
+            type(self.wolf_random_hint) is not int or self.wolf_random_hint <= 0
+        ):
+            raise ValueError("invalid wolf random hint")
         points_done = sum(
             1 for point_stage in _NIGHT_POINT_STAGES if self.stage > point_stage
         )
@@ -372,6 +378,13 @@ class GameEngine:
             if len(wolves) > 1:
                 history = list(pending.discussion_history)
                 leads = dict(pending.discussion_leads)
+                if pending.wolf_random_hint is None and not history:
+                    briefing = build_briefing(self.conversation_log, wolves[0], self.state.round_number)
+                    if not briefing.public_lines:
+                        pending = replace(
+                            pending, wolf_random_hint=random.choice(sorted(state.alive_players())),
+                        )
+                        self._pending_night_batch = pending
                 # Serial discussion rounds: each wolf speaks in turn and sees
                 # everything said before, so the channel reads like a real
                 # conversation. Stops early on consensus or a full skipped round.
@@ -381,6 +394,7 @@ class GameEngine:
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
                     result = await asyncio.to_thread(
                         director.wolf_discussion_turn, state, seat, tuple(history), briefing,
+                        pending.wolf_random_hint,
                     )
                     if result.spoke:
                         line = f"{seat}号：{result.text}"
@@ -414,26 +428,24 @@ class GameEngine:
         if pending.stage == 4:
             if wolves:
                 discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
-                # Resume-safe parallel voting: wolves that already voted in a
-                # checkpointed batch are skipped, and prior votes are shown to
-                # the remaining voters instead of being re-collected.
+                # Resume-safe sequential voting: each wolf sees all earlier
+                # votes from this same night before casting its own vote.
                 already_voted = {vote.seat for vote in pending.wolf_votes}
                 remaining = [seat for seat in wolves if seat not in already_voted]
-                if remaining:
-                    briefings = {seat: build_briefing(self.conversation_log, seat, self.state.round_number) for seat in remaining}
-                    results = await asyncio.gather(*(
-                        asyncio.to_thread(director.wolf_vote_turn, state, seat, discussion, tuple(pending.wolf_votes), briefings[seat])
-                        for seat in remaining
-                    ))
-                    for seat, result in zip(remaining, results):
-                        self.game_logger.log_audience_action(
-                            self.game_id, state.round_number, "night", "WOLF_VOTE",
-                            {"seat": seat, "target_seat": result.target_seat, "reasoning": result.reasoning},
-                        )
-                    votes = list(pending.wolf_votes) + list(results)
-                else:
-                    votes = list(pending.wolf_votes)
-                pending = replace(pending, wolf_votes=tuple(votes)); self._pending_night_batch = pending
+                votes = list(pending.wolf_votes)
+                for seat in remaining:
+                    briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    result = await asyncio.to_thread(
+                        director.wolf_vote_turn, state, seat, discussion, tuple(votes), briefing,
+                        pending.wolf_random_hint,
+                    )
+                    votes.append(result)
+                    self.game_logger.log_audience_action(
+                        self.game_id, state.round_number, "night", "WOLF_VOTE",
+                        {"seat": seat, "target_seat": result.target_seat, "reasoning": result.reasoning},
+                    )
+                    pending = replace(pending, wolf_votes=tuple(votes))
+                    self._pending_night_batch = pending
                 director.record_votes(tuple(votes))
             else:
                 director.record_votes(())
@@ -762,10 +774,9 @@ class GameEngine:
     async def _execute_vote_casting(self) -> None:
         if not self.state.voted_seats:
             self.state.votes.clear()
-        for seat in self.state.alive_players():
-            if seat in self.state.voted_seats:
-                continue
-            vote = await self.vote(seat)
+        seats = [seat for seat in self.state.alive_players() if seat not in self.state.voted_seats]
+        votes = await asyncio.gather(*(self.vote(seat) for seat in seats))
+        for seat, vote in zip(seats, votes):
             if vote:
                 self.state.votes.append(vote)
                 self.state.voted_seats.add(seat)

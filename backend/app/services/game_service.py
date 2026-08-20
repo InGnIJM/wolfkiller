@@ -105,6 +105,7 @@ def resolve_model_config(
         strict_base_url=derive_strict_base_url(
             config.base_url, config.strict_base_url,
         ),
+        action_timeout_seconds=env_config.action_timeout_seconds,
     )
     snapshot = [{
         "config_id": config.id,
@@ -415,6 +416,28 @@ class GameService:
             llm_client_factory=lambda: client_provider(0),
         )
 
+    @staticmethod
+    def _fallback_target(request, context, history: str) -> int | None:
+        """Choose one contract-valid first-night fallback target, if needed."""
+        if context.round_number != 1 or history.strip():
+            return None
+        alive = context.facts.get("alive_seats") if isinstance(context.facts, Mapping) else None
+        if type(alive) is not tuple:
+            return None
+        target_actions = sorted(request.contract.actions_requiring_target)
+        if not target_actions:
+            return None
+        action_type = target_actions[0]
+        validator = ActionValidator()
+        candidates = [
+            seat for seat in alive
+            if not validator.validate(
+                context, request.contract,
+                PipelineActionCommand(action_type=action_type, target_seat=seat, reasoning="server fallback"),
+            )
+        ]
+        return random.choice(candidates) if candidates else None
+
     def _command_provider(self, snapshot, renderer: PromptRenderer, client_provider, director):
         """LLM-backed command provider for the pipeline scheduler.
 
@@ -443,13 +466,10 @@ class GameService:
                     f"{record.speaker_seat if record.speaker_seat is not None else ''}] {record.content}"
                     for record in records[-120:]
                 )
-            # Server-side randomness: models cannot sample uniformly, so when a
-            # random pick is needed we hand them a true random index into the
-            # ascending alive-seat list instead of letting them "choose randomly".
-            alive_seats = context.facts.get("alive_seats") if isinstance(context.facts, Mapping) else None
-            if isinstance(alive_seats, tuple) and alive_seats:
+            fallback_target = self._fallback_target(request, context, history)
+            if fallback_target is not None:
                 context = replace(context, facts={
-                    **context.facts, "RANDOM_HINT": random.randrange(len(alive_seats)),
+                    **context.facts, "RANDOM_HINT": fallback_target,
                 })
             prompt = renderer.render(role_spec, request.contract, context, history)
             messages = [

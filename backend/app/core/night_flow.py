@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Optional
@@ -242,16 +241,17 @@ class NightDirector:
         )
 
     @staticmethod
-    def _random_hint(state: GameState) -> str:
-        """Server-side random target index into the ascending alive-seat list."""
-        alive = sorted(state.alive_players())
-        if not alive:
-            return "RANDOM_HINT=0"
-        return f"RANDOM_HINT={random.randrange(len(alive))}"
+    def _fallback_hint(random_hint: int | None) -> str:
+        """Render a server-selected legal fallback target, when one is needed."""
+        if random_hint is None:
+            return ""
+        if type(random_hint) is not int or random_hint <= 0:
+            raise ValueError("random hint must be a positive target seat")
+        return f"RANDOM_HINT={random_hint}\n"
 
     def discussion_prompt(
         self, state: GameState, seat: int, history: Sequence[str],
-        briefing: NightBriefing = NightBriefing(),
+        briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
@@ -265,14 +265,15 @@ class NightDirector:
             "add, or push back) and then state your own view. Never reveal "
             "that you are a werewolf. Speak like a real player — do not quote "
             "or reference the rules of this prompt. "
+            "A deliberate target among your teammates, including yourself, is "
+            "a valid strategy unless the action contract forbids it. "
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
         human = (
             f"第{state.round_number}晚狼队讨论。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
-            + self._random_hint(state)
-            + "\n"
+            + self._fallback_hint(random_hint) + ""
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
             f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
             f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
@@ -298,7 +299,7 @@ class NightDirector:
     def vote_prompt(
         self, state: GameState, seat: int,
         discussion: Sequence[str], prior_votes: Sequence[WolfVote],
-        briefing: NightBriefing = NightBriefing(),
+        briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
@@ -306,14 +307,15 @@ class NightDirector:
             f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "
+            "A deliberate target among your teammates, including yourself, is "
+            "a valid strategy unless the action contract forbids it. "
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
         human = (
             f"第{state.round_number}晚狼队投票。你的队友：{('、'.join(str(w) for w in wolves))}号。"
             f"场上存活玩家：{alive}。\n"
-            + self._random_hint(state)
-            + "\n"
+            + self._fallback_hint(random_hint) + ""
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
             f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
             f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
@@ -340,10 +342,10 @@ class NightDirector:
 
     def wolf_discussion_turn(
         self, state: GameState, seat: int, history: Sequence[str],
-        briefing: NightBriefing = NightBriefing(),
+        briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> DiscussionTurn:
         try:
-            value = self._invoke_json(self.discussion_prompt(state, seat, history, briefing))
+            value = self._invoke_json(self.discussion_prompt(state, seat, history, briefing, random_hint))
             if value.get("speak") is not True:
                 return DiscussionTurn(seat, False)
             text = _clean(value.get("text"), "text", _MAX_UTTERANCE)
@@ -369,10 +371,10 @@ class NightDirector:
     def wolf_vote_turn(
         self, state: GameState, seat: int,
         discussion: Sequence[str], prior_votes: Sequence[WolfVote],
-        briefing: NightBriefing = NightBriefing(),
+        briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> WolfVote:
         try:
-            value = self._invoke_json(self.vote_prompt(state, seat, discussion, prior_votes, briefing))
+            value = self._invoke_json(self.vote_prompt(state, seat, discussion, prior_votes, briefing, random_hint))
             if value.get("action_type") == "kill":
                 target = value.get("target_seat")
                 if type(target) is not int or target <= 0 or target not in state.players:
