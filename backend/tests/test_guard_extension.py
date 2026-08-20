@@ -68,7 +68,7 @@ def test_guard_uses_only_existing_effects() -> None:
         EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     )
     assert effects[0].target_seat == 3
-    assert effects[0].payload == {"target": 3, "amount": 1}
+    assert effects[0].payload == {"target": 3, "amount": 1, "source": "guard"}
     assert effects[1].target_seat == 1
     assert effects[1].payload == {"target": 1, "key": "last_guarded", "value": 3}
     assert effects[0].effect_id == derive_effect_id(context.action_key, 1)

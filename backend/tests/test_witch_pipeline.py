@@ -56,7 +56,7 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     ]
     assert [item.sort_key for item in saved] == [(1,), (2,), (3,), (4,)]
     assert saved[0].target_seat == 1 and saved[1].target_seat == 2
-    assert saved[1].payload == {"target": 2, "amount": 1}
+    assert saved[1].payload == {"target": 2, "amount": 1, "source": "witch_antidote"}
     assert poisoned[1].payload == {"target": 3, "amount": 1, "cause": "poison"}
     assert saved[0].preconditions["resource_equals"] == {"resource": "antidote", "value": 1}
     assert saved[2].payload["event_type"] == "WITCH_REASONING"
@@ -155,7 +155,7 @@ def test_scheduler_save_projects_target_and_applies_resources_atomically() -> No
     result = engine.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
     assert seen[0].facts["wolf_kill_target"] == 2
     assert role_resource_view(game, 1) == {"antidote": 0, "poison": 1}
-    assert game._pipeline_runtime.pending_protection == ({"target": 2, "amount": 1},)
+    assert game._pipeline_runtime.pending_protection == ({"target": 2, "amount": 1, "source": "witch_antidote"},)
     assert result.commits[-1].revision == game._pipeline_runtime.revision == 2
 
     engine.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
