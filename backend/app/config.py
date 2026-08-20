@@ -42,7 +42,7 @@ class LLMConfig:
         return ["deepseek-v4-pro"]
 
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.2"))
-    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
 
 class GameConfig:
@@ -52,7 +52,7 @@ class GameConfig:
     num_witches: int = 1
     num_hunters: int = 1
     speech_timeout_seconds: int = 60
-    phase_delay_seconds: float = 2.0
+    phase_delay_seconds: float = 0.3
 
 
 class AppConfig:
