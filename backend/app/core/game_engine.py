@@ -191,8 +191,17 @@ class GameEngine:
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self.state = GameState(game_id=self.game_id, config=self.config)
         self._phase_delay: float = 2.0
-        self._vote_concurrency = app_config.game.vote_concurrency
-        self._vote_phase_timeout_seconds = app_config.game.vote_phase_timeout_seconds
+        vote_concurrency = app_config.game.vote_concurrency
+        self._vote_concurrency = (
+            vote_concurrency
+            if type(vote_concurrency) is int and vote_concurrency > 0 else 5
+        )
+        vote_phase_timeout = app_config.game.vote_phase_timeout_seconds
+        self._vote_phase_timeout_seconds = (
+            float(vote_phase_timeout)
+            if type(vote_phase_timeout) in (int, float) and vote_phase_timeout > 0
+            else 180.0
+        )
         self._running = False
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
