@@ -95,11 +95,11 @@ def test_get_model_configures_action_timeout():
     assert mock_chat.call_args.kwargs["timeout"] == 90
 
 
-def test_vote_timeout_defaults_are_90_seconds_then_60_seconds():
+def test_vote_timeout_defaults_are_90_seconds_for_both_attempts():
     client = LLMClient(config=_config())
 
     assert client.action_timeout_seconds == 90.0
-    assert client.action_retry_timeout_seconds == 60.0
+    assert client.action_retry_timeout_seconds == 90.0
     assert client.action_max_tokens == 2048
 
 

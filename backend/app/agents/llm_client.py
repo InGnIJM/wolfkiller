@@ -43,7 +43,7 @@ class LLMClientConfig:
     strict_base_url: str
     action_max_tokens: int = 2048
     action_timeout_seconds: float = 90.0
-    action_retry_timeout_seconds: float = 60.0
+    action_retry_timeout_seconds: float = 90.0
 
 
 def env_default_client_config() -> LLMClientConfig:
@@ -59,7 +59,7 @@ def env_default_client_config() -> LLMClientConfig:
         action_max_tokens=getattr(llm_cfg, "action_max_tokens", 2048),
         action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 90.0),
         action_retry_timeout_seconds=getattr(
-            llm_cfg, "action_retry_timeout_seconds", 60.0,
+            llm_cfg, "action_retry_timeout_seconds", 90.0,
         ),
     )
 
