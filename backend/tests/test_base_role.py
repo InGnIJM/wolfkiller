@@ -29,10 +29,16 @@ class ModelStub:
 
 
 class ClientStub:
-    def __init__(self, plain=(), tools=(), strict=()):
+    def __init__(
+        self, plain=(), tools=(), strict=(), *, supports_strict_actions=True,
+        action_timeout_seconds=90.0, action_retry_timeout_seconds=60.0,
+    ):
         self.plain_model = ModelStub(plain)
         self.tools_model = ModelStub(tools)
         self.strict_model = ModelStub(strict)
+        self.supports_strict_actions = supports_strict_actions
+        self.action_timeout_seconds = action_timeout_seconds
+        self.action_retry_timeout_seconds = action_retry_timeout_seconds
 
     def get_model(self):
         return self.plain_model
@@ -385,6 +391,61 @@ class TestBaseRoleAccept:
         assert "reasoning" not in data and "response" not in data
 
     @pytest.mark.asyncio
+    async def test_provider_without_strict_endpoint_uses_json_directly(self):
+        client = ClientStub(
+            plain=[AIMessage(content=(
+                '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+            ))],
+            supports_strict_actions=False,
+        )
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert len(client.plain_model.messages) == 1
+        assert client.strict_model.messages == []
+
+    @pytest.mark.asyncio
+    async def test_primary_json_timeout_retries_once_with_retry_timeout(self):
+        class RetryModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                if self.calls == 1:
+                    await asyncio.sleep(0.05)
+                return AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+                ))
+
+        class RetryClient:
+            supports_strict_actions = False
+            action_timeout_seconds = 0.001
+            action_retry_timeout_seconds = 0.1
+
+            def __init__(self):
+                self.model = RetryModel()
+
+            def get_model(self):
+                return self.model
+
+        client = RetryClient()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert client.model.calls == 2
+
+    @pytest.mark.asyncio
     async def test_vote_timeout_records_safe_non_secret_telemetry(self):
         class TelemetryLogger:
             def __init__(self):
@@ -399,6 +460,7 @@ class TestBaseRoleAccept:
 
         class SlowClient:
             action_timeout_seconds = 0.001
+            action_retry_timeout_seconds = 0.001
 
             def get_model_with_action_tool(self, contract):
                 return SlowModel()
@@ -415,11 +477,15 @@ class TestBaseRoleAccept:
         )
 
         assert command.command.action_type == "abstain"
-        assert len(logger.records) == 1
+        assert len(logger.records) == 2
         assert logger.records[0]["transport"] == "strict"
         assert logger.records[0]["attempt"] == 1
         assert logger.records[0]["retried"] is False
-        assert logger.records[0]["parse_result"] == "timeout_fallback"
+        assert logger.records[0]["parse_result"] == "timeout_retry"
+        assert logger.records[1]["transport"] == "json"
+        assert logger.records[1]["attempt"] == 2
+        assert logger.records[1]["retried"] is True
+        assert logger.records[1]["parse_result"] == "timeout_fallback"
 
     @pytest.mark.asyncio
     async def test_accept_command_records_commit_through_applier(self):

@@ -37,6 +37,10 @@ _VOTE_CONTRACT = PipelineActionContract(
 )
 
 
+class _ActionTransportTimeout(RuntimeError):
+    """Signals that the primary action transport should use its fallback."""
+
+
 class BaseRole:
     """Base class for all Werewolf roles. Handles LLM interaction for speech and voting."""
 
@@ -336,12 +340,26 @@ class BaseRole:
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
+        supports_strict = getattr(
+            self.llm_client, "supports_strict_actions", True,
+        )
+        if supports_strict is False:
+            try:
+                return await self._request_action_with_transport(
+                    state, request, messages, self._invoke_json_action,
+                    conversation_log, "json", 1,
+                )
+            except _ActionTransportTimeout:
+                return await self._request_action_with_transport(
+                    state, request, messages, self._invoke_json_action,
+                    conversation_log, "json", 2,
+                )
         try:
             return await self._request_action_with_transport(
                 state, request, messages, self._invoke_strict_action,
                 conversation_log, "strict", 1,
             )
-        except StrictCapabilityError:
+        except (StrictCapabilityError, _ActionTransportTimeout):
             return await self._request_action_with_transport(
                 state, request, messages, self._invoke_json_action,
                 conversation_log, "json", 2,
@@ -372,30 +390,39 @@ class BaseRole:
                 parse_result=parse_result,
             )
 
-    def _action_timeout_seconds(self) -> float:
-        value = getattr(self.llm_client, "action_timeout_seconds", 45.0)
-        return float(value) if isinstance(value, (int, float)) and value > 0 else 45.0
+    def _action_timeout_seconds(self, *, retried: bool) -> float:
+        attribute = (
+            "action_retry_timeout_seconds" if retried
+            else "action_timeout_seconds"
+        )
+        fallback = 60.0 if retried else 90.0
+        value = getattr(self.llm_client, attribute, fallback)
+        return float(value) if isinstance(value, (int, float)) and value > 0 else fallback
 
     async def _request_action_with_transport(
         self, state, request, messages, invoke, conversation_log: ConversationLog,
         transport: str, first_attempt: int,
     ) -> AcceptedAction:
         active_messages = messages
-        for attempt in range(2):
-            attempt_number = first_attempt + attempt
+        for attempt_number in range(first_attempt, 3):
             prompt_chars = sum(len(message.content) for message in active_messages)
             started = time.monotonic()
             try:
                 command = await asyncio.wait_for(
-                    invoke(active_messages, request), timeout=self._action_timeout_seconds(),
+                    invoke(active_messages, request),
+                    timeout=self._action_timeout_seconds(retried=attempt_number > 1),
                 )
                 accepted = self._accept_command(state, request, command)
             except asyncio.TimeoutError:
+                should_retry = attempt_number == 1
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
-                    retried=attempt_number > 1, parse_result="timeout_fallback",
+                    retried=attempt_number > 1,
+                    parse_result="timeout_retry" if should_retry else "timeout_fallback",
                 )
+                if should_retry:
+                    raise _ActionTransportTimeout from None
                 fallback = ActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None, reasoning="timeout fallback",
@@ -417,9 +444,9 @@ class BaseRole:
                 logger.warning(
                     f"Seat {self.seat}: action validation failed for "
                     f"contract={request.contract.contract_id} "
-                    f"(attempt {attempt + 1}/2): {error}"
+                    f"(attempt {attempt_number}/2): {error}"
                 )
-                if attempt == 1:
+                if attempt_number == 2:
                     fallback = ActionCommand(
                         action_type=request.contract.fallback_action_type,
                         target_seat=None,
