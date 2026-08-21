@@ -106,6 +106,7 @@ def resolve_model_config(
             config.base_url, config.strict_base_url,
         ),
         action_timeout_seconds=env_config.action_timeout_seconds,
+        action_retry_timeout_seconds=env_config.action_retry_timeout_seconds,
     )
     snapshot = [{
         "config_id": config.id,

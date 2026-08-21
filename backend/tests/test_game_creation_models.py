@@ -71,6 +71,8 @@ def test_unknown_config_id_raises(tmp_path, monkeypatch):
 def test_configured_model_uses_stored_fields_and_env_fallbacks(tmp_path, monkeypatch):
     monkeypatch.setattr(game_service.app_config.llm, "max_tokens", 999)
     monkeypatch.setattr(game_service.app_config.llm, "strict_base_url", "http://env.test/beta")
+    monkeypatch.setattr(game_service.app_config.llm, "action_timeout_seconds", 91.0)
+    monkeypatch.setattr(game_service.app_config.llm, "action_retry_timeout_seconds", 61.0)
     crypto = ModelKeyCrypto()
     cfg, _ = _store_with(
         tmp_path, monkeypatch,
@@ -88,6 +90,8 @@ def test_configured_model_uses_stored_fields_and_env_fallbacks(tmp_path, monkeyp
     assert client_config.temperature == 0.5
     assert client_config.max_tokens == 999
     assert client_config.strict_base_url == "http://cfg.test/strict"
+    assert client_config.action_timeout_seconds == 91.0
+    assert client_config.action_retry_timeout_seconds == 61.0
     assert snapshot == [{
         "config_id": cfg.id, "name": "DeepSeek Pro",
         "model_id": "cfg-model", "base_url": "https://cfg.test/v1",
