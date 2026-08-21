@@ -41,6 +41,7 @@ class LLMClientConfig:
     temperature: float
     max_tokens: int
     strict_base_url: str
+    action_max_tokens: int = 2048
     action_timeout_seconds: float = 90.0
     action_retry_timeout_seconds: float = 60.0
 
@@ -55,6 +56,7 @@ def env_default_client_config() -> LLMClientConfig:
         temperature=llm_cfg.temperature,
         max_tokens=llm_cfg.max_tokens,
         strict_base_url=llm_cfg.strict_base_url,
+        action_max_tokens=getattr(llm_cfg, "action_max_tokens", 2048),
         action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 90.0),
         action_retry_timeout_seconds=getattr(
             llm_cfg, "action_retry_timeout_seconds", 60.0,
@@ -83,6 +85,7 @@ class LLMClient:
             temperature if temperature is not None else self._config.temperature
         )
         self.max_tokens = self._config.max_tokens
+        self.action_max_tokens = self._config.action_max_tokens
         self.action_timeout_seconds = self._config.action_timeout_seconds
         self.action_retry_timeout_seconds = self._config.action_retry_timeout_seconds
 
@@ -103,6 +106,17 @@ class LLMClient:
 
     def get_model(self) -> BaseChatModel:
         return self._build()
+
+    def get_action_model(self) -> BaseChatModel:
+        """Return a JSON action model with enough output budget to finish."""
+        return ChatOpenAI(
+            model=self.model_name,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            temperature=self.temperature,
+            max_tokens=self.action_max_tokens,
+            timeout=self.action_timeout_seconds,
+        )
 
     def get_model_with_temperature(self, temperature: float) -> BaseChatModel:
         return ChatOpenAI(
@@ -159,7 +173,7 @@ class LLMClient:
             api_key=self._config.api_key,
             base_url=self._config.strict_base_url,
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_tokens=self.action_max_tokens,
             timeout=self.action_timeout_seconds,
         )
         tool = {

@@ -43,6 +43,7 @@ class LLMConfig:
 
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.2"))
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "768"))
+    action_max_tokens: int = int(os.getenv("LLM_ACTION_MAX_TOKENS", "2048"))
     action_timeout_seconds: float = float(os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "90"))
     action_retry_timeout_seconds: float = float(
         os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "60")
