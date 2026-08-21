@@ -1554,6 +1554,23 @@ class TestReconstruction:
         assert set(state.players) == {3, 4, 5}
         assert all(player.role == "?" for player in state.players.values())
 
+    def test_reconstruct_state_ignores_records_without_discoverable_seats(
+        self, tmp_path, monkeypatch,
+    ):
+        self._write_log(tmp_path, "empty-fallback", [
+            {"operation": "phase_change", "data": {}, "seat": None},
+        ])
+        monkeypatch.chdir(str(tmp_path))
+        service = GameService(WSManager(), EventBus())
+
+        state = service._reconstruct_state("empty-fallback", {
+            "phase": "game_over", "round_number": 1, "player_count": 0,
+            "config": {"role_counts": {"wolf-killer-villager": 0}},
+        })
+
+        assert state is not None
+        assert state.players == {}
+
     def test_load_persisted_games_skips_running_games(self, monkeypatch):
         service = GameService(WSManager(), EventBus())
         service._manifest = MagicMock()
