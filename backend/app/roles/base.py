@@ -20,6 +20,7 @@ from app.models.pipeline import (
     SchedulePoint,
 )
 from langchain_core.messages import SystemMessage, HumanMessage
+from openai import APITimeoutError
 
 if TYPE_CHECKING:
     from app.agents.prompt_builder import PromptBuilder
@@ -350,8 +351,11 @@ class BaseRole:
                     conversation_log, "json", 1,
                 )
             except _ActionTransportTimeout:
+                retry_messages = self._build_vote_retry_messages(
+                    state, conversation_log,
+                )
                 return await self._request_action_with_transport(
-                    state, request, messages, self._invoke_json_action,
+                    state, request, retry_messages, self._invoke_json_action,
                     conversation_log, "json", 2,
                 )
         try:
@@ -359,11 +363,30 @@ class BaseRole:
                 state, request, messages, self._invoke_strict_action,
                 conversation_log, "strict", 1,
             )
-        except (StrictCapabilityError, _ActionTransportTimeout):
+        except _ActionTransportTimeout:
+            retry_messages = self._build_vote_retry_messages(
+                state, conversation_log,
+            )
+            return await self._request_action_with_transport(
+                state, request, retry_messages, self._invoke_json_action,
+                conversation_log, "json", 2,
+            )
+        except StrictCapabilityError:
             return await self._request_action_with_transport(
                 state, request, messages, self._invoke_json_action,
                 conversation_log, "json", 2,
             )
+
+    def _build_vote_retry_messages(
+        self, state: GameState, conversation_log: ConversationLog,
+    ) -> list:
+        prompt = self.prompt_builder.build_vote_retry_prompt(
+            state, self.seat, self.role_name, conversation_log,
+        )
+        return [
+            SystemMessage(content=self.prompt_builder.get_system_prompt()),
+            HumanMessage(content=prompt),
+        ]
 
     def _build_contract_action_prompt(
         self,
@@ -395,7 +418,7 @@ class BaseRole:
             "action_retry_timeout_seconds" if retried
             else "action_timeout_seconds"
         )
-        fallback = 60.0 if retried else 90.0
+        fallback = 90.0
         value = getattr(self.llm_client, attribute, fallback)
         return float(value) if isinstance(value, (int, float)) and value > 0 else fallback
 
@@ -413,7 +436,7 @@ class BaseRole:
                     timeout=self._action_timeout_seconds(retried=attempt_number > 1),
                 )
                 accepted = self._accept_command(state, request, command)
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, APITimeoutError):
                 should_retry = attempt_number == 1
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,

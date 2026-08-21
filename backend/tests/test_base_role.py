@@ -1,8 +1,10 @@
 import asyncio
 
 import pytest
+import httpx
 from unittest.mock import AsyncMock, MagicMock
 from langchain_core.messages import AIMessage
+from openai import APITimeoutError
 
 from app.agents.prompt_builder import PromptBuilder
 from app.core.action_validator import ActionValidationError
@@ -477,6 +479,55 @@ class TestBaseRoleAccept:
         assert client.model.calls == 2
 
     @pytest.mark.asyncio
+    async def test_timeout_retry_uses_compact_vote_messages(self):
+        class RetryModel:
+            def __init__(self):
+                self.messages = []
+
+            async def ainvoke(self, messages):
+                self.messages.append(messages)
+                if len(self.messages) == 1:
+                    await asyncio.sleep(0.05)
+                return AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+                ))
+
+        class RetryClient:
+            supports_strict_actions = False
+            action_timeout_seconds = 0.001
+            action_retry_timeout_seconds = 0.1
+
+            def __init__(self):
+                self.model = RetryModel()
+
+            def get_action_model(self):
+                return self.model
+
+        client = RetryClient()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+        conversation_log = ConversationLog()
+        for index in range(20):
+            conversation_log.add_public_speech(
+                2, "wolf-killer-villager", f"old-history-{index}-" + "x" * 300,
+                0, "speech",
+            )
+        conversation_log.add_public_speech(
+            2, "wolf-killer-villager", "current-round-evidence", 1, "speech",
+        )
+
+        accepted = await role.request_action(
+            state, conversation_log, self._vote_request(state),
+        )
+
+        first_chars = sum(len(message.content) for message in client.model.messages[0])
+        retry_chars = sum(len(message.content) for message in client.model.messages[1])
+        assert accepted.command.target_seat == 2
+        assert "current-round-evidence" in client.model.messages[1][1].content
+        assert "old-history-0" not in client.model.messages[1][1].content
+        assert retry_chars < first_chars * 0.75
+
+    @pytest.mark.asyncio
     async def test_strict_timeout_retries_json_and_commits_only_once(self):
         class SlowStrictModel:
             def __init__(self):
@@ -592,6 +643,23 @@ class TestBaseRoleAccept:
         assert logger.records[1]["attempt"] == 2
         assert logger.records[1]["retried"] is True
         assert logger.records[1]["parse_result"] == "timeout_fallback"
+
+    @pytest.mark.asyncio
+    async def test_provider_timeouts_retry_then_use_safe_fallback(self):
+        timeout = APITimeoutError(request=httpx.Request("POST", "https://model.test"))
+        client = ClientStub(
+            plain=[timeout, timeout], supports_strict_actions=False,
+        )
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.action_type == "abstain"
+        assert accepted.command.reasoning == "timeout fallback"
+        assert len(client.plain_model.messages) == 2
 
     @pytest.mark.asyncio
     async def test_accept_command_records_commit_through_applier(self):
