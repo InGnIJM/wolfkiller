@@ -876,6 +876,47 @@ async def _run_discussion_game(tmp_path, targets: dict[int, int | None], seats: 
 
 
 @pytest.mark.asyncio
+async def test_staged_night_reuses_persisted_wolf_random_hint(tmp_path) -> None:
+    class HintDirector(_TargetDirector):
+        def __init__(self):
+            super().__init__({1: None, 2: None})
+            self.random_hints: list[int | None] = []
+
+        def wolf_discussion_turn(
+            self, state, seat, history, briefing=NightBriefing(), random_hint=None,
+        ):
+            self.random_hints.append(random_hint)
+            return super().wolf_discussion_turn(
+                state, seat, history, briefing, random_hint,
+            )
+
+    point = PointResult((), (), (), "d")
+    director = HintDirector()
+    engine = GameEngine(
+        "persisted-hint", pipeline_scheduler=ScheduleStub(point),
+        director=director, data_dir=str(tmp_path),
+    )
+    engine.state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+        2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT)
+    engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(
+        engine.state.round_number, 3, (), (), (point,), wolf_random_hint=4,
+    )
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+
+    await engine._execute_staged_night()
+
+    assert director.random_hints == [4, 4]
+
+
+@pytest.mark.asyncio
 async def test_staged_night_ends_discussion_when_wolves_unanimous(tmp_path) -> None:
     seats = {
         1: ("wolf-killer-werewolf", "werewolf"),

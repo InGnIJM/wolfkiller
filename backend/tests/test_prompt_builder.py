@@ -429,6 +429,20 @@ class TestPromptBuilderHelpers:
         assert PromptBuilder._format_thoughts(log, 1, 1).endswith("...")
         assert "independent judgment" in PromptBuilder._decision_gate()
 
+    def test_history_helpers_render_previous_speaker_and_full_thought_record(self):
+        log = make_log()
+
+        conversations = PromptBuilder()._format_conversations(
+            log, 1, 1, "wolf-killer-werewolf", speaking_order=(2, 1),
+        )
+        assert PromptBuilder._previous_speaker((2, 1), 1) == 2
+        assert "2" in conversations
+
+        log.add_thought(1, "wolf-killer-werewolf", "bounded thought", 2, "speech")
+        thoughts = PromptBuilder._format_thoughts(log, 2, 1)
+        assert "bounded thought" in thoughts
+        assert "speech" in thoughts
+
     def test_public_role_rules_skip_zero_count_roles(self):
         state = make_state()
         state.config = GameConfig(role_counts={

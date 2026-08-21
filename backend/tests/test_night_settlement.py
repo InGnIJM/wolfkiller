@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.night_settlement import settle
+from app.core.night_settlement import _protection_source, settle
 
 
 def test_guard_and_witch_saving_the_same_wolf_target_causes_double_save_death() -> None:
@@ -52,6 +52,8 @@ def test_double_save_penetrates_when_wolf_kill_is_not_the_first_damage() -> None
 
 
 def test_protection_source_validation_rejects_invalid_records() -> None:
+    with pytest.raises(ValueError, match="pending effect"):
+        _protection_source(object())
     with pytest.raises(ValueError, match="pending effect"):
         settle((), (object(),), {1}, {1: True}, 1)
     with pytest.raises(ValueError, match="protection source"):
