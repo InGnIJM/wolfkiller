@@ -2325,15 +2325,15 @@ class TestGameEngine:
         assert started == {1, 2}
         assert [item.voter_seat for item in engine.state.votes] == [1, 2]
 
-    def test_vote_casting_runtime_defaults_to_five_workers_and_180_seconds(self):
+    def test_vote_casting_runtime_defaults_to_five_workers_and_400_seconds(self):
         engine = GameEngine(game_id="vote-runtime-defaults")
 
         assert engine._vote_concurrency == 5
-        assert engine._vote_phase_timeout_seconds == 180.0
+        assert engine._vote_phase_timeout_seconds == 400.0
 
     @pytest.mark.parametrize(
         ("concurrency", "phase_timeout"),
-        [(0, 0), (-1, -1.0), (True, False), ("5", "180")],
+        [(0, 0), (-1, -1.0), (True, False), ("5", "400")],
     )
     def test_vote_casting_invalid_runtime_limits_fall_back_to_safe_defaults(
         self, monkeypatch, concurrency, phase_timeout,
@@ -2349,7 +2349,7 @@ class TestGameEngine:
         engine = GameEngine(game_id="invalid-vote-runtime")
 
         assert engine._vote_concurrency == 5
-        assert engine._vote_phase_timeout_seconds == 180.0
+        assert engine._vote_phase_timeout_seconds == 400.0
 
     @pytest.mark.asyncio
     async def test_vote_casting_limits_concurrency_to_five_and_keeps_seat_order(self):

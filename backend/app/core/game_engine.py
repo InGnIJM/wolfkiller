@@ -200,7 +200,7 @@ class GameEngine:
         self._vote_phase_timeout_seconds = (
             float(vote_phase_timeout)
             if type(vote_phase_timeout) in (int, float) and vote_phase_timeout > 0
-            else 180.0
+            else 400.0
         )
         self._running = False
         self._paused = False
