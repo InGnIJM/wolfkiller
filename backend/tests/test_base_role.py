@@ -410,6 +410,37 @@ class TestBaseRoleAccept:
         assert client.strict_model.messages == []
 
     @pytest.mark.asyncio
+    async def test_json_action_prefers_dedicated_action_model(self):
+        class ActionClient:
+            supports_strict_actions = False
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            def __init__(self):
+                self.plain = ModelStub([RuntimeError("plain model must not run")])
+                self.action = ModelStub([AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+                ))])
+
+            def get_model(self):
+                return self.plain
+
+            def get_action_model(self):
+                return self.action
+
+        client = ActionClient()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert len(client.action.messages) == 1
+        assert client.plain.messages == []
+
+    @pytest.mark.asyncio
     async def test_primary_json_timeout_retries_once_with_retry_timeout(self):
         class RetryModel:
             def __init__(self):

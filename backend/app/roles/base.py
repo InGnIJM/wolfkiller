@@ -554,7 +554,12 @@ class BaseRole:
         return self.output_parser.parse_strict_action_response(response, request.contract)
 
     async def _invoke_json_action(self, messages, request):
-        response = await self.llm_client.get_model().ainvoke(messages)
+        action_model = getattr(type(self.llm_client), "get_action_model", None)
+        model = (
+            self.llm_client.get_action_model()
+            if callable(action_model) else self.llm_client.get_model()
+        )
+        response = await model.ainvoke(messages)
         content = response.content if hasattr(response, "content") else str(response)
         if not isinstance(content, str):
             raise ActionValidationError("JSON action response must be text")
