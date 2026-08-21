@@ -11,4 +11,5 @@ node_modules/
 
 # Local / temp tooling state
 .superpowers/
+.worktrees/
 backend/scripts/
