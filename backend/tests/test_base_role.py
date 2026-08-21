@@ -477,6 +477,81 @@ class TestBaseRoleAccept:
         assert client.model.calls == 2
 
     @pytest.mark.asyncio
+    async def test_strict_timeout_retries_json_and_commits_only_once(self):
+        class SlowStrictModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                await asyncio.sleep(0.05)
+
+        class StrictThenJsonClient:
+            supports_strict_actions = True
+            action_timeout_seconds = 0.001
+            action_retry_timeout_seconds = 0.1
+
+            def __init__(self):
+                self.strict = SlowStrictModel()
+                self.action = ModelStub([AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+                ))])
+
+            def get_model_with_action_tool(self, contract):
+                return self.strict
+
+            def get_action_model(self):
+                return self.action
+
+        client = StrictThenJsonClient()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert client.strict.calls == 1
+        assert len(client.action.messages) == 1
+        assert state._pipeline_runtime.revision == 1
+        assert len(state._pipeline_runtime.commits) == 1
+
+    @pytest.mark.asyncio
+    async def test_json_action_cancellation_propagates_without_commit(self):
+        started = asyncio.Event()
+        never = asyncio.Event()
+
+        class CancellableModel:
+            async def ainvoke(self, messages):
+                started.set()
+                await never.wait()
+
+        class CancellableClient:
+            supports_strict_actions = False
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            def get_action_model(self):
+                return CancellableModel()
+
+        role = BaseRole(
+            1, "wolf-killer-villager", PromptBuilder(), CancellableClient(),
+        )
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+        task = asyncio.create_task(role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        ))
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        runtime = getattr(state, "_pipeline_runtime", None)
+        assert runtime is None or runtime.revision == 0
+
+    @pytest.mark.asyncio
     async def test_vote_timeout_records_safe_non_secret_telemetry(self):
         class TelemetryLogger:
             def __init__(self):
