@@ -43,7 +43,10 @@ class LLMConfig:
 
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.2"))
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "768"))
-    action_timeout_seconds: float = float(os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "45"))
+    action_timeout_seconds: float = float(os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "90"))
+    action_retry_timeout_seconds: float = float(
+        os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "60")
+    )
 
 
 class GameConfig:
@@ -54,6 +57,10 @@ class GameConfig:
     num_hunters: int = 1
     speech_timeout_seconds: int = 60
     phase_delay_seconds: float = 0.3
+    vote_concurrency: int = int(os.getenv("VOTE_CONCURRENCY", "5"))
+    vote_phase_timeout_seconds: float = float(
+        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "180")
+    )
 
 
 class AppConfig:

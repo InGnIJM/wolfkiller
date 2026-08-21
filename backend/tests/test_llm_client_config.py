@@ -89,10 +89,35 @@ def test_get_model_uses_explicit_config_kwargs():
 
 def test_get_model_configures_action_timeout():
     with patch("app.agents.llm_client.ChatOpenAI") as mock_chat:
-        client = LLMClient(config=_config(action_timeout_seconds=45))
+        client = LLMClient(config=_config(action_timeout_seconds=90))
         client.get_model()
 
-    assert mock_chat.call_args.kwargs["timeout"] == 45
+    assert mock_chat.call_args.kwargs["timeout"] == 90
+
+
+def test_vote_timeout_defaults_are_90_seconds_then_60_seconds():
+    client = LLMClient(config=_config())
+
+    assert client.action_timeout_seconds == 90.0
+    assert client.action_retry_timeout_seconds == 60.0
+
+
+@pytest.mark.parametrize(
+    ("base_url", "strict_base_url", "expected"),
+    [
+        ("https://api.xiaomimimo.com/v1", "https://api.xiaomimimo.com/v1", False),
+        ("https://api.deepseek.com/v1", "https://api.deepseek.com/beta", True),
+        ("https://proxy.test/v1", "https://proxy.test/strict", True),
+    ],
+)
+def test_strict_actions_require_a_dedicated_endpoint(
+    base_url, strict_base_url, expected,
+):
+    client = LLMClient(config=_config(
+        base_url=base_url, strict_base_url=strict_base_url,
+    ))
+
+    assert client.supports_strict_actions is expected
 
 
 def test_model_and_temperature_params_override_config():

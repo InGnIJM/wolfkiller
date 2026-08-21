@@ -41,7 +41,8 @@ class LLMClientConfig:
     temperature: float
     max_tokens: int
     strict_base_url: str
-    action_timeout_seconds: float = 45.0
+    action_timeout_seconds: float = 90.0
+    action_retry_timeout_seconds: float = 60.0
 
 
 def env_default_client_config() -> LLMClientConfig:
@@ -54,7 +55,10 @@ def env_default_client_config() -> LLMClientConfig:
         temperature=llm_cfg.temperature,
         max_tokens=llm_cfg.max_tokens,
         strict_base_url=llm_cfg.strict_base_url,
-        action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 45.0),
+        action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 90.0),
+        action_retry_timeout_seconds=getattr(
+            llm_cfg, "action_retry_timeout_seconds", 60.0,
+        ),
     )
 
 
@@ -80,6 +84,12 @@ class LLMClient:
         )
         self.max_tokens = self._config.max_tokens
         self.action_timeout_seconds = self._config.action_timeout_seconds
+        self.action_retry_timeout_seconds = self._config.action_retry_timeout_seconds
+
+    @property
+    def supports_strict_actions(self) -> bool:
+        """Whether this provider exposes a distinct strict-action endpoint."""
+        return self._config.strict_base_url.rstrip("/") != self._config.base_url.rstrip("/")
 
     def _build(self) -> ChatOpenAI:
         return ChatOpenAI(
