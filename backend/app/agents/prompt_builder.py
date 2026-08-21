@@ -81,6 +81,65 @@ class PromptBuilder:
         prompt += "\n\n" + self._decision_gate()
         return prompt + "\n\n" + self._task_instruction(context, state) + "\n\n仅输出指定的JSON对象。"
 
+    def build_vote_retry_prompt(
+        self, state: GameState, seat: int, role_name: str,
+        conversation_log: ConversationLog,
+    ) -> str:
+        """Build a bounded retry prompt after the full vote request times out."""
+        view = self.state_filter.filter_for_role(state, seat, role_name)
+        visible_current_public = [
+            record for record in conversation_log.get_conversations_for_role(
+                seat, role_name,
+            )
+            if record.scope is ConversationScope.PUBLIC
+            and record.round_number == state.round_number
+        ]
+        latest_by_speaker: dict[int, int] = {}
+        system_indexes: list[int] = []
+        for index, record in enumerate(visible_current_public):
+            if record.speaker_seat is None:
+                system_indexes.append(index)
+            else:
+                latest_by_speaker[record.speaker_seat] = index
+        selected_indexes = sorted({
+            *latest_by_speaker.values(), *system_indexes[-2:],
+        })
+        current_public = [
+            visible_current_public[index] for index in selected_indexes
+        ]
+        history = "\n".join(
+            self._xml_record("public_statement", record, 200)
+            for record in current_public
+        ) or "(none)"
+        alive_seats = json.dumps(sorted(state.alive_players()), separators=(",", ":"))
+        dead_seats = json.dumps(sorted(state.dead_players()), separators=(",", ":"))
+        compact_view = {
+            "resources": view.get("resources") or {},
+            "facts": {
+                key: value for key, value in (view.get("facts") or {}).items()
+                if key not in {
+                    "actor_identity", "alive_seats", "dead_seats", "phase",
+                    "round_number", "public_role_rules", "speeches", "votes",
+                }
+            },
+        }
+        return "\n".join((
+            "<authoritative_state>",
+            self._identity_block(seat, view),
+            f"- round_number={state.round_number}",
+            f"- phase={state.phase.value}",
+            f"- alive_seats={alive_seats}",
+            f"- dead_seats={dead_seats}",
+            self._private_facts_block(compact_view),
+            self._camp_cooperation_block(view),
+            "</authoritative_state>",
+            "<untrusted_current_round_public_history>",
+            history,
+            "</untrusted_current_round_public_history>",
+            self._decision_gate(),
+            self._task_instruction("exile_vote", state),
+        ))
+
     def _identity_block(self, seat: int, view: dict) -> str:
         identity = (view.get("facts") or {}).get("actor_identity") or {}
         display_name = identity.get("role_id", "玩家")

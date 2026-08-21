@@ -313,6 +313,70 @@ class TestPromptBuilder:
         }
         assert "弃权示例" in prompt
 
+    def test_compact_vote_retry_keeps_decision_facts_and_drops_bulk_history(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.phase = GamePhase.VOTE_CASTING
+        log = ConversationLog()
+        log.add_public_speech(
+            4, "wolf-killer-villager", "current-round-evidence", 1, "speech",
+        )
+        log.add_public_speech(
+            5, "wolf-killer-villager", "old-round-history", 0, "speech",
+        )
+        log.add_werewolf_channel("private-night-plan", 1, 2, "wolf-killer-werewolf")
+        log.add_thought(1, "wolf-killer-werewolf", "private-thought", 1, "speech")
+        state.speeches = [SpeechRecord(5, "state-bulk-history", 0)]
+        state.votes = [VoteAction(5, 4, "state-old-vote")]
+
+        full = builder.build_vote_prompt(
+            state, 1, "wolf-killer-werewolf", log, "exile_vote",
+        )
+        compact = builder.build_vote_retry_prompt(
+            state, 1, "wolf-killer-werewolf", log,
+        )
+
+        assert "current-round-evidence" in compact
+        assert "old-round-history" not in compact
+        assert "private-night-plan" not in compact
+        assert "private-thought" not in compact
+        assert "state-bulk-history" not in compact
+        assert "state-old-vote" not in compact
+        assert "alive_seats" in compact
+        assert '"action_type":"vote"' in compact
+        assert len(compact) < len(full) * 0.75
+
+    def test_compact_vote_retry_keeps_latest_statement_per_seat_and_two_system_records(self):
+        assignments = {
+            1: "wolf-killer-werewolf", 2: "wolf-killer-werewolf",
+            3: "wolf-killer-werewolf", 4: "wolf-killer-villager",
+            5: "wolf-killer-villager", 6: "wolf-killer-villager",
+            7: "wolf-killer-seer", 8: "wolf-killer-witch",
+            9: "wolf-killer-hunter", 10: "wolf-killer-guard",
+        }
+        state = make_state(assignments)
+        state.phase = GamePhase.VOTE_CASTING
+        log = ConversationLog()
+        log.add_public_speech(1, assignments[1], "seat-1-old", 1, "speech")
+        for seat, role_name in assignments.items():
+            log.add_public_speech(
+                seat, role_name, f"seat-{seat}-latest", 1, "speech",
+            )
+        log.add_system_message("system-old", 1)
+        log.add_system_message("system-middle", 1)
+        log.add_system_message("system-new", 1)
+
+        compact = PromptBuilder().build_vote_retry_prompt(
+            state, 1, assignments[1], log,
+        )
+
+        assert "seat-1-old" not in compact
+        for seat in assignments:
+            assert f"seat-{seat}-latest" in compact
+        assert "system-old" not in compact
+        assert "system-middle" in compact
+        assert "system-new" in compact
+
     def test_tiebreak_vote_prompt_mentions_candidates_and_resume(self):
         builder = PromptBuilder()
         state = make_state()
