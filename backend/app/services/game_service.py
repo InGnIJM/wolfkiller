@@ -102,6 +102,7 @@ def resolve_model_config(
             else env_config.temperature
         ),
         max_tokens=env_config.max_tokens,
+        action_max_tokens=env_config.action_max_tokens,
         strict_base_url=derive_strict_base_url(
             config.base_url, config.strict_base_url,
         ),
