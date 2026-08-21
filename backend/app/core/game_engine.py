@@ -20,7 +20,7 @@ from app.core.night_flow import WolfVote, build_briefing
 from app.core.conversation_log import ConversationLog
 from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
-from app.config import PipelineMode
+from app.config import PipelineMode, config as app_config
 from app.core.effect_applier import CommitResult
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.core.role_pipeline import PipelineResult, RolePipeline
@@ -191,6 +191,8 @@ class GameEngine:
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self.state = GameState(game_id=self.game_id, config=self.config)
         self._phase_delay: float = 2.0
+        self._vote_concurrency = app_config.game.vote_concurrency
+        self._vote_phase_timeout_seconds = app_config.game.vote_phase_timeout_seconds
         self._running = False
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
@@ -775,7 +777,24 @@ class GameEngine:
         if not self.state.voted_seats:
             self.state.votes.clear()
         seats = [seat for seat in self.state.alive_players() if seat not in self.state.voted_seats]
-        votes = await asyncio.gather(*(self.vote(seat) for seat in seats))
+        semaphore = asyncio.Semaphore(self._vote_concurrency)
+        completed: dict[int, VoteAction | None] = {}
+
+        async def collect_vote(seat: int) -> None:
+            async with semaphore:
+                completed[seat] = await self.vote(seat)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(collect_vote(seat) for seat in seats)),
+                timeout=self._vote_phase_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Vote phase timed out after %.1fs; preserving %s/%s completed votes",
+                self._vote_phase_timeout_seconds, len(completed), len(seats),
+            )
+        votes = [completed.get(seat) for seat in seats]
         for seat, vote in zip(seats, votes):
             if vote:
                 self.state.votes.append(vote)
