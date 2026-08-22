@@ -43,7 +43,7 @@ class LLMClientConfig:
     strict_base_url: str
     action_max_tokens: int = 2048
     action_timeout_seconds: float = 90.0
-    action_retry_timeout_seconds: float = 90.0
+    action_retry_timeout_seconds: float = 120.0
 
 
 def env_default_client_config() -> LLMClientConfig:
@@ -59,7 +59,7 @@ def env_default_client_config() -> LLMClientConfig:
         action_max_tokens=getattr(llm_cfg, "action_max_tokens", 2048),
         action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 90.0),
         action_retry_timeout_seconds=getattr(
-            llm_cfg, "action_retry_timeout_seconds", 90.0,
+            llm_cfg, "action_retry_timeout_seconds", 120.0,
         ),
     )
 
@@ -115,7 +115,9 @@ class LLMClient:
             base_url=self._config.base_url,
             temperature=self.temperature,
             max_tokens=self.action_max_tokens,
-            timeout=self.action_timeout_seconds,
+            timeout=max(
+                self.action_timeout_seconds, self.action_retry_timeout_seconds,
+            ) + 5.0,
         )
 
     def get_model_with_temperature(self, temperature: float) -> BaseChatModel:
@@ -174,7 +176,9 @@ class LLMClient:
             base_url=self._config.strict_base_url,
             temperature=self.temperature,
             max_tokens=self.action_max_tokens,
-            timeout=self.action_timeout_seconds,
+            timeout=max(
+                self.action_timeout_seconds, self.action_retry_timeout_seconds,
+            ) + 5.0,
         )
         tool = {
             "type": "function",
