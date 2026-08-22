@@ -93,6 +93,32 @@ class TestWSManager:
         # Should remove dead connection
         assert mock_ws not in mgr._connections.get("game-1", [])
 
+    @pytest.mark.asyncio
+    async def test_close_game_closes_sockets_and_drops_entry(self):
+        mgr = WSManager()
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        await mgr.connect("game-1", ws)
+
+        await mgr.close_game("game-1")
+
+        ws.close.assert_awaited_once()
+        assert "game-1" not in mgr._connections
+
+    @pytest.mark.asyncio
+    async def test_close_game_ignores_missing_and_close_errors(self):
+        mgr = WSManager()
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock(side_effect=RuntimeError("already closed"))
+        await mgr.connect("game-1", ws)
+
+        await mgr.close_game("missing")
+        await mgr.close_game("game-1")
+
+        assert "game-1" not in mgr._connections
+
 
 class TestWSHandler:
     @pytest.mark.asyncio

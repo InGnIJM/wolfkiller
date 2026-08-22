@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
@@ -532,6 +533,29 @@ class GameService:
         if game_id not in self._games:
             raise KeyError(game_id)
         self._manifest.update_game(game_id, name=name)
+
+    async def delete_game(self, game_id: str) -> None:
+        if game_id not in self._games:
+            raise KeyError(game_id)
+        engine = self._engines.get(game_id)
+        if engine is not None:
+            await engine.stop()
+        task = self._tasks.get(game_id)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.warning("Engine task did not stop cleanly for %s", game_id)
+        await self.ws_manager.close_game(game_id)
+        game_dir = os.path.join(self.data_dir, "games", game_id)
+        if os.path.exists(game_dir):
+            shutil.rmtree(game_dir)
+        self._games.pop(game_id, None)
+        self._engines.pop(game_id, None)
+        self._tasks.pop(game_id, None)
+        self._model_snapshots.pop(game_id, None)
+        self._manifest.remove_game(game_id)
 
     # ── Event Handlers ─────────────────────────────────────────
 

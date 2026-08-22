@@ -38,6 +38,14 @@ class WSManager:
         for ws in dead:
             await self.disconnect(game_id, ws)
 
+    async def close_game(self, game_id: str) -> None:
+        connections = list(self._connections.pop(game_id, []))
+        for ws in connections:
+            try:
+                await ws.close()
+            except Exception:
+                logger.debug("Ignoring WebSocket close error for game %s", game_id)
+
     async def send_to(self, game_id: str, ws: WebSocket, msg_type: str, **payload) -> None:
         message = json.dumps({"type": msg_type, **payload}, ensure_ascii=False)
         try:

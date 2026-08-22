@@ -1256,6 +1256,90 @@ class TestGameDisplayName:
         assert "月" in name and "日" in name
 
 
+class TestDeleteGame:
+    def _seed(self, tmp_path, game_id="game-1", phase=GamePhase.GAME_OVER):
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        game_dir = tmp_path / "games" / game_id
+        game_dir.mkdir(parents=True)
+        (game_dir / "game.log").write_text("{}\n", encoding="utf-8")
+        state = MagicMock()
+        state.phase = phase
+        state.game_id = game_id
+        service._games[game_id] = state
+        service._manifest.add_game(
+            game_id, {"role_counts": {"wolf-killer-villager": 3}}, name="待删",
+        )
+        service._model_snapshots[game_id] = [{"name": "m"}]
+        return service, game_dir
+
+    @pytest.mark.asyncio
+    async def test_delete_completed_game_removes_dir_and_index(self, tmp_path):
+        service, game_dir = self._seed(tmp_path)
+        await service.delete_game("game-1")
+        assert "game-1" not in service.list_games()
+        assert not game_dir.exists()
+        assert service._manifest.get_entry("game-1") is None
+        assert "game-1" not in service._model_snapshots
+
+    @pytest.mark.asyncio
+    async def test_delete_running_game_stops_engine_and_cancels_task(self, tmp_path):
+        service, game_dir = self._seed(tmp_path, phase=GamePhase.NIGHT)
+        engine = MagicMock()
+        engine.stop = AsyncMock()
+        service._engines["game-1"] = engine
+
+        async def hang():
+            await asyncio.sleep(3600)
+
+        task = asyncio.create_task(hang())
+        service._tasks["game-1"] = task
+
+        await service.delete_game("game-1")
+
+        engine.stop.assert_awaited_once()
+        assert task.cancelled() or task.done()
+        assert not game_dir.exists()
+        assert "game-1" not in service._engines
+        assert "game-1" not in service._tasks
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_game_raises_key_error(self, tmp_path):
+        service, _ = self._seed(tmp_path)
+        with pytest.raises(KeyError):
+            await service.delete_game("missing")
+
+    @pytest.mark.asyncio
+    async def test_delete_keeps_memory_when_rmtree_fails(self, tmp_path, monkeypatch):
+        service, game_dir = self._seed(tmp_path)
+        monkeypatch.setattr(
+            "app.services.game_service.shutil.rmtree",
+            lambda path: (_ for _ in ()).throw(OSError("busy")),
+        )
+        with pytest.raises(OSError, match="busy"):
+            await service.delete_game("game-1")
+        assert "game-1" in service._games
+        assert game_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_continues_after_engine_wait_timeout(self, tmp_path, monkeypatch):
+        service, game_dir = self._seed(tmp_path, phase=GamePhase.NIGHT)
+        engine = MagicMock()
+        engine.stop = AsyncMock()
+        service._engines["game-1"] = engine
+        task = MagicMock()
+        task.done.return_value = False
+        service._tasks["game-1"] = task
+
+        async def boom_wait(awaitable, timeout=None):
+            raise asyncio.TimeoutError()
+
+        monkeypatch.setattr(asyncio, "wait_for", boom_wait)
+        await service.delete_game("game-1")
+        task.cancel.assert_called_once()
+        assert not game_dir.exists()
+        assert "game-1" not in service._games
+
+
 class TestPipelineSnapshotVersioning:
     def _registry(self):
         return builtin_registry.freeze()
