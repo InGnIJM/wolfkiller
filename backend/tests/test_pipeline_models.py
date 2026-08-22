@@ -91,6 +91,7 @@ def test_schedule_and_effect_enums_are_complete_and_stable() -> None:
     ]
     assert [kind.value for kind in EffectKind] == [
         "accept_action",
+        "record_vote",
         "consume_resource",
         "set_resource",
         "set_private_data",

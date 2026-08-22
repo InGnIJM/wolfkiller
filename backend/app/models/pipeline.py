@@ -42,6 +42,7 @@ class SchedulePoint(str, Enum):
 
 class EffectKind(str, Enum):
     ACCEPT_ACTION = "accept_action"
+    RECORD_VOTE = "record_vote"
     CONSUME_RESOURCE = "consume_resource"
     SET_RESOURCE = "set_resource"
     SET_PRIVATE_DATA = "set_private_data"
