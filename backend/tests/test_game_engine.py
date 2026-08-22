@@ -2391,7 +2391,7 @@ class TestGameEngine:
     @pytest.mark.asyncio
     async def test_vote_phase_timeout_marks_pending_votes_as_technical_abstentions(self):
         engine = GameEngine(game_id="vote-phase-timeout", event_bus=EventBus())
-        engine._vote_phase_timeout_seconds = 0.01
+        engine._vote_phase_timeout_seconds = 0.1
         engine.state.players = {
             seat: PlayerState(seat, "wolf-killer-villager", "good")
             for seat in (1, 2, 3)
@@ -2412,7 +2412,7 @@ class TestGameEngine:
 
         engine.vote = vote
 
-        await asyncio.wait_for(engine._execute_vote_casting(), timeout=0.2)
+        await asyncio.wait_for(engine._execute_vote_casting(), timeout=1.0)
 
         assert [(item.voter_seat, item.target_seat) for item in engine.state.votes] == [
             (1, 2), (2, None), (3, None),
@@ -2436,7 +2436,9 @@ class TestGameEngine:
 
         await engine._execute_vote_casting()
 
-        assert len(engine.state.votes) == 1
+        assert len(engine.state.votes) == 2
+        assert engine.state.votes[1].target_seat is None
+        assert engine.state.voted_seats == {1, 2}
         assert engine.sm.get_state() is GamePhase.VOTE_RESOLUTION
 
     @pytest.mark.asyncio

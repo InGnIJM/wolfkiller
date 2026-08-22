@@ -23,10 +23,12 @@ from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 from app.config import PipelineMode, config as app_config
 from app.core.effect_applier import CommitResult
+from app.core.vote_service import VoteService
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
+from app.models.vote import CastVoteArgs
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +193,8 @@ class GameEngine:
         self.game_logger = GameLogger(data_dir=data_dir)
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self.state = GameState(game_id=self.game_id, config=self.config)
+        self._vote_service = VoteService(self.state)
+        self._active_vote_window_id: str | None = None
         self._phase_delay: float = 2.0
         vote_concurrency = app_config.game.vote_concurrency
         self._vote_concurrency = (
@@ -249,6 +253,8 @@ class GameEngine:
         self._running = True
         self.sm.reset()
         self.state = GameState(game_id=self.game_id, config=self.config)
+        self._vote_service = VoteService(self.state)
+        self._active_vote_window_id = None
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self._pending_night_completion = None
         self._pending_night_batch = None
@@ -784,9 +790,36 @@ class GameEngine:
     # =================================================================
 
     async def _execute_vote_casting(self) -> None:
+        if self.sm.get_state() is not GamePhase.VOTE_CASTING:
+            raise RuntimeError("vote phase execution requires VOTE_CASTING")
+        self.state.phase = GamePhase.VOTE_CASTING
         if not self.state.voted_seats:
             self.state.votes.clear()
-        seats = [seat for seat in self.state.alive_players() if seat not in self.state.voted_seats]
+        window = self._vote_service.open_window(
+            timeout_seconds=float(self._vote_phase_timeout_seconds),
+        )
+        self._active_vote_window_id = window.window_id
+        existing_receipts = {
+            receipt.voter_seat
+            for receipt in self._vote_service.receipts(window.window_id)
+        }
+        for legacy_vote in tuple(self.state.votes):
+            if (
+                legacy_vote.voter_seat in self.state.voted_seats
+                and legacy_vote.voter_seat not in existing_receipts
+            ):
+                self._vote_service.submit(
+                    window.window_id, legacy_vote.voter_seat,
+                    CastVoteArgs(
+                        action_type=(
+                            "abstain"
+                            if legacy_vote.target_seat is None else "vote"
+                        ),
+                        target_seat=legacy_vote.target_seat,
+                        reasoning=legacy_vote.reasoning[:500],
+                    ),
+                )
+        seats = sorted(self._vote_service.missing_voters(window.window_id))
         semaphore = asyncio.Semaphore(self._vote_concurrency)
         completed: dict[int, VoteAction | None] = {}
 
@@ -799,8 +832,36 @@ class GameEngine:
                     worker_limit=self._vote_concurrency,
                     vote_round=self.state.vote_round,
                 )
-                completed[seat] = await self.vote(seat)
+                vote = await self.vote(seat)
+                received_at = time.monotonic()
+                terminal_seats = {
+                    receipt.voter_seat
+                    for receipt in self._vote_service.receipts(window.window_id)
+                }
+                if seat not in terminal_seats:
+                    if vote is None:
+                        self._vote_service.technical_abstain(
+                            window.window_id, seat,
+                            failure_code="missing_vote_result",
+                        )
+                    else:
+                        self._vote_service.submit(
+                            window.window_id, seat,
+                            CastVoteArgs(
+                                action_type=(
+                                    "abstain" if vote.target_seat is None else "vote"
+                                ),
+                                target_seat=vote.target_seat,
+                                reasoning=vote.reasoning[:500],
+                            ),
+                            received_at=received_at,
+                        )
+                completed[seat] = vote
 
+        window = self._vote_service.arm_window(
+            window.window_id,
+            timeout_seconds=float(self._vote_phase_timeout_seconds),
+        )
         try:
             await asyncio.wait_for(
                 asyncio.gather(*(collect_vote(seat) for seat in seats)),
@@ -820,26 +881,31 @@ class GameEngine:
                 vote_round=self.state.vote_round,
             )
             for seat in missing_seats:
-                completed[seat] = VoteAction(
-                    seat, None, "technical abstain: vote_phase_timeout",
+                self._vote_service.technical_abstain(
+                    window.window_id, seat, failure_code="request_timeout",
+                    timeout_type="phase_deadline",
                 )
                 self.game_logger.log_vote_technical_abstain(
                     self.game_id, self.state.round_number, seat,
                     failure_code="request_timeout", timeout_type="phase_deadline",
-                    vote_round=self.state.vote_round,
+                    window_id=window.window_id, vote_round=self.state.vote_round,
                 )
-        votes = [completed.get(seat) for seat in seats]
-        for seat, vote in zip(seats, votes):
-            if vote:
-                self.state.votes.append(vote)
-                self.state.voted_seats.add(seat)
-                self.game_logger.log_vote(
-                    self.game_id, self.state.round_number, seat, vote.target_seat,
-                    vote_round=self.state.vote_round,
-                )
-                await self.event_bus.publish(
-                    BusEvent.VOTE_CAST, game_id=self.game_id, vote=vote,
-                )
+        receipts = {
+            receipt.voter_seat: receipt
+            for receipt in self._vote_service.receipts(window.window_id)
+        }
+        if set(receipts) != set(window.eligible_voters):
+            raise RuntimeError("vote window has missing terminal receipts")
+        for seat in seats:
+            receipt = receipts[seat]
+            self.game_logger.log_vote(
+                self.game_id, self.state.round_number, seat,
+                receipt.target_seat, vote_round=self.state.vote_round,
+            )
+            await self.event_bus.publish(
+                BusEvent.VOTE_CAST, game_id=self.game_id,
+                vote=VoteAction(seat, receipt.target_seat),
+            )
 
         self.sm.transition(SM_Event.VOTES_COMPLETE)
         await self._broadcast_phase_change()
@@ -1090,24 +1156,44 @@ class GameEngine:
         player = self.state.players.get(seat)
         if role is None or player is None:
             return None
+        if self._active_vote_window_id is None:
+            window = self._vote_service.open_window(
+                timeout_seconds=float(self._vote_phase_timeout_seconds),
+            )
+            self._active_vote_window_id = window.window_id
+        window_id = self._active_vote_window_id
         request = ActionRequest(
             actor_seat=seat,
             role_id=player.role,
             contract=VOTE_CONTRACT,
             phase=GamePhase.VOTE_CASTING,
             round_id=self.state.round_number,
-            idempotency_key=(
-                f"{self.state.round_number}:{GamePhase.VOTE_CASTING.value}:"
-                f"{self.state.vote_round}:{seat}:{VOTE_CONTRACT.contract_id}"
-            ),
+            idempotency_key=self._vote_service.window(window_id).action_key(seat),
         )
         try:
             accepted = await role.request_action(
                 self.state, self.conversation_log, request
             )
+            received_at = time.monotonic()
+            if accepted.technical_failure_code is not None:
+                receipt = self._vote_service.technical_abstain(
+                    window_id, seat,
+                    failure_code=accepted.technical_failure_code,
+                    timeout_type=accepted.timeout_type,
+                )
+            else:
+                receipt = self._vote_service.submit(
+                    window_id, seat,
+                    CastVoteArgs(
+                        action_type=accepted.command.action_type,
+                        target_seat=accepted.command.target_seat,
+                        reasoning=accepted.command.reasoning,
+                    ),
+                    received_at=received_at,
+                )
             return VoteAction(
                 voter_seat=seat,
-                target_seat=accepted.command.target_seat,
+                target_seat=receipt.target_seat,
                 reasoning=accepted.command.reasoning,
             )
         except Exception as e:
@@ -1116,7 +1202,19 @@ class GameEngine:
                 self.game_id, self.state.round_number, seat,
                 failure_code="invoke_error", window_id=request.idempotency_key,
             )
-            return VoteAction(seat, None, "technical abstain: invoke_error")
+            existing = {
+                item.voter_seat: item
+                for item in self._vote_service.receipts(window_id)
+            }.get(seat)
+            if existing is None:
+                receipt = self._vote_service.technical_abstain(
+                    window_id, seat, failure_code="invoke_error",
+                )
+            else:
+                receipt = existing
+            return VoteAction(
+                seat, receipt.target_seat, "technical abstain: invoke_error",
+            )
 
     async def _check_game_over(self) -> bool:
         """Check win conditions. If game is over, handle cleanup and broadcast. Returns True if over."""
@@ -1157,6 +1255,8 @@ class GameEngine:
         return top[0] if len(top) == 1 else None
 
     def _tally_votes(self) -> dict[int, int]:
+        if self._active_vote_window_id is not None:
+            return self._vote_service.tally(self._active_vote_window_id)
         tally: dict[int, int] = {}
         for vote in self.state.votes:
             if vote.target_seat is not None:
@@ -1177,6 +1277,7 @@ class GameEngine:
         self.state.tiebreak_candidates.clear()
         self.state.supplemental_speakers.clear()
         self.state.voted_seats.clear()
+        self._active_vote_window_id = None
 
     # =================================================================
     # Helpers
