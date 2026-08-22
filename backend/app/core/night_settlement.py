@@ -100,6 +100,7 @@ def state_digest(state: object, runtime: object, alive: dict[int, bool]) -> str:
         "pending_protection": runtime.pending_protection, "events": runtime.events,
         "resource_setup_digest": runtime.resource_setup_digest,
         "action_counts": runtime.action_counts,
+        "vote_receipts": runtime.vote_receipts,
     }
     return hashlib.sha256(json.dumps(_jsonable(document), ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()

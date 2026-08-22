@@ -110,6 +110,7 @@ class _Runtime:
     commits: dict[str, CommitResult] = field(default_factory=dict)
     resource_setup_digest: str | None = None
     action_counts: dict[str, dict[str, int]] = field(default_factory=lambda: {"window": {}, "round": {}, "game": {}})
+    vote_receipts: dict[str, Mapping[str, object]] = field(default_factory=dict)
     def clone(self) -> "_Runtime":
         try:
             revision = _integer(self.revision, "runtime revision")
@@ -123,6 +124,7 @@ class _Runtime:
             events = _json_sequence(self.events, "events")
             commits = _commit_map(self.commits)
             counts = clone_action_counts(self.action_counts)
+            vote_receipts = _vote_receipt_map(self.vote_receipts)
         except (AttributeError, TypeError, ValueError) as error:
             raise EffectRejected("invalid pipeline runtime") from error
         marker = self.resource_setup_digest
@@ -130,7 +132,8 @@ class _Runtime:
             try: _utf8(marker, "resource setup digest", token=True)
             except (TypeError, ValueError) as error: raise EffectRejected("invalid pipeline runtime") from error
         return _Runtime(revision, resources, data, statuses, relations, facts,
-                        damage, protection, events, commits, marker, counts)
+                        damage, protection, events, commits, marker, counts,
+                        vote_receipts)
 def _seat(seat: object) -> int:
     try: return _integer(seat, "runtime seat", positive=True)
     except (TypeError, ValueError) as error: raise EffectRejected(str(error)) from error
@@ -181,6 +184,15 @@ def _commit_map(value: object) -> dict[str, CommitResult]:
         if type(key) is not str or type(commit) is not CommitResult or key != commit.action_key: raise EffectRejected("invalid commit ledger")
         result[key] = commit
     return result
+def _vote_receipt_map(value: object) -> dict[str, Mapping[str, object]]:
+    if not isinstance(value, Mapping): raise EffectRejected("invalid vote receipt ledger")
+    result = {}
+    for key, receipt in value.items():
+        if type(key) is not str or not isinstance(receipt, Mapping): raise EffectRejected("invalid vote receipt ledger")
+        copied = _json(receipt, "vote receipt")
+        if not isinstance(copied, Mapping) or copied.get("action_key") != key: raise EffectRejected("invalid vote receipt ledger")
+        result[key] = copied
+    return result
 def _runtime(state: GameState) -> _Runtime:
     value = getattr(state, "_pipeline_runtime", None)
     if value is None: return _Runtime()
@@ -208,6 +220,11 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
     kind = effect.kind
     schemas = {
         EffectKind.ACCEPT_ACTION: frozenset(payload),
+        EffectKind.RECORD_VOTE: frozenset({
+            "window_id", "action_key", "voter_seat", "round_number",
+            "vote_round", "status", "target_seat", "command_digest",
+            "accepted_at", "failure_code", "timeout_type",
+        }),
         EffectKind.CONSUME_RESOURCE: frozenset({"target", "resource", "amount"}),
         EffectKind.SET_RESOURCE: frozenset({"target", "resource", "value"}),
         EffectKind.SET_PRIVATE_DATA: frozenset({"target", "key", "value"}),
@@ -229,6 +246,31 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
         _exact(payload, schemas[kind], "payload")
     if kind is EffectKind.ACCEPT_ACTION:
         if effect.target_seat is not None: raise EffectRejected("accept action cannot have target")
+        return payload
+    if kind is EffectKind.RECORD_VOTE:
+        if payload["action_key"] != effect.source_action_key: raise EffectRejected("vote action key mismatch")
+        _token_field(payload, "status")
+        _token_field(payload, "command_digest")
+        _utf8(payload["window_id"], "window_id")
+        voter = _int_field(payload, "voter_seat", positive=True)
+        if voter not in seats: raise EffectRejected("vote actor does not exist")
+        _int_field(payload, "round_number")
+        _int_field(payload, "vote_round", positive=True)
+        accepted_at = payload["accepted_at"]
+        if type(accepted_at) is not float or accepted_at < 0: raise EffectRejected("invalid vote accepted_at")
+        status = payload["status"]
+        if status not in {"accepted_vote", "voluntary_abstain", "technical_abstain"}: raise EffectRejected("invalid vote status")
+        target = payload["target_seat"]
+        if target is not None:
+            target = _integer(target, "vote target", positive=True)
+            if target not in seats: raise EffectRejected("vote target does not exist")
+        if effect.target_seat != target: raise EffectRejected("vote target does not match target_seat")
+        if (status == "accepted_vote") is (target is None): raise EffectRejected("vote status and target disagree")
+        failure = payload["failure_code"]
+        timeout_type = payload["timeout_type"]
+        if failure is not None: _token_field(payload, "failure_code")
+        if timeout_type is not None: _token_field(payload, "timeout_type")
+        if (status == "technical_abstain") is (failure is None): raise EffectRejected("technical vote failure metadata invalid")
         return payload
     if kind is EffectKind.EMIT_EVENT:
         _token_field(payload, "event_type")
@@ -299,6 +341,8 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
                alive: dict[int, bool], events: list[Mapping[str, object]]) -> None:
     kind = effect.kind
     if kind is EffectKind.ACCEPT_ACTION: return
+    if kind is EffectKind.RECORD_VOTE:
+        runtime.vote_receipts[effect.source_action_key] = MappingProxyType(dict(payload)); return
     if kind is EffectKind.EMIT_EVENT:
         events.append({"event_type": payload["event_type"], "payload": payload["payload"], "visibility": effect.visibility}); return
     target = effect.target_seat; assert target is not None
@@ -379,7 +423,15 @@ class EffectApplier:
         action_key = next(iter(action_keys))
         current = _runtime(state)
         simulated = current.clone()
-        if action_key in current.commits: return current.commits[action_key]
+        if action_key in current.commits:
+            vote_effects = [effect for effect in effects if effect.kind is EffectKind.RECORD_VOTE]
+            existing_vote = current.vote_receipts.get(action_key)
+            if vote_effects:
+                if existing_vote is None: raise EffectRejected("vote receipt missing")
+                if (vote_effects[0].payload.get("command_digest")
+                        != existing_vote.get("command_digest")):
+                    raise EffectRejected("vote_conflict")
+            return current.commits[action_key]
         if resource_setup_digest is not None: simulated.resource_setup_digest = resource_setup_digest
         ordered = tuple(sorted(effects, key=lambda effect: (effect.sort_key, effect.effect_id)))
         ids = [effect.effect_id for effect in ordered]
@@ -404,6 +456,20 @@ class EffectApplier:
         digest = _digest(state, simulated, alive)
         result = CommitResult(action_key, tuple(ids), simulated.revision, tuple(generated_events), digest)
         simulated.commits[action_key] = result
+        vote_payloads = [payload for effect, payload in zip(ordered, (
+            _validate_payload(effect, set(state.players)) for effect in ordered
+        )) if effect.kind is EffectKind.RECORD_VOTE]
+        projected_votes = list(state.votes); projected_voters = set(state.voted_seats)
+        if vote_payloads:
+            if type(state.votes) is not list or type(state.voted_seats) is not set: raise EffectRejected("invalid vote projection")
+            from app.models.actions import VoteAction
+            for payload in vote_payloads:
+                voter = int(payload["voter_seat"])
+                if voter in projected_voters: raise EffectRejected("vote projection conflict")
+                projected_votes.append(VoteAction(voter, payload["target_seat"]))
+                projected_voters.add(voter)
         for seat, is_alive in alive.items(): state.players[seat].is_alive = is_alive
+        if vote_payloads:
+            state.votes[:] = projected_votes; state.voted_seats.clear(); state.voted_seats.update(projected_voters)
         setattr(state, "_pipeline_runtime", simulated)
         return result
