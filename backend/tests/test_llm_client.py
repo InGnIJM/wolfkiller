@@ -74,7 +74,7 @@ class TestLLMClient:
         assert isinstance(mapped, StrictCapabilityError)
         assert str(mapped) == body["error"]["message"]
 
-    def test_keeps_422_non_strict_schema_rejection_unchanged(self):
+    def test_maps_opaque_422_from_strict_endpoint_to_fallback_signal(self):
         body = {
             "error": {
                 "message": "The requested game state is invalid",
@@ -85,7 +85,19 @@ class TestLLMClient:
             UnprocessableEntityError, body["error"]["message"], 422, body
         )
 
-        assert LLMClient.map_strict_capability_error(error) is error
+        assert isinstance(
+            LLMClient.map_strict_capability_error(error), StrictCapabilityError,
+        )
+
+    def test_maps_opaque_400_body_from_strict_endpoint_to_fallback_signal(self):
+        error = self._provider_error(
+            BadRequestError, "Invalid request", 400,
+            {"error": "Invalid request"},
+        )
+
+        assert isinstance(
+            LLMClient.map_strict_capability_error(error), StrictCapabilityError,
+        )
 
     def test_keeps_existing_strict_capability_error_unchanged(self):
         error = StrictCapabilityError("strict schema is unsupported")
@@ -98,10 +110,6 @@ class TestLLMClient:
             lambda self: self._provider_error(
                 BadRequestError, "Invalid API key", 401,
                 {"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
-            ),
-            lambda self: self._provider_error(
-                BadRequestError, "Invalid request", 400,
-                {"error": "Invalid request"},
             ),
             lambda self: self._provider_error(
                 RateLimitError, "Too many requests", 429,
