@@ -154,6 +154,24 @@ def test_window_is_idempotent_and_cannot_close_before_deadline():
         service.close_window(first.window_id, failure_code="request_timeout")
 
 
+def test_arm_window_starts_phase_deadline_after_orchestration_setup():
+    from app.core.vote_service import VoteService
+
+    now = [10.0]
+    state = make_state()
+    service = VoteService(state, clock=lambda: now[0])
+    opened = service.open_window(timeout_seconds=5.0)
+    now[0] = 12.0
+
+    armed = service.arm_window(opened.window_id, timeout_seconds=5.0)
+
+    assert armed.window_id == opened.window_id
+    assert armed.deadline == 17.0
+    assert service.window(opened.window_id) is armed
+    with pytest.raises(ValueError, match="positive float"):
+        service.arm_window(opened.window_id, timeout_seconds=0.0)
+
+
 def test_voluntary_and_technical_abstentions_are_distinct_terminal_results():
     from app.core.vote_service import VoteService
 
@@ -185,6 +203,33 @@ def test_state_change_after_window_open_is_revalidated():
 
     with pytest.raises(VoteError, match="vote_wrong_phase"):
         service.submit(window.window_id, 1, vote(2))
+
+
+def test_submission_received_before_deadline_survives_lock_and_validation_delay():
+    from app.core.vote_service import VoteService
+
+    now = [10.0]
+    state = make_state()
+    service = VoteService(state, clock=lambda: now[0])
+    window = service.open_window(timeout_seconds=5.0)
+    now[0] = 16.0
+
+    receipt = service.submit(
+        window.window_id, 1, vote(2), received_at=14.9,
+    )
+
+    assert receipt.status is VoteStatus.ACCEPTED_VOTE
+
+
+def test_submission_rejects_invalid_server_arrival_timestamp():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=5.0)
+
+    with pytest.raises(TypeError, match="received_at"):
+        service.submit(window.window_id, 1, vote(2), received_at=-1.0)
 
 
 def test_effect_failures_are_mapped_or_propagated_and_missing_receipt_is_detected(monkeypatch):

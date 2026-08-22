@@ -52,8 +52,21 @@ class VoteService:
         except KeyError:
             raise VoteError("vote_window_not_found") from None
 
+    def arm_window(self, window_id: str, *, timeout_seconds: float) -> VoteWindow:
+        """Start the authoritative deadline after engine setup is complete."""
+        if type(timeout_seconds) is not float or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a positive float")
+        with state_transaction_lock(self._state):
+            window = self.window(window_id)
+            armed = window.model_copy(update={
+                "deadline": float(self._clock() + timeout_seconds),
+            })
+            self._windows[window_id] = armed
+            return armed
+
     def submit(
         self, window_id: str, voter_seat: int, command: CastVoteArgs,
+        *, received_at: float | None = None,
     ) -> VoteReceipt:
         if type(command) is not CastVoteArgs:
             raise TypeError("command must be CastVoteArgs")
@@ -66,6 +79,7 @@ class VoteService:
         return self._commit(
             window_id, voter_seat, status=status,
             target_seat=command.target_seat, command_digest=digest,
+            received_at=received_at,
         )
 
     def technical_abstain(
@@ -127,7 +141,7 @@ class VoteService:
         self, window_id: str, voter_seat: int, *, status: VoteStatus,
         target_seat: int | None, command_digest: str,
         failure_code: str | None = None, timeout_type: str | None = None,
-        allow_closed: bool = False,
+        allow_closed: bool = False, received_at: float | None = None,
     ) -> VoteReceipt:
         with state_transaction_lock(self._state):
             window = self.window(window_id)
@@ -137,8 +151,11 @@ class VoteService:
                 if existing.command_digest != command_digest:
                     raise VoteError("vote_conflict")
                 return existing.as_replay()
+            arrival = float(self._clock()) if received_at is None else received_at
+            if type(arrival) is not float or arrival < 0:
+                raise TypeError("received_at must be a non-negative float")
             if not allow_closed and (
-                window_id in self._closed or self._clock() >= window.deadline
+                window_id in self._closed or arrival >= window.deadline
             ):
                 raise VoteError("vote_window_closed")
             if (
