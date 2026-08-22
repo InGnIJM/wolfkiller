@@ -465,7 +465,11 @@ class EffectApplier:
             from app.models.actions import VoteAction
             for payload in vote_payloads:
                 voter = int(payload["voter_seat"])
-                if voter in projected_voters: raise EffectRejected("vote projection conflict")
+                if voter in projected_voters:
+                    legacy = [vote for vote in projected_votes if vote.voter_seat == voter]
+                    if len(legacy) == 1 and legacy[0].target_seat == payload["target_seat"]:
+                        continue
+                    raise EffectRejected("vote projection conflict")
                 projected_votes.append(VoteAction(voter, payload["target_seat"]))
                 projected_voters.add(voter)
         for seat, is_alive in alive.items(): state.players[seat].is_alive = is_alive

@@ -118,6 +118,19 @@ def test_record_vote_rejects_existing_projection_for_same_voter():
         EffectApplier().apply(state, vote_effects(), permission(1, 2))
 
 
+def test_record_vote_imports_matching_legacy_projection_without_duplicate():
+    from app.models.actions import VoteAction
+
+    state = make_state()
+    state.voted_seats.add(1)
+    state.votes.append(VoteAction(1, 2))
+
+    EffectApplier().apply(state, vote_effects(), permission(1, 2))
+
+    assert [(item.voter_seat, item.target_seat) for item in state.votes] == [(1, 2)]
+    assert "vote-key" in state._pipeline_runtime.vote_receipts
+
+
 def test_record_vote_rejects_legacy_commit_without_matching_receipt():
     state = make_state()
     key = "vote-key"
