@@ -11,9 +11,9 @@
   primary attempt and one 120-second retry. Keep the HTTP client deadline five
   seconds above the outer retry deadline so timeout classes remain distinct.
 - Trigger: simultaneous voting can overload a provider or stall a game phase.
-  Action: cap voting at five concurrent requests, keep completed votes in seat
-  order, and cancel unfinished work at the 500-second phase deadline so two
-  five-request batches can each consume their 90+120-second attempt budget.
+  Action: cap voting at five concurrent requests, keep terminal receipts in
+  seat order, and cancel unfinished work at the 500-second phase deadline so
+  two five-request batches can each consume their 90+120-second attempt budget.
 - Trigger: a full vote prompt times out and must be retried against a slow
   provider. Action: retry with only authoritative identity/private facts,
   legal seats, each speaker's latest current-round public statement, the two
@@ -36,3 +36,11 @@
   `action_key`; replay the same semantic digest, reject changed-target reuse,
   and ensure every eligible voter has an accepted, voluntary-abstain, or
   technical-abstain receipt before resolution reads the vote ledger.
+- Trigger: the phase deadline cancels a vote coroutine after its receipt was
+  committed but before the coroutine returned. Action: determine completed and
+  missing voters from the authoritative receipt ledger, never from task-local
+  completion bookkeeping, before creating phase-timeout abstentions.
+- Trigger: a strict tool endpoint returns HTTP 400 or 422 with non-standard or
+  opaque compatibility wording. Action: treat that client rejection as a
+  one-time JSON fallback signal; keep authentication, rate-limit, network, and
+  server failures in their original error classes.
