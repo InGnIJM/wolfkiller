@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, mock_open, patch, PropertyMock
+from unittest.mock import ANY, AsyncMock, MagicMock, mock_open, patch, PropertyMock
 from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
@@ -163,7 +163,7 @@ class TestGameService:
 
         assert service.get_game_state(game_id).config.role_counts == counts
         service._manifest.add_game.assert_called_once_with(
-            game_id, {"role_counts": counts}, model_snapshot=[],
+            game_id, {"role_counts": counts}, model_snapshot=[], name=ANY,
         )
 
     @pytest.mark.asyncio
@@ -1230,6 +1230,10 @@ class TestGameDisplayName:
         )
         assert service.get_display_name("abcd1234") == "abcd1234"
         assert service.get_display_name("missing") == "missing"
+        service._manifest._entries["abcd1234"]["name"] = "   "
+        assert service.get_display_name("abcd1234") == "abcd1234"
+        service._manifest._entries["abcd1234"]["name"] = 1
+        assert service.get_display_name("abcd1234") == "abcd1234"
 
     def test_rename_game_updates_manifest(self, tmp_path):
         service = self._service(tmp_path)
@@ -1337,6 +1341,20 @@ class TestDeleteGame:
         await service.delete_game("game-1")
         task.cancel.assert_called_once()
         assert not game_dir.exists()
+        assert "game-1" not in service._games
+
+    @pytest.mark.asyncio
+    async def test_delete_skips_finished_task_and_missing_directory(self, tmp_path):
+        service, game_dir = self._seed(tmp_path)
+        task = MagicMock()
+        task.done.return_value = True
+        service._tasks["game-1"] = task
+        import shutil
+        shutil.rmtree(game_dir)
+
+        await service.delete_game("game-1")
+
+        task.cancel.assert_not_called()
         assert "game-1" not in service._games
 
 
