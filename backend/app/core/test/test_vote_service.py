@@ -1,0 +1,214 @@
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+from app.models.game import GamePhase, GameState, PlayerState
+from app.models.vote import CastVoteArgs, VoteError, VoteStatus
+
+
+def make_state() -> GameState:
+    state = GameState(game_id="g", phase=GamePhase.VOTE_CASTING, round_number=3)
+    state.players = {
+        seat: PlayerState(seat, "wolf-killer-villager", "good")
+        for seat in (1, 2, 3)
+    }
+    return state
+
+
+def vote(target: int, reasoning: str = "reason") -> CastVoteArgs:
+    return CastVoteArgs(
+        action_type="vote", target_seat=target, reasoning=reasoning,
+    )
+
+
+def test_submit_atomically_records_receipt_and_legacy_projection():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=30.0)
+
+    receipt = service.submit(window.window_id, 1, vote(2))
+
+    assert receipt.status is VoteStatus.ACCEPTED_VOTE
+    assert receipt.target_seat == 2
+    assert state.voted_seats == {1}
+    assert [(item.voter_seat, item.target_seat) for item in state.votes] == [(1, 2)]
+    assert service.tally(window.window_id) == {2: 1}
+
+
+def test_same_semantic_vote_replays_but_changed_target_conflicts():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=30.0)
+    original = service.submit(window.window_id, 1, vote(2, "first"))
+
+    replay = service.submit(window.window_id, 1, vote(2, "retry"))
+
+    assert replay.replayed is True
+    assert replay.command_digest == original.command_digest
+    with pytest.raises(VoteError, match="vote_conflict"):
+        service.submit(window.window_id, 1, vote(3))
+    assert service.tally(window.window_id) == {2: 1}
+
+
+def test_concurrent_different_submissions_commit_exactly_one_ballot():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=30.0)
+
+    def submit(target):
+        try:
+            return service.submit(window.window_id, 1, vote(target)).status.value
+        except VoteError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, (2, 3)))
+
+    assert sorted(results) == ["accepted_vote", "vote_conflict"]
+    assert len(service.receipts(window.window_id)) == 1
+    assert len(state.votes) == 1
+
+
+def test_permissions_and_window_deadline_are_server_enforced():
+    from app.core.vote_service import VoteService
+
+    now = [10.0]
+    state = make_state()
+    service = VoteService(state, clock=lambda: now[0])
+    window = service.open_window(timeout_seconds=5.0)
+
+    state.players[1].is_alive = False
+    with pytest.raises(VoteError, match="vote_actor_ineligible"):
+        service.submit(window.window_id, 1, vote(2))
+    state.players[1].is_alive = True
+    state.players[2].is_alive = False
+    with pytest.raises(VoteError, match="vote_target_ineligible"):
+        service.submit(window.window_id, 1, vote(2))
+    state.players[2].is_alive = True
+    now[0] = 15.0
+    with pytest.raises(VoteError, match="vote_window_closed"):
+        service.submit(window.window_id, 1, vote(2))
+
+
+def test_close_window_creates_terminal_technical_abstentions_for_every_missing_voter():
+    from app.core.vote_service import VoteService
+
+    now = [10.0]
+    state = make_state()
+    service = VoteService(state, clock=lambda: now[0])
+    window = service.open_window(timeout_seconds=5.0)
+    service.submit(window.window_id, 1, vote(2))
+    now[0] = 15.0
+
+    receipts = service.close_window(
+        window.window_id, failure_code="request_timeout",
+        timeout_type="phase_deadline",
+    )
+
+    assert [item.status for item in receipts] == [
+        VoteStatus.ACCEPTED_VOTE,
+        VoteStatus.TECHNICAL_ABSTAIN,
+        VoteStatus.TECHNICAL_ABSTAIN,
+    ]
+    assert {item.voter_seat for item in receipts} == {1, 2, 3}
+    assert state.voted_seats == {1, 2, 3}
+    assert service.missing_voters(window.window_id) == frozenset()
+
+
+def test_service_rejects_invalid_construction_window_and_command_inputs():
+    from app.core.vote_service import VoteService
+
+    with pytest.raises(TypeError, match="state must be GameState"):
+        VoteService(object())
+    state = make_state()
+    state.phase = GamePhase.SPEECH
+    service = VoteService(state, clock=lambda: 10.0)
+    with pytest.raises(VoteError, match="vote_wrong_phase"):
+        service.open_window(timeout_seconds=1.0)
+    state.phase = GamePhase.VOTE_CASTING
+    with pytest.raises(ValueError, match="positive float"):
+        service.open_window(timeout_seconds=0.0)
+    with pytest.raises(VoteError, match="vote_window_not_found"):
+        service.window("missing")
+    window = service.open_window(timeout_seconds=1.0)
+    with pytest.raises(TypeError, match="command must be CastVoteArgs"):
+        service.submit(window.window_id, 1, object())
+
+
+def test_window_is_idempotent_and_cannot_close_before_deadline():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    first = service.open_window(timeout_seconds=5.0)
+    second = service.open_window(timeout_seconds=20.0)
+
+    assert second is first
+    with pytest.raises(VoteError, match="vote_deadline_not_reached"):
+        service.close_window(first.window_id, failure_code="request_timeout")
+
+
+def test_voluntary_and_technical_abstentions_are_distinct_terminal_results():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=5.0)
+
+    voluntary = service.submit(
+        window.window_id, 1,
+        CastVoteArgs(action_type="abstain", target_seat=None, reasoning="unsure"),
+    )
+    technical = service.technical_abstain(
+        window.window_id, 2, failure_code="provider_rate_limit",
+    )
+
+    assert voluntary.status is VoteStatus.VOLUNTARY_ABSTAIN
+    assert technical.status is VoteStatus.TECHNICAL_ABSTAIN
+    assert technical.failure_code == "provider_rate_limit"
+    assert service.tally(window.window_id) == {}
+
+
+def test_state_change_after_window_open_is_revalidated():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=5.0)
+    state.round_number = 4
+
+    with pytest.raises(VoteError, match="vote_wrong_phase"):
+        service.submit(window.window_id, 1, vote(2))
+
+
+def test_effect_failures_are_mapped_or_propagated_and_missing_receipt_is_detected(monkeypatch):
+    from app.core.effect_applier import EffectApplier, EffectRejected
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=5.0)
+
+    def conflict(*args, **kwargs):
+        raise EffectRejected("vote_conflict")
+
+    monkeypatch.setattr(EffectApplier, "apply", conflict)
+    with pytest.raises(VoteError, match="vote_conflict"):
+        service.submit(window.window_id, 1, vote(2))
+
+    def rejected(*args, **kwargs):
+        raise EffectRejected("effect permission denied")
+
+    monkeypatch.setattr(EffectApplier, "apply", rejected)
+    with pytest.raises(EffectRejected, match="effect permission denied"):
+        service.submit(window.window_id, 1, vote(2))
+
+    monkeypatch.setattr(EffectApplier, "apply", lambda *args, **kwargs: None)
+    with pytest.raises(RuntimeError, match="did not produce a receipt"):
+        service.submit(window.window_id, 1, vote(2))
