@@ -1,5 +1,5 @@
 import type {
-  FieldConstraints, GameListResponse, GameLogs, GameMemories, GamePreset,
+  FieldConstraints, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
   ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
   ModelTestResult, PublicGameState, RoleCatalogItem,
 } from '../store/types';
@@ -29,6 +29,21 @@ export async function listGames(): Promise<GameListResponse> {
   const res = await fetch(`${getApiBase()}/api/games`);
   if (!res.ok) throw new Error(`List games failed: ${res.status}`);
   return res.json();
+}
+
+export async function renameGame(gameId: string, name: string): Promise<GameListItem> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Rename game failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteGame(gameId: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Delete game failed: ${res.status}`);
 }
 
 export class GameNotFoundError extends Error {

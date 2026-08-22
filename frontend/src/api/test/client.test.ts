@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createGame, createModel, deleteModel, fetchConstraints, fetchPresets,
-  fetchRoleCatalog, listModels, testModelConnection, updateModel,
+  createGame, createModel, deleteGame, deleteModel, fetchConstraints, fetchPresets,
+  fetchRoleCatalog, listModels, renameGame, testModelConnection, updateModel,
 } from '../client';
 
 const BASE = 'http://localhost:8000';
@@ -89,6 +89,30 @@ describe('model config api', () => {
       role_counts: { 'wolf-killer-werewolf': 1 },
       model_assignments: [{ config_id: null, count: 1 }],
     });
+  });
+
+  it('renames a game with PATCH', async () => {
+    const fetchFn = mockFetch({ game_id: 'g1', name: '新名字' });
+    const result = await renameGame('g1', '新名字');
+    expect(result).toEqual({ game_id: 'g1', name: '新名字' });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/games/g1`);
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body)).toEqual({ name: '新名字' });
+  });
+
+  it('deletes a game', async () => {
+    const fetchFn = mockFetch({}, true, 204);
+    await deleteGame('g1');
+    expect(fetchFn.mock.calls[0][0]).toBe(`${BASE}/api/games/g1`);
+    expect(fetchFn.mock.calls[0][1].method).toBe('DELETE');
+  });
+
+  it('rejects failed rename and delete', async () => {
+    mockFetch({}, false, 400);
+    await expect(renameGame('g1', 'x')).rejects.toThrow('Rename game failed: 400');
+    mockFetch({}, false, 500);
+    await expect(deleteGame('g1')).rejects.toThrow('Delete game failed: 500');
   });
 
   it('rejects non-ok responses', async () => {

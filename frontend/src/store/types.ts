@@ -160,6 +160,7 @@ export interface GameLogs {
 
 export interface GameListItem {
   game_id: string;
+  name: string;
   phase: GamePhase;
   round_number: number;
   player_count: number;

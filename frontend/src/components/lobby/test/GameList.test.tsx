@@ -40,6 +40,7 @@ function deferred<T>() {
 
 const game = (id: string, phase: GameListItem['phase'] = 'night'): GameListItem => ({
   game_id: id,
+  name: `${id}-name`,
   phase,
   round_number: 1,
   player_count: 6,
