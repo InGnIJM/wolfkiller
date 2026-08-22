@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -200,7 +201,7 @@ class GameEngine:
         self._vote_phase_timeout_seconds = (
             float(vote_phase_timeout)
             if type(vote_phase_timeout) in (int, float) and vote_phase_timeout > 0
-            else 400.0
+            else 500.0
         )
         self._running = False
         self._paused = False
@@ -790,7 +791,14 @@ class GameEngine:
         completed: dict[int, VoteAction | None] = {}
 
         async def collect_vote(seat: int) -> None:
+            queued_at = time.monotonic()
             async with semaphore:
+                self.game_logger.log_vote_queue_telemetry(
+                    self.game_id, self.state.round_number, seat,
+                    queue_wait_ms=int((time.monotonic() - queued_at) * 1000),
+                    worker_limit=self._vote_concurrency,
+                    vote_round=self.state.vote_round,
+                )
                 completed[seat] = await self.vote(seat)
 
         try:
@@ -799,10 +807,27 @@ class GameEngine:
                 timeout=self._vote_phase_timeout_seconds,
             )
         except asyncio.TimeoutError:
+            completed_seats = sorted(completed)
+            missing_seats = sorted(set(seats) - set(completed))
             logger.warning(
                 "Vote phase timed out after %.1fs; preserving %s/%s completed votes",
                 self._vote_phase_timeout_seconds, len(completed), len(seats),
             )
+            self.game_logger.log_vote_phase_timeout(
+                self.game_id, self.state.round_number,
+                timeout_seconds=self._vote_phase_timeout_seconds,
+                completed_seats=completed_seats, missing_seats=missing_seats,
+                vote_round=self.state.vote_round,
+            )
+            for seat in missing_seats:
+                completed[seat] = VoteAction(
+                    seat, None, "technical abstain: vote_phase_timeout",
+                )
+                self.game_logger.log_vote_technical_abstain(
+                    self.game_id, self.state.round_number, seat,
+                    failure_code="request_timeout", timeout_type="phase_deadline",
+                    vote_round=self.state.vote_round,
+                )
         votes = [completed.get(seat) for seat in seats]
         for seat, vote in zip(seats, votes):
             if vote:
@@ -810,6 +835,7 @@ class GameEngine:
                 self.state.voted_seats.add(seat)
                 self.game_logger.log_vote(
                     self.game_id, self.state.round_number, seat, vote.target_seat,
+                    vote_round=self.state.vote_round,
                 )
                 await self.event_bus.publish(
                     BusEvent.VOTE_CAST, game_id=self.game_id, vote=vote,
@@ -1059,7 +1085,7 @@ class GameEngine:
         )
 
     async def vote(self, seat: int) -> Optional[VoteAction]:
-        """Player casts a vote. Returns VoteAction or None."""
+        """Player casts a vote, using an explicit technical abstention on failure."""
         role = self.roles.get(seat)
         player = self.state.players.get(seat)
         if role is None or player is None:
@@ -1086,7 +1112,11 @@ class GameEngine:
             )
         except Exception as e:
             logger.error(f"Vote error (seat={seat}): {e}", exc_info=True)
-            return None
+            self.game_logger.log_vote_technical_abstain(
+                self.game_id, self.state.round_number, seat,
+                failure_code="invoke_error", window_id=request.idempotency_key,
+            )
+            return VoteAction(seat, None, "technical abstain: invoke_error")
 
     async def _check_game_over(self) -> bool:
         """Check win conditions. If game is over, handle cleanup and broadcast. Returns True if over."""

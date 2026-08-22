@@ -2325,15 +2325,15 @@ class TestGameEngine:
         assert started == {1, 2}
         assert [item.voter_seat for item in engine.state.votes] == [1, 2]
 
-    def test_vote_casting_runtime_defaults_to_five_workers_and_400_seconds(self):
+    def test_vote_casting_runtime_defaults_to_five_workers_and_500_seconds(self):
         engine = GameEngine(game_id="vote-runtime-defaults")
 
         assert engine._vote_concurrency == 5
-        assert engine._vote_phase_timeout_seconds == 400.0
+        assert engine._vote_phase_timeout_seconds == 500.0
 
     @pytest.mark.parametrize(
         ("concurrency", "phase_timeout"),
-        [(0, 0), (-1, -1.0), (True, False), ("5", "400")],
+        [(0, 0), (-1, -1.0), (True, False), ("5", "500")],
     )
     def test_vote_casting_invalid_runtime_limits_fall_back_to_safe_defaults(
         self, monkeypatch, concurrency, phase_timeout,
@@ -2349,7 +2349,7 @@ class TestGameEngine:
         engine = GameEngine(game_id="invalid-vote-runtime")
 
         assert engine._vote_concurrency == 5
-        assert engine._vote_phase_timeout_seconds == 400.0
+        assert engine._vote_phase_timeout_seconds == 500.0
 
     @pytest.mark.asyncio
     async def test_vote_casting_limits_concurrency_to_five_and_keeps_seat_order(self):
@@ -2389,7 +2389,7 @@ class TestGameEngine:
         assert [item.voter_seat for item in engine.state.votes] == list(range(1, 8))
 
     @pytest.mark.asyncio
-    async def test_vote_phase_timeout_preserves_completed_votes_and_cancels_pending(self):
+    async def test_vote_phase_timeout_marks_pending_votes_as_technical_abstentions(self):
         engine = GameEngine(game_id="vote-phase-timeout", event_bus=EventBus())
         engine._vote_phase_timeout_seconds = 0.01
         engine.state.players = {
@@ -2414,7 +2414,10 @@ class TestGameEngine:
 
         await asyncio.wait_for(engine._execute_vote_casting(), timeout=0.2)
 
-        assert [item.voter_seat for item in engine.state.votes] == [1]
+        assert [(item.voter_seat, item.target_seat) for item in engine.state.votes] == [
+            (1, 2), (2, None), (3, None),
+        ]
+        assert engine.state.voted_seats == {1, 2, 3}
         assert cancelled == {2, 3}
         assert engine.sm.get_state() is GamePhase.VOTE_RESOLUTION
 
@@ -2626,14 +2629,15 @@ class TestGameEngine:
         assert engine.state.win_result is None
 
     @pytest.mark.asyncio
-    async def test_vote_request_exception_returns_none(self):
+    async def test_vote_request_exception_returns_technical_abstention(self):
         role = MagicMock()
         role.request_action = AsyncMock(side_effect=RuntimeError("llm down"))
         engine = GameEngine(game_id="vote-error", roles={1: role})
         engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good")}
         engine.state.phase = GamePhase.VOTE_CASTING
 
-        assert await engine.vote(1) is None
+        vote = await engine.vote(1)
+        assert vote == VoteAction(1, None, "technical abstain: invoke_error")
 
     @pytest.mark.asyncio
     async def test_give_last_words_without_role_returns_none(self):
