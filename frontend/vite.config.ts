@@ -16,6 +16,7 @@ export default defineConfig({
         'src/components/game/HistoryPanel.tsx',
         'src/components/game/WinOverlay.tsx',
         'src/components/lobby/GameList.tsx',
+        'src/components/lobby/GameCard.tsx',
       ],
       exclude: ['src/**/test/**', 'src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
       thresholds: {
