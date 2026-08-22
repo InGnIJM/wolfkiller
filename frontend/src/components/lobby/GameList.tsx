@@ -1,17 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Box, Typography, Button, Stack, Container } from '@mui/material';
+import {
+  Alert, Box, Button, Container, Dialog, DialogActions, DialogContent,
+  DialogTitle, Stack, TextField, Typography,
+} from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import GameCard from './GameCard';
-import { listGames } from '../../api/client';
-
-interface GameInfo {
-  game_id: string;
-  phase: string;
-  round_number: number;
-  player_count: number;
-  alive_count: number;
-  winner: string | null;
-}
+import { deleteGame, listGames, renameGame } from '../../api/client';
+import type { GameListItem } from '../../store/types';
 
 interface Props {
   onJoinGame: (gameId: string) => void;
@@ -31,7 +26,12 @@ const PHASE_LABELS: Record<string, string> = {
 };
 
 export default function GameList({ onJoinGame, onCreateClick }: Props) {
-  const [games, setGames] = useState<GameInfo[]>([]);
+  const [games, setGames] = useState<GameListItem[]>([]);
+  const [renameTarget, setRenameTarget] = useState<GameListItem | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<GameListItem | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -51,6 +51,45 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       clearInterval(t);
     };
   }, []);
+
+  const openRename = (g: GameListItem) => {
+    setRenameTarget(g);
+    setRenameValue(g.name);
+    setRenameError('');
+  };
+
+  const submitRename = async () => {
+    if (renameTarget === null) return;
+    const name = renameValue.trim();
+    if (!name) {
+      setRenameError('名称不能为空');
+      return;
+    }
+    try {
+      const updated = await renameGame(renameTarget.game_id, name);
+      setGames((prev) => prev.map((item) => (
+        item.game_id === updated.game_id ? { ...item, ...updated } : item
+      )));
+      setRenameTarget(null);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const submitDelete = async () => {
+    if (deleteTarget === null) return;
+    try {
+      await deleteGame(deleteTarget.game_id);
+      setGames((prev) => prev.filter((item) => item.game_id !== deleteTarget.game_id));
+      setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const inProgress = deleteTarget !== null
+    && deleteTarget.phase !== 'game_over'
+    && deleteTarget.phase !== 'error';
 
   return (
     <Container maxWidth="sm" sx={{ py: 4 }}>
@@ -89,15 +128,56 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           <GameCard
             key={g.game_id}
             gameId={g.game_id}
+            name={g.name}
             phase={PHASE_LABELS[g.phase] || g.phase}
             roundNumber={g.round_number}
             playerCount={g.player_count}
             aliveCount={g.alive_count}
             winner={g.winner}
             onClick={() => onJoinGame(g.game_id)}
+            onRename={() => openRename(g)}
+            onDelete={() => { setDeleteTarget(g); setDeleteError(''); }}
           />
         ))}
       </Stack>
+
+      <Dialog open={renameTarget !== null} onClose={() => setRenameTarget(null)}>
+        <DialogTitle>重命名对局</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="对局名称"
+            fullWidth
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+          />
+          {renameError && <Alert severity="error" sx={{ mt: 1 }}>{renameError}</Alert>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameTarget(null)}>取消</Button>
+          <Button onClick={() => void submitRename()}>确定</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
+        <DialogTitle>删除对局</DialogTitle>
+        <DialogContent>
+          <Typography>
+            确定删除「{deleteTarget?.name}」？此操作不可恢复。
+          </Typography>
+          {inProgress && (
+            <Typography color="warning.main" sx={{ mt: 1 }}>
+              对局正在进行，删除将立即中断。
+            </Typography>
+          )}
+          {deleteError && <Alert severity="error" sx={{ mt: 1 }}>{deleteError}</Alert>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>取消</Button>
+          <Button color="error" onClick={() => void submitDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }

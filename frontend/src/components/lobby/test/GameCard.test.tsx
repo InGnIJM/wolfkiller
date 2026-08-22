@@ -76,6 +76,10 @@ describe('GameCard', () => {
     unmount();
     renderCard({ winner: 'werewolf', name: '狼局' });
     expect(screen.getByText('狼人胜')).toBeInTheDocument();
+    cleanup();
+    renderCard({ winner: 'unknown' });
+    expect(screen.queryByText('好人胜')).not.toBeInTheDocument();
+    expect(screen.queryByText('狼人胜')).not.toBeInTheDocument();
   });
 
   it('closes the overflow menu without entering the game', () => {

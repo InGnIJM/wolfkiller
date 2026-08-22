@@ -1,30 +1,42 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { listGames } from '../../../api/client';
+import { deleteGame, listGames, renameGame } from '../../../api/client';
 import type { GameListItem } from '../../../store/types';
 import GameList from '../GameList';
 
 vi.mock('../../../api/client', () => ({
   listGames: vi.fn(),
+  renameGame: vi.fn(),
+  deleteGame: vi.fn(),
 }));
 
 vi.mock('../GameCard', () => ({
   default: ({
     gameId,
+    name,
     phase,
     onClick,
+    onRename,
+    onDelete,
   }: {
     gameId: string;
+    name: string;
     phase: string;
     onClick: () => void;
+    onRename: () => void;
+    onDelete: () => void;
   }) => (
-    <button data-testid={`game-${gameId}`} data-phase={phase} onClick={onClick}>
-      {gameId}
-    </button>
+    <div>
+      <button data-testid={`game-${gameId}`} data-phase={phase} onClick={onClick}>
+        {name}
+      </button>
+      <button data-testid={`rename-${gameId}`} onClick={onRename}>rename</button>
+      <button data-testid={`delete-${gameId}`} onClick={onDelete}>delete</button>
+    </div>
   ),
 }));
 
@@ -133,5 +145,111 @@ describe('GameList polling', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /创建游戏/ }));
     expect(onCreateClick).toHaveBeenCalledOnce();
+  });
+});
+
+describe('GameList management', () => {
+  it('renames a game from the dialog and updates the card title', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1'), game('game-2')] });
+    vi.mocked(renameGame).mockResolvedValue({ ...game('game-1'), name: '新名字' });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByTestId('rename-game-1'));
+    const input = screen.getByLabelText('对局名称');
+    fireEvent.change(input, { target: { value: '新名字' } });
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+
+    await waitFor(() => expect(renameGame).toHaveBeenCalledWith('game-1', '新名字'));
+    expect(screen.getByTestId('game-game-1')).toHaveTextContent('新名字');
+    expect(screen.getByTestId('game-game-2')).toHaveTextContent('game-2-name');
+  });
+
+  it('cancels rename without calling the API', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1')] });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('rename-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(renameGame).not.toHaveBeenCalled();
+    expect(screen.getByTestId('game-game-1')).toHaveTextContent('game-1-name');
+  });
+
+  it('keeps the rename dialog open when the name is blank', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1')] });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('rename-game-1'));
+    fireEvent.change(screen.getByLabelText('对局名称'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    expect(renameGame).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('对局名称')).toBeInTheDocument();
+  });
+
+  it('shows rename errors in the dialog', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1')] });
+    vi.mocked(renameGame).mockRejectedValue(new Error('Rename game failed: 400'));
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('rename-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(screen.getByText(/Rename game failed: 400/)).toBeInTheDocument());
+    expect(screen.getByLabelText('对局名称')).toBeInTheDocument();
+  });
+
+  it('shows non-error rename failures', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1')] });
+    vi.mocked(renameGame).mockRejectedValue('boom');
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('rename-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+  });
+
+  it('warns when deleting an in-progress game and removes it after confirm', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1', 'night')] });
+    vi.mocked(deleteGame).mockResolvedValue(undefined);
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('delete-game-1'));
+    expect(screen.getByText(/对局正在进行，删除将立即中断/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(deleteGame).toHaveBeenCalledWith('game-1'));
+    expect(screen.queryByTestId('game-game-1')).not.toBeInTheDocument();
+  });
+
+  it('does not warn when deleting a finished or error game', async () => {
+    vi.mocked(listGames).mockResolvedValue({
+      games: [game('done', 'game_over'), game('bad', 'error')],
+    });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('delete-done'));
+    expect(screen.queryByText(/对局正在进行/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    fireEvent.click(screen.getByTestId('delete-bad'));
+    expect(screen.queryByText(/对局正在进行/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the delete dialog open when delete fails', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1', 'game_over')] });
+    vi.mocked(deleteGame).mockRejectedValue(new Error('Delete game failed: 500'));
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('delete-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(screen.getByText(/Delete game failed: 500/)).toBeInTheDocument());
+    expect(screen.getByTestId('game-game-1')).toBeInTheDocument();
+  });
+
+  it('shows non-error delete failures', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1', 'game_over')] });
+    vi.mocked(deleteGame).mockRejectedValue('busy');
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByTestId('delete-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(screen.getByText('busy')).toBeInTheDocument());
   });
 });
