@@ -139,6 +139,7 @@ async def test_repeated_invalid_vote_logs_technical_abstention():
     accepted = await role.request_action(state, make_log(logger), make_request(state))
 
     assert accepted.command.action_type == "abstain"
+    assert accepted.technical_failure_code == "action_payload_not_json"
     assert logger.technical_abstentions == [
         {
             "failure_code": "action_payload_not_json",
@@ -164,6 +165,8 @@ async def test_local_deadline_is_distinguished_in_vote_telemetry():
     accepted = await role.request_action(state, make_log(logger), make_request(state))
 
     assert accepted.command.action_type == "abstain"
+    assert accepted.technical_failure_code == "request_timeout"
+    assert accepted.timeout_type == "local_deadline"
     assert [record["timeout_type"] for record in logger.records] == [
         "local_deadline", "local_deadline",
     ]
@@ -184,6 +187,8 @@ async def test_provider_timeout_is_distinguished_in_vote_telemetry():
     accepted = await role.request_action(state, make_log(logger), make_request(state))
 
     assert accepted.command.action_type == "abstain"
+    assert accepted.technical_failure_code == "request_timeout"
+    assert accepted.timeout_type == "provider_timeout"
     assert [record["timeout_type"] for record in logger.records] == [
         "provider_timeout", "provider_timeout",
     ]
@@ -236,6 +241,7 @@ async def test_transient_provider_failure_retries_then_technically_abstains(
     accepted = await role.request_action(state, make_log(logger), make_request(state))
 
     assert accepted.command.action_type == "abstain"
+    assert accepted.technical_failure_code == failure_code
     assert [record["failure_code"] for record in logger.records] == [
         failure_code, failure_code,
     ]
