@@ -528,7 +528,7 @@ class TestBaseRoleAccept:
         assert retry_chars < first_chars * 0.75
 
     @pytest.mark.asyncio
-    async def test_strict_timeout_retries_json_and_commits_only_once(self):
+    async def test_strict_timeout_retries_json_without_writing_state(self):
         class SlowStrictModel:
             def __init__(self):
                 self.calls = 0
@@ -565,8 +565,7 @@ class TestBaseRoleAccept:
         assert accepted.command.target_seat == 2
         assert client.strict.calls == 1
         assert len(client.action.messages) == 1
-        assert state._pipeline_runtime.revision == 1
-        assert len(state._pipeline_runtime.commits) == 1
+        assert not hasattr(state, "_pipeline_runtime")
 
     @pytest.mark.asyncio
     async def test_json_action_cancellation_propagates_without_commit(self):
@@ -662,7 +661,7 @@ class TestBaseRoleAccept:
         assert len(client.plain_model.messages) == 2
 
     @pytest.mark.asyncio
-    async def test_accept_command_records_commit_through_applier(self):
+    async def test_accept_command_only_returns_validated_decision(self):
         client = ClientStub(strict=[AIMessage(
             content="",
             tool_calls=[{
@@ -678,8 +677,7 @@ class TestBaseRoleAccept:
 
         assert accepted.command.action_type == "vote"
         assert accepted.command.target_seat == 2
-        assert "1:vote_casting:1:1:exile_vote" in state._pipeline_runtime.commits
-        assert state._pipeline_runtime.revision == 1
+        assert not hasattr(state, "_pipeline_runtime")
 
     @pytest.mark.asyncio
     async def test_accept_command_rejects_dead_target_and_falls_back(self):

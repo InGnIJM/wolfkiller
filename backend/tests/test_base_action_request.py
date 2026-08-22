@@ -88,7 +88,7 @@ async def test_request_action_uses_strict_tool_and_returns_validator_accepted_ac
     assert accepted.command.action_type == "vote"
     assert accepted.command.target_seat == 2
     assert client.contracts == [accepted.request.contract]
-    assert accepted.request.idempotency_key in state._pipeline_runtime.commits
+    assert not hasattr(state, "_pipeline_runtime")
 
 
 @pytest.mark.asyncio

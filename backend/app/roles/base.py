@@ -9,14 +9,11 @@ from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
 from app.agents.output_parser import OutputParser, StrictCapabilityError, ToolCallError
 from app.core.action_validator import ActionValidationError, ActionValidator
-from app.core.effect_applier import EffectApplier, EffectPermission, derive_effect_id
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
 from app.models.pipeline import (
     ActionCommand as PipelineActionCommand,
     ActionContext,
     ActionContract as PipelineActionContract,
-    EffectKind,
-    GameEffect,
     SchedulePoint,
 )
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -480,7 +477,11 @@ class BaseRole:
                     action_type=request.contract.fallback_action_type,
                     target_seat=None, reasoning="timeout fallback",
                 )
-                return self._accept_command(state, request, fallback)
+                return self._accept_command(
+                    state, request, fallback,
+                    technical_failure_code="request_timeout",
+                    timeout_type="local_deadline",
+                )
             except APITimeoutError:
                 should_retry = attempt_number == 1
                 self._vote_telemetry(
@@ -500,7 +501,11 @@ class BaseRole:
                     action_type=request.contract.fallback_action_type,
                     target_seat=None, reasoning="timeout fallback",
                 )
-                return self._accept_command(state, request, fallback)
+                return self._accept_command(
+                    state, request, fallback,
+                    technical_failure_code="request_timeout",
+                    timeout_type="provider_timeout",
+                )
             except (RateLimitError, InternalServerError, APIConnectionError) as error:
                 should_retry = attempt_number == 1
                 self._vote_telemetry(
@@ -522,7 +527,10 @@ class BaseRole:
                     action_type=request.contract.fallback_action_type,
                     target_seat=None, reasoning="provider error fallback",
                 )
-                return self._accept_command(state, request, fallback)
+                return self._accept_command(
+                    state, request, fallback,
+                    technical_failure_code=_provider_failure_code(error),
+                )
             except StrictCapabilityError:
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
@@ -552,7 +560,10 @@ class BaseRole:
                         target_seat=None,
                         reasoning="safe fallback",
                     )
-                    return self._accept_command(state, request, fallback)
+                    return self._accept_command(
+                        state, request, fallback,
+                        technical_failure_code=_validation_failure_code(error),
+                    )
                 if callable(getattr(
                     self.prompt_builder, "build_vote_retry_prompt", None,
                 )):
@@ -588,11 +599,12 @@ class BaseRole:
                 return accepted
         raise AssertionError("unreachable")  # pragma: no cover - transport always returns or re-raises within two attempts
 
-    def _accept_command(self, state: GameState, request: ActionRequest,
-                        command: ActionCommand) -> AcceptedAction:
-        """Validate a vote command through the pure pipeline validator and
-        record its acceptance atomically through EffectApplier — the only
-        state-writing path in the codebase."""
+    def _accept_command(
+        self, state: GameState, request: ActionRequest, command: ActionCommand,
+        *, technical_failure_code: str | None = None,
+        timeout_type: str | None = None,
+    ) -> AcceptedAction:
+        """Validate an untrusted model decision without changing game state."""
         runtime = getattr(state, "_pipeline_runtime", None)
         revision = 0 if runtime is None else runtime.revision
         player = state.players.get(self.seat)
@@ -626,25 +638,11 @@ class BaseRole:
             raise ActionValidationError(
                 violations[0].message, code=violations[0].code,
             )
-        accept = GameEffect(
-            effect_id=derive_effect_id(context.action_key, 0),
-            kind=EffectKind.ACCEPT_ACTION,
-            source_action_key=context.action_key,
-            payload={
-                "actor_seat": self.seat,
-                "contract_id": _VOTE_CONTRACT.contract_id,
-                "window_id": request.idempotency_key,
-                "round_number": state.round_number,
-            },
-            expected_revision=context.revision,
-            sort_key=(0,),
+        return AcceptedAction(
+            request=request, command=command,
+            technical_failure_code=technical_failure_code,
+            timeout_type=timeout_type,
         )
-        permission = EffectPermission(
-            self.seat, frozenset(), frozenset(),
-            frozenset(state.alive_players()) | {self.seat}, frozenset(),
-        )
-        EffectApplier().apply(state, (accept,), permission)
-        return AcceptedAction(request=request, command=command)
 
     async def _invoke_strict_action(self, messages, request):
         try:
