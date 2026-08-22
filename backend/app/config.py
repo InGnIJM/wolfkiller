@@ -46,7 +46,7 @@ class LLMConfig:
     action_max_tokens: int = int(os.getenv("LLM_ACTION_MAX_TOKENS", "2048"))
     action_timeout_seconds: float = float(os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "90"))
     action_retry_timeout_seconds: float = float(
-        os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "90")
+        os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "120")
     )
 
 
@@ -60,7 +60,7 @@ class GameConfig:
     phase_delay_seconds: float = 0.3
     vote_concurrency: int = int(os.getenv("VOTE_CONCURRENCY", "5"))
     vote_phase_timeout_seconds: float = float(
-        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "400")
+        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "500")
     )
 
 
