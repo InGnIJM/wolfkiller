@@ -74,3 +74,20 @@ def test_strict_response_wrong_tool_has_stable_failure_code():
         OutputParser().parse_strict_action_response(response, VOTE_CONTRACT)
 
     assert caught.value.code == "strict_tool_name_mismatch"
+
+
+def test_vote_contract_accepts_cast_vote_tool_name():
+    response = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "cast_vote",
+            "args": {
+                "action_type": "vote", "target_seat": 2, "reasoning": "x",
+            },
+            "id": "call-1", "type": "tool_call",
+        }],
+    )
+
+    command = OutputParser().parse_strict_action_response(response, VOTE_CONTRACT)
+
+    assert command.target_seat == 2

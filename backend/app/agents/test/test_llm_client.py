@@ -3,6 +3,7 @@ from unittest.mock import patch
 from app.agents.llm_client import LLMClient, LLMClientConfig
 from app.models.contracts import ActionContract
 from app.models.game import GamePhase
+from app.core.game_engine import VOTE_CONTRACT
 
 
 def make_client() -> LLMClient:
@@ -25,6 +26,8 @@ def test_json_action_client_timeout_has_guard_above_retry_budget():
         client.get_action_model()
 
     assert chat.call_args.kwargs["timeout"] == 125
+    assert chat.call_args.kwargs["temperature"] == 0.1
+    assert chat.call_args.kwargs["max_tokens"] == 768
 
 
 def test_strict_action_client_timeout_has_guard_above_retry_budget():
@@ -42,3 +45,16 @@ def test_strict_action_client_timeout_has_guard_above_retry_budget():
         client.get_model_with_action_tool(contract)
 
     assert chat.call_args.kwargs["timeout"] == 125
+    assert chat.call_args.kwargs["temperature"] == 0.1
+    assert chat.call_args.kwargs["max_tokens"] == 768
+
+
+def test_vote_tool_is_forced_under_cast_vote_name():
+    client = make_client()
+
+    with patch("app.agents.llm_client.ChatOpenAI") as chat:
+        client.get_model_with_action_tool(VOTE_CONTRACT)
+
+    tool = chat.return_value.bind_tools.call_args.args[0][0]
+    assert tool["function"]["name"] == "cast_vote"
+    assert chat.return_value.bind_tools.call_args.kwargs["tool_choice"] == "cast_vote"
