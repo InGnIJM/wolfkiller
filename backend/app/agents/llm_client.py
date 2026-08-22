@@ -13,6 +13,8 @@ from app.models.contracts import ActionContract
 
 
 _DEEPSEEK_STRICT_HOST = "api.deepseek.com"
+_ACTION_TEMPERATURE = 0.1
+_ACTION_MAX_TOKENS = 768
 
 
 def derive_strict_base_url(
@@ -91,8 +93,8 @@ class LLMClient:
 
     @property
     def supports_strict_actions(self) -> bool:
-        """Whether this provider exposes a distinct strict-action endpoint."""
-        return self._config.strict_base_url.rstrip("/") != self._config.base_url.rstrip("/")
+        """Attempt a forced tool first; unsupported providers fall back safely."""
+        return True
 
     def _build(self) -> ChatOpenAI:
         return ChatOpenAI(
@@ -113,8 +115,8 @@ class LLMClient:
             model=self.model_name,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            temperature=self.temperature,
-            max_tokens=self.action_max_tokens,
+            temperature=_ACTION_TEMPERATURE,
+            max_tokens=min(self.action_max_tokens, _ACTION_MAX_TOKENS),
             timeout=max(
                 self.action_timeout_seconds, self.action_retry_timeout_seconds,
             ) + 5.0,
@@ -174,8 +176,8 @@ class LLMClient:
             model=self.model_name,
             api_key=self._config.api_key,
             base_url=self._config.strict_base_url,
-            temperature=self.temperature,
-            max_tokens=self.action_max_tokens,
+            temperature=_ACTION_TEMPERATURE,
+            max_tokens=min(self.action_max_tokens, _ACTION_MAX_TOKENS),
             timeout=max(
                 self.action_timeout_seconds, self.action_retry_timeout_seconds,
             ) + 5.0,
@@ -183,12 +185,12 @@ class LLMClient:
         tool = {
             "type": "function",
             "function": {
-                "name": contract.contract_id,
+                "name": contract.resolved_tool_name,
                 "description": "Submit the issued game action.",
                 "parameters": contract.json_schema(),
                 "strict": True,
             },
         }
         return model.bind_tools(
-            [tool], tool_choice=contract.contract_id, strict=True
+            [tool], tool_choice=contract.resolved_tool_name, strict=True
         )

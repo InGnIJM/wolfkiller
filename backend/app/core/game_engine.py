@@ -39,6 +39,7 @@ VOTE_CONTRACT = ActionContract(
     actions_requiring_target=frozenset({"vote"}),
     resolution_priority=0,
     fallback_action_type="abstain",
+    tool_name="cast_vote",
 )
 
 _EVENT_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")

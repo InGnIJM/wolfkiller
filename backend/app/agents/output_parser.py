@@ -151,7 +151,7 @@ class OutputParser:
         self, name: str, args: dict | str, contract: ActionContract
     ) -> ActionCommand:
         """Parse the sole action tool that was issued for a contract."""
-        if name != contract.contract_id:
+        if name not in {contract.resolved_tool_name, contract.contract_id}:
             raise ToolCallError(
                 "tool name does not match issued contract",
                 code="strict_tool_name_mismatch",
