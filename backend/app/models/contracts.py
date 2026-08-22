@@ -19,6 +19,11 @@ class ActionContract:
     actions_requiring_target: frozenset[str]
     resolution_priority: int
     fallback_action_type: str
+    tool_name: str | None = None
+
+    @property
+    def resolved_tool_name(self) -> str:
+        return self.tool_name or self.contract_id
 
     def json_schema(self) -> dict:
         return {
