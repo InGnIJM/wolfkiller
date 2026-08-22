@@ -136,6 +136,56 @@ class GameLogger:
             },
         )
 
+    def log_vote_window_opened(
+        self, game_id: str, round_num: int, *, window_id: str,
+        vote_round: int, eligible_voters: list[int], timeout_seconds: float,
+    ) -> None:
+        self.log_operation(
+            game_id, "vote_window_opened", round_num, "vote_casting",
+            data={
+                "window_id": window_id, "vote_round": vote_round,
+                "eligible_voters": eligible_voters,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+
+    def log_vote_receipt(
+        self, game_id: str, round_num: int, seat: int, *, window_id: str,
+        action_key: str, vote_round: int, status: str, target: Optional[int],
+        command_digest: str, replayed: bool,
+        failure_code: Optional[str] = None,
+        timeout_type: Optional[str] = None,
+    ) -> None:
+        data = {
+            "window_id": window_id, "action_key": action_key,
+            "vote_round": vote_round, "status": status, "target": target,
+            "command_digest": command_digest, "replayed": replayed,
+        }
+        if failure_code is not None:
+            data["failure_code"] = failure_code
+        if timeout_type is not None:
+            data["timeout_type"] = timeout_type
+        self.log_operation(
+            game_id, "vote_receipt", round_num, "vote_casting",
+            seat=seat, data=data,
+        )
+
+    def log_vote_window_closed(
+        self, game_id: str, round_num: int, *, window_id: str,
+        vote_round: int, accepted_votes: int, voluntary_abstains: int,
+        technical_abstains: int, missing_voters: int,
+    ) -> None:
+        self.log_operation(
+            game_id, "vote_window_closed", round_num, "vote_casting",
+            data={
+                "window_id": window_id, "vote_round": vote_round,
+                "accepted_votes": accepted_votes,
+                "voluntary_abstains": voluntary_abstains,
+                "technical_abstains": technical_abstains,
+                "missing_voters": missing_voters,
+            },
+        )
+
     def log_vote_technical_abstain(
         self, game_id: str, round_num: int, seat: int, *, failure_code: str,
         timeout_type: Optional[str] = None, window_id: Optional[str] = None,
