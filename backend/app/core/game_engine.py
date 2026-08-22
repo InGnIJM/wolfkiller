@@ -28,7 +28,7 @@ from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, Work
 from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
-from app.models.vote import CastVoteArgs
+from app.models.vote import CastVoteArgs, VoteStatus
 
 logger = logging.getLogger(__name__)
 
@@ -863,6 +863,12 @@ class GameEngine:
             window.window_id,
             timeout_seconds=float(self._vote_phase_timeout_seconds),
         )
+        self.game_logger.log_vote_window_opened(
+            self.game_id, self.state.round_number,
+            window_id=window.window_id, vote_round=window.vote_round,
+            eligible_voters=sorted(window.eligible_voters),
+            timeout_seconds=self._vote_phase_timeout_seconds,
+        )
         try:
             await asyncio.wait_for(
                 asyncio.gather(*(collect_vote(seat) for seat in seats)),
@@ -899,6 +905,16 @@ class GameEngine:
             raise RuntimeError("vote window has missing terminal receipts")
         for seat in seats:
             receipt = receipts[seat]
+            self.game_logger.log_vote_receipt(
+                self.game_id, self.state.round_number, seat,
+                window_id=receipt.window_id, action_key=receipt.action_key,
+                vote_round=window.vote_round, status=receipt.status.value,
+                target=receipt.target_seat,
+                command_digest=receipt.command_digest,
+                replayed=receipt.replayed,
+                failure_code=receipt.failure_code,
+                timeout_type=receipt.timeout_type,
+            )
             self.game_logger.log_vote(
                 self.game_id, self.state.round_number, seat,
                 receipt.target_seat, vote_round=self.state.vote_round,
@@ -907,6 +923,24 @@ class GameEngine:
                 BusEvent.VOTE_CAST, game_id=self.game_id,
                 vote=VoteAction(seat, receipt.target_seat),
             )
+        terminal_receipts = tuple(receipts.values())
+        self.game_logger.log_vote_window_closed(
+            self.game_id, self.state.round_number,
+            window_id=window.window_id, vote_round=window.vote_round,
+            accepted_votes=sum(
+                receipt.status is VoteStatus.ACCEPTED_VOTE
+                for receipt in terminal_receipts
+            ),
+            voluntary_abstains=sum(
+                receipt.status is VoteStatus.VOLUNTARY_ABSTAIN
+                for receipt in terminal_receipts
+            ),
+            technical_abstains=sum(
+                receipt.status is VoteStatus.TECHNICAL_ABSTAIN
+                for receipt in terminal_receipts
+            ),
+            missing_voters=len(window.eligible_voters - set(receipts)),
+        )
 
         self.sm.transition(SM_Event.VOTES_COMPLETE)
         await self._broadcast_phase_change()

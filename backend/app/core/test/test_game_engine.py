@@ -119,6 +119,18 @@ async def test_vote_phase_commits_role_decisions_through_vote_service_once():
 
     roles = {1: VotingRole(2), 2: VotingRole(1)}
     engine.roles = roles
+    opened = []
+    receipt_logs = []
+    closed = []
+    engine.game_logger.log_vote_window_opened = (
+        lambda *args, **kwargs: opened.append((args, kwargs))
+    )
+    engine.game_logger.log_vote_receipt = (
+        lambda *args, **kwargs: receipt_logs.append((args, kwargs))
+    )
+    engine.game_logger.log_vote_window_closed = (
+        lambda *args, **kwargs: closed.append((args, kwargs))
+    )
 
     await engine._execute_vote_casting()
 
@@ -131,6 +143,15 @@ async def test_vote_phase_commits_role_decisions_through_vote_service_once():
         (1, 2), (2, 1),
     ]
     assert roles[1].requests[0].idempotency_key == f"{window_id}:1"
+    assert opened[0][1]["window_id"] == window_id
+    assert [item[1]["status"] for item in receipt_logs] == [
+        "accepted_vote", "accepted_vote",
+    ]
+    assert closed[0][1] == {
+        "window_id": window_id, "vote_round": 1,
+        "accepted_votes": 2, "voluntary_abstains": 0,
+        "technical_abstains": 0, "missing_voters": 0,
+    }
 
 
 @pytest.mark.asyncio
