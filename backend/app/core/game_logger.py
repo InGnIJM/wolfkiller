@@ -81,23 +81,76 @@ class GameLogger:
                            data={"text": text})
 
     def log_vote(
-        self, game_id: str, round_num: int, seat: int, target: Optional[int],
+        self, game_id: str, round_num: int, seat: int, target: Optional[int], *,
+        vote_round: int,
     ) -> None:
         self.log_operation(game_id, "vote", round_num, "vote_casting", seat=seat,
-                           data={"target": target})
+                           data={"target": target, "vote_round": vote_round})
 
     def log_vote_telemetry(
         self, game_id: str, round_num: int, seat: int, *, transport: str,
         attempt: int, prompt_chars: int, elapsed_ms: int, retried: bool,
-        parse_result: str,
+        parse_result: str, failure_code: Optional[str] = None,
+        timeout_type: Optional[str] = None,
+        window_id: Optional[str] = None,
     ) -> None:
+        data = {
+            "transport": transport, "attempt": attempt,
+            "prompt_chars": prompt_chars, "elapsed_ms": elapsed_ms,
+            "retried": retried, "parse_result": parse_result,
+        }
+        if failure_code is not None:
+            data["failure_code"] = failure_code
+        if timeout_type is not None:
+            data["timeout_type"] = timeout_type
+        if window_id is not None:
+            data["window_id"] = window_id
         self.log_operation(
             game_id, "vote_telemetry", round_num, "vote_casting", seat=seat,
+            data=data,
+        )
+
+    def log_vote_queue_telemetry(
+        self, game_id: str, round_num: int, seat: int, *,
+        queue_wait_ms: int, worker_limit: int, vote_round: int,
+    ) -> None:
+        self.log_operation(
+            game_id, "vote_queue_telemetry", round_num, "vote_casting", seat=seat,
             data={
-                "transport": transport, "attempt": attempt,
-                "prompt_chars": prompt_chars, "elapsed_ms": elapsed_ms,
-                "retried": retried, "parse_result": parse_result,
+                "queue_wait_ms": queue_wait_ms, "worker_limit": worker_limit,
+                "vote_round": vote_round,
             },
+        )
+
+    def log_vote_phase_timeout(
+        self, game_id: str, round_num: int, *, timeout_seconds: float,
+        completed_seats: list[int], missing_seats: list[int], vote_round: int,
+    ) -> None:
+        self.log_operation(
+            game_id, "vote_phase_timeout", round_num, "vote_casting",
+            data={
+                "timeout_seconds": timeout_seconds,
+                "completed_seats": completed_seats,
+                "missing_seats": missing_seats,
+                "vote_round": vote_round,
+            },
+        )
+
+    def log_vote_technical_abstain(
+        self, game_id: str, round_num: int, seat: int, *, failure_code: str,
+        timeout_type: Optional[str] = None, window_id: Optional[str] = None,
+        vote_round: Optional[int] = None,
+    ) -> None:
+        data = {"failure_code": failure_code}
+        if timeout_type is not None:
+            data["timeout_type"] = timeout_type
+        if window_id is not None:
+            data["window_id"] = window_id
+        if vote_round is not None:
+            data["vote_round"] = vote_round
+        self.log_operation(
+            game_id, "vote_technical_abstain", round_num, "vote_casting", seat=seat,
+            data=data,
         )
 
     def log_vote_result(
