@@ -1218,6 +1218,44 @@ def test_manifest_remove_game_drops_entry_and_persists(tmp_path):
     assert GameManifest(str(tmp_path)).load_or_rebuild() == {}
 
 
+class TestGameDisplayName:
+    def _service(self, tmp_path):
+        return GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+
+    def test_get_display_name_falls_back_to_short_id(self, tmp_path):
+        service = self._service(tmp_path)
+        service._games["abcd1234"] = MagicMock()
+        service._manifest.add_game(
+            "abcd1234", {"role_counts": {"wolf-killer-villager": 3}},
+        )
+        assert service.get_display_name("abcd1234") == "abcd1234"
+        assert service.get_display_name("missing") == "missing"
+
+    def test_rename_game_updates_manifest(self, tmp_path):
+        service = self._service(tmp_path)
+        service._games["game-1"] = MagicMock()
+        service._manifest.add_game(
+            "game-1", {"role_counts": {"wolf-killer-villager": 3}}, name="旧名",
+        )
+        service.rename_game("game-1", "新名字")
+        assert service.get_display_name("game-1") == "新名字"
+
+    def test_rename_missing_game_raises_key_error(self, tmp_path):
+        service = self._service(tmp_path)
+        with pytest.raises(KeyError):
+            service.rename_game("missing", "名字")
+
+    @pytest.mark.asyncio
+    async def test_create_game_writes_default_name(self, tmp_path):
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        game_id = await service.create_game(
+            num_werewolves=1, num_villagers=3, num_seers=0, num_witches=0, num_hunters=0,
+        )
+        name = service.get_display_name(game_id)
+        assert name.startswith("4人局 · ")
+        assert "月" in name and "日" in name
+
+
 class TestPipelineSnapshotVersioning:
     def _registry(self):
         return builtin_registry.freeze()

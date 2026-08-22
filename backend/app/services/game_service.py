@@ -33,7 +33,7 @@ from app.models.pipeline import ActionCommand as PipelineActionCommand, Schedule
 from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
-from app.services.game_manifest import GameManifest
+from app.services.game_manifest import GameManifest, default_game_name
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +366,7 @@ class GameService:
             game_id,
             {"role_counts": dict(config.role_counts)},
             model_snapshot=model_snapshot,
+            name=default_game_name(config.total_players),
         )
 
         task = asyncio.create_task(engine.start())
@@ -519,6 +520,18 @@ class GameService:
 
     def list_games(self) -> list[str]:
         return list(self._games.keys())
+
+    def get_display_name(self, game_id: str) -> str:
+        entry = self._manifest.get_entry(game_id) or {}
+        name = entry.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return game_id[:8]
+
+    def rename_game(self, game_id: str, name: str) -> None:
+        if game_id not in self._games:
+            raise KeyError(game_id)
+        self._manifest.update_game(game_id, name=name)
 
     # ── Event Handlers ─────────────────────────────────────────
 
