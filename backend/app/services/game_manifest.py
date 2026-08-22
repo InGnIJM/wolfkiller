@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from app.models.game import GamePhase, SnapshotVersionError
 
@@ -26,6 +27,16 @@ _LEGACY_ROLE_COUNT_KEYS = frozenset({
 
 _VALID_PIPELINE_VERSIONS = frozenset({"v1", "v2"})
 _CURRENT_EFFECT_SCHEMA = 1
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def default_game_name(player_count: int, now: datetime | None = None) -> str:
+    moment = datetime.now(_SHANGHAI) if now is None else now
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_SHANGHAI)
+    else:
+        moment = moment.astimezone(_SHANGHAI)
+    return f"{player_count}人局 · {moment.month}月{moment.day}日 {moment:%H:%M}"
 
 
 def restore_snapshot(
@@ -209,6 +220,7 @@ class GameManifest:
     def add_game(
         self, game_id: str, config: dict,
         model_snapshot: Optional[list] = None,
+        name: Optional[str] = None,
     ) -> None:
         entry = self._entries.get(game_id, {})
         role_counts = config.get("role_counts")
@@ -229,6 +241,8 @@ class GameManifest:
         })
         if model_snapshot is not None:
             entry["model_snapshot"] = model_snapshot
+        if name is not None:
+            entry["name"] = name
         self._entries[game_id] = entry
         self._persist()
 
@@ -246,6 +260,7 @@ class GameManifest:
         state_revision: Optional[int] = None,
         last_consistent_checkpoint: Optional[str] = None,
         model_snapshot: Optional[list] = None,
+        name: Optional[str] = None,
     ) -> None:
         entry = self._entries.get(game_id)
         if entry is None:
@@ -275,6 +290,17 @@ class GameManifest:
             entry["last_consistent_checkpoint"] = last_consistent_checkpoint
         if model_snapshot is not None:
             entry["model_snapshot"] = model_snapshot
+        if name is not None:
+            entry["name"] = name
+        self._persist()
+
+    def get_entry(self, game_id: str) -> Optional[dict]:
+        return self._entries.get(game_id)
+
+    def remove_game(self, game_id: str) -> None:
+        if game_id not in self._entries:
+            return
+        self._entries.pop(game_id)
         self._persist()
 
     # ── Internals ──────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch, PropertyMock
 from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
@@ -9,7 +10,7 @@ from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.models.game import GamePhase
 from app.api.websocket.ws_handler import WSManager
 from app.roles.registry import builtin_registry
-from app.services.game_manifest import GameManifest
+from app.services.game_manifest import GameManifest, default_game_name
 
 
 @pytest.fixture(autouse=True)
@@ -1179,6 +1180,42 @@ class TestGameService:
         assert service._games["game-a"] is original
         service._persist_game.assert_not_called()
         manager.broadcast.assert_not_awaited()
+
+
+def test_default_game_name_formats_shanghai_time_without_padding_month_day():
+    utc = datetime(2026, 8, 22, 13, 50, tzinfo=timezone.utc)
+    assert default_game_name(8, now=utc) == "8人局 · 8月22日 21:50"
+
+
+def test_default_game_name_treats_naive_datetime_as_shanghai():
+    naive = datetime(2026, 1, 5, 9, 5)
+    assert default_game_name(9, now=naive) == "9人局 · 1月5日 09:05"
+
+
+def test_manifest_stores_and_updates_name(tmp_path):
+    manifest = GameManifest(str(tmp_path))
+    manifest.add_game(
+        "game-1",
+        {"role_counts": {"wolf-killer-villager": 3}},
+        name="开局名",
+    )
+    (tmp_path / "games" / "game-1").mkdir(parents=True)
+
+    assert manifest.get_entry("game-1")["name"] == "开局名"
+    manifest.update_game("game-1", name="新名字")
+    restored = GameManifest(str(tmp_path)).load_or_rebuild()["game-1"]
+    assert restored["name"] == "新名字"
+
+
+def test_manifest_remove_game_drops_entry_and_persists(tmp_path):
+    manifest = GameManifest(str(tmp_path))
+    manifest.add_game("game-1", {"role_counts": {"wolf-killer-villager": 3}}, name="A")
+    (tmp_path / "games" / "game-1").mkdir(parents=True)
+    manifest.remove_game("game-1")
+    manifest.remove_game("missing")
+
+    assert manifest.get_entry("game-1") is None
+    assert GameManifest(str(tmp_path)).load_or_rebuild() == {}
 
 
 class TestPipelineSnapshotVersioning:
