@@ -20,12 +20,24 @@ from app.models.pipeline import (
     SchedulePoint,
 )
 from langchain_core.messages import SystemMessage, HumanMessage
-from openai import APITimeoutError
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 
 if TYPE_CHECKING:
     from app.agents.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+def _validation_failure_code(error: ActionValidationError) -> str:
+    """Return a stable, non-secret classification for an invalid action."""
+    return error.code
+
+
+def _provider_failure_code(error: Exception) -> str:
+    if isinstance(error, RateLimitError):
+        return "provider_rate_limit"
+    if isinstance(error, InternalServerError):
+        return "provider_server_error"
+    return "provider_connection_error"
 
 _VOTE_CONTRACT = PipelineActionContract(
     contract_id="exile_vote",
@@ -403,14 +415,16 @@ class BaseRole:
     def _vote_telemetry(
         self, conversation_log: ConversationLog, request: ActionRequest, *,
         transport: str, attempt: int, prompt_chars: int, elapsed_ms: int,
-        retried: bool, parse_result: str,
+        retried: bool, parse_result: str, failure_code: str | None = None,
+        timeout_type: str | None = None,
     ) -> None:
         log_telemetry = getattr(conversation_log, "log_vote_telemetry", None)
         if request.contract.contract_id == "exile_vote" and callable(log_telemetry):
             log_telemetry(
                 request.round_id, self.seat, transport=transport, attempt=attempt,
                 prompt_chars=prompt_chars, elapsed_ms=elapsed_ms, retried=retried,
-                parse_result=parse_result,
+                parse_result=parse_result, failure_code=failure_code,
+                timeout_type=timeout_type, window_id=request.idempotency_key,
             )
 
     def _action_timeout_seconds(self, *, retried: bool) -> float:
@@ -421,6 +435,17 @@ class BaseRole:
         fallback = 90.0
         value = getattr(self.llm_client, attribute, fallback)
         return float(value) if isinstance(value, (int, float)) and value > 0 else fallback
+
+    def _log_vote_technical_abstain(
+        self, conversation_log: ConversationLog, request: ActionRequest,
+        *, failure_code: str, timeout_type: str | None = None,
+    ) -> None:
+        log_abstain = getattr(conversation_log, "log_vote_technical_abstain", None)
+        if request.contract.contract_id == "exile_vote" and callable(log_abstain):
+            log_abstain(
+                request.round_id, self.seat, failure_code=failure_code,
+                timeout_type=timeout_type, window_id=request.idempotency_key,
+            )
 
     async def _request_action_with_transport(
         self, state, request, messages, invoke, conversation_log: ConversationLog,
@@ -436,19 +461,66 @@ class BaseRole:
                     timeout=self._action_timeout_seconds(retried=attempt_number > 1),
                 )
                 accepted = self._accept_command(state, request, command)
-            except (asyncio.TimeoutError, APITimeoutError):
+            except asyncio.TimeoutError:
                 should_retry = attempt_number == 1
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
                     retried=attempt_number > 1,
                     parse_result="timeout_retry" if should_retry else "timeout_fallback",
+                    failure_code="request_timeout", timeout_type="local_deadline",
                 )
                 if should_retry:
                     raise _ActionTransportTimeout from None
+                self._log_vote_technical_abstain(
+                    conversation_log, request, failure_code="request_timeout",
+                    timeout_type="local_deadline",
+                )
                 fallback = ActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None, reasoning="timeout fallback",
+                )
+                return self._accept_command(state, request, fallback)
+            except APITimeoutError:
+                should_retry = attempt_number == 1
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1,
+                    parse_result="timeout_retry" if should_retry else "timeout_fallback",
+                    failure_code="request_timeout", timeout_type="provider_timeout",
+                )
+                if should_retry:
+                    raise _ActionTransportTimeout from None
+                self._log_vote_technical_abstain(
+                    conversation_log, request, failure_code="request_timeout",
+                    timeout_type="provider_timeout",
+                )
+                fallback = ActionCommand(
+                    action_type=request.contract.fallback_action_type,
+                    target_seat=None, reasoning="timeout fallback",
+                )
+                return self._accept_command(state, request, fallback)
+            except (RateLimitError, InternalServerError, APIConnectionError) as error:
+                should_retry = attempt_number == 1
+                self._vote_telemetry(
+                    conversation_log, request, transport=transport, attempt=attempt_number,
+                    prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
+                    retried=attempt_number > 1,
+                    parse_result=(
+                        "invoke_error_retry" if should_retry else "invoke_error_fallback"
+                    ),
+                    failure_code=_provider_failure_code(error),
+                )
+                if should_retry:
+                    raise _ActionTransportTimeout from None
+                self._log_vote_technical_abstain(
+                    conversation_log, request,
+                    failure_code=_provider_failure_code(error),
+                )
+                fallback = ActionCommand(
+                    action_type=request.contract.fallback_action_type,
+                    target_seat=None, reasoning="provider error fallback",
                 )
                 return self._accept_command(state, request, fallback)
             except StrictCapabilityError:
@@ -463,6 +535,7 @@ class BaseRole:
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
                     retried=attempt_number > 1, parse_result="invalid",
+                    failure_code=_validation_failure_code(error),
                 )
                 logger.warning(
                     f"Seat {self.seat}: action validation failed for "
@@ -470,26 +543,40 @@ class BaseRole:
                     f"(attempt {attempt_number}/2): {error}"
                 )
                 if attempt_number == 2:
+                    self._log_vote_technical_abstain(
+                        conversation_log, request,
+                        failure_code=_validation_failure_code(error),
+                    )
                     fallback = ActionCommand(
                         action_type=request.contract.fallback_action_type,
                         target_seat=None,
                         reasoning="safe fallback",
                     )
                     return self._accept_command(state, request, fallback)
-                active_messages = [
-                    *messages,
-                    HumanMessage(
-                        content=(
+                if callable(getattr(
+                    self.prompt_builder, "build_vote_retry_prompt", None,
+                )):
+                    active_messages = [
+                        *self._build_vote_retry_messages(state, conversation_log),
+                        HumanMessage(content=(
                             "The previous action was invalid. Submit the required "
                             "action again using the issued schema."
-                        )
-                    ),
-                ]
+                        )),
+                    ]
+                else:
+                    active_messages = [
+                        *messages,
+                        HumanMessage(content=(
+                            "The previous action was invalid. Submit the required "
+                            "action again using the issued schema."
+                        )),
+                    ]
             except Exception:
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
                     retried=attempt_number > 1, parse_result="invoke_error",
+                    failure_code="invoke_error",
                 )
                 raise
             else:
@@ -536,7 +623,9 @@ class BaseRole:
         )
         violations = self.action_validator.validate(context, _VOTE_CONTRACT, pipeline_command)
         if violations:
-            raise ActionValidationError(violations[0].message)
+            raise ActionValidationError(
+                violations[0].message, code=violations[0].code,
+            )
         accept = GameEffect(
             effect_id=derive_effect_id(context.action_key, 0),
             kind=EffectKind.ACCEPT_ACTION,
@@ -585,7 +674,9 @@ class BaseRole:
         response = await model.ainvoke(messages)
         content = response.content if hasattr(response, "content") else str(response)
         if not isinstance(content, str):
-            raise ActionValidationError("JSON action response must be text")
+            raise ActionValidationError(
+                "JSON action response must be text", code="action_response_not_text",
+            )
         return self.output_parser.parse_action_payload(content, request.contract)
 
     async def _invoke_llm(self, prompt: str) -> str:

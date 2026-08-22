@@ -23,6 +23,19 @@ class ConversationLog:
         if self._logger and self._game_id:
             self._logger.log_vote_telemetry(self._game_id, round_num, seat, **data)
 
+    def log_vote_technical_abstain(
+        self, round_num: int, seat: int, *, failure_code: str,
+        timeout_type: Optional[str] = None, window_id: Optional[str] = None,
+    ) -> None:
+        log_abstain = getattr(self._logger, "log_vote_technical_abstain", None)
+        if self._game_id and callable(log_abstain):
+            data = {"failure_code": failure_code, "window_id": window_id}
+            if timeout_type is not None:
+                data["timeout_type"] = timeout_type
+            log_abstain(
+                self._game_id, round_num, seat, **data,
+            )
+
     # ── Add methods ──────────────────────────────────────────────
 
     def add_public_speech(
