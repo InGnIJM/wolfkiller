@@ -7,7 +7,7 @@ from app.core.game_engine import GameEngine
 from app.models.actions import VoteAction
 from app.models.contracts import AcceptedAction, ActionCommand
 from app.models.game import GamePhase, PlayerState
-from app.models.vote import VoteStatus
+from app.models.vote import CastVoteArgs, VoteStatus
 
 
 def prepare_engine(game_id: str, seats: range) -> GameEngine:
@@ -74,7 +74,33 @@ async def test_vote_phase_timeout_logs_exact_completed_and_missing_seats():
 
 
 @pytest.mark.asyncio
-async def test_vote_exception_becomes_logged_technical_abstention():
+async def test_vote_phase_timeout_uses_terminal_receipt_after_task_cancellation():
+    engine = prepare_engine("phase-timeout-receipt", range(1, 2))
+    engine._vote_phase_timeout_seconds = 0.1
+
+    async def commit_then_stall(seat):
+        engine._vote_service.submit(
+            engine._active_vote_window_id,
+            seat,
+            CastVoteArgs(
+                action_type="abstain", target_seat=None, reasoning="timeout race",
+            ),
+        )
+        await asyncio.Event().wait()
+
+    engine.vote = commit_then_stall
+
+    await engine._execute_vote_casting()
+
+    receipt = engine._vote_service.receipts(
+        "phase-timeout-receipt:1:vote_casting:1:cast_vote:v2",
+    )[0]
+    assert receipt.status is VoteStatus.VOLUNTARY_ABSTAIN
+    assert receipt.failure_code is None
+
+
+@pytest.mark.asyncio
+async def test_vote_exception_becomes_logged_technical_abstention(caplog):
     engine = prepare_engine("vote-error", range(1, 2))
     calls = []
     engine.game_logger.log_vote_technical_abstain = (
@@ -83,7 +109,7 @@ async def test_vote_exception_becomes_logged_technical_abstention():
 
     class BrokenRole:
         async def request_action(self, *args):
-            raise RuntimeError("provider disconnected")
+            raise RuntimeError("secret-provider-response-body")
 
     engine.roles = {1: BrokenRole()}
 
@@ -97,6 +123,34 @@ async def test_vote_exception_becomes_logged_technical_abstention():
             'window_id': 'vote-error:1:vote_casting:1:cast_vote:v2:1',
         },
     )]
+    assert "secret-provider-response-body" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_vote_rejection_uses_stable_vote_error_code():
+    engine = prepare_engine("vote-rejected", range(1, 2))
+    calls = []
+    engine.game_logger.log_vote_technical_abstain = (
+        lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+
+    class InvalidTargetRole:
+        async def request_action(self, state, conversation_log, request):
+            return AcceptedAction(
+                request=request,
+                command=ActionCommand(
+                    action_type="vote", target_seat=99, reasoning="invalid",
+                ),
+            )
+
+    engine.roles = {1: InvalidTargetRole()}
+
+    vote = await engine.vote(1)
+
+    assert vote == VoteAction(
+        1, None, "technical abstain: vote_target_ineligible",
+    )
+    assert calls[0][1]["failure_code"] == "vote_target_ineligible"
 
 
 @pytest.mark.asyncio

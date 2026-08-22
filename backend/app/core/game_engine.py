@@ -28,7 +28,7 @@ from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, Work
 from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
-from app.models.vote import CastVoteArgs, VoteStatus
+from app.models.vote import CastVoteArgs, VoteError, VoteStatus
 
 logger = logging.getLogger(__name__)
 
@@ -822,7 +822,6 @@ class GameEngine:
                 )
         seats = sorted(self._vote_service.missing_voters(window.window_id))
         semaphore = asyncio.Semaphore(self._vote_concurrency)
-        completed: dict[int, VoteAction | None] = {}
 
         async def collect_vote(seat: int) -> None:
             queued_at = time.monotonic()
@@ -857,7 +856,6 @@ class GameEngine:
                             ),
                             received_at=received_at,
                         )
-                completed[seat] = vote
 
         window = self._vote_service.arm_window(
             window.window_id,
@@ -875,11 +873,15 @@ class GameEngine:
                 timeout=self._vote_phase_timeout_seconds,
             )
         except asyncio.TimeoutError:
-            completed_seats = sorted(completed)
-            missing_seats = sorted(set(seats) - set(completed))
+            terminal_seats = {
+                receipt.voter_seat
+                for receipt in self._vote_service.receipts(window.window_id)
+            }
+            completed_seats = sorted(set(seats) & terminal_seats)
+            missing_seats = sorted(set(seats) - terminal_seats)
             logger.warning(
                 "Vote phase timed out after %.1fs; preserving %s/%s completed votes",
-                self._vote_phase_timeout_seconds, len(completed), len(seats),
+                self._vote_phase_timeout_seconds, len(completed_seats), len(seats),
             )
             self.game_logger.log_vote_phase_timeout(
                 self.game_id, self.state.round_number,
@@ -1231,11 +1233,17 @@ class GameEngine:
                 target_seat=receipt.target_seat,
                 reasoning=accepted.command.reasoning,
             )
-        except Exception as e:
-            logger.error(f"Vote error (seat={seat}): {e}", exc_info=True)
+        except Exception as error:
+            failure_code = (
+                error.code if isinstance(error, VoteError) else "invoke_error"
+            )
+            logger.error(
+                "Vote action failed (seat=%s, failure_code=%s)",
+                seat, failure_code,
+            )
             self.game_logger.log_vote_technical_abstain(
                 self.game_id, self.state.round_number, seat,
-                failure_code="invoke_error", window_id=request.idempotency_key,
+                failure_code=failure_code, window_id=request.idempotency_key,
             )
             existing = {
                 item.voter_seat: item
@@ -1243,12 +1251,12 @@ class GameEngine:
             }.get(seat)
             if existing is None:
                 receipt = self._vote_service.technical_abstain(
-                    window_id, seat, failure_code="invoke_error",
+                    window_id, seat, failure_code=failure_code,
                 )
             else:
                 receipt = existing
             return VoteAction(
-                seat, receipt.target_seat, "technical abstain: invoke_error",
+                seat, receipt.target_seat, f"technical abstain: {failure_code}",
             )
 
     async def _check_game_over(self) -> bool:
