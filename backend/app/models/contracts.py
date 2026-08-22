@@ -63,3 +63,5 @@ class ActionRequest:
 class AcceptedAction:
     request: ActionRequest
     command: ActionCommand
+    technical_failure_code: str | None = None
+    timeout_type: str | None = None
