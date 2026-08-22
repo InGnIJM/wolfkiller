@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.api.model_schemas import ModelAssignment
 
@@ -38,11 +38,24 @@ class CreateGameResponse(BaseModel):
 
 class GameListItem(BaseModel):
     game_id: str
+    name: str
     phase: str
     round_number: int
     player_count: int
     alive_count: int
     winner: Optional[str] = None
+
+
+class RenameGameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be blank")
+        return stripped
 
 
 class GameListResponse(BaseModel):

@@ -10,7 +10,7 @@ from app.api.schemas import (
     PublicSeerThoughtResponse, PublicSpeechResponse, PublicVoteResponse,
     PublicVoteResultResponse, PublicWinnerResponse, PublicWitchThoughtResponse,
     PublicWolfChatMessageResponse, PublicWolfVoteResponse,
-    SetSpeedRequest, WSMessage,
+    RenameGameRequest, SetSpeedRequest, WSMessage,
 )
 
 
@@ -204,18 +204,26 @@ class TestSchemas:
 
     def test_game_list_item(self):
         item = GameListItem(
-            game_id="abc", phase="night", round_number=2,
+            game_id="abc", name="夜局", phase="night", round_number=2,
             player_count=9, alive_count=7, winner=None,
         )
         assert item.game_id == "abc"
+        assert item.name == "夜局"
         assert item.phase == "night"
 
     def test_game_list_item_with_winner(self):
         item = GameListItem(
-            game_id="abc", phase="game_over", round_number=5,
+            game_id="abc", name="终局", phase="game_over", round_number=5,
             player_count=9, alive_count=4, winner="good",
         )
         assert item.winner == "good"
+
+    def test_rename_game_request_strips_and_rejects_blank(self):
+        assert RenameGameRequest(name="  新名字  ").name == "新名字"
+        with pytest.raises(ValidationError):
+            RenameGameRequest(name="   ")
+        with pytest.raises(ValidationError):
+            RenameGameRequest(name="x" * 51)
 
     def test_game_list_response(self):
         resp = GameListResponse(games=[])

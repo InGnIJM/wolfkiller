@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes import game_routes
-from app.api.schemas import CreateGameRequest
+from app.api.schemas import CreateGameRequest, RenameGameRequest
 
 
 def test_create_game_request_accepts_dynamic_role_counts():
@@ -117,11 +117,84 @@ async def test_list_games_omits_missing_states(monkeypatch):
         None,
     ]
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    service.get_display_name.side_effect = lambda gid: f"{gid}-name"
 
     response = await game_routes.list_games()
 
     assert response.games[0].game_id == "present"
+    assert response.games[0].name == "present-name"
     assert response.games[0].winner == "good"
+
+
+@pytest.mark.asyncio
+async def test_rename_game_returns_updated_list_item(monkeypatch):
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        alive_players=lambda: [object()],
+        win_result=None,
+        players={1: object()},
+    )
+    service = MagicMock()
+    service.get_game_state.return_value = state
+    service.get_display_name.return_value = "新名字"
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.rename_game("g1", RenameGameRequest(name="新名字"))
+
+    service.rename_game.assert_called_once_with("g1", "新名字")
+    assert response.name == "新名字"
+    assert response.game_id == "g1"
+
+
+@pytest.mark.asyncio
+async def test_rename_game_returns_404_when_missing(monkeypatch):
+    service = MagicMock()
+    service.rename_game.side_effect = KeyError("g1")
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.rename_game("g1", RenameGameRequest(name="新名字"))
+    assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rename_game_returns_404_when_state_vanishes(monkeypatch):
+    service = MagicMock()
+    service.get_game_state.return_value = None
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.rename_game("g1", RenameGameRequest(name="新名字"))
+    assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_game_returns_204(monkeypatch):
+    service = MagicMock()
+    service.delete_game = AsyncMock()
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    response = await game_routes.delete_game("g1")
+    service.delete_game.assert_awaited_once_with("g1")
+    assert response is None
+
+
+@pytest.mark.asyncio
+async def test_delete_game_returns_404_when_missing(monkeypatch):
+    service = MagicMock()
+    service.delete_game = AsyncMock(side_effect=KeyError("g1"))
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.delete_game("g1")
+    assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_game_returns_500_when_archive_busy(monkeypatch):
+    service = MagicMock()
+    service.delete_game = AsyncMock(side_effect=OSError("busy"))
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.delete_game("g1")
+    assert caught.value.status_code == 500
 
 
 @pytest.mark.asyncio

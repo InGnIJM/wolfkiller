@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from app.api.schemas import (
     CreateGameRequest, CreateGameResponse,
     GameListResponse, GameListItem, GameDetailResponse, GameLogsResponse,
-    GameMemoriesResponse, PlayerMemoryResponse,
+    GameMemoriesResponse, PlayerMemoryResponse, RenameGameRequest,
 )
 from app.models.game import Camp
 from app.services.game_service import GameService
@@ -102,6 +102,19 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
     )
 
 
+def _list_item(service: GameService, game_id: str, state) -> GameListItem:
+    win = state.win_result.get("winning_camp") if state.win_result else None
+    return GameListItem(
+        game_id=game_id,
+        name=service.get_display_name(game_id),
+        phase=state.phase.value,
+        round_number=state.round_number,
+        player_count=len(state.players),
+        alive_count=len(state.alive_players()),
+        winner=win,
+    )
+
+
 @router.get("", response_model=GameListResponse)
 async def list_games():
     service = get_service()
@@ -111,15 +124,32 @@ async def list_games():
         state = service.get_game_state(g)
         if state is None:
             continue
-        items.append(GameListItem(
-            game_id=g,
-            phase=state.phase.value,
-            round_number=state.round_number,
-            player_count=len(state.players),
-            alive_count=len(state.alive_players()),
-            winner=state.win_result.get("winning_camp") if state.win_result else None,
-        ))
+        items.append(_list_item(service, g, state))
     return GameListResponse(games=items)
+
+
+@router.patch("/{game_id}", response_model=GameListItem)
+async def rename_game(game_id: str, req: RenameGameRequest):
+    service = get_service()
+    try:
+        service.rename_game(game_id, req.name)
+    except KeyError:
+        raise HTTPException(404, "Game not found") from None
+    state = service.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(404, "Game not found")
+    return _list_item(service, game_id, state)
+
+
+@router.delete("/{game_id}", status_code=204)
+async def delete_game(game_id: str):
+    service = get_service()
+    try:
+        await service.delete_game(game_id)
+    except KeyError:
+        raise HTTPException(404, "Game not found") from None
+    except OSError as error:
+        raise HTTPException(500, "Failed to delete game archive") from error
 
 
 @router.get("/{game_id}", response_model=GameDetailResponse)
