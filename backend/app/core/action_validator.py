@@ -11,6 +11,10 @@ from app.models.pipeline import (
 class ActionValidationError(ValueError):
     """Raised when an action does not satisfy its issued contract."""
 
+    def __init__(self, message: str, *, code: str = "action_validation_error"):
+        self.code = code
+        super().__init__(message)
+
 
 class ActionValidator:
     """Pure, side-effect-free validation of pipeline action commands."""

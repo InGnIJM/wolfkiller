@@ -25,13 +25,27 @@ class ToolCallResult:
 
 class ToolCallError(ActionValidationError):
     """Raised when tool call validation fails, with reason for caller."""
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, *, code: str = "action_validation_error"):
         self.reason = reason
-        super().__init__(reason)
+        super().__init__(reason, code=code)
 
 
 class StrictCapabilityError(RuntimeError):
     """The configured provider explicitly rejects strict tool support."""
+
+
+def _schema_failure_code(error_types: set[str]) -> str:
+    """Classify Pydantic schema failures without retaining response content."""
+    if "missing" in error_types:
+        return "action_payload_missing_field"
+    if "extra_forbidden" in error_types:
+        return "action_payload_extra_field"
+    if any(
+        item.endswith("_type") or item.endswith("_parsing")
+        for item in error_types
+    ):
+        return "action_payload_wrong_type"
+    return "action_payload_schema_invalid"
 
 
 def extract_json_object(raw: object) -> object:
@@ -88,37 +102,49 @@ class OutputParser:
         if isinstance(payload, str):
             payload = extract_json_object(payload)
             if payload is None:
-                raise ToolCallError("action payload must be a JSON object")
+                raise ToolCallError(
+                    "action payload must be a JSON object",
+                    code="action_payload_not_json",
+                )
 
         if not isinstance(payload, dict):
-            raise ToolCallError("action payload must be a JSON object")
+            raise ToolCallError(
+                "action payload must be a JSON object",
+                code="action_payload_not_json",
+            )
 
         try:
             command = ActionCommand.model_validate(payload, strict=True)
         except ValidationError as error:
-            raise ToolCallError("invalid action payload") from error
+            code = _schema_failure_code({item["type"] for item in error.errors()})
+            raise ToolCallError("invalid action payload", code=code) from error
 
         schema = contract.json_schema()
         action_schema = schema["properties"]["action_type"]
         if command.action_type not in action_schema["enum"]:
-            raise ToolCallError("action type is not permitted by contract")
+            raise ToolCallError(
+                "action type is not permitted by contract",
+                code="action_type_not_permitted",
+            )
         if (
             command.action_type in contract.actions_requiring_target
             and command.target_seat is None
         ):
-            raise ToolCallError("action requires a target")
+            raise ToolCallError("action requires a target", code="target_required")
         if (
             command.action_type not in contract.actions_requiring_target
             and command.target_seat is not None
         ):
-            raise ToolCallError("action must not include a target")
+            raise ToolCallError("action must not include a target", code="target_forbidden")
 
         max_reasoning_length = schema["properties"]["reasoning"].get("maxLength")
         if (
             max_reasoning_length is not None
             and len(command.reasoning) > max_reasoning_length
         ):
-            raise ToolCallError("reasoning exceeds contract limit")
+            raise ToolCallError(
+                "reasoning exceeds contract limit", code="reasoning_too_long"
+            )
         return command
 
     def parse_tool_action(
@@ -126,7 +152,10 @@ class OutputParser:
     ) -> ActionCommand:
         """Parse the sole action tool that was issued for a contract."""
         if name != contract.contract_id:
-            raise ToolCallError("tool name does not match issued contract")
+            raise ToolCallError(
+                "tool name does not match issued contract",
+                code="strict_tool_name_mismatch",
+            )
         return self.parse_action_payload(args, contract)
 
     def parse_strict_action_response(
@@ -134,15 +163,23 @@ class OutputParser:
     ) -> ActionCommand:
         """Accept exactly one native tool call for an issued strict contract."""
         tool_calls = getattr(response, "tool_calls", None)
-        if not tool_calls or len(tool_calls) != 1:
-            raise ActionValidationError("strict action response must contain one tool call")
+        if not tool_calls:
+            raise ActionValidationError(
+                "strict action response must contain one tool call",
+                code="strict_tool_missing",
+            )
+        if len(tool_calls) != 1:
+            raise ActionValidationError(
+                "strict action response must contain one tool call",
+                code="strict_tool_count_invalid",
+            )
         tool_call = tool_calls[0]
         try:
             return self.parse_tool_action(
                 tool_call["name"], tool_call.get("args", {}), contract
             )
         except ToolCallError as error:
-            raise ActionValidationError(error.reason) from error
+            raise ActionValidationError(error.reason, code=error.code) from error
 
     def parse_night_action(self, raw: str, player_seat: int) -> NightAction:
         parsed = self._extract_json(raw)
