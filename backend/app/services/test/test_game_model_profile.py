@@ -40,7 +40,7 @@ def test_resolved_config_carries_profile_and_snapshot_has_no_key(stored_model):
 
 @pytest.mark.asyncio
 async def test_create_game_passes_only_llm_clients_to_game_core(
-    stored_model, monkeypatch,
+    stored_model, monkeypatch, tmp_path,
 ):
     class FakeLLMClient:
         instances = []
@@ -81,7 +81,7 @@ async def test_create_game_passes_only_llm_clients_to_game_core(
     monkeypatch.setattr(game_service, "Scheduler", scheduler)
     monkeypatch.setattr(GameEngine, "start", AsyncMock())
 
-    service = GameService(WSManager(), EventBus(), data_dir="data")
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
     await service.create_game(
         role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 8},
         model_assignments=[{"config_id": stored_model.id, "count": 9}],
