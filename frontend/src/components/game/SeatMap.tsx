@@ -18,6 +18,12 @@ const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> 
   'wolf-killer-guard': { label: '守卫', ...ROLE_COLORS.guard },
 };
 
+// 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字
+const ROMAN = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ', 'Ⅺ', 'Ⅻ'];
+function toRoman(seat: number): string {
+  return ROMAN[(seat - 1) % ROMAN.length] ?? String(seat);
+}
+
 interface Props {
   players: Record<number, PublicPlayerState>;
   currentSpeaker?: number | null;
@@ -25,18 +31,22 @@ interface Props {
   children?: React.ReactNode;
 }
 
-function getRectPosition(index: number, total: number, rectW: number, rectH: number) {
-  if (total <= 1) return { x: rectW / 2, y: rectH / 2 };
-
-  const perimeter = 2 * (rectW + rectH);
-  const dist = index * (perimeter / total);
-  if (dist < rectW) return { x: dist, y: 0 };
-
-  let remaining = dist - rectW;
-  if (remaining < rectH) return { x: rectW, y: remaining };
-  remaining -= rectH;
-  if (remaining < rectW) return { x: rectW - remaining, y: rectH };
-  return { x: 0, y: rectH - (remaining - rectW) };
+// 椭圆排布：任意人数沿椭圆周长均匀分布（从顶部 12 点方向起），
+// 兼容后续人数扩充；半径为矩形可用区减去座位半宽，保证不贴边。
+function getEllipsePosition(
+  index: number,
+  total: number,
+  rectW: number,
+  rectH: number,
+  cardSize: number,
+) {
+  if (total <= 0) return { x: rectW / 2, y: rectH / 2 };
+  const cx = rectW / 2;
+  const cy = rectH / 2;
+  const rx = Math.max(24, rectW / 2 - cardSize * 0.9);
+  const ry = Math.max(24, rectH / 2 - cardSize * 1.1);
+  const angle = (index / total) * Math.PI * 2 - Math.PI / 2;
+  return { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) };
 }
 
 function PublicSeat({
@@ -54,35 +64,44 @@ function PublicSeat({
 }) {
   const badge = player.role ? ROLE_BADGES[player.role] : undefined;
   const status = player.is_alive ? '存活' : '出局';
+  const accent = badge?.color ?? (
+    player.camp === 'werewolf' ? '#E5484D'
+      : player.camp === 'good' ? '#93B58C'
+        : 'divider'
+  );
   const label = [
     `${seat}号`,
     badge?.label,
     status,
     player.is_sheriff ? '警长' : '',
   ].filter(Boolean).join(' ');
+
   return (
     <Box
       aria-label={label}
       sx={{
         position: 'relative',
         display: 'flex',
-        minWidth: cardSize,
+        width: cardSize + 10,
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 0.25,
-        p: 0.7,
-        pt: 0.9,
+        gap: 0.5,
+        px: 1,
+        py: 1.1,
         border: '1px solid',
         borderTop: '2px solid',
-        borderColor: isCurrentSpeaker ? 'error.main' : (
-          badge?.color
-          ?? (player.camp === 'werewolf' ? 'error.main' : player.camp === 'good' ? 'success.main' : 'divider')
-        ),
-        borderTopColor: isCurrentSpeaker ? 'error.main' : (badge?.color ?? 'divider'),
-        borderRadius: 1.5,
-        bgcolor: player.is_alive ? 'rgba(23,18,33,0.85)' : 'action.disabledBackground',
-        opacity: player.is_alive ? 1 : 0.55,
-        boxShadow: '0 6px 18px rgba(0,0,0,0.35)',
+        borderColor: isCurrentSpeaker ? '#E5484D' : (player.is_alive ? accent : 'rgba(212,168,83,0.14)'),
+        borderTopColor: isCurrentSpeaker ? '#E5484D' : (player.is_alive ? accent : 'rgba(212,168,83,0.14)'),
+        borderRadius: 2,
+        bgcolor: player.is_alive ? 'rgba(23,18,33,0.85)' : 'rgba(23,18,33,0.5)',
+        backgroundImage: player.is_alive
+          ? 'linear-gradient(180deg, rgba(29,23,41,0.92), rgba(18,14,24,0.92))'
+          : 'none',
+        boxShadow: '0 10px 26px rgba(0,0,0,0.45)',
+        opacity: player.is_alive ? 1 : 0.5,
+        filter: player.is_alive ? 'none' : 'grayscale(0.7)',
+        transition: 'transform 0.2s ease, border-color 0.2s ease',
+        '&:hover': { transform: 'translateY(-3px)' },
         ...(isCurrentSpeaker ? { animation: `${speakerPulse} 1.2s ease-in-out infinite` } : {}),
       }}
     >
@@ -91,7 +110,7 @@ function PublicSeat({
           variant="caption"
           sx={{
             position: 'absolute',
-            top: -9,
+            top: -10,
             left: '50%',
             transform: 'translateX(-50%)',
             color: 'background.paper',
@@ -103,7 +122,7 @@ function PublicSeat({
             fontWeight: 800,
             letterSpacing: 1,
             lineHeight: 1.4,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
             whiteSpace: 'nowrap',
           }}
         >
@@ -134,14 +153,14 @@ function PublicSeat({
         variant="caption"
         sx={{
           fontWeight: 800,
-          fontSize: '0.78rem',
-          lineHeight: 1.2,
-          letterSpacing: 1,
+          fontSize: 15,
+          lineHeight: 1.1,
+          letterSpacing: 2,
           fontFamily: '"Cinzel","Noto Serif SC",serif',
-          color: isCurrentSpeaker ? 'error.light' : 'text.primary',
+          color: isCurrentSpeaker ? '#F4B3B6' : 'text.primary',
         }}
       >
-        {seat}号
+        {toRoman(seat)}
       </Typography>
       {badge && (
         <Typography
@@ -150,23 +169,34 @@ function PublicSeat({
             fontWeight: 700,
             fontSize: '0.72rem',
             lineHeight: 1.3,
-            px: 0.7,
-            py: 0.15,
-            borderRadius: 1,
+            letterSpacing: 3,
+            textIndent: 3,
             color: badge.color,
-            bgcolor: badge.bg,
-            border: '1px solid',
-            borderColor: badge.color,
+            ...(player.is_alive ? {} : { textDecoration: 'line-through', textDecorationColor: 'rgba(229,72,77,0.7)' }),
           }}
         >
           {badge.label}
         </Typography>
       )}
-      <Typography variant="caption" color={player.is_alive ? 'success.light' : 'text.disabled'}>
+      <Typography
+        variant="caption"
+        sx={{
+          fontSize: '0.6rem',
+          letterSpacing: 1.5,
+          color: player.is_alive ? '#7D7468' : 'text.disabled',
+        }}
+      >
         {status}
       </Typography>
       {voteTarget !== undefined && (
-        <Typography variant="caption" color={voteTarget === null ? 'text.disabled' : 'warning.light'}>
+        <Typography
+          variant="caption"
+          sx={{
+            fontSize: '0.6rem',
+            fontWeight: 600,
+            color: voteTarget === null ? 'text.disabled' : 'warning.light',
+          }}
+        >
           {voteTarget === null ? '弃权' : `→ ${voteTarget}号`}
         </Typography>
       )}
@@ -197,11 +227,11 @@ export default function SeatMap({ players, currentSpeaker, voteTargets, children
   const seats = Object.entries(players)
     .map(([seat, player]) => ({ seat: Number(seat), player }))
     .sort((left, right) => left.seat - right.seat);
-  const cardSize = size.w > 0 ? Math.max(44, Math.min(72, Math.min(size.w, size.h) * 0.1)) : 52;
-  const padX = Math.max(60, size.w * 0.1);
-  const padY = Math.max(50, size.h * 0.1);
-  const rectW = Math.max(100, size.w - padX * 2);
-  const rectH = Math.max(100, size.h - padY * 2);
+  const cardSize = size.w > 0 ? Math.max(44, Math.min(78, Math.min(size.w, size.h) * 0.1)) : 52;
+  const padX = Math.max(64, size.w * 0.08);
+  const padY = Math.max(56, size.h * 0.08);
+  const rectW = Math.max(120, size.w - padX * 2);
+  const rectH = Math.max(120, size.h - padY * 2);
 
   return (
     <Box ref={containerRef} sx={{ position: 'relative', width: '100%', height: '100%', minHeight: 420, overflow: 'hidden' }}>
@@ -213,8 +243,8 @@ export default function SeatMap({ players, currentSpeaker, voteTargets, children
             left: '50%',
             top: '50%',
             transform: 'translate(-50%,-50%)',
-            width: Math.min(rectW * 0.94, 600),
-            height: rectH * 0.84,
+            width: Math.max(120, rectW - cardSize * 1.6),
+            height: Math.max(120, rectH - cardSize * 2),
             border: '1px dashed',
             borderColor: 'divider',
             borderRadius: '50%',
@@ -225,11 +255,16 @@ export default function SeatMap({ players, currentSpeaker, voteTargets, children
       )}
 
       {size.w > 0 && seats.map(({ seat, player }, index) => {
-        const position = getRectPosition(index, seats.length, rectW, rectH);
+        const position = getEllipsePosition(index, seats.length, rectW, rectH, cardSize);
         return (
           <Box
             key={seat}
-            sx={{ position: 'absolute', left: padX + position.x - cardSize / 2, top: padY + position.y - 48, transition: 'left 0.35s ease, top 0.35s ease' }}
+            sx={{
+              position: 'absolute',
+              left: padX + position.x - (cardSize + 10) / 2,
+              top: padY + position.y - 42,
+              transition: 'left 0.35s ease, top 0.35s ease',
+            }}
           >
             <PublicSeat
               seat={seat}
@@ -243,7 +278,7 @@ export default function SeatMap({ players, currentSpeaker, voteTargets, children
       })}
 
       {size.w > 0 && (
-        <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: Math.min(rectW * 0.85, 680), maxHeight: rectH * 0.82, overflowY: 'auto' }}>
+        <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: Math.min(rectW * 0.78, 620), maxHeight: rectH * 0.78, overflowY: 'auto' }}>
           {children}
         </Box>
       )}
