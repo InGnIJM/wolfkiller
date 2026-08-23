@@ -26,7 +26,7 @@ cd frontend
 npm install                           # 安装依赖
 npm run dev                           # 启动前端 (localhost:5173)
 npm run build                         # 类型检查 + 生产构建
-npm test                              # Vitest（57 个测试）
+npm test                              # Vitest（当前 162 个测试）
 npm run lint                          # ESLint 检查
 ```
 
@@ -85,6 +85,12 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
+### 模型配置与角色目录
+
+- `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录（roles）、标准预设（presets）与角色人数约束（constraints）
+- `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
+- 前端：`components/create/CreateGameWizard.tsx` 两步向导（人数身份配置 → 整局模型选择，一期整局一个模型，可选「环境默认 .env」或已存配置）；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
+
 ### 持久化与存档
 
 - **游戏日志**：`GameLogger` 以 JSONL 写 `backend/data/games/<id>/game.log`；`GameManifest` 维护 `index.json`（重启后可恢复游戏列表）
@@ -99,14 +105,14 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 **WebSocket (`frontend/src/api/websocket.ts`)** 自定义 hook，建立 WebSocket 连接后将 JSON 消息路由到 Zustand store 对应的处理函数。
 
-**主题 (`frontend/src/theme.ts`)** 定义了完整的 MUI 深色主题，使用自定义蓝/紫色系配色方案。
+**主题 (`frontend/src/theme.ts`)** 定义了完整的 MUI 深色主题「血月剧场」（Crimson Gothic）：血红 `#C22E42` × 鎏金 `#D4A853` 双主轴、衬线字体栈（Cinzel + Noto Serif SC）、金色发丝线分隔。设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`。
 
 ### 关键设计细节
 
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等），有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
 - **发言顺序**：从死亡玩家左手边开始逆时针发言，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
-- **测试门禁**：后端 1331 个测试 + statement/branch 100% 覆盖（`--cov-fail-under=100`）；守卫样例证明五个核心模块 blob 不变即可扩展新角色
+- **测试门禁**：后端当前 1902 个测试 + statement/branch 100% 覆盖（`--cov-fail-under=100`）；守卫样例证明五个核心模块 blob 不变即可扩展新角色
 
 ## 注意事项
 

@@ -1,6 +1,6 @@
 # Wolf Killer - AI 狼人杀
 
-完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人）均由大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整的游戏过程。
+完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人）均由大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整的游戏过程，并可在创建游戏时为整局配置 LLM（环境默认或自定义 API 配置）。
 
 ## 技术栈
 
@@ -8,6 +8,7 @@
 | -------- | -------------------------------------- |
 | 前端     | React 19 + TypeScript + Vite 8 + MUI 9 |
 | 状态管理 | Zustand 5                              |
+| 路由     | React Router 7                         |
 | 后端     | Python + FastAPI                       |
 | AI 框架  | LangChain (langchain-openai)           |
 | LLM      | DeepSeek (deepseek-chat)               |
@@ -22,20 +23,24 @@ WolfKiller/
 │   ├── app/
 │   │   ├── main.py              # FastAPI 入口
 │   │   ├── config.py            # 环境变量配置
+│   │   ├── catalog.py           # 角色目录、标准预设、人数约束
 │   │   ├── models/              # 游戏数据模型 + 冻结流水线核心类型（pipeline.py）
 │   │   ├── core/                # 引擎、调度器、效果应用、投影、校验、解析、事件总线、日志
 │   │   ├── agents/              # LLM 客户端、提示渲染、输出解析、状态过滤
 │   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫样例）
-│   │   ├── api/                 # REST API + WebSocket
-│   │   └── services/            # 游戏服务、记忆持久化、存档清单与版本校验
-│   └── tests/                   # 34 个测试文件，statement/branch 100% 覆盖
+│   │   ├── api/                 # REST 路由（routes/）+ WebSocket 处理（websocket/）
+│   │   ├── services/            # 游戏服务、记忆持久化、存档清单与版本校验
+│   │   └── stores/              # 模型配置持久化 + API Key 加密存储
+│   └── tests/                   # 44 个测试文件，statement/branch 100% 覆盖
 ├── frontend/
 │   └── src/
 │       ├── api/                 # REST 客户端 + WebSocket hook
-│       ├── store/               # Zustand 状态管理 + 时间轴回放引擎
+│       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store
 │       └── components/
-│           ├── lobby/           # 大厅（游戏列表、创建游戏）
+│           ├── lobby/           # 大厅（游戏列表）
+│           ├── create/          # 创建游戏向导（人数身份 → 模型配置）
 │           ├── game/            # 游戏（座位图、时间轴、历史面板、胜利画面）
+│           ├── models/          # 模型配置页与编辑对话框
 │           └── shared/          # 共享组件（头像、角色图标、发言气泡）
 └── README.md
 ```
@@ -52,7 +57,7 @@ WolfKiller/
 ### 环境要求
 
 - Python >= 3.11
-- Node.js >= 18
+- Node.js >= 20.19（Vite 8 要求 `^20.19.0 || >=22.12.0`）
 - DeepSeek API Key（[前往获取](https://platform.deepseek.com/)）
 
 ### 1. 配置环境变量
@@ -66,10 +71,20 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
 LLM_TEMPERATURE=1.2
 
+# 可选：多模型随机分配（逗号分隔，优先于 LLM_MODEL）与超时/Token 参数
+# LLM_MODELS=deepseek-chat,deepseek-reasoner
+# DEEPSEEK_STRICT_BASE_URL=https://api.deepseek.com/beta
+# LLM_MAX_TOKENS=768
+# LLM_ACTION_MAX_TOKENS=2048
+# LLM_ACTION_TIMEOUT_SECONDS=90
+# LLM_ACTION_RETRY_TIMEOUT_SECONDS=120
+
 # App
 DEBUG=true
 LOG_LEVEL=INFO
 ```
+
+更多可用环境变量（投票并发 `VOTE_CONCURRENCY`、投票阶段超时 `VOTE_PHASE_TIMEOUT_SECONDS`、角色流水线模式 `ROLE_PIPELINE_V2=v1|shadow|v2` 等）见 `backend/app/config.py`。
 
 ### 2. 启动后端
 
@@ -96,9 +111,12 @@ npm run dev
 ### 创建游戏
 
 1. 打开前端页面 `http://localhost:5173`
-2. 点击「创建游戏」按钮
-3. 配置各角色人数（默认 9 人局：3 狼人、3 平民、1 预言家、1 女巫、1 猎人）
-4. 游戏创建后自动开始，所有角色由 AI 控制
+2. 点击「创建游戏」，进入两步向导：
+   - **第 1 步 · 人数身份配置**：配置各角色人数，可选用标准预设（默认 9 人局：3 狼人、3 平民、1 预言家、1 女巫、1 猎人）
+   - **第 2 步 · Agent 模型配置**：为整局玩家选择模型——使用 `.env` 默认，或选择/新建已保存的 API 配置（名称、base_url、model、API Key，Key 加密存储在后端）
+3. 游戏创建后自动开始，所有角色由 AI 控制
+
+已保存的 API 配置可在大厅的「模型配置」页面集中管理（支持连通性测试、Key 脱敏显示）。
 
 ### 观看游戏回放
 
@@ -137,7 +155,7 @@ npm run dev
 ```
 
 - **夜晚**：狼人投票刀人 → 女巫获取刀口信息（可救/可毒）→ 预言家查验 → 猎人死亡可开枪 → 结算死亡
-- **白天**：公布死亡 → 遗言（仅第一天）→ 顺序发言 → 投票放逐 → 平票则加赛发言重投
+- **白天**：公布死亡 → 夜间死者逐一发表遗言 → 顺序发言 → 投票放逐 → 被放逐者遗言；平票则加赛发言重投
 
 ### 胜利条件
 
@@ -147,25 +165,35 @@ npm run dev
 
 ## REST API
 
-| 方法      | 路径                     | 说明                     |
-| --------- | ------------------------ | ------------------------ |
-| GET       | `/api/health`          | 健康检查                 |
-| GET       | `/api/config`          | 获取应用配置             |
-| POST      | `/api/games`           | 创建新游戏               |
-| GET       | `/api/games`           | 获取游戏列表             |
-| GET       | `/api/games/{id}`      | 获取游戏详情             |
-| GET       | `/api/games/{id}/logs` | 获取游戏日志（用于回放） |
-| WebSocket | `/ws/game/{id}`        | 实时事件推送             |
+| 方法      | 路径                          | 说明                               |
+| --------- | ----------------------------- | ---------------------------------- |
+| GET       | `/api/health`               | 健康检查                           |
+| GET       | `/api/config`               | 获取应用配置                       |
+| POST      | `/api/games`                | 创建新游戏                         |
+| GET       | `/api/games`                | 获取游戏列表                       |
+| GET       | `/api/games/{id}`           | 获取游戏详情                       |
+| DELETE    | `/api/games/{id}`           | 删除游戏                           |
+| GET       | `/api/games/{id}/logs`      | 获取游戏日志（用于回放）           |
+| GET       | `/api/games/{id}/memories`  | 获取角色记忆                       |
+| GET       | `/api/catalog/roles`        | 角色目录（能力与约束）             |
+| GET       | `/api/catalog/presets`      | 标准角色配置预设                   |
+| GET       | `/api/catalog/constraints`  | 角色人数约束                       |
+| GET       | `/api/models`               | 获取模型配置列表                   |
+| POST      | `/api/models`               | 新建模型配置（API Key 加密存储）   |
+| PUT       | `/api/models/{config_id}`   | 更新模型配置                       |
+| DELETE    | `/api/models/{config_id}`   | 删除模型配置                       |
+| POST      | `/api/models/test`          | 模型连通性测试                     |
+| WebSocket | `/ws/game/{id}`             | 实时事件推送                       |
 
 ## 运行测试
 
 ```bash
 cd backend
-python -m pytest tests/ -q                                                       # 全部测试（1331 个）
+python -m pytest tests/ -q                                                       # 全部测试（当前 1902 个）
 python -m pytest tests --cov=app --cov-branch --cov-fail-under=100 -q           # 覆盖率门禁（statement/branch 100%）
 
 cd frontend
-npm test                                                                         # Vitest（57 个测试）
+npm test                                                                         # Vitest（当前 138 个测试）
 npm run build                                                                    # TypeScript + Vite 构建
 ```
 
@@ -175,4 +203,4 @@ npm run build                                                                   
 
 - JSONL 格式的完整游戏日志（`game.log`）与 LLM 对话记录（`conversation.log`）
 - 每个角色的记忆状态 JSON 文件（`memories/`）
-- `index.json` 游戏清单，携带流水线版本信息，重启后可恢复并校验兼容性
+- 游戏清单 `backend/data/games/index.json`（位于 games 根目录，不在各游戏子目录内），携带流水线版本信息，重启后可恢复并校验兼容性
