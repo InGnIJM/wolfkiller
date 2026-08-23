@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wolf Killer UI 重构 · 四种风格提案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e1116;--card:#161b23;--line:#262d38;
+  --ink:#e8ecf3;--ink2:#98a2b3;--ink3:#5f6b7e;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:"Inter","Noto Sans SC",system-ui,sans-serif;color:var(--ink);
+  background:
+    radial-gradient(60vw 40vh at 85% -10%, rgba(99,102,241,.14), transparent 60%),
+    radial-gradient(50vw 36vh at 5% 110%, rgba(229,72,77,.08), transparent 60%),
+    var(--bg);
+  min-height:100vh;padding:44px 28px 60px;
+}
+.wrap{max-width:1080px;margin:0 auto}
+.kicker{font-size:12px;font-weight:700;letter-spacing:.4em;color:var(--ink3);text-indent:.4em;text-align:center}
+h1{text-align:center;font-size:30px;font-weight:800;margin-top:10px;letter-spacing:.02em}
+h1 span{background:linear-gradient(120deg,#a8c7fa,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{text-align:center;color:var(--ink2);font-size:14px;line-height:1.9;margin-top:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin-top:34px}
+.style-card{
+  display:flex;flex-direction:column;border-radius:18px;overflow:hidden;
+  background:var(--card);border:1px solid var(--line);text-decoration:none;color:inherit;
+  transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;
+}
+.style-card:hover{transform:translateY(-4px);border-color:#3b4557;box-shadow:0 18px 40px rgba(0,0,0,.35)}
+.preview{height:96px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.preview .big-num{font-size:56px;font-weight:800;opacity:.9;font-family:Georgia,serif}
+.p1{background:radial-gradient(circle at 50% 130%, #c22e42 0%, #171221 70%)}
+.p1 .big-num{color:#f2e9dc}
+.p2{background:linear-gradient(135deg,#0a0e1f,#131034)}
+.p2 .big-num{color:#a8c7fa;text-shadow:0 0 24px rgba(168,199,250,.8)}
+.p3{background:linear-gradient(135deg,#f1e9d7,#e9dfc8)}
+.p3 .big-num{color:#2e2618}
+.p4{background:#05090b}
+.p4 .big-num{color:#3ef08c;text-shadow:0 0 24px rgba(62,240,140,.8)}
+.body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:10px;flex:1}
+.tag-no{font-size:10.5px;font-weight:700;letter-spacing:.3em;color:var(--ink3)}
+.name{font-size:17.5px;font-weight:800}
+.en{font-size:11px;color:var(--ink3);font-weight:600;letter-spacing:.16em;margin-top:-6px}
+.desc{font-size:12.5px;color:var(--ink2);line-height:1.85;flex:1}
+.sw{display:flex;gap:5px}
+.sw i{width:20px;height:20px;border-radius:6px;border:1px solid rgba(255,255,255,.12)}
+.open{
+  margin-top:2px;display:inline-flex;align-items:center;gap:7px;
+  font-size:13px;font-weight:700;color:#a8c7fa;
+}
+.style-card:hover .open{text-decoration:underline;text-underline-offset:3px}
+table{width:100%;border-collapse:collapse;margin-top:40px;font-size:13px}
+caption{text-align:left;font-weight:800;font-size:15px;padding-bottom:10px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);line-height:1.7}
+th{color:var(--ink3);font-size:11.5px;letter-spacing:.14em;font-weight:700}
+td b{color:var(--ink)}
+td{color:var(--ink2)}
+.note{
+  margin-top:26px;border:1px dashed var(--line);border-radius:14px;padding:16px 20px;
+  color:var(--ink2);font-size:12.5px;line-height:2;
+}
+.note b{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">WOLF KILLER · UI REDESIGN PROPOSALS</div>
+  <h1>UI 重构 · <span>四种风格提案</span></h1>
+  <p class="sub">四份 Demo 呈现<b>同一局游戏</b>（#A3F9-C2E8 · 第 2 天 · 发言阶段 · 存活 7/9），<br>信息架构一致（顶栏 / 时间轴控制 / 环形座位图 + 中央阶段 / 发言卡 / 事件流），方便横向对比。</p>
+
+  <div class="grid">
+    <a class="style-card" href="01-crimson-gothic.html">
+      <div class="preview p1"><span class="big-num">壹</span></div>
+      <div class="body">
+        <span class="tag-no">PROPOSAL 01</span>
+        <span class="name">血月剧场</span><span class="en">CRIMSON GOTHIC</span>
+        <p class="desc">暗夜哥特 + 血月意象，衬线大字与金色纹饰。戏剧沉浸感最强，最贴合「狼人杀」的悬疑叙事。</p>
+        <div class="sw"><i style="background:#0b0a0f"></i><i style="background:#c22e42"></i><i style="background:#d4a853"></i><i style="background:#f2e9dc"></i></div>
+        <span class="open">打开 Demo →</span>
+      </div>
+    </a>
+    <a class="style-card" href="02-spatial-glass.html">
+      <div class="preview p2"><span class="big-num">贰</span></div>
+      <div class="body">
+        <span class="tag-no">PROPOSAL 02</span>
+        <span class="name">星穹玻璃</span><span class="en">SPATIAL GLASS</span>
+        <p class="desc">现有蓝紫主题的进化版：VisionOS 式毛玻璃 + 柔光渐变。现代、干净、数据可读性好，迁移成本最低。</p>
+        <div class="sw"><i style="background:#0a0e1f"></i><i style="background:#a8c7fa"></i><i style="background:#c4b5fd"></i><i style="background:#f472b6"></i></div>
+        <span class="open">打开 Demo →</span>
+      </div>
+    </a>
+    <a class="style-card" href="03-detective-dossier.html">
+      <div class="preview p3"><span class="big-num">叁</span></div>
+      <div class="body">
+        <span class="tag-no">PROPOSAL 03</span>
+        <span class="name">迷雾档案</span><span class="en">DETECTIVE DOSSIER</span>
+        <p class="desc">唯一浅色方案：复古侦探案卷，羊皮纸 + 火漆印章 + 打字机标签。「上帝视角查案」的叙事感独特。</p>
+        <div class="sw"><i style="background:#f1e9d7"></i><i style="background:#2e2618"></i><i style="background:#b23a2e"></i><i style="background:#b98a2f"></i></div>
+        <span class="open">打开 Demo →</span>
+      </div>
+    </a>
+    <a class="style-card" href="04-neon-terminal.html">
+      <div class="preview p4"><span class="big-num">肆</span></div>
+      <div class="body">
+        <span class="tag-no">PROPOSAL 04</span>
+        <span class="name">AI 终端</span><span class="en">NEON TERMINAL</span>
+        <p class="desc">磷光绿终端 + CRT 扫描线 + 日志流。强调「全员 LLM 对弈」的机器美学，程序员气质拉满。</p>
+        <div class="sw"><i style="background:#05090b"></i><i style="background:#3ef08c"></i><i style="background:#4fd8ff"></i><i style="background:#ff5c7a"></i></div>
+        <span class="open">打开 Demo →</span>
+      </div>
+    </a>
+  </div>
+
+  <table>
+    <caption>横向对比</caption>
+    <thead><tr><th>维度</th><th>01 血月剧场</th><th>02 星穹玻璃</th><th>03 迷雾档案</th><th>04 AI 终端</th></tr></thead>
+    <tbody>
+      <tr><td><b>主题模式</b></td><td>深色</td><td>深色</td><td>浅色</td><td>深色</td></tr>
+      <tr><td><b>沉浸 / 氛围</b></td><td>★★★★★ 悬疑戏剧感最强</td><td>★★★☆ 轻盈现代</td><td>★★★★ 复古叙事感</td><td>★★★★ 极客机器感</td></tr>
+      <tr><td><b>信息可读性</b></td><td>★★★☆ 装饰较多需克制</td><td>★★★★☆ 层次清晰</td><td>★★★★ 高对比易读</td><td>★★★★ 等宽对齐工整</td></tr>
+      <tr><td><b>与现版差异 / 迁移成本</b></td><td>大（换字体体系+配色）</td><td>小（同色系演进）</td><td>大（浅色模式重做）</td><td>中（组件风格化）</td></tr>
+      <tr><td><b>适合定位</b></td><td>对外展示、内容传播</td><td>日常观战主力界面</td><td>差异化记忆点</td><td>技术社区传播</td></tr>
+    </tbody>
+  </table>
+
+  <p class="note">
+    <b>说明</b>：① 全部为纯静态 HTML（无构建依赖），双击即可在浏览器打开；图标均为内联 SVG，无 emoji；已处理 focus-visible / prefers-reduced-motion / 对比度。
+    &nbsp;② 字体经 Google Fonts 加载，离线时自动回退系统字体。
+    &nbsp;③ 选定方向后，我会把它整理成语义化 Design Token（对齐 Material Design 3 结构），再落到 MUI theme.ts 与各组件改造。
+  </p>
+</div>
+</body>
+</html>

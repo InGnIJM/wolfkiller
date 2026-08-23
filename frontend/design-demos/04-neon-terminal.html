@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>风格 04 · AI 终端 — Wolf Killer UI 提案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   风格 04 · AI 终端（Neon Terminal）
+   关键词：磷光绿终端 / CRT 扫描线 / 日志流 / 全员 AI 的机器美学
+   ============================================================ */
+:root{
+  --bg:#05090b;
+  --panel:#0a1216;
+  --panel-2:#0d171c;
+  --grid:rgba(62,240,140,.05);
+  --line:#173028;
+  --phos:#3ef08c;
+  --phos-dim:#1f7a4d;
+  --cyan:#4fd8ff;
+  --amber:#ffc24d;
+  --red:#ff5c7a;
+  --violet:#b18cff;
+  --ink:#d7ffe9;
+  --ink-2:#7fae95;
+  --ink-3:#48685a;
+  --mono:"JetBrains Mono","Noto Sans SC",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--mono);color:var(--ink);min-height:100vh;display:flex;flex-direction:column;
+  background:
+    linear-gradient(rgba(62,240,140,.03), rgba(62,240,140,.03)),
+    radial-gradient(80% 60% at 50% 0%, rgba(79,216,255,.06), transparent 60%),
+    var(--bg);
+}
+/* CRT 扫描线 */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:99;
+  background:repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 1px, transparent 1px 3px);
+  mix-blend-mode:multiply;opacity:.5;
+}
+::selection{background:rgba(62,240,140,.35)}
+button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--phos);outline-offset:2px}
+
+/* ---------- 窗口标题栏 ---------- */
+.titlebar{
+  display:flex;align-items:center;gap:12px;padding:10px 18px;
+  background:var(--panel);border-bottom:1px solid var(--line);
+}
+.dots{display:flex;gap:7px}
+.dots i{width:11px;height:11px;border-radius:50%;background:var(--line)}
+.dots i:nth-child(1){background:var(--red)}
+.dots i:nth-child(2){background:var(--amber)}
+.dots i:nth-child(3){background:var(--phos)}
+.ttl{font-size:12px;color:var(--ink-2);letter-spacing:.04em}
+.ttl b{color:var(--phos);font-weight:500}
+.env{margin-left:auto;display:flex;gap:14px;font-size:11px;color:var(--ink-3)}
+.env b{color:var(--cyan);font-weight:500}
+
+/* ---------- 状态条 ---------- */
+.statbar{
+  display:flex;align-items:center;gap:18px;padding:9px 20px;font-size:11.5px;
+  border-bottom:1px solid var(--line);background:var(--panel-2);flex-wrap:wrap;
+}
+.statbar .k{color:var(--ink-3)}
+.statbar .v{color:var(--phos)}
+.statbar .warn{color:var(--amber)}
+.statbar .bad{color:var(--red)}
+.cursor::after{content:"▊";animation:blink 1s steps(2) infinite;color:var(--phos)}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- 布局 ---------- */
+.layout{flex:1;display:flex;min-height:0}
+.stage-col{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* --- 控制台 --- */
+.console{
+  display:flex;align-items:center;gap:16px;padding:11px 20px;
+  border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap;
+}
+.keys{display:flex;gap:5px}
+.key{
+  min-width:32px;height:30px;padding:0 10px;display:grid;place-items:center;
+  border:1px solid var(--line);border-radius:4px;background:var(--panel-2);
+  color:var(--ink-2);transition:all .15s ease;font-size:12px;
+}
+.key:hover{border-color:var(--phos-dim);color:var(--phos)}
+.key.main{border-color:var(--phos-dim);color:var(--phos);background:rgba(62,240,140,.08)}
+.seek{flex:1;display:flex;align-items:center;gap:12px;min-width:150px}
+.rail{flex:1;height:22px;display:flex;align-items:center;position:relative}
+.rail .ln{width:100%;height:2px;background:var(--line)}
+.rail .fl{position:absolute;left:0;width:62%;height:2px;background:linear-gradient(90deg,var(--phos-dim),var(--phos))}
+.rail .hd{
+  position:absolute;left:62%;top:50%;transform:translate(-50%,-50%);
+  width:9px;height:15px;background:var(--phos);
+  clip-path:polygon(0 0,100% 50%,0 100%);
+  box-shadow:0 0 8px rgba(62,240,140,.8);
+}
+.rlabel{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+.flags{display:flex;gap:4px}
+.flag{
+  font-size:11px;padding:4px 10px;border-radius:3px;border:1px solid var(--line);
+  color:var(--ink-3);transition:all .15s ease;
+}
+.flag:hover{color:var(--ink-2)}
+.flag.on{color:#04140b;background:var(--phos);border-color:var(--phos);font-weight:700}
+
+/* ---------- 雷达舞台 ---------- */
+.stage{position:relative;flex:1;min-height:430px;margin:4px 20px 0;overflow:hidden}
+.grid-bg{
+  position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size:34px 34px;
+  mask-image:radial-gradient(70% 70% at 50% 47%, #000 45%, transparent 78%);
+  -webkit-mask-image:radial-gradient(70% 70% at 50% 47%, #000 45%, transparent 78%);
+}
+.sweepring{
+  position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);
+  width:min(56vh,460px);aspect-ratio:1;border-radius:50%;pointer-events:none;
+  border:1px dashed rgba(62,240,140,.18);
+  background:
+    repeating-radial-gradient(circle at center, rgba(62,240,140,.05) 0 1px, transparent 1px 25%);
+}
+.sweepring::before{
+  content:"";position:absolute;inset:-1px;border-radius:50%;
+  background:conic-gradient(from 0deg, rgba(62,240,140,.14), transparent 70deg);
+  animation:sweep 6s linear infinite;
+}
+@keyframes sweep{to{transform:rotate(360deg)}}
+.agent{position:absolute;transform:translate(-50%,-50%);width:118px;z-index:1}
+.mod{
+  border:1px solid var(--rc,var(--line));border-radius:6px;
+  background:linear-gradient(180deg, rgba(13,23,28,.94), rgba(8,14,17,.94));
+  padding:8px 9px 8px;box-shadow:0 0 0 1px rgba(0,0,0,.4),0 8px 22px rgba(0,0,0,.5);
+  transition:border-color .15s ease,transform .15s ease;
+}
+.agent:hover .mod{transform:translateY(-2px);border-color:var(--phos-dim)}
+.mod-head{display:flex;align-items:center;gap:7px}
+.led{width:8px;height:8px;border-radius:50%;background:var(--rc,var(--phos-dim));box-shadow:0 0 7px var(--rc,var(--transparent))}
+.agent.dead .led{background:var(--ink-3);box-shadow:none}
+.mod-id{font-size:13px;font-weight:800;letter-spacing:.06em;color:var(--rc,var(--ink))}
+.mod-id small{color:var(--ink-3);font-weight:400;margin-left:5px;font-size:9.5px;letter-spacing:.14em}
+.mod-role{
+  margin-top:6px;display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.22em;
+  color:var(--rc,var(--ink-2));
+}
+.mod-sub{margin-top:5px;display:flex;justify-content:space-between;font-size:9.5px;letter-spacing:.14em;color:var(--ink-3)}
+.agent.dead{opacity:.42}
+.agent.dead .mod-role{text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:var(--red)}
+.agent.speaking{z-index:2}
+.agent.speaking .mod{
+  border-color:var(--phos);
+  box-shadow:0 0 0 1px rgba(62,240,140,.5),0 0 26px rgba(62,240,140,.25),0 10px 26px rgba(0,0,0,.55);
+}
+.tx-bars{display:flex;align-items:flex-end;gap:2px;height:11px;margin-top:6px}
+.tx-bars i{width:4px;background:var(--phos);animation:wv .9s ease-in-out infinite}
+.tx-bars i:nth-child(2){animation-delay:.12s}.tx-bars i:nth-child(3){animation-delay:.24s}
+.tx-bars i:nth-child(4){animation-delay:.36s}.tx-bars i:nth-child(5){animation-delay:.48s}.tx-bars i:nth-child(6){animation-delay:.6s}
+@keyframes wv{0%,100%{height:3px}50%{height:11px}}
+.tag-sheriff{
+  font-size:9px;font-weight:800;letter-spacing:.18em;color:#04140b;
+  background:var(--amber);padding:1px 6px;border-radius:2px;margin-left:auto;
+}
+
+/* ---------- 中央状态块 ---------- */
+.core{
+  position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);
+  width:min(37%,320px);z-index:2;border:1px solid var(--line);border-radius:8px;
+  background:rgba(6,11,13,.92);padding:16px 18px 14px;
+  box-shadow:0 0 40px rgba(62,240,140,.07), inset 0 0 60px rgba(62,240,140,.03);
+}
+.core .hdr{display:flex;justify-content:space-between;font-size:10px;letter-spacing:.2em;color:var(--ink-3);margin-bottom:8px}
+.core .hdr b{color:var(--cyan);font-weight:500}
+.core h2{
+  font-size:44px;line-height:1.1;font-weight:800;letter-spacing:.04em;color:var(--phos);
+  text-shadow:0 0 18px rgba(62,240,140,.55);
+}
+.core h2 small{font-size:15px;color:var(--ink-2);text-shadow:none;font-weight:500;letter-spacing:.3em;margin-left:8px}
+.core .phase{
+  display:inline-block;margin-top:9px;font-size:12px;font-weight:700;letter-spacing:.24em;
+  color:var(--cyan);border:1px solid rgba(79,216,255,.35);padding:4px 12px;border-radius:3px;
+  background:rgba(79,216,255,.07);
+}
+.core .alert{
+  margin-top:13px;font-size:11.5px;line-height:1.8;color:var(--ink-2);
+  border-left:2px solid var(--red);padding:2px 0 2px 12px;
+}
+.core .alert b{color:var(--red);font-weight:700}
+.readout{display:flex;gap:0;margin-top:13px;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.readout div{flex:1;text-align:center;padding:7px 4px;border-right:1px solid var(--line)}
+.readout div:last-child{border-right:none}
+.readout b{display:block;font-size:15px;color:var(--ink)}
+.readout span{font-size:9px;letter-spacing:.2em;color:var(--ink-3)}
+
+/* ---------- 输出块 ---------- */
+.stdout{
+  margin:12px 20px 18px;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);padding:14px 20px 13px;
+}
+.stdout .cmdline{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-2);margin-bottom:8px}
+.cmdline .prompt{color:var(--phos);font-weight:700}
+.cmdline b{color:var(--ink)}
+.cmdline .badge{font-size:10px;color:var(--violet);border:1px solid rgba(177,140,255,.4);padding:1px 8px;border-radius:2px;letter-spacing:.16em}
+.cmdline .live{margin-left:auto;color:var(--phos);font-size:10.5px;letter-spacing:.2em;display:flex;align-items:center;gap:6px}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--phos);animation:blink 1s steps(2) infinite}
+.stdout p{font-size:13.5px;line-height:2;color:#c9ecd9}
+.stdout p em{font-style:normal;color:var(--cyan)}
+.stdout p strong{color:var(--amber);font-weight:500}
+.meta-line{margin-top:9px;font-size:10.5px;color:var(--ink-3);letter-spacing:.06em}
+
+/* ---------- 日志流 ---------- */
+.logstream{
+  width:350px;flex-shrink:0;margin:14px 20px 18px 0;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);display:flex;flex-direction:column;min-height:0;overflow:hidden;
+}
+.logstream header{display:flex;align-items:center;gap:9px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:12px}
+.logstream header b{color:var(--cyan);font-weight:500}
+.logstream header span{margin-left:auto;font-size:10.5px;color:var(--ink-3)}
+.lines{flex:1;overflow-y:auto;padding:8px 0;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.line{padding:6px 16px 6px 0;display:flex;gap:10px;border-left:2px solid transparent}
+.line:hover{background:rgba(62,240,140,.04)}
+.line time{color:var(--ink-3);font-size:10.5px;padding-left:14px;white-space:nowrap}
+.line .lv{font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--lc);flex-shrink:0;width:44px}
+.line .msg{font-size:11.5px;line-height:1.75;color:var(--ink-2)}
+.line .msg b{color:var(--lc);font-weight:500}
+.line.death{--lc:var(--red);border-left-color:rgba(255,92,122,.5);background:rgba(255,92,122,.04)}
+.line.vote{--lc:var(--amber)}
+.line.night{--lc:var(--cyan)}
+.line.sys{--lc:var(--ink-3)}
+.day-div{padding:9px 16px 4px;font-size:9.5px;letter-spacing:.3em;color:var(--ink-3)}
+
+@media (max-width:1100px){.logstream{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+  <span class="ttl">wolfkiller <b>replay</b> --id A3F9C2E8 --view omniscient</span>
+  <div class="env"><span>CPU <b>12%</b></span><span>LLM <b>deepseek-v3</b></span><span class="cursor">LIVE</span></div>
+</div>
+
+<div class="statbar">
+  <span><span class="k">DAY </span><span class="v">02</span></span>
+  <span><span class="k">PHASE </span><span class="v">SPEECH</span></span>
+  <span><span class="k">ALIVE </span><span class="v">7/9</span></span>
+  <span><span class="k">WOLF_KILLED </span><span class="bad">1</span></span>
+  <span><span class="k">WOLF_REMAIN </span><span class="warn">1</span></span>
+  <span><span class="k">ELAPSED </span><span class="v">00:41</span><span class="k"> / TOKENS </span><span class="v">1284</span></span>
+</div>
+
+<div class="layout">
+  <section class="stage-col">
+
+    <div class="console">
+      <div class="keys">
+        <button class="key" aria-label="上一事件"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M18 5v14L8 12l10-7zM7 5h2v14H7z"/></svg></button>
+        <button class="key main" aria-label="播放或暂停"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h4v16H7zM13 4h4v16h-4z"/></svg></button>
+        <button class="key" aria-label="下一事件"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l10 7L6 19V5zM15 5h2v14h-2z"/></svg></button>
+      </div>
+      <div class="seek">
+        <span class="rlabel">T=128</span>
+        <div class="rail" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="回放进度"><i class="ln"></i><i class="fl"></i><i class="hd"></i></div>
+        <span class="rlabel">206</span>
+      </div>
+      <button class="flag">SPD=2.0×</button>
+      <div class="flags" role="group" aria-label="事件筛选">
+        <button class="flag on">ALL</button><button class="flag">SPEECH</button><button class="flag">VOTE</button><button class="flag">NIGHT</button><button class="flag">DEATH</button>
+      </div>
+    </div>
+
+    <div class="stage">
+      <i class="grid-bg" aria-hidden="true"></i>
+      <i class="sweepring" aria-hidden="true"></i>
+
+      <div class="agent" style="--rc:var(--phos);left:50%;top:8%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-01<small>VILLAGER</small></span></div>
+          <div class="mod-role">村 民</div>
+          <div class="mod-sub"><span>ONLINE</span><span>P=—</span></div>
+        </div>
+      </div>
+      <div class="agent" style="--rc:var(--phos);left:74.4%;top:19%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-02</span><span class="tag-sheriff">警长</span></div>
+          <div class="mod-role">守 卫</div>
+          <div class="mod-sub"><span>ONLINE</span><span>PROTECT→02</span></div>
+        </div>
+      </div>
+      <div class="agent" style="--rc:var(--cyan);left:87.4%;top:43%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-03<small>SEER</small></span></div>
+          <div class="mod-role">预言家</div>
+          <div class="mod-sub"><span>ONLINE</span><span>CHECK 03=GOOD</span></div>
+        </div>
+      </div>
+      <div class="agent dead" style="--rc:var(--red);left:82.9%;top:70%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-04<small>WEREWOLF</small></span></div>
+          <div class="mod-role">狼 人</div>
+          <div class="mod-sub"><span>EXILED D1</span><span>OFFLINE</span></div>
+        </div>
+      </div>
+      <div class="agent speaking" style="--rc:var(--violet);left:63%;top:88%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-05<small>WITCH</small></span></div>
+          <div class="mod-role">女 巫</div>
+          <div class="mod-sub"><span>SPEAKING</span><span>POTION×1</span></div>
+          <div class="tx-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+      <div class="agent" style="--rc:var(--phos);left:37%;top:88%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-06<small>VILLAGER</small></span></div>
+          <div class="mod-role">村 民</div>
+          <div class="mod-sub"><span>ONLINE</span><span>NEXT</span></div>
+        </div>
+      </div>
+      <div class="agent" style="--rc:var(--red);left:17.1%;top:70%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-07<small>WEREWOLF</small></span></div>
+          <div class="mod-role">狼 人</div>
+          <div class="mod-sub"><span>ONLINE</span><span>KILL→09 D2</span></div>
+        </div>
+      </div>
+      <div class="agent" style="--rc:var(--amber);left:12.6%;top:43%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-08<small>HUNTER</small></span></div>
+          <div class="mod-role">猎 人</div>
+          <div class="mod-sub"><span>ONLINE</span><span>GUN=READY</span></div>
+        </div>
+      </div>
+      <div class="agent dead" style="--rc:var(--red);left:25.6%;top:19%">
+        <div class="mod">
+          <div class="mod-head"><i class="led" aria-hidden="true"></i><span class="mod-id">AGT-09<small>VILLAGER</small></span></div>
+          <div class="mod-role">村 民</div>
+          <div class="mod-sub"><span>KILLED D2</span><span>OFFLINE</span></div>
+        </div>
+      </div>
+
+      <div class="core">
+        <div class="hdr"><span>GAME.STATE</span><b>#A3F9C2E8</b></div>
+        <h2>DAY 02<small>第二日</small></h2>
+        <span class="phase">白天 · 发言阶段</span>
+        <p class="alert"><b>[DAWN REPORT]</b> 09 号夜间出局（狼人袭击）；守卫守护 02 号，女巫未用药。</p>
+        <div class="readout">
+          <div><b>7/9</b><span>存活</span></div>
+          <div><b>2</b><span>出局</span></div>
+          <div><b>1</b><span>余狼</span></div>
+          <div><b>62%</b><span>进度</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stdout">
+      <div class="cmdline">
+        <span class="prompt">$</span><b>agent_05</b> speak --day 2 <span class="badge">WITCH</span>
+        <span class="live"><i aria-hidden="true"></i>STREAMING</span>
+      </div>
+      <p>昨晚的刀口落在了 <em>09号</em> 身上，我没有理由交出最后一瓶解药——留着她，好人阵营还有一次容错。今天我的票会跟紧真预言家的节奏：如果 <em>03号</em> 昨日报出的查验为真，那么 <strong>07号</strong> 今天这段「划水式」发言，就是在替狼队拖时间。</p>
+      <div class="meta-line">[latency 0.86s] [tokens 1284] [confidence 0.86] [tool_calls: none]</div>
+    </div>
+  </section>
+
+  <aside class="logstream" aria-label="事件日志流">
+    <header>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <b>event_stream.jsonl</b><span>128/206</span>
+    </header>
+    <div class="lines">
+      <div class="day-div">── DAY 01 · NIGHT ──</div>
+      <div class="line night"><time>00:41</time><span class="lv">NIGHT</span><span class="msg"><b>狼人袭击 02号</b> → 女巫使用解药，平安。</span></div>
+      <div class="line night"><time>00:52</time><span class="lv">CHECK</span><span class="msg"><b>预言家查验 03号</b> → 结果 GOOD。</span></div>
+      <div class="day-div">── DAY 01 · DAYTIME ──</div>
+      <div class="line vote"><time>01:20</time><span class="lv">ELECT</span><span class="msg"><b>02号当选警长</b>，得票 4/9。</span></div>
+      <div class="line vote"><time>01:47</time><span class="lv">VOTE</span><span class="msg"><b>04号被放逐</b>（票：02 03 05 06 08），身份 WEREWOLF。</span></div>
+      <div class="line sys"><time>01:49</time><span class="lv">LAST</span><span class="msg">04号遗言：「你们会后悔的。」指认 07号。</span></div>
+      <div class="day-div">── DAY 02 · NIGHT ──</div>
+      <div class="line night"><time>02:31</time><span class="lv">NIGHT</span><span class="msg"><b>狼人袭击 09号</b>；守卫守护 02号；女巫保留药瓶。</span></div>
+      <div class="line death"><time>02:31</time><span class="lv">DEATH</span><span class="msg"><b>09号 出局</b>（wolf_kill）。</span></div>
+      <div class="day-div">── DAY 02 · DAYTIME ──</div>
+      <div class="line" style="--lc:var(--violet)"><time>03:12</time><span class="lv">SPCH</span><span class="msg"><b>05号（女巫）发言中</b> — 解释留药理由，质疑 07号节奏。</span></div>
+      <div class="line sys" style="opacity:.55"><time>--:--</time><span class="lv">NEXT</span><span class="msg"><b>06号发言</b>，按逆时针顺序继续。</span></div>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>
