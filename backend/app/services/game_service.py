@@ -18,6 +18,7 @@ from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import (
     LLMClient, LLMClientConfig, derive_strict_base_url, env_default_client_config,
 )
+from app.agents.providers.registry import ProviderRegistry
 from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
@@ -63,7 +64,7 @@ def resolve_model_config(
     Returns (client_config, display_snapshot); the snapshot never contains
     the api key.
     """
-    env_config = env_default_client_config()
+    env_config = replace(env_default_client_config(), provider_profile="auto")
     if model_assignments is None:
         return env_config, []
     if not isinstance(model_assignments, list) or len(model_assignments) != 1:
@@ -76,11 +77,15 @@ def resolve_model_config(
     if not isinstance(count, int) or isinstance(count, bool) or count != total_players:
         raise ValueError("model assignment count must equal total players")
     if config_id is None:
+        resolved_profile = ProviderRegistry().resolve(
+            env_config.provider_profile, env_config.base_url, env_config.model_id,
+        ).profile_id
         return env_config, [{
             "config_id": None,
             "name": "环境默认 (.env)",
             "model_id": env_config.model_id,
             "base_url": env_config.base_url,
+            "provider_profile": resolved_profile,
         }]
     config = get_model_config_store().get(config_id)
     if config is None:
@@ -109,12 +114,19 @@ def resolve_model_config(
         ),
         action_timeout_seconds=env_config.action_timeout_seconds,
         action_retry_timeout_seconds=env_config.action_retry_timeout_seconds,
+        provider_profile=config.provider_profile,
     )
+    resolved_profile = ProviderRegistry().resolve(
+        client_config.provider_profile,
+        client_config.base_url,
+        client_config.model_id,
+    ).profile_id
     snapshot = [{
         "config_id": config.id,
         "name": config.name,
         "model_id": config.model_id,
         "base_url": config.base_url,
+        "provider_profile": resolved_profile,
     }]
     return client_config, snapshot
 

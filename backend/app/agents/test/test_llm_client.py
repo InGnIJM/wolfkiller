@@ -8,12 +8,12 @@ from app.core.game_engine import VOTE_CONTRACT
 
 def make_client() -> LLMClient:
     return LLMClient(config=LLMClientConfig(
-        base_url="https://model.test/v1",
+        base_url="https://api.deepseek.com/v1",
         api_key="test-key",
         model_id="test-model",
         temperature=0,
         max_tokens=128,
-        strict_base_url="https://model.test/beta",
+        strict_base_url="https://api.deepseek.com/beta",
         action_timeout_seconds=90,
         action_retry_timeout_seconds=120,
     ))
@@ -27,7 +27,7 @@ def test_json_action_client_timeout_has_guard_above_retry_budget():
 
     assert chat.call_args.kwargs["timeout"] == 125
     assert chat.call_args.kwargs["temperature"] == 0.1
-    assert chat.call_args.kwargs["max_tokens"] == 768
+    assert chat.call_args.kwargs["max_tokens"] == 2048
 
 
 def test_strict_action_client_timeout_has_guard_above_retry_budget():
@@ -46,7 +46,7 @@ def test_strict_action_client_timeout_has_guard_above_retry_budget():
 
     assert chat.call_args.kwargs["timeout"] == 125
     assert chat.call_args.kwargs["temperature"] == 0.1
-    assert chat.call_args.kwargs["max_tokens"] == 768
+    assert chat.call_args.kwargs["max_tokens"] == 2048
 
 
 def test_vote_tool_is_forced_under_cast_vote_name():

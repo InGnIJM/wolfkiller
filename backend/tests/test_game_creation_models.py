@@ -36,6 +36,7 @@ def test_env_entry_returns_env_config_and_display_snapshot(monkeypatch):
     assert snapshot == [{
         "config_id": None, "name": "环境默认 (.env)",
         "model_id": client_config.model_id, "base_url": "http://env.test/v1",
+        "provider_profile": "custom-openai",
     }]
 
 
@@ -97,6 +98,7 @@ def test_configured_model_uses_stored_fields_and_env_fallbacks(tmp_path, monkeyp
     assert snapshot == [{
         "config_id": cfg.id, "name": "DeepSeek Pro",
         "model_id": "cfg-model", "base_url": "https://cfg.test/v1",
+        "provider_profile": "custom-openai",
     }]
     assert "sk-cfg-key" not in str(snapshot)
 

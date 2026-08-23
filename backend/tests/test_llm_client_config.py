@@ -111,7 +111,7 @@ def test_get_action_model_uses_action_token_budget_without_changing_plain_model(
         client.get_model()
         plain_kwargs = mock_chat.call_args.kwargs
 
-    assert action_kwargs["max_tokens"] == 768
+    assert action_kwargs["max_tokens"] == 2048
     assert action_kwargs["temperature"] == 0.1
     assert plain_kwargs["max_tokens"] == 768
 
@@ -119,12 +119,12 @@ def test_get_action_model_uses_action_token_budget_without_changing_plain_model(
 @pytest.mark.parametrize(
     ("base_url", "strict_base_url", "expected"),
     [
-        ("https://api.xiaomimimo.com/v1", "https://api.xiaomimimo.com/v1", True),
+        ("https://api.xiaomimimo.com/v1", "https://api.xiaomimimo.com/v1", False),
         ("https://api.deepseek.com/v1", "https://api.deepseek.com/beta", True),
-        ("https://proxy.test/v1", "https://proxy.test/strict", True),
+        ("https://proxy.test/v1", "https://proxy.test/strict", False),
     ],
 )
-def test_strict_actions_are_attempted_then_capability_fallback_is_used(
+def test_strict_actions_follow_resolved_profile(
     base_url, strict_base_url, expected,
 ):
     client = LLMClient(config=_config(
@@ -171,11 +171,14 @@ def test_get_model_with_action_tool_uses_strict_base_url():
         fallback_action_type="pass",
     )
     with patch("app.agents.llm_client.ChatOpenAI") as mock_chat:
-        client = LLMClient(config=_config())
+        client = LLMClient(config=_config(
+            base_url="https://api.deepseek.com/v1",
+            strict_base_url="https://api.deepseek.com/beta",
+        ))
         client.get_model_with_action_tool(contract)
     kwargs = mock_chat.call_args.kwargs
-    assert kwargs["base_url"] == "https://example.test/beta"
-    assert kwargs["max_tokens"] == 768
+    assert kwargs["base_url"] == "https://api.deepseek.com/beta"
+    assert kwargs["max_tokens"] == 2048
     assert kwargs["temperature"] == 0.1
     tool = mock_chat.return_value.bind_tools.call_args.args[0][0]
     assert tool["function"]["name"] == "night_check"

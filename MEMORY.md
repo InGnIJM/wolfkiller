@@ -2,14 +2,18 @@
 
 - Trigger: an OpenAI-compatible reasoning model returns prose, malformed JSON,
   or `finish_reason=length` for a short game action. Action: force the action
-  tool first, run action transports at temperature 0.1 with a 768-token cap,
-  retain strict schema validation, and use one compact JSON retry only when the
-  provider explicitly rejects or ignores native tool calling.
+  tool only when the resolved provider profile declares `strict_tools`;
+  otherwise use JSON directly. Run action transports at temperature 0.1, take
+  the action token budget from configuration (default 2048) without a global
+  768-token cap, retain strict schema validation, and use one compact JSON retry
+  only when native tool calling was attempted and rejected or ignored.
 - Trigger: a provider reuses its normal endpoint as the strict-action endpoint.
-  Action: still attempt the forced tool on that endpoint; if it rejects strict
-  tools or returns no native tool call, fall back to JSON with a 90-second
-  primary attempt and one 120-second retry. Keep the HTTP client deadline five
-  seconds above the outer retry deadline so timeout classes remain distinct.
+  Action: attempt the forced tool on that endpoint only when the resolved
+  provider profile declares `strict_tools`; otherwise use JSON directly. If an
+  attempted strict tool is rejected or returns no native tool call, fall back
+  to JSON with a 90-second primary attempt and one 120-second retry. Keep the
+  HTTP client deadline five seconds above the outer retry deadline so timeout
+  classes remain distinct.
 - Trigger: simultaneous voting can overload a provider or stall a game phase.
   Action: cap voting at five concurrent requests, keep terminal receipts in
   seat order, and cancel unfinished work at the 500-second phase deadline so

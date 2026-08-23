@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -10,6 +10,9 @@ class ModelConfigRequest(BaseModel):
     api_key: str = ""
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
     strict_base_url: Optional[str] = None
+    provider_profile: Literal[
+        "auto", "openai", "deepseek", "openrouter", "custom-openai",
+    ] = "auto"
 
     @field_validator("name")
     @classmethod
@@ -37,6 +40,9 @@ class ModelConfigResponse(BaseModel):
     key_invalid: bool
     temperature: Optional[float]
     strict_base_url: Optional[str]
+    provider_profile: Literal[
+        "auto", "openai", "deepseek", "openrouter", "custom-openai",
+    ]
     created_at: str
     updated_at: str
 
@@ -50,12 +56,24 @@ class ModelTestRequest(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_id: Optional[str] = None
+    provider_profile: Literal[
+        "auto", "openai", "deepseek", "openrouter", "custom-openai",
+    ] = "auto"
+
+
+class ModelCapabilitiesResponse(BaseModel):
+    tools: bool
+    strict_tools: bool
+    json_output: bool
+    reasoning_effort: bool
+    temperature: bool
 
 
 class ModelTestResponse(BaseModel):
     ok: bool
     latency_ms: Optional[int] = None
     error: Optional[str] = None
+    capabilities: Optional[ModelCapabilitiesResponse] = None
 
 
 class ModelAssignment(BaseModel):
