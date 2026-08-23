@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>风格 02 · 星穹玻璃 — Wolf Killer UI 提案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   风格 02 · 星穹玻璃（Spatial Glass）
+   关键词：VisionOS 空间感 / 毛玻璃 / 柔光渐变 / 现代数据面板
+   与现有蓝紫主题一脉相承，迁移成本最低
+   ============================================================ */
+:root{
+  --bg-0:#0a0e1f;
+  --bg-1:#131034;
+  --glass:rgba(255,255,255,.055);
+  --glass-strong:rgba(255,255,255,.09);
+  --stroke:rgba(255,255,255,.11);
+  --stroke-soft:rgba(255,255,255,.07);
+  --ink:#eaedfa;
+  --ink-2:#aab3d2;
+  --ink-3:#767f9e;
+  --primary:#a8c7fa;
+  --lavender:#c4b5fd;
+  --pink:#f472b6;
+  --wolf:#fb7185;
+  --seer:#7dd3fc;
+  --witch:#c4b5fd;
+  --hunter:#fbbf24;
+  --villager:#86efac;
+  --guard:#5eead4;
+  --r-lg:24px;--r-md:18px;--r-sm:999px;
+  --sans:"Inter","Noto Sans SC",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--sans);color:var(--ink);min-height:100vh;
+  display:flex;flex-direction:column;
+  background:
+    radial-gradient(52vw 44vh at 82% -10%, rgba(99,102,241,.32), transparent 65%),
+    radial-gradient(46vw 40vh at 8% 108%, rgba(236,72,153,.16), transparent 60%),
+    radial-gradient(40vw 34vh at 45% 55%, rgba(125,211,252,.08), transparent 62%),
+    linear-gradient(160deg, var(--bg-0), var(--bg-1));
+  background-attachment:fixed;
+}
+::selection{background:rgba(168,199,250,.35)}
+button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:8px}
+.glass{
+  background:var(--glass);
+  border:1px solid var(--stroke);
+  backdrop-filter:blur(22px) saturate(150%);
+  -webkit-backdrop-filter:blur(22px) saturate(150%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 20px 50px rgba(4,6,18,.4);
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar{display:flex;align-items:center;gap:16px;padding:14px 26px}
+.logo{display:flex;align-items:center;gap:11px}
+.logo .mark{
+  width:36px;height:36px;border-radius:12px;display:grid;place-items:center;color:#0b1030;
+  background:linear-gradient(135deg,var(--primary),var(--lavender));
+  box-shadow:0 6px 22px rgba(168,199,250,.4);
+}
+.logo b{font-size:15.5px;font-weight:800;letter-spacing:.04em}
+.logo small{display:block;font-size:10.5px;font-weight:600;letter-spacing:.28em;color:var(--ink-3)}
+.crumbs{margin-left:14px;display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:13px}
+.crumbs .sep{opacity:.5}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:var(--r-sm);
+  font-size:12.5px;font-weight:600;color:var(--ink-2);
+  background:var(--glass);border:1px solid var(--stroke);
+  transition:background .18s ease,border-color .18s ease,color .18s ease;
+}
+button.pill:hover{background:var(--glass-strong);color:var(--ink)}
+.pill.accent{
+  color:#0b1030;background:linear-gradient(135deg,var(--primary),#d3e3fd);border-color:transparent;
+  box-shadow:0 4px 18px rgba(168,199,250,.35);
+}
+.dot-live{width:7px;height:7px;border-radius:50%;background:#4ade80;box-shadow:0 0 8px rgba(74,222,128,.9)}
+
+/* ---------- 布局 ---------- */
+.layout{flex:1;display:flex;gap:0;min-height:0;padding:0 26px 22px}
+.stage-col{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* ---------- 控制台 ---------- */
+.deck{display:flex;align-items:center;gap:16px;padding:12px 18px;border-radius:var(--r-md);margin-bottom:18px}
+.ctrls{display:flex;align-items:center;gap:6px}
+.ibtn{
+  width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);
+  background:rgba(255,255,255,.05);border:1px solid var(--stroke-soft);
+  transition:all .18s ease;
+}
+.ibtn:hover{background:rgba(255,255,255,.12);color:var(--ink)}
+.ibtn.main{width:42px;height:42px;color:#0b1030;background:linear-gradient(135deg,var(--primary),var(--lavender));border:none;box-shadow:0 6px 20px rgba(168,199,250,.4)}
+.timeline{flex:1;display:flex;flex-direction:column;gap:7px;min-width:140px}
+.track{position:relative;height:5px;border-radius:99px;background:rgba(255,255,255,.08)}
+.track .fill{position:absolute;inset:0;width:62%;border-radius:99px;background:linear-gradient(90deg,#7cacf8,var(--lavender))}
+.track .knob{
+  position:absolute;left:62%;top:50%;transform:translate(-50%,-50%);
+  width:13px;height:13px;border-radius:50%;background:#fff;
+  box-shadow:0 0 0 4px rgba(168,199,250,.25),0 2px 8px rgba(0,0,0,.4);
+}
+.ticks{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-3);font-weight:500;letter-spacing:.06em}
+.speed-chip{font-size:12px;font-weight:700;color:var(--primary);background:rgba(168,199,250,.12);border:1px solid rgba(168,199,250,.3);padding:6px 13px;border-radius:var(--r-sm)}
+.seg{display:flex;gap:2px;padding:3px;border-radius:var(--r-sm);background:rgba(255,255,255,.05);border:1px solid var(--stroke-soft)}
+.seg button{padding:5px 13px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--ink-3);transition:all .18s ease}
+.seg button:hover{color:var(--ink-2)}
+.seg button.on{color:#0b1030;background:rgba(211,227,253,.92)}
+
+/* ---------- 舞台 ---------- */
+.stage{position:relative;flex:1;min-height:430px;margin-bottom:16px}
+.stage .orb{position:absolute;border-radius:50%;filter:blur(70px);pointer-events:none;opacity:.55}
+.orb.a{width:300px;height:300px;left:56%;top:-6%;background:rgba(99,102,241,.5)}
+.orb.b{width:260px;height:260px;left:12%;bottom:-8%;background:rgba(196,181,253,.28)}
+.ring{
+  position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);
+  width:min(58vh,480px);aspect-ratio:1;border-radius:50%;
+  border:1px dashed rgba(255,255,255,.12);pointer-events:none;
+}
+.seat{position:absolute;transform:translate(-50%,-50%);width:112px;text-align:center}
+.card{
+  position:relative;border-radius:var(--r-md);padding:11px 8px 10px;
+  background:var(--glass);border:1px solid var(--stroke);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 30px rgba(4,6,18,.35);
+  transition:transform .2s ease,border-color .2s ease;
+}
+.seat:hover .card{transform:translateY(-3px);border-color:rgba(168,199,250,.45)}
+.avat{
+  width:40px;height:40px;margin:0 auto 7px;border-radius:14px;display:grid;place-items:center;
+  font-weight:800;font-size:16px;color:#0b1030;
+  background:linear-gradient(135deg,var(--rc,var(--primary)),#ffffff33);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 6px 16px var(--rc-g,rgba(168,199,250,.3));
+}
+.num{font-size:12px;font-weight:700;color:var(--rc,var(--ink));letter-spacing:.06em}
+.role-tag{
+  display:inline-block;margin-top:5px;font-size:10.5px;font-weight:700;letter-spacing:.18em;
+  color:var(--rc);background:color-mix(in srgb,var(--rc) 14%,transparent);
+  padding:2px 9px;border-radius:var(--r-sm);
+}
+.status{margin-top:5px;font-size:10px;color:var(--ink-3);letter-spacing:.14em;font-weight:600}
+.seat.dead{opacity:.5}
+.seat.dead .card{filter:grayscale(.75)}
+.seat.dead .role-tag{text-decoration:line-through}
+.badge-sheriff{
+  position:absolute;top:-9px;left:50%;transform:translateX(-50%);
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:10px;font-weight:800;color:#0b1030;letter-spacing:.1em;
+  background:linear-gradient(135deg,#ffe9a8,var(--hunter));padding:2.5px 9px;border-radius:var(--r-sm);
+  box-shadow:0 4px 12px rgba(251,191,36,.4);
+}
+.badge-dead{
+  position:absolute;top:-9px;right:-7px;width:24px;height:24px;border-radius:50%;
+  display:grid;place-items:center;color:#fff;background:rgba(251,113,133,.92);
+  box-shadow:0 4px 14px rgba(251,113,133,.5);
+}
+.seat.speaking .card{
+  border-color:rgba(168,199,250,.75);
+  box-shadow:0 0 0 1px rgba(168,199,250,.4),0 0 34px rgba(168,199,250,.35),inset 0 1px 0 rgba(255,255,255,.12);
+}
+.waveform{display:flex;align-items:flex-end;justify-content:center;gap:2.5px;height:14px;margin-top:7px}
+.waveform i{width:3px;border-radius:2px;background:var(--primary);animation:wv 1s ease-in-out infinite}
+.waveform i:nth-child(2){animation-delay:.15s}.waveform i:nth-child(3){animation-delay:.3s}
+.waveform i:nth-child(4){animation-delay:.45s}.waveform i:nth-child(5){animation-delay:.6s}
+@keyframes wv{0%,100%{height:4px}50%{height:14px}}
+
+/* ---------- 中央 ---------- */
+.center{
+  position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);
+  width:min(38%,320px);text-align:center;border-radius:28px;padding:26px 22px 22px;
+}
+.center .kicker{font-size:11px;font-weight:700;letter-spacing:.4em;text-indent:.4em;color:var(--primary)}
+.center h2{font-size:46px;font-weight:800;letter-spacing:.02em;margin:6px 0 2px;
+  background:linear-gradient(120deg,#ffffff,var(--primary) 70%,var(--lavender));
+  -webkit-background-clip:text;background-clip:text;color:transparent;}
+.center .ph{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--ink-2);
+  background:rgba(255,255,255,.07);border:1px solid var(--stroke-soft);padding:6px 15px;border-radius:var(--r-sm)}
+.center .report{
+  margin-top:16px;text-align:left;font-size:12.5px;line-height:1.85;color:var(--ink-2);
+  border-radius:var(--r-md);padding:12px 15px;
+  background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.25);
+}
+.center .report b{color:#fda4af;font-weight:700}
+.stats{display:flex;justify-content:center;gap:22px;margin-top:15px}
+.stat b{display:block;font-size:17px;font-weight:800;color:var(--ink)}
+.stat span{font-size:10.5px;color:var(--ink-3);font-weight:600;letter-spacing:.12em}
+
+/* ---------- 发言卡 ---------- */
+.speech{border-radius:var(--r-lg);padding:17px 22px 15px;margin-bottom:2px}
+.sp-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.sp-head .avat{margin:0}
+.sp-head .who b{font-size:14.5px;font-weight:700}
+.sp-head .who span{margin-left:8px;font-size:12px;font-weight:700;color:var(--witch)}
+.sp-head .live{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:800;letter-spacing:.2em;color:#86efac}
+.speech p{font-size:14.5px;line-height:1.95;color:#dbe1f5}
+.sp-meta{display:flex;gap:14px;margin-top:10px}
+.mchip{font-size:11px;font-weight:600;color:var(--ink-3);background:rgba(255,255,255,.05);border:1px solid var(--stroke-soft);padding:3px 11px;border-radius:var(--r-sm)}
+
+/* ---------- 历史 ---------- */
+.history{
+  width:340px;flex-shrink:0;margin-left:22px;border-radius:var(--r-lg);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden;
+}
+.history header{display:flex;align-items:center;gap:10px;padding:16px 20px 12px}
+.history h3{font-size:14.5px;font-weight:800;letter-spacing:.06em}
+.history header .n{margin-left:auto;font-size:11px;font-weight:700;color:var(--primary);background:rgba(168,199,250,.12);padding:3px 10px;border-radius:var(--r-sm)}
+.feed{flex:1;overflow-y:auto;padding:2px 20px 20px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}
+.ev{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--stroke-soft)}
+.ev:last-child{border-bottom:none}
+.ev .ico{
+  flex-shrink:0;width:32px;height:32px;border-radius:11px;display:grid;place-items:center;color:var(--ec);
+  background:color-mix(in srgb,var(--ec) 13%,transparent);border:1px solid color-mix(in srgb,var(--ec) 30%,transparent);
+}
+.ev .body{min-width:0}
+.ev .head{display:flex;align-items:baseline;gap:8px}
+.ev .head b{font-size:13px;font-weight:700}
+.ev .head time{margin-left:auto;font-size:10.5px;color:var(--ink-3);font-weight:600}
+.ev p{margin-top:3px;font-size:12px;line-height:1.75;color:var(--ink-2)}
+.day-sep{
+  display:flex;align-items:center;gap:10px;margin:14px 0 4px;
+  font-size:11px;font-weight:800;letter-spacing:.3em;color:var(--ink-3);
+}
+.day-sep::after{content:"";flex:1;height:1px;background:var(--stroke-soft)}
+
+@media (max-width:1100px){.history{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="logo">
+    <span class="mark" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3L20 9.3l-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.4-1z"/></svg>
+    </span>
+    <div><b>Wolf Killer</b><small>AI WEREWOLF ARENA</small></div>
+  </div>
+  <nav class="crumbs" aria-label="面包屑">大厅 <span class="sep">/</span> 对局 <span class="sep">/</span> <span style="color:var(--ink)">#A3F9-C2E8</span></nav>
+  <div class="right">
+    <span class="pill"><i class="dot-live" aria-hidden="true"></i>回放 · 上帝视角</span>
+    <button class="pill accent">新建对局</button>
+    <button class="pill">返回</button>
+  </div>
+</header>
+
+<div class="layout">
+  <section class="stage-col">
+
+    <div class="deck glass">
+      <div class="ctrls">
+        <button class="ibtn" aria-label="上一事件"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 5v14L8 12l10-7zM7 5h2v14H7z"/></svg></button>
+        <button class="ibtn main" aria-label="播放或暂停"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h4v16H7zM13 4h4v16h-4z"/></svg></button>
+        <button class="ibtn" aria-label="下一事件"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l10 7L6 19V5zM15 5h2v14h-2z"/></svg></button>
+      </div>
+      <div class="timeline">
+        <div class="track" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="回放进度"><div class="fill"></div><div class="knob"></div></div>
+        <div class="ticks"><span>DAY 1 · 夜</span><span>DAY 2 · 发言中 · 03:12</span><span>128/206</span></div>
+      </div>
+      <button class="speed-chip">2.0×</button>
+      <div class="seg" role="group" aria-label="事件筛选">
+        <button class="on">全部</button><button>发言</button><button>投票</button><button>夜间</button><button>死亡</button>
+      </div>
+    </div>
+
+    <div class="stage">
+      <i class="orb a" aria-hidden="true"></i><i class="orb b" aria-hidden="true"></i>
+      <div class="ring" aria-hidden="true"></div>
+
+      <div class="seat" style="--rc:var(--villager);--rc-g:rgba(134,239,172,.35);left:50%;top:9%">
+        <div class="card"><div class="avat" style="--rc:var(--villager)">1</div><div class="num">1号</div><div class="role-tag">村民</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--guard);--rc-g:rgba(94,234,212,.35);left:74.4%;top:19%">
+        <span class="badge-sheriff"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>警长</span>
+        <div class="card"><div class="avat">2</div><div class="num">2号</div><div class="role-tag">守卫</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--seer);--rc-g:rgba(125,211,252,.35);left:87.4%;top:43%">
+        <div class="card"><div class="avat">3</div><div class="num">3号</div><div class="role-tag">预言家</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat dead" style="--rc:var(--wolf);left:82.9%;top:70%">
+        <span class="badge-dead" title="第1天被放逐" aria-label="被放逐"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+        <div class="card"><div class="avat">4</div><div class="num">4号</div><div class="role-tag">狼人</div><div class="status">放逐 D1</div></div>
+      </div>
+      <div class="seat speaking" style="--rc:var(--witch);--rc-g:rgba(196,181,253,.4);left:63%;top:88%">
+        <div class="card">
+          <div class="avat">5</div><div class="num">5号</div><div class="role-tag">女巫</div><div class="status">发言中</div>
+          <div class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+      <div class="seat" style="--rc:var(--villager);--rc-g:rgba(134,239,172,.35);left:37%;top:88%">
+        <div class="card"><div class="avat">6</div><div class="num">6号</div><div class="role-tag">村民</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--wolf);--rc-g:rgba(251,113,133,.4);left:17.1%;top:70%">
+        <div class="card"><div class="avat">7</div><div class="num">7号</div><div class="role-tag">狼人</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--hunter);--rc-g:rgba(251,191,36,.35);left:12.6%;top:43%">
+        <div class="card"><div class="avat">8</div><div class="num">8号</div><div class="role-tag">猎人</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat dead" style="--rc:var(--villager);left:25.6%;top:19%">
+        <span class="badge-dead" title="第2夜遇袭" aria-label="夜间死亡"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+        <div class="card"><div class="avat">9</div><div class="num">9号</div><div class="role-tag">村民</div><div class="status">夜亡 D2</div></div>
+      </div>
+
+      <div class="center glass">
+        <div class="kicker">DAY 02</div>
+        <h2>第 2 天</h2>
+        <span class="ph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>白天 · 发言阶段</span>
+        <div class="report"><b>昨夜战报</b> — 9 号遇袭出局；守卫守护 2 号，女巫保留解药。</div>
+        <div class="stats">
+          <div class="stat"><b>7/9</b><span>存活</span></div>
+          <div class="stat"><b>2</b><span>已出局</span></div>
+          <div class="stat"><b>D2</b><span>天数</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="speech glass">
+      <div class="sp-head">
+        <span class="avat" style="--rc:var(--witch)" aria-hidden="true">5</span>
+        <div class="who"><b>5号</b><span>女巫</span></div>
+        <div class="live"><i class="dot-live" aria-hidden="true"></i>正在发言</div>
+      </div>
+      <p>昨晚的刀口落在了 9 号身上，我没有理由交出最后一瓶解药——留着她，好人阵营还有一次容错。今天我的票会跟紧真预言家的节奏：如果 3 号昨日报出的查验为真，那么 7 号今天这段「划水式」发言，就是在替狼队拖时间。</p>
+      <div class="sp-meta"><span class="mchip">时长 00:41</span><span class="mchip">tokens 1,284</span><span class="mchip">置信度 0.86</span></div>
+    </div>
+  </section>
+
+  <aside class="history glass" aria-label="历史记录">
+    <header>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <h3>事件流</h3><span class="n">128 / 206</span>
+    </header>
+    <div class="feed">
+      <div class="day-sep">DAY 1 · 夜晚</div>
+      <div class="ev" style="--ec:var(--wolf)">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12c2-3 5-5 9-5s7 2 9 5c-2 3-5 5-9 5s-7-2-9-5z"/><circle cx="12" cy="12" r="2"/></svg></span>
+        <div class="body"><div class="head"><b>狼人袭击 2 号</b><time>00:41</time></div><p>女巫交出解药，2 号平安。</p></div>
+      </div>
+      <div class="ev" style="--ec:var(--seer)">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg></span>
+        <div class="body"><div class="head"><b>预言家查验 3 号</b><time>00:52</time></div><p>结果：好人。</p></div>
+      </div>
+      <div class="day-sep">DAY 1 · 白天</div>
+      <div class="ev" style="--ec:var(--hunter)">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 15a4 4 0 100-8 4 4 0 000 8zM8 21h8M12 19v2"/><circle cx="12" cy="11" r="9"/></svg></span>
+        <div class="body"><div class="head"><b>2 号当选警长</b><time>01:20</time></div><p>得票 4/9，上警三人。</p></div>
+      </div>
+      <div class="ev" style="--ec:var(--wolf)">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21V4h13l-2 4 2 4H4"/></svg></span>
+        <div class="body"><div class="head"><b>4 号被放逐（狼人）</b><time>01:47</time></div><p>得票 5：2、3、5、6、8。遗言指认 7 号。</p></div>
+      </div>
+      <div class="day-sep">DAY 2 · 夜晚</div>
+      <div class="ev" style="--ec:var(--villager)">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg></span>
+        <div class="body"><div class="head"><b>9 号夜间出局</b><time>02:31</time></div><p>守卫守护 2 号，女巫未用药。</p></div>
+      </div>
+      <div class="day-sep">DAY 2 · 白天</div>
+      <div class="ev" style="--ec:var(--witch)">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
+        <div class="body"><div class="head"><b>5 号（女巫）发言中</b><time>03:12</time></div><p>解释保留解药理由，质疑 7 号节奏。</p></div>
+      </div>
+      <div class="ev" style="--ec:var(--ink-3);opacity:.55">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
+        <div class="body"><div class="head"><b>接下来：6 号发言</b><time>--:--</time></div><p>按逆时针顺序继续。</p></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>风格 01 · 血月剧场 — Wolf Killer UI 提案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Noto+Serif+SC:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   风格 01 · 血月剧场（Crimson Gothic）
+   关键词：暗夜哥特 / 血月 / 金色纹饰 / 戏剧感 / 衬线大字
+   ============================================================ */
+:root{
+  --bg:#0b0a0f;
+  --bg-2:#120e18;
+  --surface:#171221;
+  --surface-2:#1d1729;
+  --line:rgba(212,168,83,.22);
+  --line-soft:rgba(212,168,83,.12);
+  --ink:#f2e9dc;
+  --ink-dim:#b3a89a;
+  --ink-faint:#7d7468;
+  --crimson:#e5484d;
+  --crimson-deep:#c22e42;
+  --gold:#d4a853;
+  --wolf:#e5484d;
+  --seer:#7fb4d9;
+  --witch:#b08be0;
+  --hunter:#d9a441;
+  --villager:#93b58c;
+  --guard:#74aba3;
+  --radius:10px;
+  --serif:"Noto Serif SC", "Songti SC", serif;
+  --latin:"Cinzel", var(--serif);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--serif);
+  background:
+    radial-gradient(1100px 520px at 50% -8%, rgba(194,46,66,.16), transparent 62%),
+    radial-gradient(900px 700px at 50% 118%, rgba(212,168,83,.07), transparent 60%),
+    linear-gradient(180deg, var(--bg-2), var(--bg) 42%);
+  color:var(--ink);
+  min-height:100vh;
+  display:flex;flex-direction:column;
+}
+::selection{background:rgba(229,72,77,.35)}
+button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
+
+/* ---------- 顶栏 ---------- */
+.topbar{
+  display:flex;align-items:center;gap:20px;
+  padding:14px 26px 12px;
+  border-bottom:1px solid var(--line-soft);
+  position:relative;
+}
+.topbar::after{ /* 金色纹饰分隔线 */
+  content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg, transparent, rgba(212,168,83,.55) 18%, rgba(229,72,77,.6) 50%, rgba(212,168,83,.55) 82%, transparent);
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand .sigil{
+  width:38px;height:38px;border-radius:50%;
+  border:1px solid var(--line);
+  display:grid;place-items:center;color:var(--gold);
+  background:radial-gradient(circle at 35% 30%, rgba(229,72,77,.35), rgba(23,18,33,.9) 70%);
+  box-shadow:0 0 18px rgba(229,72,77,.25);
+}
+.brand h1{font-size:17px;font-weight:900;letter-spacing:.35em}
+.brand small{display:block;font-family:var(--latin);font-size:10px;font-weight:600;letter-spacing:.45em;color:var(--gold);margin-top:2px}
+.gamemeta{margin-left:auto;display:flex;align-items:center;gap:14px;color:var(--ink-dim);font-size:13px}
+.gamemeta .id{font-family:var(--latin);letter-spacing:.14em;font-size:12px;color:var(--ink-faint)}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 13px;border-radius:999px;font-size:12.5px;
+  border:1px solid var(--line);color:var(--gold);background:rgba(212,168,83,.06);
+  transition:background .2s ease,border-color .2s ease;
+}
+button.chip:hover{background:rgba(212,168,83,.14)}
+.chip.solid{background:rgba(229,72,77,.14);border-color:rgba(229,72,77,.4);color:#f4b3b6}
+
+/* ---------- 布局 ---------- */
+.layout{flex:1;display:flex;min-height:0}
+.stage-col{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line-soft)}
+
+/* ---------- 时间轴工具条 ---------- */
+.toolbar{
+  display:flex;align-items:center;gap:14px;
+  padding:12px 26px;border-bottom:1px solid var(--line-soft);
+}
+.ctrl-group{display:flex;align-items:center;gap:4px}
+.icon-btn{
+  width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  border:1px solid var(--line);color:var(--ink-dim);
+  transition:color .18s ease,border-color .18s ease,background .18s ease;
+}
+.icon-btn:hover{color:var(--gold);border-color:var(--gold)}
+.icon-btn.primary{width:42px;height:42px;background:rgba(229,72,77,.15);border-color:rgba(229,72,77,.5);color:#f4b3b6}
+.icon-btn.primary:hover{background:rgba(229,72,77,.28)}
+.progress{flex:1;display:flex;align-items:center;gap:12px;min-width:120px}
+.progress .bar{flex:1;height:3px;border-radius:99px;background:rgba(212,168,83,.15);position:relative;overflow:hidden}
+.progress .bar i{
+  position:absolute;inset:0;width:62%;
+  background:linear-gradient(90deg, var(--crimson-deep), var(--crimson));
+  border-radius:99px;
+}
+.progress .bar i::after{
+  content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);
+  width:9px;height:9px;border-radius:50%;background:var(--crimson);
+  box-shadow:0 0 10px rgba(229,72,77,.9);
+}
+.progress time{font-family:var(--latin);font-size:11.5px;letter-spacing:.1em;color:var(--ink-faint)}
+.speed{
+  font-family:var(--latin);font-size:12px;letter-spacing:.08em;color:var(--gold);
+  border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:rgba(212,168,83,.05);
+}
+.filters{display:flex;gap:6px}
+.f-chip{
+  padding:4px 12px;border-radius:999px;font-size:12px;color:var(--ink-faint);
+  border:1px solid transparent;transition:all .18s ease;
+}
+.f-chip:hover{color:var(--ink-dim)}
+.f-chip.on{color:#f4b3b6;border-color:rgba(229,72,77,.45);background:rgba(229,72,77,.12)}
+
+/* ---------- 圆桌舞台 ---------- */
+.stage{position:relative;flex:1;min-height:430px;margin:8px 26px 0}
+.moon{
+  position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);
+  width:min(52vh,420px);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle at 50% 42%, rgba(242,233,220,.09), rgba(242,233,220,.02) 55%, transparent 70%);
+  pointer-events:none;
+}
+.seat{
+  position:absolute;transform:translate(-50%,-50%);
+  width:104px;text-align:center;
+}
+.seat .card{
+  border:1px solid var(--line);
+  border-top:2px solid var(--rc,var(--ink-faint));
+  border-radius:var(--radius);
+  background:linear-gradient(180deg, rgba(29,23,41,.92), rgba(18,14,24,.92));
+  padding:10px 8px 9px;
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+  transition:transform .2s ease,border-color .2s ease;
+}
+.seat:hover .card{transform:translateY(-3px)}
+.seat .num{
+  font-family:var(--latin);font-size:15px;font-weight:700;letter-spacing:.1em;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+}
+.seat .role{
+  margin-top:5px;font-size:12.5px;letter-spacing:.35em;text-indent:.35em;color:var(--rc);
+}
+.seat .status{margin-top:6px;font-size:11px;color:var(--ink-faint);letter-spacing:.2em}
+.seat.dead .card{opacity:.45;filter:grayscale(.7)}
+.seat.dead .role{text-decoration:line-through;text-decoration-color:rgba(229,72,77,.7)}
+.seat.speaking .card{
+  border-color:var(--crimson);
+  box-shadow:0 0 0 1px rgba(229,72,77,.4), 0 0 30px rgba(229,72,77,.28), 0 14px 30px rgba(0,0,0,.5);
+}
+.seat .halo{
+  margin:-4px auto 6px;width:8px;height:8px;border-radius:50%;
+  background:var(--crimson);box-shadow:0 0 12px 3px rgba(229,72,77,.55);
+  animation:pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:.45;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+.seat .sheriff{
+  position:absolute;top:-9px;left:50%;transform:translateX(-50%);
+  font-size:10px;letter-spacing:.2em;color:var(--bg);
+  background:var(--gold);padding:2px 8px;border-radius:999px;font-weight:700;
+}
+.seat .cause{
+  position:absolute;top:-10px;right:-6px;
+  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  color:var(--bg);background:var(--crimson);
+  box-shadow:0 0 14px rgba(229,72,77,.5);
+}
+.seat .vote-arrow{
+  position:absolute;font-size:11px;color:var(--gold);letter-spacing:.05em;
+}
+
+/* ---------- 中央展示 ---------- */
+.center{
+  position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);
+  width:min(40%,330px);text-align:center;padding:10px 0 6px;
+}
+.center .eyebrow{
+  font-family:var(--latin);font-size:10.5px;letter-spacing:.5em;text-indent:.5em;color:var(--gold);
+}
+.center .day{
+  font-size:56px;font-weight:900;line-height:1.15;letter-spacing:.06em;
+  background:linear-gradient(180deg,#f7efe2,#caa96a);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  text-shadow:0 18px 50px rgba(212,168,83,.18);
+}
+.center .phase{
+  display:inline-block;margin-top:2px;font-size:14.5px;letter-spacing:.4em;text-indent:.4em;
+  color:var(--ink);padding-bottom:8px;
+  border-bottom:1px solid var(--line);
+}
+.center .report{
+  margin:16px auto 0;max-width:250px;
+  font-size:12.5px;line-height:1.75;color:var(--ink-dim);
+  border:1px dashed rgba(229,72,77,.4);border-radius:var(--radius);
+  padding:10px 14px;background:rgba(229,72,77,.05);
+}
+.center .report b{color:#f4b3b6;font-weight:600}
+.center .alive{margin-top:12px;font-size:12px;color:var(--ink-faint);letter-spacing:.25em}
+
+/* ---------- 发言卡 ---------- */
+.speech-card{
+  margin:10px 26px 20px;border:1px solid var(--line);border-radius:14px;
+  background:linear-gradient(180deg, rgba(29,23,41,.85), rgba(18,14,24,.9));
+  padding:16px 22px 14px;position:relative;
+}
+.speech-card::before{
+  content:"";position:absolute;left:22px;right:22px;top:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(229,72,77,.65),transparent);
+}
+.speaker-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.seal-avatar{
+  width:42px;height:42px;border-radius:50%;display:grid;place-items:center;
+  font-family:var(--latin);font-size:16px;font-weight:700;color:#f7efe2;
+  background:radial-gradient(circle at 32% 28%, var(--witch), #3a2c52 78%);
+  box-shadow:0 0 0 2px rgba(176,139,224,.35), 0 6px 18px rgba(0,0,0,.5);
+}
+.speaker-row .who{font-size:14.5px;font-weight:700;letter-spacing:.08em}
+.speaker-row .who span{color:var(--witch);margin-left:8px;font-size:12.5px;letter-spacing:.3em;font-weight:400}
+.speaker-row .live{
+  margin-left:auto;display:inline-flex;align-items:center;gap:7px;
+  font-size:11.5px;letter-spacing:.25em;color:#f4b3b6;
+}
+.speaker-row .live i{width:7px;height:7px;border-radius:50%;background:var(--crimson);animation:pulse 1.4s infinite}
+.speech-text{font-size:15px;line-height:2;color:var(--ink)}
+.speech-meta{margin-top:10px;display:flex;gap:16px;font-size:11.5px;color:var(--ink-faint);letter-spacing:.12em}
+
+/* ---------- 编年史侧栏 ---------- */
+.chronicle{
+  width:340px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;
+  background:linear-gradient(180deg, rgba(23,18,33,.6), rgba(11,10,15,.3));
+}
+.chronicle header{
+  padding:16px 22px 12px;display:flex;align-items:baseline;gap:10px;
+  border-bottom:1px solid var(--line-soft);
+}
+.chronicle h2{font-size:15px;font-weight:700;letter-spacing:.3em}
+.chronicle header small{font-family:var(--latin);font-size:10px;letter-spacing:.3em;color:var(--ink-faint)}
+.entries{flex:1;overflow-y:auto;padding:6px 22px 22px;scrollbar-width:thin;scrollbar-color:rgba(212,168,83,.3) transparent}
+.day-mark{
+  display:flex;align-items:center;gap:12px;margin:18px 0 8px;
+  font-size:12px;letter-spacing:.35em;color:var(--gold);
+}
+.day-mark::before,.day-mark::after{content:"";flex:1;height:1px;background:var(--line-soft)}
+.entry{
+  position:relative;padding:10px 0 10px 20px;
+  border-left:1px solid var(--line-soft);margin-left:4px;
+}
+.entry::before{
+  content:"";position:absolute;left:-4.5px;top:16px;
+  width:8px;height:8px;border-radius:50%;
+  background:var(--bg);border:1.5px solid var(--dotc,var(--gold));
+}
+.entry .t{display:flex;gap:8px;align-items:baseline}
+.entry .tag{
+  font-size:10.5px;letter-spacing:.2em;color:var(--dotc,var(--gold));
+  border:1px solid var(--line-soft);border-radius:4px;padding:1px 7px;
+}
+.entry .name{font-size:13px;color:var(--ink);font-weight:600;letter-spacing:.05em}
+.entry p{margin-top:5px;font-size:12.5px;line-height:1.8;color:var(--ink-dim)}
+.entry.death{--dotc:var(--crimson)}
+.entry.vote{--dotc:#c98f3f}
+.entry.night{--dotc:var(--seer)}
+
+@media (max-width:1100px){
+  .chronicle{display:none}
+  .stage-col{border-right:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="sigil" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+    </span>
+    <div>
+      <h1>血月剧场</h1>
+      <small>WOLF&nbsp;KILLER&nbsp;·&nbsp;ACT&nbsp;II</small>
+    </div>
+  </div>
+  <div class="gamemeta">
+    <span class="id">#A3F9-C2E8</span>
+    <span>存活 7 / 9</span>
+    <span class="chip solid" aria-label="当前为回放上帝视角">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+      上帝视角
+    </span>
+    <button class="chip">返回大厅</button>
+  </div>
+</header>
+
+<div class="layout">
+  <section class="stage-col">
+
+    <div class="toolbar">
+      <div class="ctrl-group">
+        <button class="icon-btn" aria-label="上一事件">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M18 5v14L8 12l10-7zM7 5h2v14H7z"/></svg>
+        </button>
+        <button class="icon-btn primary" aria-label="播放或暂停">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h4v16H7zM13 4h4v16h-4z"/></svg>
+        </button>
+        <button class="icon-btn" aria-label="下一事件">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l10 7L6 19V5zM15 5h2v14h-2z"/></svg>
+        </button>
+      </div>
+      <div class="progress">
+        <time>DAY II · 03:12</time>
+        <div class="bar" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="回放进度"><i></i></div>
+        <time>128 / 206</time>
+      </div>
+      <button class="speed">2.0×</button>
+      <div class="filters" role="group" aria-label="事件筛选">
+        <button class="f-chip on">全部</button>
+        <button class="f-chip">发言</button>
+        <button class="f-chip">投票</button>
+        <button class="f-chip">夜间</button>
+        <button class="f-chip">死亡</button>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="moon" aria-hidden="true"></div>
+
+      <!-- 座位：环形分布 -->
+      <div class="seat" style="--rc:var(--villager);left:50%;top:10%">
+        <div class="card"><div class="num">Ⅰ</div><div class="role">村民</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--guard);left:74.4%;top:19.4%">
+        <span class="sheriff">警长</span>
+        <div class="card"><div class="num">Ⅱ</div><div class="role">守卫</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--seer);left:87.4%;top:43%">
+        <div class="card"><div class="num">Ⅲ</div><div class="role">预言家</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat dead" style="--rc:var(--wolf);left:82.9%;top:70%">
+        <span class="cause" title="第1天被放逐" aria-label="被放逐">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 21v-2a2 2 0 0 0-2-2 5 5 0 0 1-.9-9.8A6 6 0 0 1 16 4.3 4.5 4.5 0 0 1 20 8.7 4 4 0 0 1 19 16a2 2 0 0 0-2 2v3"/><path d="M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 1 5 0"/></svg>
+        </span>
+        <div class="card"><div class="num">Ⅳ</div><div class="role">狼人</div><div class="status">放逐 D1</div></div>
+      </div>
+      <div class="seat speaking" style="--rc:var(--witch);left:63%;top:87.6%">
+        <div class="halo" aria-hidden="true"></div>
+        <div class="card"><div class="num">Ⅴ</div><div class="role">女巫</div><div class="status">发言中</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--villager);left:37%;top:87.6%">
+        <div class="card"><div class="num">Ⅵ</div><div class="role">村民</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--wolf);left:17.1%;top:70%">
+        <div class="card"><div class="num">Ⅶ</div><div class="role">狼人</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat" style="--rc:var(--hunter);left:12.6%;top:43%">
+        <div class="card"><div class="num">Ⅷ</div><div class="role">猎人</div><div class="status">存活</div></div>
+      </div>
+      <div class="seat dead" style="--rc:var(--villager);left:25.6%;top:19.4%">
+        <span class="cause" title="第2夜遇袭" aria-label="夜间死亡">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a6 6 0 0 0-6 6c0 2 .8 3.4 1.7 4.5.6.8.9 1.5 1 2.5h6.6c.1-1 .4-1.7 1-2.5.9-1.1 1.7-2.5 1.7-4.5a6 6 0 0 0-6-6z"/><path d="M9.5 19h5M10.5 22h3"/></svg>
+        </span>
+        <div class="card"><div class="num">Ⅸ</div><div class="role">村民</div><div class="status">夜亡 D2</div></div>
+      </div>
+
+      <!-- 中央 -->
+      <div class="center">
+        <div class="eyebrow">THE SECOND DAY</div>
+        <div class="day">第贰天</div>
+        <div class="phase">白天 · 发言阶段</div>
+        <div class="report"><b>昨夜战报</b> —— 9 号在夜色中出局，死因：狼人袭击。守卫守护了 2 号，女巫未动用药瓶。</div>
+        <div class="alive">存活 7 / 9 · 狼 1 已知 · 尚有 1 狼在暗</div>
+      </div>
+    </div>
+
+    <div class="speech-card">
+      <div class="speaker-row">
+        <span class="seal-avatar" aria-hidden="true">V</span>
+        <div class="who">5号 · 女巫<span>正在陈词</span></div>
+        <div class="live"><i aria-hidden="true"></i>LIVE</div>
+      </div>
+      <p class="speech-text">昨晚的刀口落在了 9 号身上，我没有理由交出最后一瓶解药——留着她，好人阵营还有一次容错。今天我的票会跟紧真预言家的节奏：如果 3 号昨日报出的查验为真，那么 7 号今天这段「划水式」发言，就是在替狼队拖时间。</p>
+      <div class="speech-meta">
+        <span>发言时长 00:41</span><span>生成 tokens 1,284</span><span>置信度 0.86</span>
+      </div>
+    </div>
+  </section>
+
+  <aside class="chronicle" aria-label="事件编年史">
+    <header><h2>编年史</h2><small>CHRONICLE · 128/206</small></header>
+    <div class="entries">
+      <div class="day-mark">第一夜</div>
+      <div class="entry night">
+        <div class="t"><span class="tag">狼刀</span><span class="name">狼人袭击 2 号</span></div>
+        <p>女巫交出解药，2 号平安无事。</p>
+      </div>
+      <div class="entry night">
+        <div class="t"><span class="tag">查验</span><span class="name">预言家查验 3 号</span></div>
+        <p>结果：好人。</p>
+      </div>
+      <div class="day-mark">第一天</div>
+      <div class="entry vote">
+        <div class="t"><span class="tag">竞选</span><span class="name">2 号当选警长</span></div>
+        <p>得票 4 / 9，上警三人。</p>
+      </div>
+      <div class="entry vote">
+        <div class="t"><span class="tag">放逐</span><span class="name">4 号被放逐</span></div>
+        <p>得票 5：2、3、5、6、8 投出；遗言指认 7 号。</p>
+      </div>
+      <div class="entry death">
+        <div class="t"><span class="tag">遗言</span><span class="name">4 号 · 狼人</span></div>
+        <p>「……你们放逐我，明天晚上你们就会后悔。」身份揭晓：狼人。</p>
+      </div>
+      <div class="day-mark">第二夜</div>
+      <div class="entry night">
+        <div class="t"><span class="tag">狼刀</span><span class="name">狼人袭击 9 号</span></div>
+        <p>守卫守护 2 号，女巫保留解药，9 号出局。</p>
+      </div>
+      <div class="day-mark">第二天</div>
+      <div class="entry">
+        <div class="t"><span class="tag">发言</span><span class="name">5 号 · 女巫 正在发言</span></div>
+        <p>表态保留解药理由，指向 7 号节奏有问题。</p>
+      </div>
+      <div class="entry" style="opacity:.5">
+        <div class="t"><span class="tag">待续</span><span class="name">接下来：6 号发言</span></div>
+        <p>按逆时针顺序，从死者左侧继续。</p>
+      </div>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

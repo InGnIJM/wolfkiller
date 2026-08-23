@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>风格 03 · 迷雾档案 — Wolf Killer UI 提案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Noto+Serif+SC:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   风格 03 · 迷雾档案（Detective Dossier）
+   关键词：复古侦探 / 羊皮纸案卷 / 火漆印章 / 打字机 / 浅色模式
+   ============================================================ */
+:root{
+  --paper:#f1e9d7;
+  --paper-2:#e9dfc8;
+  --card:#f7f0e0;
+  --ink:#2e2618;
+  --ink-2:#5f5340;
+  --ink-3:#8d7f66;
+  --stamp:#b23a2e;
+  --stamp-soft:rgba(178,58,46,.12);
+  --pin-gold:#b98a2f;
+  --wolf:#a02c22;
+  --seer:#31648c;
+  --witch:#6b4d92;
+  --hunter:#9c6b1d;
+  --villager:#4c7042;
+  --guard:#2f6e64;
+  --line:#c9ba9b;
+  --serif:"Noto Serif SC","Songti SC",serif;
+  --type:"Special Elite",var(--serif);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--serif);color:var(--ink);min-height:100vh;display:flex;flex-direction:column;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 27px, rgba(120,100,60,.05) 27px 28px),
+    radial-gradient(120% 90% at 50% 0%, var(--paper), var(--paper-2));
+}
+::selection{background:rgba(178,58,46,.25)}
+button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px dashed var(--stamp);outline-offset:2px}
+
+/* ---------- 案卷头 ---------- */
+.filehead{
+  display:flex;align-items:center;gap:18px;padding:16px 30px 14px;
+  border-bottom:2px solid var(--ink);position:relative;
+}
+.filehead::after{
+  content:"";position:absolute;left:30px;right:30px;bottom:-6px;height:1px;background:var(--ink);opacity:.35;
+}
+.stamp-box{
+  border:2.5px solid var(--stamp);color:var(--stamp);
+  padding:6px 14px;font-weight:900;letter-spacing:.3em;text-indent:.3em;
+  transform:rotate(-2.5deg);font-size:15px;
+  box-shadow:inset 0 0 0 1px rgba(178,58,46,.25);
+  background:var(--stamp-soft);
+}
+.case-meta{display:flex;flex-direction:column;gap:2px;margin-left:6px}
+.case-meta .no{font-family:var(--type);font-size:13px;letter-spacing:.18em;color:var(--ink-2)}
+.case-meta b{font-size:17px;font-weight:900;letter-spacing:.14em}
+.head-actions{margin-left:auto;display:flex;gap:10px;align-items:center}
+.tbtn{
+  font-family:var(--type);font-size:12px;letter-spacing:.12em;color:var(--ink-2);
+  border:1.5px solid var(--ink);padding:6px 14px;border-radius:3px;background:transparent;
+  transition:all .15s ease;
+}
+.tbtn:hover{background:var(--ink);color:var(--paper)}
+.viewtag{font-family:var(--type);font-size:11px;letter-spacing:.15em;color:var(--stamp);border:1px dashed var(--stamp);padding:5px 10px;border-radius:3px}
+
+/* ---------- 布局 ---------- */
+.layout{flex:1;display:flex;min-height:0}
+.stage-col{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1.5px solid var(--line)}
+
+/* --- 工具条：录音带风格 --- */
+.toolbar{
+  display:flex;align-items:center;gap:14px;padding:12px 30px;
+  border-bottom:1.5px solid var(--line);background:rgba(255,255,255,.25);
+}
+.reel{width:30px;height:30px;border-radius:50%;border:2px solid var(--ink);position:relative;flex-shrink:0}
+.reel::before{content:"";position:absolute;inset:8px;border-radius:50%;border:2px solid var(--ink)}
+.reel.spin::after{
+  content:"";position:absolute;left:50%;top:-7px;width:2px;height:44%;background:var(--ink);transform-origin:bottom;transform:translateX(-50%);
+  animation:spin 2.4s linear infinite;
+}
+@keyframes spin{to{transform:translateX(-50%) rotate(360deg)}}
+.ctrls{display:flex;gap:6px}
+.cbtn{
+  width:32px;height:32px;border:1.5px solid var(--ink);border-radius:50%;
+  display:grid;place-items:center;color:var(--ink);transition:all .15s ease;
+}
+.cbtn:hover{background:var(--ink);color:var(--paper)}
+.tape-track{flex:1;height:10px;border:1.5px solid var(--ink);border-radius:99px;background:
+  repeating-linear-gradient(-45deg, rgba(46,38,24,.08) 0 6px, transparent 6px 12px);position:relative}
+.tape-fill{position:absolute;inset:1px auto 1px 1px;width:62%;max-width:calc(100% - 2px);background:repeating-linear-gradient(-45deg,var(--ink) 0 6px,#4a4030 6px 12px);border-radius:99px}
+.tlabel{font-family:var(--type);font-size:11px;letter-spacing:.12em;color:var(--ink-2)}
+.filters{display:flex;gap:4px}
+.fchip{font-family:var(--type);font-size:11px;letter-spacing:.08em;padding:4px 11px;border:1px solid transparent;color:var(--ink-3);border-radius:3px}
+.fchip:hover{color:var(--ink)}
+.fchip.on{border-color:var(--ink);color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+
+/* ---------- 证物板 ---------- */
+.board{position:relative;flex:1;min-height:430px;margin:6px 30px 0}
+.board::before{ /* 软木板暗纹 */
+  content:"";position:absolute;inset:0;border:1.5px solid var(--line);border-radius:6px;
+  background:
+    radial-gradient(3px 3px at 12% 22%, rgba(120,95,55,.18), transparent 60%),
+    radial-gradient(3px 3px at 78% 68%, rgba(120,95,55,.16), transparent 60%),
+    radial-gradient(2px 2px at 45% 85%, rgba(120,95,55,.15), transparent 60%),
+    rgba(214,197,164,.35);
+  pointer-events:none;
+}
+.seat{position:absolute;transform:translate(-50%,-50%);width:118px;z-index:1}
+.photo{
+  position:relative;background:var(--card);border:1px solid var(--line);
+  padding:9px 8px 8px;box-shadow:2px 3px 0 rgba(46,38,24,.12);
+  transition:transform .16s ease;
+}
+.photo::before,.photo::after{ /* 照片胶带角 */
+  content:"";position:absolute;width:34px;height:13px;background:rgba(222,208,175,.85);
+  border-left:1px solid rgba(46,38,24,.12);border-right:1px solid rgba(46,38,24,.12);
+}
+.photo::before{top:-6px;left:-10px;transform:rotate(-8deg)}
+.photo::after{bottom:-6px;right:-10px;transform:rotate(-6deg)}
+.seat:hover .photo{transform:rotate(.6deg) translateY(-2px)}
+.pin{
+  position:absolute;top:-8px;left:50%;transform:translateX(-50%);
+  width:13px;height:13px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #e8c56b, var(--pin-gold));
+  box-shadow:0 2px 4px rgba(46,38,24,.45);z-index:2;
+}
+.mugshot{display:flex;align-items:center;gap:8px}
+.mnum{
+  width:34px;height:34px;flex-shrink:0;display:grid;place-items:center;
+  font-weight:900;font-size:15px;color:var(--paper);
+  background:var(--rc,var(--ink));border-radius:2px;
+}
+.minfo{text-align:left;min-width:0}
+.minfo .nm{font-size:12.5px;font-weight:700;letter-spacing:.06em}
+.minfo .rl{font-family:var(--type);font-size:10px;letter-spacing:.2em;color:var(--rc,var(--ink-2))}
+.st-line{margin-top:7px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center}
+.st{font-size:10px;letter-spacing:.2em;color:var(--ink-3)}
+.sheriff-tag{font-size:9.5px;font-weight:700;letter-spacing:.15em;color:var(--paper);background:var(--hunter);padding:1px 6px;border-radius:2px}
+.rubber{
+  position:absolute;right:-8px;top:-10px;z-index:3;
+  font-family:var(--type);font-size:10px;font-weight:700;letter-spacing:.2em;
+  color:var(--stamp);border:2px solid var(--stamp);padding:2px 7px;border-radius:2px;
+  transform:rotate(9deg);background:rgba(247,240,224,.85);
+  box-shadow:1px 2px 0 rgba(46,38,24,.12);
+}
+.seat.dead .photo{opacity:.62;filter:saturate(.4)}
+.seat.dead .mnum{background:var(--ink-3)}
+.seat.speaking{z-index:2}
+.seat.speaking .photo{
+  outline:2.5px solid var(--ink);outline-offset:2px;
+}
+.seat.speaking .st{color:var(--stamp);font-weight:700}
+.string{ /* 嫌疑人连线 */
+  position:absolute;pointer-events:none;z-index:0;
+}
+
+/* ---------- 中央案情卡 ---------- */
+.dossier{
+  position:absolute;left:50%;top:47%;transform:translate(-50%,-50%) rotate(-.6deg);
+  width:min(36%,320px);z-index:2;background:var(--card);
+  border:1.5px solid var(--ink);box-shadow:4px 5px 0 rgba(46,38,24,.15);
+  padding:18px 20px 16px;
+}
+.dossier .corner-fold{
+  position:absolute;top:0;right:0;width:26px;height:26px;
+  background:linear-gradient(225deg, var(--paper-2) 50%, transparent 50%);
+  border-left:1px solid var(--line);border-bottom:1px solid var(--line);
+}
+.dossier .k{font-family:var(--type);font-size:10.5px;letter-spacing:.3em;color:var(--ink-3)}
+.dossier h2{font-size:37px;font-weight:900;letter-spacing:.1em;line-height:1.2;margin:2px 0 0}
+.dossier .ph{
+  display:inline-block;margin-top:4px;font-family:var(--type);font-size:12px;letter-spacing:.22em;
+  color:var(--paper);background:var(--ink);padding:3px 12px;border-radius:2px;
+}
+.dossier hr{border:none;border-top:1.5px dashed var(--line);margin:12px 0 10px}
+.dossier .report{font-size:12.5px;line-height:1.9;color:var(--ink-2)}
+.dossier .report b{color:var(--stamp)}
+.dossier .foot{margin-top:11px;display:flex;justify-content:space-between;font-family:var(--type);font-size:10.5px;letter-spacing:.14em;color:var(--ink-3)}
+
+/* ---------- 证词记录 ---------- */
+.testimony{
+  margin:14px 30px 20px;background:var(--card);border:1.5px solid var(--ink);
+  box-shadow:3px 4px 0 rgba(46,38,24,.12);padding:16px 22px 13px;position:relative;
+}
+.t-head{display:flex;align-items:center;gap:12px;padding-bottom:9px;border-bottom:1.5px dashed var(--line);margin-bottom:9px}
+.t-head .who{font-size:14.5px;font-weight:900;letter-spacing:.08em}
+.t-head .who i{font-style:normal;font-family:var(--type);font-size:11px;letter-spacing:.2em;color:var(--witch);margin-left:8px}
+.t-head .rec{margin-left:auto;font-family:var(--type);font-size:10.5px;letter-spacing:.2em;color:var(--stamp);display:flex;align-items:center;gap:6px}
+.rec i{width:8px;height:8px;border-radius:50%;background:var(--stamp);animation:blink 1.2s steps(2) infinite}
+@keyframes blink{50%{opacity:.25}}
+.testimony p{font-size:14px;line-height:2.05;color:#3a3122}
+.t-foot{margin-top:8px;font-family:var(--type);font-size:10px;letter-spacing:.15em;color:var(--ink-3)}
+
+/* ---------- 侦查日志 ---------- */
+.logbook{
+  width:340px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;background:rgba(255,255,255,.28);
+}
+.logbook header{display:flex;align-items:baseline;gap:10px;padding:16px 22px 10px;border-bottom:1.5px solid var(--ink)}
+.logbook h3{font-size:14.5px;font-weight:900;letter-spacing:.3em}
+.logbook header span{margin-left:auto;font-family:var(--type);font-size:10.5px;letter-spacing:.12em;color:var(--ink-3)}
+.loglines{flex:1;overflow-y:auto;padding:4px 22px 20px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.logday{font-family:var(--type);font-size:11px;letter-spacing:.3em;color:var(--ink-3);margin:16px 0 6px;display:flex;align-items:center;gap:10px}
+.logday::after{content:"";flex:1;border-top:1.5px dashed var(--line)}
+.log{
+  position:relative;padding:9px 0 9px 22px;
+}
+.log::before{content:"▸";position:absolute;left:2px;top:8px;color:var(--lc,var(--ink-3))}
+.log .lt{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.log .cat{font-family:var(--type);font-size:10px;letter-spacing:.18em;color:var(--lc,var(--ink-2));border:1px solid var(--lc,var(--line));padding:1px 7px;border-radius:2px;background:rgba(255,255,255,.5)}
+.log b{font-size:13px;letter-spacing:.04em}
+.log time{margin-left:auto;font-family:var(--type);font-size:10px;color:var(--ink-3)}
+.log p{margin-top:3px;font-size:12px;line-height:1.85;color:var(--ink-2)}
+.log.death{--lc:var(--stamp)}
+
+@media (max-width:1100px){.logbook{display:none}.stage-col{border-right:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="filehead">
+  <span class="stamp-box">迷雾档案</span>
+  <div class="case-meta">
+    <span class="no">CASE NO. A3F9-C2E8 · WOLF KILLER</span>
+    <b>第贰日 · 白昼听审</b>
+  </div>
+  <div class="head-actions">
+    <span class="viewtag">上帝视角 · 回放</span>
+    <button class="tbtn">归档返回</button>
+  </div>
+</header>
+
+<div class="layout">
+  <section class="stage-col">
+
+    <div class="toolbar">
+      <span class="reel spin" aria-hidden="true"></span>
+      <div class="ctrls">
+        <button class="cbtn" aria-label="上一事件"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M18 5v14L8 12l10-7zM7 5h2v14H7z"/></svg></button>
+        <button class="cbtn" aria-label="播放或暂停"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h4v16H7zM13 4h4v16h-4z"/></svg></button>
+        <button class="cbtn" aria-label="下一事件"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l10 7L6 19V5zM15 5h2v14h-2z"/></svg></button>
+      </div>
+      <div class="tape-track" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="回放进度"><i class="tape-fill"></i></div>
+      <span class="tlabel">128 / 206</span>
+      <span class="tlabel">×2.0</span>
+      <div class="filters" role="group" aria-label="事件筛选">
+        <button class="fchip on">全部</button><button class="fchip">证词</button><button class="fchip">投票</button><button class="fchip">夜巡</button><button class="fchip">死亡</button>
+      </div>
+    </div>
+
+    <div class="board">
+      <!-- 嫌疑人连线 -->
+      <svg class="string" style="left:0;top:0;width:100%;height:100%" aria-hidden="true">
+        <path d="M 300 88 C 380 150, 430 190, 470 210" stroke="#a02c22" stroke-width="1.5" fill="none" opacity=".5" stroke-dasharray="4 4"/>
+        <path d="M 470 210 C 520 230, 600 260, 700 300" stroke="#a02c22" stroke-width="1.5" fill="none" opacity=".5" stroke-dasharray="4 4"/>
+      </svg>
+
+      <div class="seat" style="--rc:var(--villager);left:50%;top:9%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i>
+          <div class="mugshot"><span class="mnum">1</span><span class="minfo"><span class="nm">一号</span><br><span class="rl">VILLAGER · 村民</span></span></div>
+          <div class="st-line"><span class="st">存活</span></div>
+        </div>
+      </div>
+      <div class="seat" style="--rc:var(--guard);left:74.4%;top:19%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i><span class="sheriff-tag" style="position:absolute;top:-8px;right:6px;">警长</span>
+          <div class="mugshot"><span class="mnum">2</span><span class="minfo"><span class="nm">二号</span><br><span class="rl">GUARD · 守卫</span></span></div>
+          <div class="st-line"><span class="st">存活</span></div>
+        </div>
+      </div>
+      <div class="seat" style="--rc:var(--seer);left:87.4%;top:43%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i>
+          <div class="mugshot"><span class="mnum">3</span><span class="minfo"><span class="nm">三号</span><br><span class="rl">SEER · 预言家</span></span></div>
+          <div class="st-line"><span class="st">存活</span></div>
+        </div>
+      </div>
+      <div class="seat dead" style="--rc:var(--wolf);left:82.9%;top:70%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i><span class="rubber">放逐·D1</span>
+          <div class="mugshot"><span class="mnum">4</span><span class="minfo"><span class="nm">四号</span><br><span class="rl">WEREWOLF · 狼人</span></span></div>
+          <div class="st-line"><span class="st">已结案</span></div>
+        </div>
+      </div>
+      <div class="seat speaking" style="--rc:var(--witch);left:63%;top:88%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i>
+          <div class="mugshot"><span class="mnum">5</span><span class="minfo"><span class="nm">五号</span><br><span class="rl">WITCH · 女巫</span></span></div>
+          <div class="st-line"><span class="st">陈述中…</span><span class="sheriff-tag" style="background:var(--witch)">LIVE</span></div>
+        </div>
+      </div>
+      <div class="seat" style="--rc:var(--villager);left:37%;top:88%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i>
+          <div class="mugshot"><span class="mnum">6</span><span class="minfo"><span class="nm">六号</span><br><span class="rl">VILLAGER · 村民</span></span></div>
+          <div class="st-line"><span class="st">存活</span></div>
+        </div>
+      </div>
+      <div class="seat" style="--rc:var(--wolf);left:17.1%;top:70%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i>
+          <div class="mugshot"><span class="mnum">7</span><span class="minfo"><span class="nm">七号</span><br><span class="rl">WEREWOLF · 狼人</span></span></div>
+          <div class="st-line"><span class="st">存活 · 头号嫌犯?</span></div>
+        </div>
+      </div>
+      <div class="seat" style="--rc:var(--hunter);left:12.6%;top:43%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i>
+          <div class="mugshot"><span class="mnum">8</span><span class="minfo"><span class="nm">八号</span><br><span class="rl">HUNTER · 猎人</span></span></div>
+          <div class="st-line"><span class="st">存活</span></div>
+        </div>
+      </div>
+      <div class="seat dead" style="--rc:var(--villager);left:25.6%;top:19%">
+        <div class="photo"><i class="pin" aria-hidden="true"></i><span class="rubber" style="transform:rotate(-8deg)">遇害·D2</span>
+          <div class="mugshot"><span class="mnum">9</span><span class="minfo"><span class="nm">九号</span><br><span class="rl">VILLAGER · 村民</span></span></div>
+          <div class="st-line"><span class="st">已结案</span></div>
+        </div>
+      </div>
+
+      <!-- 中央案卷 -->
+      <div class="dossier">
+        <i class="corner-fold" aria-hidden="true"></i>
+        <span class="k">SUMMARY OF CASE</span>
+        <h2>第 二 日</h2>
+        <span class="ph">白天 · 发言阶段</span>
+        <hr>
+        <p class="report"><b>昨夜记录</b> —— 九号于夜间遇害，死因判定为狼人袭击。守卫守护二号未受波及，女巫药瓶仍在。</p>
+        <div class="foot"><span>在场 7 / 9</span><span>狼 1 已伏诛</span><span>余狼 1</span></div>
+      </div>
+    </div>
+
+    <div class="testimony">
+      <div class="t-head">
+        <span style="width:34px;height:34px;display:grid;place-items:center;font-weight:900;color:var(--paper);background:var(--witch)">5</span>
+        <span class="who">五号<i>WITCH · 女巫</i></span>
+        <span class="rec"><i aria-hidden="true"></i>RECORDING</span>
+      </div>
+      <p>昨晚的刀口落在了九号身上，我没有理由交出最后一瓶解药——留着她，好人阵营还有一次容错。今天我的票会跟紧真预言家的节奏：如果三号昨日报出的查验为真，那么七号今天这段「划水式」发言，就是在替狼队拖时间。</p>
+      <div class="t-foot">RECORDED AT DAY II · 03:12 &nbsp;/&nbsp; TOKENS 1284 &nbsp;/&nbsp; CONFIDENCE 0.86</div>
+    </div>
+  </section>
+
+  <aside class="logbook" aria-label="侦查日志">
+    <header><h3>侦查日志</h3><span>128/206 ENTRIES</span></header>
+    <div class="loglines">
+      <div class="logday">第一夜</div>
+      <div class="log" style="--lc:var(--seer)">
+        <div class="lt"><span class="cat">夜巡</span><b>狼人袭击二号</b><time>00:41</time></div>
+        <p>女巫交出解药，二号平安无事。</p>
+      </div>
+      <div class="log" style="--lc:var(--seer)">
+        <div class="lt"><span class="cat">查验</span><b>预言家查验三号</b><time>00:52</time></div>
+        <p>结论：好人。</p>
+      </div>
+      <div class="logday">第一日</div>
+      <div class="log">
+        <div class="lt"><span class="cat">竞选</span><b>二号当选警长</b><time>01:20</time></div>
+        <p>得票 4/9，上警三人。</p>
+      </div>
+      <div class="log death">
+        <div class="lt"><span class="cat">放逐</span><b>四号被放逐（狼人）</b><time>01:47</time></div>
+        <p>得票 5：二、三、五、六、八号。遗言指认七号。</p>
+      </div>
+      <div class="logday">第二夜</div>
+      <div class="log death">
+        <div class="lt"><span class="cat">遇害</span><b>九号夜间出局</b><time>02:31</time></div>
+        <p>守卫守护二号，女巫未用药。</p>
+      </div>
+      <div class="logday">第二日</div>
+      <div class="log" style="--lc:var(--witch)">
+        <div class="lt"><span class="cat">证词</span><b>五号（女巫）陈述中</b><time>03:12</time></div>
+        <p>解释保留解药理由，质疑七号节奏有问题。</p>
+      </div>
+      <div class="log" style="opacity:.55">
+        <div class="lt"><span class="cat">待续</span><b>下一位：六号发言</b><time>--:--</time></div>
+        <p>按逆时针顺序，自死者左侧继续。</p>
+      </div>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>
