@@ -7,7 +7,13 @@ from .base import CallPurpose, ProviderProfile
 class OpenAICompatibleTransport:
     """Build a ChatOpenAI model from a provider profile and call purpose."""
 
-    def build(self, config, profile: ProviderProfile, purpose: CallPurpose) -> BaseChatModel:
+    def build(
+        self,
+        config,
+        profile: ProviderProfile,
+        purpose: CallPurpose,
+        chat_model_factory=None,
+    ) -> BaseChatModel:
         is_action = purpose in {
             CallPurpose.ACTION_JSON,
             CallPurpose.ACTION_STRICT,
@@ -28,4 +34,5 @@ class OpenAICompatibleTransport:
             kwargs["base_url"] = config.strict_base_url
         if profile.capabilities.temperature:
             kwargs["temperature"] = config.temperature
-        return ChatOpenAI(**kwargs)
+        factory = chat_model_factory or ChatOpenAI
+        return factory(**kwargs)
