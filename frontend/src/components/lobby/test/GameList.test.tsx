@@ -161,7 +161,8 @@ describe('GameList management', () => {
     fireEvent.click(screen.getByRole('button', { name: '确定' }));
 
     await waitFor(() => expect(renameGame).toHaveBeenCalledWith('game-1', '新名字'));
-    expect(screen.getByTestId('game-game-1')).toHaveTextContent('新名字');
+    // 等待重命名后的状态更新完成渲染，避免与 mock 调用检测产生竞态
+    await waitFor(() => expect(screen.getByTestId('game-game-1')).toHaveTextContent('新名字'));
     expect(screen.getByTestId('game-game-2')).toHaveTextContent('game-2-name');
   });
 

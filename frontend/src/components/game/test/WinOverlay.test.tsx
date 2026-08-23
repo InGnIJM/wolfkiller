@@ -49,6 +49,15 @@ describe('WinOverlay', () => {
     expect(play).toHaveBeenCalledOnce();
   });
 
+  it('styles a werewolf victory with the crimson accent', () => {
+    render(
+      <WinOverlay winResult={{ winning_camp: 'werewolf', reason: 'all_villagers_dead' }} />,
+    );
+
+    expect(screen.getByText('狼人阵营获胜')).toBeVisible();
+    expect(screen.getByText('所有平民出局')).toBeVisible();
+  });
+
   it('supports closing and displays unknown public result values verbatim', () => {
     const dismissWinOverlay = vi.fn();
     useGameStore.setState({ dismissWinOverlay });
