@@ -1,52 +1,59 @@
 import { createTheme } from '@mui/material/styles';
+import {
+  BLOOD_MOON, CANVAS, HAIRLINE, INK, ROLE_COLORS,
+} from './theme/tokens';
+
+// 血月剧场（Crimson Gothic）主题
+// 令牌来源：src/theme/tokens.ts；风格稿：frontend/design-demos/01-crimson-gothic.html
 
 const theme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: '#A8C7FA',
-      light: '#D3E3FD',
-      dark: '#7CACF8',
+      main: BLOOD_MOON.crimsonDeep,
+      light: BLOOD_MOON.crimson,
+      dark: BLOOD_MOON.crimsonDark,
     },
     secondary: {
-      main: '#C4B5FD',
-      light: '#E8DEF8',
-      dark: '#9A82DB',
+      main: BLOOD_MOON.gold,
+      light: BLOOD_MOON.goldLight,
+      dark: BLOOD_MOON.goldDark,
     },
-    error: { main: '#F2B8B5' },
-    warning: { main: '#FFD968' },
-    success: { main: '#A5D6A7' },
-    info: { main: '#9DBDF9' },
+    error: { main: '#F6686C' },
+    warning: { main: ROLE_COLORS.hunter.color },
+    success: { main: ROLE_COLORS.villager.color },
+    info: { main: ROLE_COLORS.seer.color },
     background: {
-      default: '#131314',
-      paper: '#1C1B1F',
+      default: CANVAS.bg,
+      paper: CANVAS.surface,
     },
-    divider: '#49454F',
+    divider: HAIRLINE.soft,
     text: {
-      primary: '#E6E1E5',
-      secondary: '#CAC4D0',
-      disabled: '#938F99',
+      primary: INK.primary,
+      secondary: INK.dim,
+      disabled: INK.faint,
     },
     action: {
-      hover: 'rgba(168,199,250,0.08)',
-      selected: 'rgba(168,199,250,0.12)',
-      disabled: 'rgba(230,225,229,0.12)',
-      disabledBackground: 'rgba(230,225,229,0.08)',
+      hover: 'rgba(212,168,83,0.09)',
+      selected: 'rgba(212,168,83,0.14)',
+      focus: 'rgba(212,168,83,0.18)',
+      disabled: 'rgba(242,233,220,0.12)',
+      disabledBackground: 'rgba(242,233,220,0.08)',
     },
   },
   typography: {
-    fontFamily: '"Google Sans", "Google Sans Text", Roboto, "Noto Sans SC", Arial, sans-serif',
+    fontFamily: '"Cinzel", "Noto Serif SC", "Songti SC", Georgia, serif',
     h4: { fontWeight: 700, letterSpacing: '-0.5px' },
-    h5: { fontWeight: 500, letterSpacing: '-0.25px' },
-    h6: { fontWeight: 500, letterSpacing: '-0.15px' },
+    h5: { fontWeight: 700, letterSpacing: '-0.25px' },
+    h6: { fontWeight: 700, letterSpacing: '-0.15px' },
     subtitle1: { fontWeight: 500, fontSize: '1rem' },
     subtitle2: { fontWeight: 500, fontSize: '0.875rem' },
     body1: { fontSize: '0.9375rem', letterSpacing: '0.1px', lineHeight: 1.6 },
     body2: { fontSize: '0.8125rem', letterSpacing: '0.1px', lineHeight: 1.6 },
     caption: { fontSize: '0.75rem', letterSpacing: '0.2px', lineHeight: 1.5 },
-    button: { textTransform: 'none', fontWeight: 500, letterSpacing: '0.1px' },
+    button: { textTransform: 'none', fontWeight: 600, letterSpacing: '0.4px' },
   },
-  shape: { borderRadius: 16 },
+  shape: { borderRadius: 12 },
   components: {
     MuiCssBaseline: {
       styleOverrides: {
@@ -54,56 +61,87 @@ const theme = createTheme({
           margin: 0,
           WebkitFontSmoothing: 'antialiased',
           MozOsxFontSmoothing: 'grayscale',
+          backgroundImage: [
+            'radial-gradient(1100px 520px at 50% -8%, rgba(194,46,66,0.16), transparent 62%)',
+            'radial-gradient(900px 700px at 50% 118%, rgba(212,168,83,0.07), transparent 60%)',
+            `linear-gradient(180deg, ${CANVAS.bgElevated}, ${CANVAS.bg} 42%)`,
+          ].join(', '),
+          backgroundAttachment: 'fixed',
+        },
+        '::selection': {
+          backgroundColor: 'rgba(229,72,77,0.35)',
         },
         '*': {
           scrollbarWidth: 'thin',
-          scrollbarColor: '#49454F transparent',
+          scrollbarColor: `${HAIRLINE.strong} transparent`,
+        },
+      },
+    },
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          backgroundColor: 'rgba(23,18,33,0.88)',
+          backdropFilter: 'blur(10px)',
         },
       },
     },
     MuiButton: {
       styleOverrides: {
         root: {
-          borderRadius: 20,
-          padding: '8px 20px',
-          fontWeight: 500,
+          borderRadius: 999,
+          padding: '8px 22px',
+          fontWeight: 600,
           fontSize: '0.875rem',
-          letterSpacing: '0.1px',
+          letterSpacing: '0.4px',
         },
         sizeSmall: {
-          borderRadius: 16,
+          borderRadius: 999,
           padding: '4px 14px',
           fontSize: '0.75rem',
         },
         contained: {
           boxShadow: 'none',
-          '&:hover': { boxShadow: '0 1px 3px rgba(0,0,0,0.3)' },
+          '&:hover': { boxShadow: '0 6px 22px rgba(194,46,66,0.35)' },
         },
         outlined: {
-          borderColor: '#49454F',
+          borderColor: HAIRLINE.strong,
+          '&:hover': {
+            borderColor: BLOOD_MOON.gold,
+            backgroundColor: 'rgba(212,168,83,0.06)',
+          },
+        },
+      },
+    },
+    MuiIconButton: {
+      styleOverrides: {
+        root: {
+          '&:hover': {
+            color: BLOOD_MOON.goldLight,
+            backgroundColor: 'rgba(212,168,83,0.09)',
+          },
         },
       },
     },
     MuiCard: {
       styleOverrides: {
         root: {
-          borderRadius: 16,
-          borderColor: '#49454F',
+          borderColor: HAIRLINE.soft,
+          backgroundImage: 'none',
         },
       },
     },
     MuiPaper: {
       styleOverrides: {
-        outlined: {
-          borderColor: '#49454F',
-        },
+        root: { backgroundImage: 'none' },
+        outlined: { borderColor: HAIRLINE.soft },
       },
     },
     MuiDialog: {
       styleOverrides: {
         paper: {
-          borderRadius: 24,
+          borderRadius: 16,
           padding: 0,
+          border: `1px solid ${HAIRLINE.soft}`,
         },
       },
     },
@@ -111,47 +149,48 @@ const theme = createTheme({
       styleOverrides: {
         root: {
           fontSize: '1.25rem',
-          fontWeight: 500,
+          fontWeight: 700,
           padding: '24px 24px 16px',
         },
       },
     },
     MuiDialogContent: {
       styleOverrides: {
-        root: {
-          padding: '16px 24px',
-        },
+        root: { padding: '16px 24px' },
       },
     },
     MuiDialogActions: {
       styleOverrides: {
-        root: {
-          padding: '16px 24px 24px',
-        },
+        root: { padding: '16px 24px 24px' },
       },
     },
     MuiTextField: {
       styleOverrides: {
         root: {
-          '& .MuiOutlinedInput-root': {
-            borderRadius: 12,
-          },
+          '& .MuiOutlinedInput-root': { borderRadius: 10 },
         },
       },
     },
     MuiChip: {
       styleOverrides: {
-        root: {
-          borderRadius: 8,
-          fontWeight: 500,
-        },
+        root: { fontWeight: 600, borderRadius: 999 },
+        outlined: { borderColor: HAIRLINE.strong },
       },
     },
     MuiLinearProgress: {
       styleOverrides: {
         root: {
-          borderRadius: 2,
-          backgroundColor: 'rgba(168,199,250,0.12)',
+          borderRadius: 99,
+          backgroundColor: 'rgba(212,168,83,0.14)',
+        },
+        bar: { backgroundColor: BLOOD_MOON.crimson },
+      },
+    },
+    MuiTabs: {
+      styleOverrides: {
+        indicator: {
+          backgroundColor: BLOOD_MOON.gold,
+          height: 2,
         },
       },
     },
@@ -159,15 +198,9 @@ const theme = createTheme({
       styleOverrides: {
         root: {
           textTransform: 'none',
-          fontWeight: 500,
+          fontWeight: 600,
           fontSize: '0.8125rem',
-        },
-      },
-    },
-    MuiTabs: {
-      styleOverrides: {
-        indicator: {
-          borderRadius: '3px 3px 0 0',
+          '&.Mui-selected': { color: BLOOD_MOON.goldLight },
         },
       },
     },
