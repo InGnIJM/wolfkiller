@@ -26,6 +26,7 @@ def test_new_generates_id_and_timestamps():
     assert len(cfg.id) == 32
     assert cfg.created_at
     assert cfg.updated_at
+    assert cfg.provider_profile == "auto"
 
 
 def test_store_roundtrip_upsert_list_get_delete(tmp_path):
@@ -39,6 +40,7 @@ def test_store_roundtrip_upsert_list_get_delete(tmp_path):
     assert loaded is not None
     assert loaded.name == "DeepSeek Pro"
     assert loaded.api_key_encrypted == cfg.api_key_encrypted
+    assert loaded.provider_profile == "auto"
     assert store.delete(cfg.id) is True
     assert store.list_all() == []
 

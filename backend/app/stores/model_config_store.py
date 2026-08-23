@@ -24,12 +24,14 @@ class ModelConfig:
     strict_base_url: Optional[str] = None
     created_at: str = ""
     updated_at: str = ""
+    provider_profile: str = "auto"
 
     @classmethod
     def new(
         cls, name: str, base_url: str, model_id: str,
         api_key_encrypted: str = "", temperature: Optional[float] = None,
         strict_base_url: Optional[str] = None,
+        provider_profile: str = "auto",
     ) -> "ModelConfig":
         now = datetime.now(timezone.utc).isoformat()
         return cls(
@@ -37,6 +39,7 @@ class ModelConfig:
             name=name, base_url=base_url, model_id=model_id,
             api_key_encrypted=api_key_encrypted,
             temperature=temperature, strict_base_url=strict_base_url,
+            provider_profile=provider_profile,
             created_at=now, updated_at=now,
         )
 
@@ -60,11 +63,14 @@ class JsonModelConfigStore:
     def list_all(self) -> list[ModelConfig]:
         with self._lock:
             raw = self._read()
-            return [
-                ModelConfig(**entry)
-                for entry in raw.get("configs", [])
-                if isinstance(entry, dict)
-            ]
+            configs = []
+            for entry in raw.get("configs", []):
+                if not isinstance(entry, dict):
+                    continue
+                entry = entry.copy()
+                entry.setdefault("provider_profile", "auto")
+                configs.append(ModelConfig(**entry))
+            return configs
 
     def get(self, config_id: str) -> Optional[ModelConfig]:
         return next(
