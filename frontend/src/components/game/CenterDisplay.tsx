@@ -59,14 +59,22 @@ const panelSx = {
 };
 
 function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: number }) {
+  const players = useGameStore((s) => s.players);
+  const alive = Object.values(players).filter((p) => p.is_alive).length;
+  const total = Object.keys(players).length;
+
   return (
     <Box sx={{ ...panelSx, py: 2.5 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5 }}>
-        <Box aria-hidden="true" sx={{ width: 34, height: '1px', bgcolor: 'divider' }} />
-        <Typography variant="caption" color="secondary.dark" sx={{ fontWeight: 600, letterSpacing: 3 }}>
-          第 {roundNumber} 轮
+        <Box aria-hidden="true" sx={{ width: 38, height: '1px', bgcolor: 'divider' }} />
+        <Typography
+          variant="caption"
+          color="secondary.dark"
+          sx={{ fontWeight: 700, letterSpacing: 3, fontFamily: '"Cinzel","Noto Serif SC",serif' }}
+        >
+          DAY {roundNumber}
         </Typography>
-        <Box aria-hidden="true" sx={{ width: 34, height: '1px', bgcolor: 'divider' }} />
+        <Box aria-hidden="true" sx={{ width: 38, height: '1px', bgcolor: 'divider' }} />
       </Box>
       <Typography
         variant="h5"
@@ -74,12 +82,31 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
         sx={{
           mt: 1,
           fontWeight: 900,
-          letterSpacing: 6,
+          letterSpacing: 8,
           textShadow: '0 0 28px rgba(212,168,83,0.28)',
         }}
       >
         {PHASE_LABELS[phase] || phase}
       </Typography>
+      <Box
+        sx={{
+          mt: 1.5,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 1.8,
+          py: 0.6,
+          borderRadius: 99,
+          border: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'rgba(23,18,33,0.6)',
+        }}
+      >
+        <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>存活</Typography>
+        <Typography sx={{ color: 'secondary.main', fontWeight: 800, fontSize: '0.85rem' }}>
+          {alive}/{total}
+        </Typography>
+      </Box>
     </Box>
   );
 }
