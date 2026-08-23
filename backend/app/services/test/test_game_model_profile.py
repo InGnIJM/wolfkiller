@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -48,9 +48,6 @@ async def test_create_game_passes_only_llm_clients_to_game_core(
         def __init__(self, *, config: LLMClientConfig):
             self.config = config
             self.instances.append(self)
-
-        def get_model(self):
-            return MagicMock()
 
     def assert_core_has_no_provider_objects(values):
         assert not any(

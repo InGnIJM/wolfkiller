@@ -25,14 +25,16 @@ def test_profile_round_trip(tmp_path):
     assert store.get(config.id).provider_profile == "openrouter"
 
 
-def test_old_entry_is_not_mutated_when_default_profile_is_added(tmp_path):
+def test_old_entry_is_not_mutated_when_default_profile_is_added(tmp_path, monkeypatch):
     entry = {
         "id": "old", "name": "Old", "base_url": "https://example.com",
         "model_id": "model", "created_at": "t", "updated_at": "t",
     }
-    path = tmp_path / "models.json"
-    path.write_text(json.dumps({"version": 1, "configs": [entry]}), encoding="utf-8")
+    raw = {"version": 1, "configs": [entry]}
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    monkeypatch.setattr(store, "_read", lambda: raw)
 
-    JsonModelConfigStore(str(path)).list_all()
+    assert store.list_all()[0].provider_profile == "auto"
+    assert store.get("old").provider_profile == "auto"
 
-    assert "provider_profile" not in entry
+    assert "provider_profile" not in raw["configs"][0]
