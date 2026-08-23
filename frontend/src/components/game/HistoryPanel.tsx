@@ -64,6 +64,32 @@ const KNOWLEDGE_LABELS: Record<string, string> = {
   last_wolf_kill_target: '昨夜狼刀目标',
 };
 
+// —— 编年史条目：类型标签 + 时间线色调 ——
+const EVENT_TAGS: Record<string, string> = {
+  speech: '发言',
+  vote: '投票',
+  vote_result: '放逐',
+  night_action: '夜间',
+  narration: '旁白',
+  wolf_chat_message: '狼聊',
+  wolf_vote: '狼票',
+  witch_thought: '思考',
+  seer_thought: '思考',
+  night_thought: '思考',
+  death: '死亡',
+  phase: '阶段',
+  winner: '结局',
+};
+
+function eventTone(event: PublicReplayEvent): string {
+  if (event.event_type === 'death' || event.event_type === 'wolf_chat_message') return '#F4B3B6';
+  if (event.event_type === 'narration') return '#7D7468';
+  if (event.event_type.includes('vote')) return '#E8C887';
+  if (event.event_type.includes('thought')) return '#C4B5FD';
+  if (event.event_type === 'night_action') return '#9DC8E8';
+  return '#D4A853';
+}
+
 // —— 编年史日分组：夜行动 → 第N夜，其余 → 第N天 ——
 const NIGHT_TYPES = new Set([
   'night_action', 'wolf_vote', 'witch_thought', 'seer_thought',
@@ -324,6 +350,9 @@ function EventCard({
       break;
   }
 
+  const tag = EVENT_TAGS[event.event_type] ?? '事件';
+  const tone = eventTone(event);
+
   return (
     <Box
       onClick={onClick}
@@ -335,23 +364,62 @@ function EventCard({
       role="button"
       tabIndex={0}
       sx={{
-        p: 1.2,
-        mb: 0.6,
+        position: 'relative',
+        pl: 3,
+        pr: 1.2,
+        py: 0.4,
+        mb: 1.2,
         cursor: 'pointer',
-        borderRadius: 2,
-        borderLeft: '3px solid',
-        borderColor: event.event_type === 'death' || event.event_type === 'wolf_chat_message'
-          ? 'error.main'
-          : event.event_type === 'narration'
-            ? 'text.disabled'
-            : event.event_type.includes('vote')
-              ? 'warning.main'
-              : 'primary.main',
-        bgcolor: 'rgba(242,233,220,0.03)',
-        '&:hover': { bgcolor: 'action.hover' },
-        transition: 'background-color 0.15s',
+        borderRadius: 1,
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          left: 8,
+          top: 10,
+          bottom: -14,
+          width: 1,
+          bgcolor: 'divider',
+        },
+        '&:hover': { '& .wk-dot': { transform: 'scale(1.35)' } },
       }}
     >
+      <Box
+        className="wk-dot"
+        aria-hidden="true"
+        sx={{
+          position: 'absolute',
+          left: 3.5,
+          top: 9,
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          bgcolor: 'background.paper',
+          border: '2px solid',
+          borderColor: tone,
+          boxShadow: `0 0 7px ${tone}`,
+          zIndex: 1,
+          transition: 'transform 0.15s',
+        }}
+      />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mb: 0.3 }}>
+        <Typography
+          variant="caption"
+          sx={{
+            fontSize: '0.56rem',
+            fontWeight: 800,
+            letterSpacing: 2,
+            lineHeight: 1.4,
+            color: tone,
+            border: '1px solid',
+            borderColor: `${tone}66`,
+            borderRadius: 0.6,
+            px: 0.7,
+            py: 0.1,
+          }}
+        >
+          {tag}
+        </Typography>
+      </Box>
       {content}
     </Box>
   );

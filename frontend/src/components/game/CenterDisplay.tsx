@@ -23,9 +23,18 @@ const PHASE_LABELS: Record<string, string> = {
 
 const CAUSE_LABELS: Record<string, string> = {
   wolf_kill: '夜间死亡',
-  poison: '夜间死亡',
-  hunter_shot: '出局',
+  poison: '毒杀',
   exile: '被放逐',
+  hunter_shot: '猎人带走',
+};
+
+const THOUGHT_LABELS: Record<string, string> = {
+  witch_reasoning: '女巫',
+  seer_reasoning: '预言家',
+  hunter_reasoning: '猎人',
+  guard_reasoning: '守卫',
+  witch_thought: '女巫',
+  seer_thought: '预言家',
 };
 
 const NIGHT_ACTION_LABELS: Record<string, string> = {
@@ -37,20 +46,6 @@ const NIGHT_ACTION_LABELS: Record<string, string> = {
   guard_protect: '守卫守护',
 };
 
-const THOUGHT_LABELS: Record<string, string> = {
-  witch_reasoning: '女巫思考',
-  seer_reasoning: '预言家思考',
-  hunter_reasoning: '猎人思考',
-  guard_reasoning: '守卫思考',
-  witch_thought: '女巫思考',
-  seer_thought: '预言家思考',
-};
-
-const CAMP_LABELS: Record<string, string> = {
-  good: '好人',
-  werewolf: '狼人',
-};
-
 const panelSx = {
   textAlign: 'center',
   py: 2,
@@ -58,6 +53,7 @@ const panelSx = {
   animation: `${fadeIn} 0.25s ease-out`,
 };
 
+// 中央阶段页：DAY N + 大字阶段名 + 存活统计（中心只展示阶段信息）
 function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: number }) {
   const players = useGameStore((s) => s.players);
   const alive = Object.values(players).filter((p) => p.is_alive).length;
@@ -111,167 +107,95 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   );
 }
 
-function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
+// 阶段页下方的一句话事件摘要（完整内容见底部活动栏 / 右侧编年史）
+function EventSummary({ entry }: { entry: PublicReplayEvent }) {
+  let text: string;
+  let tone = '#E8C887';
+
   switch (entry.event_type) {
     case 'speech':
-      return (
-        <Box sx={panelSx}>
-          <Typography variant="subtitle2" color="secondary.main" gutterBottom sx={{ fontWeight: 700, letterSpacing: 2 }}>
-            {entry.payload.phase === 'last_words'
-              ? `${entry.payload.player_seat}号玩家遗言`
-              : `${entry.payload.player_seat}号玩家发言`}
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.primary"
-            sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto', lineHeight: 1.9, fontSize: '0.875rem' }}
-          >
-            {entry.payload.text}
-          </Typography>
-        </Box>
-      );
-    case 'vote':
-      return (
-        <Box sx={panelSx}>
-          <Typography variant="subtitle2" color="warning.light" gutterBottom>
-            {entry.payload.voter_seat}号玩家投票
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {entry.payload.target_seat === null ? '弃权' : `投给 ${entry.payload.target_seat}号`}
-          </Typography>
-        </Box>
-      );
-    case 'vote_result':
-      return (
-        <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="subtitle1" color="warning.light" gutterBottom>
-            投票结果
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {entry.payload.exiled_seat === null
-              ? '平票，无人被放逐'
-              : `${entry.payload.exiled_seat}号玩家被放逐出局`}
-          </Typography>
-        </Box>
-      );
-    case 'night_action': {
-      const action = entry.payload;
-      const counts = action.vote_counts
-        ? Object.entries(action.vote_counts).map(([target, count]) => `${target}号×${count}`).join('，')
-        : null;
-      const detail = action.action_type === 'seer_check'
-        ? `查验了 ${action.target_seat}号，身份为${CAMP_LABELS[action.result ?? ''] ?? '未知'}`
-        : counts
-          ? `刀向 ${action.target_seat}号（票型：${counts}）`
-          : `目标 ${action.target_seat}号`;
-      return (
-        <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="subtitle1" color="info.light" gutterBottom>
-            {NIGHT_ACTION_LABELS[action.action_type] ?? '夜晚行动'}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {detail}
-          </Typography>
-        </Box>
-      );
-    }
-    case 'narration':
-      return (
-        <Box sx={{ ...panelSx, py: 3 }}>
-          <Typography variant="h5" color="secondary.light" gutterBottom sx={{ fontWeight: 900, letterSpacing: 4, textShadow: '0 0 26px rgba(212,168,83,0.25)' }}>
-            {entry.payload.title}
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-            {entry.payload.text}
-          </Typography>
-        </Box>
-      );
-    case 'wolf_chat_message':
-      return (
-        <Box
-          sx={{
-            ...panelSx,
-            textAlign: 'left',
-            py: 1.5,
-            borderLeft: '3px solid',
-            borderColor: 'error.main',
-          }}
-        >
-          <Typography variant="body1" color="text.secondary" sx={{ wordBreak: 'break-word' }}>
-            {entry.payload.seat}号：{entry.payload.text}
-          </Typography>
-        </Box>
-      );
-    case 'wolf_vote':
-      return (
-        <Box sx={panelSx}>
-          <Typography variant="subtitle2" color="warning.light" gutterBottom>
-            {entry.payload.seat}号 出票
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {entry.payload.target_seat === null
-              ? `弃权（${entry.payload.reasoning}）`
-              : `→ ${entry.payload.target_seat}号（${entry.payload.reasoning}）`}
-          </Typography>
-        </Box>
-      );
+      text = entry.payload.phase === 'last_words'
+        ? `${entry.payload.player_seat}号遗言`
+        : `${entry.payload.player_seat}号正在发言`;
+      break;
     case 'witch_thought':
     case 'seer_thought':
-      return (
-        <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="subtitle1" color="info.light" gutterBottom>
-            {THOUGHT_LABELS[entry.event_type]} · {entry.payload.seat}号
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-            {entry.payload.text}
-          </Typography>
-        </Box>
-      );
     case 'night_thought': {
-      const { action_type, seat, target_seat, reasoning } = entry.payload;
-      const body = target_seat === null
-        ? `不行动：${reasoning || '（无理由）'}`
-        : `目标 ${target_seat}号：${reasoning || '（无理由）'}`;
-      return (
-        <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="subtitle1" color="info.light" gutterBottom>
-            {THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-            {body}
-          </Typography>
-        </Box>
-      );
+      const who = THOUGHT_LABELS[
+        'action_type' in entry.payload ? entry.payload.action_type : entry.event_type
+      ] ?? '角色';
+      text = `${who}思考中`;
+      tone = '#C4B5FD';
+      break;
     }
+    case 'wolf_chat_message':
+      text = '狼群密谋中';
+      tone = '#F4B3B6';
+      break;
+    case 'night_action':
+      text = `${NIGHT_ACTION_LABELS[entry.payload.action_type] ?? '夜晚行动'} · 目标 ${entry.payload.target_seat}号`;
+      tone = '#9DC8E8';
+      break;
     case 'death':
-      return (
-        <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="subtitle1" color="error.light" gutterBottom>
-            死亡公告
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {entry.payload.player_seat}号玩家{CAUSE_LABELS[entry.payload.cause] || '死亡'}
-          </Typography>
-        </Box>
-      );
-    case 'phase':
-      return <PhaseContent phase={entry.payload.phase} roundNumber={entry.payload.round_number} />;
+      text = `${entry.payload.player_seat}号 ${CAUSE_LABELS[entry.payload.cause] ?? '出局'}`;
+      tone = '#F4B3B6';
+      break;
+    case 'vote':
+      text = entry.payload.target_seat === null
+        ? `${entry.payload.voter_seat}号弃权`
+        : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`;
+      break;
+    case 'vote_result':
+      text = entry.payload.exiled_seat === null ? '平票，无人被放逐' : `${entry.payload.exiled_seat}号被放逐`;
+      break;
+    case 'narration':
+      text = entry.payload.title;
+      break;
     case 'winner':
-      return (
-        <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="h6" color="secondary.light" sx={{ fontWeight: 700, letterSpacing: 2 }}>
-            游戏结束
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {entry.payload.winning_camp === 'werewolf' ? '狼人阵营获胜' : '好人阵营获胜'}
-          </Typography>
-        </Box>
-      );
+      text = entry.payload.winning_camp === 'werewolf' ? '狼人阵营获胜' : '好人阵营获胜';
+      tone = '#F4B3B6';
+      break;
+    default:
+      return null;
   }
+
+  return (
+    <Box
+      sx={{
+        mt: 1.5,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 1,
+        px: 1.8,
+        py: 0.6,
+        borderRadius: 99,
+        border: '1px solid',
+        borderColor: 'divider',
+        bgcolor: 'rgba(23,18,33,0.6)',
+      }}
+    >
+      <Box
+        aria-hidden="true"
+        sx={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          bgcolor: tone,
+          boxShadow: `0 0 8px ${tone}`,
+        }}
+      />
+      <Typography
+        variant="caption"
+        sx={{ color: tone, fontWeight: 700, letterSpacing: 1.5, fontSize: '0.72rem' }}
+      >
+        {text}
+      </Typography>
+    </Box>
+  );
 }
 
 export default function CenterDisplay() {
-  const { timeline, timelineIndex, isPaused, phase, roundNumber } = useGameStore();
+  const { phase, roundNumber, timeline, timelineIndex, isPaused } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;
@@ -287,7 +211,10 @@ export default function CenterDisplay() {
     );
   }
 
-  if (!entry) return <PhaseContent phase={phase} roundNumber={roundNumber} />;
-
-  return <PublicEventContent key={`entry-${timelineIndex}`} entry={entry} />;
+  return (
+    <Box sx={{ width: '100%', textAlign: 'center' }}>
+      <PhaseContent phase={phase} roundNumber={roundNumber} />
+      {entry && <EventSummary key={`summary-${timelineIndex}`} entry={entry} />}
+    </Box>
+  );
 }
