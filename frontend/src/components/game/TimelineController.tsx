@@ -144,7 +144,7 @@ export default function TimelineController() {
         sx={{
           height: 3,
           cursor: 'pointer',
-          bgcolor: 'rgba(168,199,250,0.08)',
+          bgcolor: 'rgba(212,168,83,0.08)',
           '&:hover': { height: 5 },
           transition: 'height 0.15s',
         }}

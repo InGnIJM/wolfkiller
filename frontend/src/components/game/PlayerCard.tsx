@@ -3,13 +3,13 @@ import Avatar from '../shared/Avatar';
 import type { PublicPlayerState } from '../../store/types';
 
 const highlightPulse = keyframes`
-  0%, 100% { boxShadow: '0 0 0 0 rgba(168,199,250,0.4)'; }
-  50% { boxShadow: '0 0 0 6px rgba(168,199,250,0.15)'; }
+  0%, 100% { boxShadow: '0 0 0 0 rgba(229,72,77,0.4)'; }
+  50% { boxShadow: '0 0 0 6px rgba(229,72,77,0.15)'; }
 `;
 
 const speakerPulse = keyframes`
-  0%, 100% { boxShadow: '0 0 0 2px rgba(168,199,250,0.6), 0 0 8px rgba(168,199,250,0.3)'; }
-  50% { boxShadow: '0 0 0 6px rgba(168,199,250,0.3), 0 0 16px rgba(168,199,250,0.15)'; }
+  0%, 100% { boxShadow: '0 0 0 2px rgba(229,72,77,0.6), 0 0 8px rgba(229,72,77,0.3)'; }
+  50% { boxShadow: '0 0 0 6px rgba(229,72,77,0.3), 0 0 16px rgba(229,72,77,0.15)'; }
 `;
 
 interface Props {
@@ -80,7 +80,7 @@ export default function PlayerCard({
             px: 0.6,
             py: 0.1,
             borderRadius: 1,
-            bgcolor: voteTarget !== null ? 'rgba(255,217,104,0.12)' : 'rgba(255,255,255,0.04)',
+            bgcolor: voteTarget !== null ? 'rgba(212,168,83,0.14)' : 'rgba(242,233,220,0.05)',
             color: voteTarget !== null ? 'warning.light' : 'text.disabled',
             fontSize: '0.6rem',
             fontWeight: 500,

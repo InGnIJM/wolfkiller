@@ -1,14 +1,15 @@
 import { Box, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import type { PublicPlayerState } from '../../store/types';
+import { ROLE_COLORS } from '../../theme/tokens';
 
 const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> = {
-  'wolf-killer-werewolf': { label: '狼人', color: 'error.main', bg: 'rgba(242,184,181,0.16)' },
-  'wolf-killer-witch': { label: '女巫', color: 'secondary.main', bg: 'rgba(196,181,253,0.16)' },
-  'wolf-killer-seer': { label: '预言家', color: 'info.main', bg: 'rgba(157,189,249,0.16)' },
-  'wolf-killer-hunter': { label: '猎人', color: 'warning.main', bg: 'rgba(255,217,104,0.16)' },
-  'wolf-killer-villager': { label: '村民', color: 'success.main', bg: 'rgba(165,214,167,0.16)' },
-  'wolf-killer-guard': { label: '守卫', color: 'success.light', bg: 'rgba(204,232,206,0.16)' },
+  'wolf-killer-werewolf': { label: '狼人', ...ROLE_COLORS.werewolf },
+  'wolf-killer-witch': { label: '女巫', ...ROLE_COLORS.witch },
+  'wolf-killer-seer': { label: '预言家', ...ROLE_COLORS.seer },
+  'wolf-killer-hunter': { label: '猎人', ...ROLE_COLORS.hunter },
+  'wolf-killer-villager': { label: '村民', ...ROLE_COLORS.villager },
+  'wolf-killer-guard': { label: '守卫', ...ROLE_COLORS.guard },
 };
 
 interface Props {
