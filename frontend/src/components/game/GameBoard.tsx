@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, Typography, Button, CircularProgress } from '@mui/material';
+import { Box, Typography, Button, Chip, CircularProgress } from '@mui/material';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useGameStore } from '../../store/gameStore';
 import { fetchGameLogs, fetchGameDetail, GameNotFoundError } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
@@ -8,6 +9,7 @@ import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
 import HistoryPanel from './HistoryPanel';
 import WinOverlay from './WinOverlay';
+import SpeechCard from './SpeechCard';
 
 interface Props {
   onBack: () => void;
@@ -112,6 +114,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
   }, [gameId, loading, winResult, error, initPlayersFromDetail, mergeLogs]);
 
   const aliveCount = Object.values(players).filter((p) => p.is_alive).length;
+  const totalPlayers = Object.keys(players).length;
 
   const voteTargets: Record<number, number | null> = {};
   if (phase === 'vote_casting' || phase === 'vote_resolution') {
@@ -144,15 +147,34 @@ export default function GameBoard({ onBack, gameId }: Props) {
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <TimelineController />
 
+      {/* 游戏信息条：存活统计 / 对局编号 / 视角标识 + 操作 */}
       <Box sx={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        px: 2, py: 0.8, flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 2,
+        px: 2.5, py: 0.9, flexShrink: 0,
         borderBottom: '1px solid', borderColor: 'divider',
+        bgcolor: 'rgba(23,18,33,0.5)',
       }}>
-        <Typography variant="body2" color="text.secondary">
-          存活 {aliveCount}/{Object.keys(players).length} · #{gameId.slice(0, 8)}
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.6 }}>
+          <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>存活</Typography>
+          <Typography sx={{ color: 'secondary.main', fontWeight: 800, fontSize: '0.9rem', lineHeight: 1 }}>{aliveCount}</Typography>
+          <Typography variant="caption" color="text.disabled">/ {totalPlayers}</Typography>
+        </Box>
+        <Box aria-hidden="true" sx={{ width: '1px', height: 14, bgcolor: 'divider' }} />
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ letterSpacing: 2, fontFamily: '"Cinzel","Noto Serif SC",serif' }}
+        >
+          # {gameId.slice(0, 8)}
         </Typography>
-        <Box sx={{ display: 'flex', gap: 0.8 }}>
+        <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
+          <Chip
+            icon={<VisibilityIcon sx={{ fontSize: 14 }} />}
+            label="上帝视角"
+            size="small"
+            variant="outlined"
+            sx={{ '& .MuiChip-label': { letterSpacing: 1 } }}
+          />
           <Button
             size="small"
             variant={showHistory ? 'contained' : 'outlined'}
@@ -168,14 +190,17 @@ export default function GameBoard({ onBack, gameId }: Props) {
       </Box>
 
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
-        <Box sx={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0, minHeight: 0 }}>
-          <SeatMap
-            players={players}
-            currentSpeaker={currentSpeaker}
-            voteTargets={voteTargets}
-          >
-            <CenterDisplay />
-          </SeatMap>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+          <Box sx={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0, minHeight: 0 }}>
+            <SeatMap
+              players={players}
+              currentSpeaker={currentSpeaker}
+              voteTargets={voteTargets}
+            >
+              <CenterDisplay />
+            </SeatMap>
+          </Box>
+          <SpeechCard />
         </Box>
 
         {showHistory && <HistoryPanel onClose={toggleHistory} />}

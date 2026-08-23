@@ -24,12 +24,26 @@ export function AppShell() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      {/* 血月氛围背景层：贯穿所有路由的血月光晕 + 底部鎏金微光 + 暗角 */}
+      <Box
+        aria-hidden="true"
+        sx={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 0,
+          pointerEvents: 'none',
+          background: [
+            'radial-gradient(1000px 560px at 50% -12%, rgba(229,72,77,0.20), transparent 62%)',
+            'radial-gradient(820px 540px at 50% 118%, rgba(212,168,83,0.09), transparent 60%)',
+            'radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0,0,0,0.38) 100%)',
+          ].join(', '),
+        }}
+      />
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'relative', zIndex: 1 }}>
         <AppBar
           position="static"
           elevation={0}
           sx={{
-            bgcolor: 'background.paper',
             borderBottom: '1px solid',
             borderColor: 'divider',
           }}

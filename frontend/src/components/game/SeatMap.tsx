@@ -1,7 +1,13 @@
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, keyframes } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useRef, useState } from 'react';
 import type { PublicPlayerState } from '../../store/types';
 import { ROLE_COLORS } from '../../theme/tokens';
+
+const speakerPulse = keyframes`
+  0%, 100% { boxShadow: '0 0 0 2px rgba(229,72,77,0.55), 0 0 10px rgba(229,72,77,0.3)'; }
+  50% { boxShadow: '0 0 0 6px rgba(229,72,77,0.28), 0 0 20px rgba(229,72,77,0.16)'; }
+`;
 
 const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> = {
   'wolf-killer-werewolf': { label: '狼人', ...ROLE_COLORS.werewolf },
@@ -58,23 +64,83 @@ function PublicSeat({
     <Box
       aria-label={label}
       sx={{
+        position: 'relative',
         display: 'flex',
         minWidth: cardSize,
         flexDirection: 'column',
         alignItems: 'center',
         gap: 0.25,
         p: 0.7,
+        pt: 0.9,
         border: '1px solid',
-        borderColor: isCurrentSpeaker ? 'primary.main' : (
+        borderTop: '2px solid',
+        borderColor: isCurrentSpeaker ? 'error.main' : (
           badge?.color
           ?? (player.camp === 'werewolf' ? 'error.main' : player.camp === 'good' ? 'success.main' : 'divider')
         ),
-        borderRadius: 2,
-        bgcolor: player.is_alive ? 'background.paper' : 'action.disabledBackground',
-        opacity: player.is_alive ? 1 : 0.6,
+        borderTopColor: isCurrentSpeaker ? 'error.main' : (badge?.color ?? 'divider'),
+        borderRadius: 1.5,
+        bgcolor: player.is_alive ? 'rgba(23,18,33,0.85)' : 'action.disabledBackground',
+        opacity: player.is_alive ? 1 : 0.55,
+        boxShadow: '0 6px 18px rgba(0,0,0,0.35)',
+        ...(isCurrentSpeaker ? { animation: `${speakerPulse} 1.2s ease-in-out infinite` } : {}),
       }}
     >
-      <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
+      {player.is_sheriff && (
+        <Typography
+          variant="caption"
+          sx={{
+            position: 'absolute',
+            top: -9,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'background.paper',
+            bgcolor: 'warning.main',
+            borderRadius: 99,
+            px: 0.9,
+            py: 0.1,
+            fontSize: '0.58rem',
+            fontWeight: 800,
+            letterSpacing: 1,
+            lineHeight: 1.4,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          警长
+        </Typography>
+      )}
+      {!player.is_alive && (
+        <Box
+          aria-hidden="true"
+          sx={{
+            position: 'absolute',
+            top: -8,
+            right: -8,
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            display: 'grid',
+            placeItems: 'center',
+            color: 'background.paper',
+            bgcolor: 'error.main',
+            boxShadow: '0 0 10px rgba(229,72,77,0.6)',
+          }}
+        >
+          <CloseIcon sx={{ fontSize: 13 }} />
+        </Box>
+      )}
+      <Typography
+        variant="caption"
+        sx={{
+          fontWeight: 800,
+          fontSize: '0.78rem',
+          lineHeight: 1.2,
+          letterSpacing: 1,
+          fontFamily: '"Cinzel","Noto Serif SC",serif',
+          color: isCurrentSpeaker ? 'error.light' : 'text.primary',
+        }}
+      >
         {seat}号
       </Typography>
       {badge && (
@@ -99,7 +165,6 @@ function PublicSeat({
       <Typography variant="caption" color={player.is_alive ? 'success.light' : 'text.disabled'}>
         {status}
       </Typography>
-      {player.is_sheriff && <Typography variant="caption" color="warning.light">警长</Typography>}
       {voteTarget !== undefined && (
         <Typography variant="caption" color={voteTarget === null ? 'text.disabled' : 'warning.light'}>
           {voteTarget === null ? '弃权' : `→ ${voteTarget}号`}
@@ -141,7 +206,22 @@ export default function SeatMap({ players, currentSpeaker, voteTargets, children
   return (
     <Box ref={containerRef} sx={{ position: 'relative', width: '100%', height: '100%', minHeight: 420, overflow: 'hidden' }}>
       {size.w > 0 && (
-        <Box sx={{ position: 'absolute', left: padX, top: padY, width: rectW, height: rectH, border: '1px dashed', borderColor: 'divider', borderRadius: 3, pointerEvents: 'none' }} />
+        <Box
+          aria-hidden="true"
+          sx={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            transform: 'translate(-50%,-50%)',
+            width: Math.min(rectW * 0.94, 600),
+            height: rectH * 0.84,
+            border: '1px dashed',
+            borderColor: 'divider',
+            borderRadius: '50%',
+            opacity: 0.55,
+            pointerEvents: 'none',
+          }}
+        />
       )}
 
       {size.w > 0 && seats.map(({ seat, player }, index) => {
