@@ -5,6 +5,7 @@ import {
   ThemeProvider, CssBaseline, Box, Typography, AppBar, Toolbar,
   Container, Button,
 } from '@mui/material';
+import DarkModeIcon from '@mui/icons-material/DarkMode';
 import theme from './theme';
 import GameList from './components/lobby/GameList';
 import GameBoard from './components/game/GameBoard';
@@ -34,22 +35,56 @@ export function AppShell() {
           }}
         >
           <Container maxWidth={false}>
-            <Toolbar disableGutters sx={{ minHeight: 56 }}>
-              <Typography
-                component={Link}
-                to="/"
-                variant="h6"
+            <Toolbar disableGutters sx={{ minHeight: 56, gap: 1.2 }}>
+              <Box
+                aria-hidden="true"
                 sx={{
-                  flexGrow: 1,
-                  fontWeight: 500,
-                  fontSize: '1.125rem',
-                  letterSpacing: '-0.2px',
-                  color: 'text.primary',
-                  textDecoration: 'none',
+                  width: 34,
+                  height: 34,
+                  borderRadius: '50%',
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: 'secondary.main',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  bgcolor: 'rgba(194,46,66,0.18)',
+                  boxShadow: '0 0 16px rgba(229,72,77,0.22)',
                 }}
               >
-                Wolf Killer
-              </Typography>
+                <DarkModeIcon sx={{ fontSize: 17 }} />
+              </Box>
+              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                <Typography
+                  component={Link}
+                  to="/"
+                  variant="h6"
+                  sx={{
+                    display: 'block',
+                    lineHeight: 1.15,
+                    fontWeight: 700,
+                    fontSize: '1.05rem',
+                    letterSpacing: '3px',
+                    color: 'text.primary',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Wolf Killer
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    display: 'block',
+                    lineHeight: 1,
+                    mt: 0.2,
+                    fontSize: '0.6rem',
+                    fontWeight: 600,
+                    letterSpacing: '5px',
+                    color: 'secondary.dark',
+                  }}
+                >
+                  血月剧场 · AI WEREWOLF
+                </Typography>
+              </Box>
               <Button color="inherit" onClick={() => navigate('/models')}>
                 模型管理
               </Button>

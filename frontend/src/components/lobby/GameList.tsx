@@ -95,6 +95,12 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     <Container maxWidth="sm" sx={{ py: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
         <Box>
+          <Typography
+            variant="caption"
+            sx={{ display: 'block', mb: 0.3, fontWeight: 600, fontSize: '0.65rem', letterSpacing: 5, color: 'secondary.dark' }}
+          >
+            WOLF KILLER · 血月剧场
+          </Typography>
           <Typography variant="h4" sx={{ fontWeight: 400, fontSize: '2rem', letterSpacing: '-0.5px' }}>
             狼人杀
           </Typography>

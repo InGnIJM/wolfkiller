@@ -1,9 +1,5 @@
 import { Avatar as MuiAvatar } from '@mui/material';
-
-const COLORS = [
-  '#4285F4', '#EA4335', '#FBBC04', '#34A853',
-  '#FF6D01', '#46BDC6', '#7BA7F0', '#F06292', '#81C784',
-];
+import { AVATAR_PALETTE, INK } from '../../theme/tokens';
 
 interface Props {
   seat: number;
@@ -12,16 +8,18 @@ interface Props {
 }
 
 export default function Avatar({ seat, size = 48, isAlive = true }: Props) {
-  const color = COLORS[(seat - 1) % COLORS.length];
+  const color = AVATAR_PALETTE[(seat - 1) % AVATAR_PALETTE.length];
   return (
     <MuiAvatar
       sx={{
         width: size,
         height: size,
         bgcolor: color,
+        color: INK.primary,
+        border: '1px solid rgba(212,168,83,0.25)',
         opacity: isAlive ? 1 : 0.35,
         fontSize: size * 0.42,
-        fontWeight: 500,
+        fontWeight: 700,
         transition: 'opacity 0.3s',
       }}
     >
