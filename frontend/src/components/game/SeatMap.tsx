@@ -88,16 +88,20 @@ function PublicSeat({
         gap: 0.5,
         px: 1,
         py: 1.1,
-        border: '1px solid',
-        borderTop: '2px solid',
-        borderColor: isCurrentSpeaker ? '#E5484D' : (player.is_alive ? accent : 'rgba(212,168,83,0.14)'),
-        borderTopColor: isCurrentSpeaker ? '#E5484D' : (player.is_alive ? accent : 'rgba(212,168,83,0.14)'),
+        border: '2px solid',
+        borderColor: isCurrentSpeaker ? '#E5484D' : (
+          player.is_alive ? accent : 'rgba(212,168,83,0.18)'
+        ),
         borderRadius: 2,
         bgcolor: player.is_alive ? 'rgba(23,18,33,0.85)' : 'rgba(23,18,33,0.5)',
         backgroundImage: player.is_alive
           ? 'linear-gradient(180deg, rgba(29,23,41,0.92), rgba(18,14,24,0.92))'
           : 'none',
-        boxShadow: '0 10px 26px rgba(0,0,0,0.45)',
+        boxShadow: isCurrentSpeaker
+          ? undefined
+          : player.is_alive
+            ? `0 0 14px ${accent}44, 0 10px 26px rgba(0,0,0,0.45)`
+            : '0 10px 26px rgba(0,0,0,0.45)',
         opacity: player.is_alive ? 1 : 0.5,
         filter: player.is_alive ? 'none' : 'grayscale(0.7)',
         transition: 'transform 0.2s ease, border-color 0.2s ease',

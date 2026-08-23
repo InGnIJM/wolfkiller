@@ -62,8 +62,8 @@ const theme = createTheme({
           WebkitFontSmoothing: 'antialiased',
           MozOsxFontSmoothing: 'grayscale',
           backgroundImage: [
-            'radial-gradient(1100px 520px at 50% -8%, rgba(194,46,66,0.16), transparent 62%)',
-            'radial-gradient(900px 700px at 50% 118%, rgba(212,168,83,0.07), transparent 60%)',
+            'radial-gradient(1100px 520px at 50% -8%, rgba(194,46,66,0.24), transparent 62%)',
+            'radial-gradient(900px 700px at 50% 118%, rgba(212,168,83,0.11), transparent 60%)',
             `linear-gradient(180deg, ${CANVAS.bgElevated}, ${CANVAS.bg} 42%)`,
           ].join(', '),
           backgroundAttachment: 'fixed',

@@ -24,7 +24,7 @@ export function AppShell() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {/* 血月氛围背景层：贯穿所有路由的血月光晕 + 底部鎏金微光 + 暗角 */}
+      {/* 血月氛围背景层：贯穿所有路由的血月光晕 + 中央暗红主晕 + 鎏金微光 + 星尘 */}
       <Box
         aria-hidden="true"
         sx={{
@@ -33,9 +33,16 @@ export function AppShell() {
           zIndex: 0,
           pointerEvents: 'none',
           background: [
-            'radial-gradient(1000px 560px at 50% -12%, rgba(229,72,77,0.20), transparent 62%)',
-            'radial-gradient(820px 540px at 50% 118%, rgba(212,168,83,0.09), transparent 60%)',
-            'radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0,0,0,0.38) 100%)',
+            'radial-gradient(1300px 700px at 50% -16%, rgba(229,72,77,0.34), transparent 64%)',
+            'radial-gradient(1000px 760px at 50% 52%, rgba(122,28,43,0.20), transparent 68%)',
+            'radial-gradient(820px 460px at 10% 110%, rgba(212,168,83,0.16), transparent 60%)',
+            'radial-gradient(820px 460px at 90% 110%, rgba(194,46,66,0.14), transparent 60%)',
+            'radial-gradient(2px 2px at 18% 26%, rgba(242,233,220,0.7), transparent 100%)',
+            'radial-gradient(2px 2px at 74% 18%, rgba(242,233,220,0.55), transparent 100%)',
+            'radial-gradient(2px 2px at 62% 36%, rgba(212,168,83,0.6), transparent 100%)',
+            'radial-gradient(2px 2px at 30% 62%, rgba(242,233,220,0.4), transparent 100%)',
+            'radial-gradient(2px 2px at 84% 68%, rgba(242,233,220,0.45), transparent 100%)',
+            'linear-gradient(180deg, rgba(18,14,24,0.22), rgba(11,10,15,0.48))',
           ].join(', '),
         }}
       />
