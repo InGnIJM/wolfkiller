@@ -9,7 +9,7 @@ import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
 import HistoryPanel from './HistoryPanel';
 import WinOverlay from './WinOverlay';
-import SpeechCard from './SpeechCard';
+import ActivityCard from './ActivityCard';
 
 interface Props {
   onBack: () => void;
@@ -200,7 +200,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
               <CenterDisplay />
             </SeatMap>
           </Box>
-          <SpeechCard />
+          <ActivityCard />
         </Box>
 
         {showHistory && <HistoryPanel onClose={toggleHistory} />}
