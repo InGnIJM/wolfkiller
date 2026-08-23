@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from app.agents.llm_client import LLMClient, LLMClientConfig, derive_strict_base_url
+from app.agents.providers.registry import ProviderRegistry
 from app.api.model_schemas import (
     ModelConfigRequest, ModelConfigResponse, ModelListResponse,
     ModelCapabilitiesResponse, ModelTestRequest, ModelTestResponse,
@@ -110,22 +111,23 @@ async def test_model(req: ModelTestRequest):
                 api_key = crypto.decrypt(config.api_key_encrypted)
             except KeyDecryptionError:
                 raise HTTPException(400, "stored api key cannot be decrypted") from None
-        strict_url = derive_strict_base_url(config.base_url, config.strict_base_url)
+        explicit_strict_base_url = config.strict_base_url
         provider_profile = config.provider_profile
     else:
         if not req.base_url or not req.model_id:
             raise HTTPException(422, "base_url and model_id are required")
         base_url, model_id = req.base_url, req.model_id
         api_key = req.api_key or ""
-        strict_url = derive_strict_base_url(base_url)
+        explicit_strict_base_url = None
         provider_profile = req.provider_profile
-    # Probe the same endpoints the game will call: the regular endpoint and
-    # the derived strict-mode endpoint (they differ for official DeepSeek).
-    targets = (
-        [(base_url, ""), (strict_url, "strict:")]
-        if strict_url != base_url
-        else [(base_url, "")]
+    resolved_profile = ProviderRegistry().resolve(
+        provider_profile, base_url, model_id,
     )
+    strict_url = base_url
+    targets = [(base_url, "")]
+    if resolved_profile.strict_endpoint:
+        strict_url = derive_strict_base_url(base_url, explicit_strict_base_url)
+        targets.append((strict_url, "strict:"))
     start = time.monotonic()
     capabilities: dict[str, bool] | None = None
     for endpoint, prefix in targets:
@@ -139,7 +141,7 @@ async def test_model(req: ModelTestRequest):
                 strict_base_url=strict_url,
                 action_timeout_seconds=10,
                 action_retry_timeout_seconds=10,
-                provider_profile=provider_profile,
+                provider_profile=resolved_profile.profile_id,
             )).probe()
             if not prefix:
                 capabilities = result

@@ -48,6 +48,102 @@ async def test_model_test_uses_llm_client_and_reports_capabilities(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_explicit_custom_profile_does_not_probe_deepseek_strict_endpoint(monkeypatch):
+    client = MagicMock()
+    client.probe.return_value = {
+        "tools": True,
+        "strict_tools": False,
+        "json_output": True,
+        "reasoning_effort": False,
+        "temperature": True,
+    }
+    llm_client = MagicMock(return_value=client)
+    monkeypatch.setattr(model_routes, "LLMClient", llm_client)
+
+    response = await model_routes.test_model(ModelTestRequest(
+        base_url="https://api.deepseek.com/v1",
+        model_id="compatible-model",
+        provider_profile="custom-openai",
+    ))
+
+    assert response.ok is True
+    assert llm_client.call_count == 1
+    assert llm_client.call_args.kwargs["config"].base_url == (
+        "https://api.deepseek.com/v1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_deepseek_profile_probes_strict_on_custom_hostname(monkeypatch):
+    client = MagicMock()
+    client.probe.return_value = {
+        "tools": True,
+        "strict_tools": True,
+        "json_output": True,
+        "reasoning_effort": True,
+        "temperature": True,
+    }
+    llm_client = MagicMock(return_value=client)
+    monkeypatch.setattr(model_routes, "LLMClient", llm_client)
+
+    response = await model_routes.test_model(ModelTestRequest(
+        base_url="https://deepseek-proxy.example/v1",
+        model_id="deepseek-chat",
+        provider_profile="deepseek",
+    ))
+
+    assert response.ok is True
+    assert llm_client.call_count == 2
+    assert [
+        call.kwargs["config"].base_url for call in llm_client.call_args_list
+    ] == [
+        "https://deepseek-proxy.example/v1",
+        "https://deepseek-proxy.example/v1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stored_deepseek_profile_uses_explicit_strict_endpoint(monkeypatch, tmp_path):
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    stored = ModelConfig.new(
+        name="deepseek-proxy",
+        base_url="https://deepseek-proxy.example/v1",
+        model_id="deepseek-chat",
+        strict_base_url="https://deepseek-strict.example/v1",
+        provider_profile="deepseek",
+    )
+    store.upsert(stored)
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    client = MagicMock()
+    client.probe.return_value = {
+        "tools": True,
+        "strict_tools": True,
+        "json_output": True,
+        "reasoning_effort": True,
+        "temperature": True,
+    }
+    llm_client = MagicMock(return_value=client)
+    monkeypatch.setattr(model_routes, "LLMClient", llm_client)
+
+    response = await model_routes.test_model(ModelTestRequest(
+        config_id=stored.id,
+        provider_profile="custom-openai",
+    ))
+
+    assert response.ok is True
+    assert [
+        call.kwargs["config"].base_url for call in llm_client.call_args_list
+    ] == [
+        "https://deepseek-proxy.example/v1",
+        "https://deepseek-strict.example/v1",
+    ]
+    assert all(
+        call.kwargs["config"].provider_profile == "deepseek"
+        for call in llm_client.call_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_config_probe_uses_stored_profile(monkeypatch, tmp_path):
     store = JsonModelConfigStore(str(tmp_path / "models.json"))
     stored = ModelConfig.new(
