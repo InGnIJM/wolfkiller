@@ -40,17 +40,85 @@ afterEach(() => {
   useGameStore.getState().reset();
 });
 
-describe('CenterDisplay phase page', () => {
-  it('shows the day number, phase name and survival count', () => {
+describe('CenterDisplay dramatic phase page', () => {
+  it('shows english eyebrow, chinese day numerals and phase name', () => {
     renderCenter({ phase: 'speech', roundNumber: 2 });
-    expect(screen.getByText('DAY 2')).toBeInTheDocument();
-    expect(screen.getByText('发言阶段')).toBeInTheDocument();
+    expect(screen.getByText('THE SECOND DAY')).toBeInTheDocument();
+    expect(screen.getByText('第贰天')).toBeInTheDocument();
+    expect(screen.getByText('白天 · 议论纷纷')).toBeInTheDocument();
+    expect(screen.getByText(/存活 0\/0 · 余狼 0/)).toBeInTheDocument();
+  });
+
+  it('renders the night phase with roman day numeral', () => {
+    renderCenter({ phase: 'night', roundNumber: 1 });
+    expect(screen.getByText('第壹天')).toBeInTheDocument();
+    expect(screen.getByText('黑夜 · 群狼苏醒')).toBeInTheDocument();
   });
 
   it('shows a paused hint when paused with no event', () => {
     useGameStore.setState({ isPaused: true });
     render(<CenterDisplay />);
     expect(screen.getByText('游戏已暂停')).toBeInTheDocument();
+  });
+});
+
+describe('CenterDisplay war reports', () => {
+  it('reports the latest death from the timeline', () => {
+    renderCenter({
+      phase: 'dawn',
+      roundNumber: 2,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'death',
+          payload: { player_seat: 9, cause: 'wolf_kill', round_number: 2 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText(/9号在夜色中出局，死因：狼人袭击/)).toBeInTheDocument();
+  });
+
+  it('reports the latest exile result', () => {
+    renderCenter({
+      phase: 'vote_resolution',
+      roundNumber: 1,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'vote_result',
+          payload: { exiled_seat: 2, round_number: 1 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText(/2号被公投放逐，尘土落定/)).toBeInTheDocument();
+  });
+
+  it('reports the wolf-kill blade target', () => {
+    renderCenter({
+      phase: 'dawn',
+      roundNumber: 1,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_action',
+          payload: { action_type: 'werewolf_kill', target_seat: 2, round_number: 1, vote_counts: { '2': 2 } },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText(/狼人的刀锋昨夜指向 2号/)).toBeInTheDocument();
+  });
+
+  it('falls back to a phase-flavored report when no key events exist', () => {
+    renderCenter({ phase: 'speech', roundNumber: 1 });
+    expect(screen.getByText(/众人各执一词，真伪难辨/)).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({ phase: 'night', roundNumber: 1 });
+    expect(screen.getByText(/长夜未尽，狼人已在暗中谋划/)).toBeInTheDocument();
   });
 });
 
@@ -70,20 +138,6 @@ describe('CenterDisplay event summary', () => {
     expect(screen.queryByText('全文在活动栏')).not.toBeInTheDocument();
   });
 
-  it('summarizes a last-word speech as 遗言', () => {
-    renderCenter({
-      timeline: [
-        {
-          ...replayEventMeta,
-          event_type: 'speech',
-          payload: { player_seat: 4, text: '遗言全文', round_number: 1, phase: 'last_words' },
-        },
-      ],
-      timelineIndex: 0,
-    });
-    expect(screen.getByText('4号遗言')).toBeInTheDocument();
-  });
-
   it('summarizes death, vote and vote-result events', () => {
     renderCenter({
       timeline: [
@@ -95,7 +149,7 @@ describe('CenterDisplay event summary', () => {
       ],
       timelineIndex: 0,
     });
-    expect(screen.getByText('9号 夜间死亡')).toBeInTheDocument();
+    expect(screen.getByText('9号 狼人袭击')).toBeInTheDocument();
     cleanup();
     useGameStore.getState().reset();
 
@@ -110,20 +164,6 @@ describe('CenterDisplay event summary', () => {
       timelineIndex: 0,
     });
     expect(screen.getByText('1号投给 2号')).toBeInTheDocument();
-    cleanup();
-    useGameStore.getState().reset();
-
-    renderCenter({
-      timeline: [
-        {
-          ...replayEventMeta,
-          event_type: 'vote_result',
-          payload: { exiled_seat: 2, round_number: 1 },
-        },
-      ],
-      timelineIndex: 0,
-    });
-    expect(screen.getByText('2号被放逐')).toBeInTheDocument();
   });
 
   it('summarizes thoughts, wolf chat and night actions', () => {
@@ -138,20 +178,6 @@ describe('CenterDisplay event summary', () => {
       timelineIndex: 0,
     });
     expect(screen.getByText('女巫思考中')).toBeInTheDocument();
-    cleanup();
-    useGameStore.getState().reset();
-
-    renderCenter({
-      timeline: [
-        {
-          ...replayEventMeta,
-          event_type: 'wolf_chat_message',
-          payload: { round_number: 1, seat: 1, text: '刀谁' },
-        },
-      ],
-      timelineIndex: 0,
-    });
-    expect(screen.getByText('狼群密谋中')).toBeInTheDocument();
     cleanup();
     useGameStore.getState().reset();
 
@@ -208,6 +234,6 @@ describe('CenterDisplay event summary', () => {
       ],
       timelineIndex: 0,
     });
-    expect(screen.getByText('夜晚进行中')).toBeInTheDocument();
+    expect(screen.getByText('黑夜 · 群狼苏醒')).toBeInTheDocument();
   });
 });

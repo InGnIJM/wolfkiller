@@ -7,22 +7,23 @@ const fadeIn = keyframes`
   to { opacity: 1; transform: translateY(0); }
 `;
 
+// —— 阶段文案：带白天/黑夜的叙事化表达，增强中央张力 ——
 const PHASE_LABELS: Record<string, string> = {
-  waiting: '等待游戏开始',
-  role_deal: '游戏准备中',
-  night: '夜晚进行中',
-  dawn: '天亮了',
-  last_words: '遗言阶段',
-  sheriff_election: '警长竞选阶段',
-  speech: '发言阶段',
-  vote_casting: '投票阶段',
-  vote_resolution: '公布投票结果',
-  game_over: '游戏结束',
-  error: '游戏异常结束',
+  waiting: '夜宴将启',
+  role_deal: '身份落定',
+  night: '黑夜 · 群狼苏醒',
+  dawn: '白昼降临',
+  last_words: '遗言时刻',
+  sheriff_election: '警长竞选',
+  speech: '白天 · 议论纷纷',
+  vote_casting: '白天 · 投票表决',
+  vote_resolution: '白天 · 揭票时刻',
+  game_over: '尘埃落定',
+  error: '对局异常',
 };
 
 const CAUSE_LABELS: Record<string, string> = {
-  wolf_kill: '夜间死亡',
+  wolf_kill: '狼人袭击',
   poison: '毒杀',
   exile: '被放逐',
   hunter_shot: '猎人带走',
@@ -53,56 +54,145 @@ const panelSx = {
   animation: `${fadeIn} 0.25s ease-out`,
 };
 
-// 中央阶段页：DAY N + 大字阶段名 + 存活统计（中心只展示阶段信息）
+// —— 中文大写天数（第贰天 / 第拾天）——
+const CN_UPPER = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖'] as const;
+function upperDay(n: number): string {
+  if (n >= 1 && n <= 9) return CN_UPPER[n];
+  if (n === 10) return '拾';
+  if (n >= 11 && n <= 19) return `拾${CN_UPPER[n - 10]}`;
+  if (n === 20) return '贰拾';
+  return String(n);
+}
+
+const EN_ORDINAL: Record<number, string> = {
+  1: 'FIRST', 2: 'SECOND', 3: 'THIRD', 4: 'FOURTH', 5: 'FIFTH', 6: 'SIXTH',
+  7: 'SEVENTH', 8: 'EIGHTH', 9: 'NINTH', 10: 'TENTH', 11: 'ELEVENTH', 12: 'TWELFTH',
+};
+function ordinalEn(n: number): string {
+  return EN_ORDINAL[n] ?? String(n);
+}
+
+// 战报：从已播放时间线中回溯最近的关键事件，生成叙事性一句战报
+function buildReport(phase: string, events: PublicReplayEvent[]): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.event_type === 'death') {
+      return `${e.payload.player_seat}号在夜色中出局，死因：${CAUSE_LABELS[e.payload.cause] ?? '未明'}`;
+    }
+    if (e.event_type === 'vote_result') {
+      return e.payload.exiled_seat === null
+        ? '公投平票，无人被放逐'
+        : `${e.payload.exiled_seat}号被公投放逐，尘土落定`;
+    }
+    if (e.event_type === 'night_action' && e.payload.action_type === 'werewolf_kill') {
+      return `狼人的刀锋昨夜指向 ${e.payload.target_seat}号`;
+    }
+  }
+  if (phase === 'night' || phase === 'dawn') return '长夜未尽，狼人已在暗中谋划……';
+  if (phase === 'speech') return '众人各执一词，真伪难辨……';
+  if (phase === 'vote_casting' || phase === 'vote_resolution') return '公投在即，人心浮动……';
+  return '村中灯火未熄，只待天明';
+}
+
+// 中央阶段页：英文眉标 + 第X天金字 + 阶段名 + 战报 + 存活与余狼情报
 function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: number }) {
   const players = useGameStore((s) => s.players);
+  const timeline = useGameStore((s) => s.timeline);
+  const timelineIndex = useGameStore((s) => s.timelineIndex);
+
   const alive = Object.values(players).filter((p) => p.is_alive).length;
   const total = Object.keys(players).length;
+  const wolvesRemain = Object.values(players).filter((p) => p.camp === 'werewolf' && p.is_alive).length;
+  const report = buildReport(phase, timeline.slice(0, timelineIndex + 1));
 
   return (
-    <Box sx={{ ...panelSx, py: 2.5 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5 }}>
-        <Box aria-hidden="true" sx={{ width: 38, height: '1px', bgcolor: 'divider' }} />
-        <Typography
-          variant="caption"
-          color="secondary.dark"
-          sx={{ fontWeight: 700, letterSpacing: 3, fontFamily: '"Cinzel","Noto Serif SC",serif' }}
-        >
-          DAY {roundNumber}
-        </Typography>
-        <Box aria-hidden="true" sx={{ width: 38, height: '1px', bgcolor: 'divider' }} />
-      </Box>
+    <Box sx={{ ...panelSx, py: 1.5 }}>
       <Typography
-        variant="h5"
-        color="text.primary"
         sx={{
-          mt: 1,
+          fontSize: '0.62rem',
+          fontWeight: 700,
+          letterSpacing: 6,
+          color: 'secondary.dark',
+          fontFamily: '"Cinzel","Noto Serif SC",serif',
+        }}
+      >
+        THE {ordinalEn(roundNumber)} DAY
+      </Typography>
+      <Typography
+        sx={{
+          mt: 0.5,
+          fontSize: 46,
           fontWeight: 900,
+          lineHeight: 1.2,
           letterSpacing: 8,
-          textShadow: '0 0 28px rgba(212,168,83,0.28)',
+          fontFamily: '"Cinzel","Noto Serif SC",serif',
+          background: 'linear-gradient(180deg, #F7EFE2, #CAA96A)',
+          WebkitBackgroundClip: 'text',
+          backgroundClip: 'text',
+          color: 'transparent',
+          textShadow: '0 18px 50px rgba(212,168,83,0.22)',
+        }}
+      >
+        第{upperDay(roundNumber)}天
+      </Typography>
+      <Typography
+        sx={{
+          display: 'inline-block',
+          mt: 0.4,
+          fontSize: '0.95rem',
+          fontWeight: 700,
+          letterSpacing: 5,
+          color: 'text.primary',
+          pb: 1,
+          borderBottom: '1px solid',
+          borderColor: 'secondary.main',
         }}
       >
         {PHASE_LABELS[phase] || phase}
       </Typography>
+
       <Box
         sx={{
           mt: 1.5,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 1,
+          mx: 'auto',
+          maxWidth: 320,
           px: 1.8,
-          py: 0.6,
-          borderRadius: 99,
-          border: '1px solid',
-          borderColor: 'divider',
-          bgcolor: 'rgba(23,18,33,0.6)',
+          py: 0.9,
+          border: '1px dashed',
+          borderColor: 'rgba(229,72,77,0.4)',
+          borderRadius: 2,
+          bgcolor: 'rgba(229,72,77,0.05)',
+          textAlign: 'left',
         }}
       >
-        <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>存活</Typography>
-        <Typography sx={{ color: 'secondary.main', fontWeight: 800, fontSize: '0.85rem' }}>
-          {alive}/{total}
+        <Typography
+          variant="caption"
+          sx={{
+            display: 'block',
+            color: '#F4B3B6',
+            fontWeight: 800,
+            letterSpacing: 3,
+            fontSize: '0.58rem',
+            mb: 0.2,
+          }}
+        >
+          战报
+        </Typography>
+        <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.9, fontSize: '0.72rem' }}>
+          {report}
         </Typography>
       </Box>
+
+      <Typography
+        sx={{
+          mt: 1,
+          fontSize: '0.68rem',
+          letterSpacing: 3,
+          color: 'text.disabled',
+        }}
+      >
+        存活 {alive}/{total} · 余狼 {wolvesRemain}
+      </Typography>
     </Box>
   );
 }
@@ -162,12 +252,12 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
   return (
     <Box
       sx={{
-        mt: 1.5,
+        mt: 1,
         display: 'inline-flex',
         alignItems: 'center',
         gap: 1,
         px: 1.8,
-        py: 0.6,
+        py: 0.5,
         borderRadius: 99,
         border: '1px solid',
         borderColor: 'divider',
