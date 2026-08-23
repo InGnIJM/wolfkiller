@@ -72,6 +72,30 @@ describe('ActivityCard', () => {
     expect(screen.getByText('我是狼，你们上当了')).toBeInTheDocument();
   });
 
+  it('computes duration from the previous event timestamp and shows token placeholder', () => {
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [
+        {
+          ...replayEventMeta,
+          event_type: 'phase',
+          payload: { phase: 'speech', round_number: 2 },
+        },
+        {
+          timestamp: '2026-08-13T00:01:30Z',
+          event_type: 'speech',
+          payload: { player_seat: 5, text: '耗时应当为 90 秒', round_number: 2, phase: 'speech' },
+        },
+      ],
+    });
+    useGameStore.getState().seekTo(1);
+    render(<ActivityCard />);
+
+    expect(screen.getByText(/第2轮 · 发言/)).toBeInTheDocument();
+    expect(screen.getByText(/耗时 01:30/)).toBeInTheDocument();
+    expect(screen.getByText('tokens --')).toBeInTheDocument();
+  });
+
   it('renders witch thoughts with seat and body', () => {
     setTimeline([
       {

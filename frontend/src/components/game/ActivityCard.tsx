@@ -27,6 +27,18 @@ const CAUSE_LABELS: Record<string, string> = {
   hunter_shot: '猎人带走',
 };
 
+function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function formatClock(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '--:--';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 interface CardProps {
   tone: string;
   children: React.ReactNode;
@@ -109,7 +121,15 @@ function SeatAvatar({ seat, size = 40 }: { seat: number; size?: number }) {
   );
 }
 
-function SpeechView({ payload }: { payload: Extract<PublicReplayEvent['payload'], { player_seat: number; text: string }> }) {
+function SpeechView({
+  payload,
+  timestamp,
+  durationSec,
+}: {
+  payload: Extract<PublicReplayEvent['payload'], { player_seat: number; text: string }>;
+  timestamp: string;
+  durationSec: number | null;
+}) {
   const isLastWords = payload.phase === 'last_words';
   return (
     <ActivityFrame tone="#E5484D">
@@ -140,6 +160,25 @@ function SpeechView({ payload }: { payload: Extract<PublicReplayEvent['payload']
       >
         {payload.text}
       </Typography>
+      <Box
+        sx={{
+          mt: 1.2,
+          pt: 0.8,
+          borderTop: '1px dashed',
+          borderColor: 'divider',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 2.5,
+          fontSize: '0.6rem',
+          color: 'text.disabled',
+          letterSpacing: 1,
+        }}
+      >
+        <span>第{payload.round_number}轮 · {isLastWords ? '遗言' : '发言'}</span>
+        <span>时点 {formatClock(timestamp)}</span>
+        <span>耗时 {durationSec === null ? '--:--' : formatDuration(durationSec)}</span>
+        <span>tokens --</span>
+      </Box>
     </ActivityFrame>
   );
 }
@@ -297,9 +336,19 @@ export default function ActivityCard() {
 
   if (!entry) return null;
 
+  // 发言耗时：距上一条事件的时间差（秒）
+  let durationSec: number | null = null;
+  if (timelineIndex > 0) {
+    const cur = new Date(entry.timestamp).getTime();
+    const prev = new Date(timeline[timelineIndex - 1].timestamp).getTime();
+    if (!Number.isNaN(cur) && !Number.isNaN(prev) && cur >= prev) {
+      durationSec = Math.round((cur - prev) / 1000);
+    }
+  }
+
   switch (entry.event_type) {
     case 'speech':
-      return <SpeechView payload={entry.payload} />;
+      return <SpeechView payload={entry.payload} timestamp={entry.timestamp} durationSec={durationSec} />;
     case 'witch_thought':
     case 'seer_thought':
       return (

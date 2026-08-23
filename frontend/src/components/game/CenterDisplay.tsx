@@ -155,12 +155,12 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
         sx={{
           mt: 1.5,
           mx: 'auto',
-          maxWidth: 320,
-          px: 1.8,
-          py: 0.9,
+          maxWidth: 236,
+          px: 1.5,
+          py: 0.7,
           border: '1px dashed',
           borderColor: 'rgba(229,72,77,0.4)',
-          borderRadius: 2,
+          borderRadius: 1.5,
           bgcolor: 'rgba(229,72,77,0.05)',
           textAlign: 'left',
         }}
@@ -172,13 +172,13 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
             color: '#F4B3B6',
             fontWeight: 800,
             letterSpacing: 3,
-            fontSize: '0.58rem',
-            mb: 0.2,
+            fontSize: '0.56rem',
+            mb: 0.1,
           }}
         >
           战报
         </Typography>
-        <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.9, fontSize: '0.72rem' }}>
+        <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.8, fontSize: '0.7rem' }}>
           {report}
         </Typography>
       </Box>
