@@ -14,26 +14,26 @@ class ProviderRegistry:
             profile_id="openai",
             api_mode=_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, True, True, True, True),
-            default_action_max_tokens=768,
+            default_action_max_tokens=2048,
         ),
         "deepseek": ProviderProfile(
             profile_id="deepseek",
             api_mode=_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, True, True, True, True),
-            default_action_max_tokens=768,
+            default_action_max_tokens=2048,
             strict_endpoint=True,
         ),
         "openrouter": ProviderProfile(
             profile_id="openrouter",
             api_mode=_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, False, True, True, True),
-            default_action_max_tokens=0,
+            default_action_max_tokens=2048,
         ),
         "custom-openai": ProviderProfile(
             profile_id="custom-openai",
             api_mode=_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, False, True, False, True),
-            default_action_max_tokens=768,
+            default_action_max_tokens=2048,
         ),
     }
 
