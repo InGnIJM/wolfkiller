@@ -69,3 +69,24 @@ def test_action_uses_action_timeout_with_retry_headroom():
         OpenAICompatibleTransport().build(cfg, profile, CallPurpose.ACTION_JSON)
     kwargs = chat.call_args.kwargs
     assert kwargs["timeout"] == 125.0
+
+
+def test_tools_uses_action_budget_and_timeout():
+    cfg = config()
+    profile = ProviderRegistry().resolve("openrouter", cfg.base_url, cfg.model_id)
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        OpenAICompatibleTransport().build(cfg, profile, CallPurpose.TOOLS)
+    kwargs = chat.call_args.kwargs
+    assert kwargs["max_tokens"] == 2048
+    assert kwargs["timeout"] == 125.0
+
+
+def test_strict_action_keeps_base_url_without_strict_endpoint_capability():
+    cfg = config(
+        base_url="https://openrouter.ai/api/v1",
+        strict_base_url="https://unused.test/beta",
+    )
+    profile = ProviderRegistry().resolve("openrouter", cfg.base_url, cfg.model_id)
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        OpenAICompatibleTransport().build(cfg, profile, CallPurpose.ACTION_STRICT)
+    assert chat.call_args.kwargs["base_url"] == cfg.base_url
