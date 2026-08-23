@@ -109,14 +109,15 @@ export default function TimelineController() {
               label={`${s}x`}
               size="small"
               variant={playSpeed === s ? 'filled' : 'outlined'}
-              color={playSpeed === s ? 'primary' : 'default'}
+              color={playSpeed === s ? 'secondary' : 'default'}
               onClick={() => setSpeed(s)}
               sx={{
                 height: 24,
                 minWidth: 36,
                 fontSize: '0.7rem',
-                fontWeight: 500,
+                fontWeight: 600,
                 cursor: 'pointer',
+                fontFamily: '"Cinzel","Noto Serif SC",serif',
                 '& .MuiChip-label': { px: 0.8 },
               }}
             />

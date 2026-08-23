@@ -64,6 +64,28 @@ const KNOWLEDGE_LABELS: Record<string, string> = {
   last_wolf_kill_target: '昨夜狼刀目标',
 };
 
+// —— 编年史日分组：夜行动 → 第N夜，其余 → 第N天 ——
+const NIGHT_TYPES = new Set([
+  'night_action', 'wolf_vote', 'witch_thought', 'seer_thought',
+  'night_thought', 'wolf_chat_message', 'narration',
+]);
+
+function dayLabel(event: PublicReplayEvent): string {
+  const round = (event.payload as { round_number?: number }).round_number;
+  return `第${round ?? '?'}${NIGHT_TYPES.has(event.event_type) ? '夜' : '天'}`;
+}
+
+function buildDayGroups(events: { event: PublicReplayEvent; index: number }[]) {
+  const groups: { label: string; items: typeof events }[] = [];
+  for (const item of events) {
+    const label = dayLabel(item.event);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(item);
+    else groups.push({ label, items: [item] });
+  }
+  return groups;
+}
+
 function formatKnowledgeValue(key: string, value: unknown): string {
   if (key === 'teammates' && Array.isArray(value)) {
     return value.length ? value.map((seat) => `${seat}号`).join('、') : '无';
@@ -424,7 +446,26 @@ export default function HistoryPanel({ onClose }: Props) {
           </>
         ) : (
           <>
-            {currentEvents.map(({ event, index }) => <EventCard key={index} event={event} onClick={() => handleClick(index)} />)}
+            {tab === 0 ? (
+              buildDayGroups(currentEvents).map((group, groupIndex) => (
+                <Box key={`chronicle-${groupIndex}`} sx={{ mb: 0.5 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1.5, mb: 0.5 }}>
+                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
+                    <Typography variant="caption" sx={{ color: 'secondary.dark', fontWeight: 700, letterSpacing: 3 }}>
+                      {group.label}
+                    </Typography>
+                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
+                  </Box>
+                  {group.items.map(({ event, index }) => (
+                    <EventCard key={index} event={event} onClick={() => handleClick(index)} />
+                  ))}
+                </Box>
+              ))
+            ) : (
+              currentEvents.map(({ event, index }) => (
+                <EventCard key={index} event={event} onClick={() => handleClick(index)} />
+              ))
+            )}
             {currentEvents.length === 0 && (
               <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 4 }}>
                 暂无记录

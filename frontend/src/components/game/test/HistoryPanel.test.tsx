@@ -104,6 +104,36 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
   });
 
+  it('groups daytime speeches into 第N天 chronicle marks', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'speech',
+        payload: { player_seat: 5, text: '我怀疑2号', round_number: 1, phase: 'speech' },
+      },
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText('第1天')).toBeVisible();
+    expect(screen.getByText(/我怀疑2号/)).toBeVisible();
+  });
+
+  it('groups night narration into 第N夜 chronicle marks', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'narration',
+        payload: { round_number: 2, title: '夜幕降临', text: '请狼人睁眼' },
+      },
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText('第2夜')).toBeVisible();
+    expect(screen.getByText('夜幕降临')).toBeVisible();
+  });
+
   it('groups chat messages into 思考 and narration plus wolf votes into 夜晚', () => {
     const timeline: PublicReplayEvent[] = [
       {
