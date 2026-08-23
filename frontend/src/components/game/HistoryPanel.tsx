@@ -126,7 +126,7 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
         borderRadius: 2,
         borderLeft: '3px solid',
         borderColor: memory.is_alive ? 'success.main' : 'text.disabled',
-        bgcolor: 'rgba(255,255,255,0.02)',
+        bgcolor: 'rgba(242,233,220,0.03)',
       }}
     >
       <Typography variant="caption" sx={{ fontWeight: 600 }}>
@@ -325,7 +325,7 @@ function EventCard({
             : event.event_type.includes('vote')
               ? 'warning.main'
               : 'primary.main',
-        bgcolor: 'rgba(255,255,255,0.02)',
+        bgcolor: 'rgba(242,233,220,0.03)',
         '&:hover': { bgcolor: 'action.hover' },
         transition: 'background-color 0.15s',
       }}

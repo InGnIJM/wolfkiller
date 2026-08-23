@@ -61,11 +61,24 @@ const panelSx = {
 function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: number }) {
   return (
     <Box sx={{ ...panelSx, py: 2.5 }}>
-      <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 500 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5 }}>
+        <Box aria-hidden="true" sx={{ width: 34, height: '1px', bgcolor: 'divider' }} />
+        <Typography variant="caption" color="secondary.dark" sx={{ fontWeight: 600, letterSpacing: 3 }}>
+          第 {roundNumber} 轮
+        </Typography>
+        <Box aria-hidden="true" sx={{ width: 34, height: '1px', bgcolor: 'divider' }} />
+      </Box>
+      <Typography
+        variant="h5"
+        color="text.primary"
+        sx={{
+          mt: 1,
+          fontWeight: 900,
+          letterSpacing: 6,
+          textShadow: '0 0 28px rgba(212,168,83,0.28)',
+        }}
+      >
         {PHASE_LABELS[phase] || phase}
-      </Typography>
-      <Typography variant="body2" color="text.disabled" sx={{ mt: 0.3 }}>
-        第 {roundNumber} 轮
       </Typography>
     </Box>
   );
@@ -76,15 +89,15 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
     case 'speech':
       return (
         <Box sx={panelSx}>
-          <Typography variant="subtitle2" color="primary.light" gutterBottom>
+          <Typography variant="subtitle2" color="secondary.main" gutterBottom sx={{ fontWeight: 700, letterSpacing: 2 }}>
             {entry.payload.phase === 'last_words'
               ? `${entry.payload.player_seat}号玩家遗言`
               : `${entry.payload.player_seat}号玩家发言`}
           </Typography>
           <Typography
             variant="body2"
-            color="grey.400"
-            sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto', lineHeight: 1.8, fontSize: '0.875rem' }}
+            color="text.primary"
+            sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto', lineHeight: 1.9, fontSize: '0.875rem' }}
           >
             {entry.payload.text}
           </Typography>
@@ -96,7 +109,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle2" color="warning.light" gutterBottom>
             {entry.payload.voter_seat}号玩家投票
           </Typography>
-          <Typography variant="body2" color="grey.300">
+          <Typography variant="body2" color="text.secondary">
             {entry.payload.target_seat === null ? '弃权' : `投给 ${entry.payload.target_seat}号`}
           </Typography>
         </Box>
@@ -107,7 +120,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle1" color="warning.light" gutterBottom>
             投票结果
           </Typography>
-          <Typography variant="body2" color="grey.300">
+          <Typography variant="body2" color="text.secondary">
             {entry.payload.exiled_seat === null
               ? '平票，无人被放逐'
               : `${entry.payload.exiled_seat}号玩家被放逐出局`}
@@ -129,7 +142,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle1" color="info.light" gutterBottom>
             {NIGHT_ACTION_LABELS[action.action_type] ?? '夜晚行动'}
           </Typography>
-          <Typography variant="body2" color="grey.300">
+          <Typography variant="body2" color="text.secondary">
             {detail}
           </Typography>
         </Box>
@@ -138,10 +151,10 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
     case 'narration':
       return (
         <Box sx={{ ...panelSx, py: 3 }}>
-          <Typography variant="h5" color="primary.light" gutterBottom sx={{ fontWeight: 600 }}>
+          <Typography variant="h5" color="secondary.light" gutterBottom sx={{ fontWeight: 900, letterSpacing: 4, textShadow: '0 0 26px rgba(212,168,83,0.25)' }}>
             {entry.payload.title}
           </Typography>
-          <Typography variant="body1" color="grey.300" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+          <Typography variant="body1" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
             {entry.payload.text}
           </Typography>
         </Box>
@@ -157,7 +170,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
             borderColor: 'error.main',
           }}
         >
-          <Typography variant="body1" color="grey.300" sx={{ wordBreak: 'break-word' }}>
+          <Typography variant="body1" color="text.secondary" sx={{ wordBreak: 'break-word' }}>
             {entry.payload.seat}号：{entry.payload.text}
           </Typography>
         </Box>
@@ -168,7 +181,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle2" color="warning.light" gutterBottom>
             {entry.payload.seat}号 出票
           </Typography>
-          <Typography variant="body2" color="grey.300">
+          <Typography variant="body2" color="text.secondary">
             {entry.payload.target_seat === null
               ? `弃权（${entry.payload.reasoning}）`
               : `→ ${entry.payload.target_seat}号（${entry.payload.reasoning}）`}
@@ -182,7 +195,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle1" color="info.light" gutterBottom>
             {THOUGHT_LABELS[entry.event_type]} · {entry.payload.seat}号
           </Typography>
-          <Typography variant="body2" color="grey.300" sx={{ whiteSpace: 'pre-wrap' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
             {entry.payload.text}
           </Typography>
         </Box>
@@ -197,7 +210,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle1" color="info.light" gutterBottom>
             {THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
           </Typography>
-          <Typography variant="body2" color="grey.300" sx={{ whiteSpace: 'pre-wrap' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
             {body}
           </Typography>
         </Box>
@@ -209,7 +222,7 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
           <Typography variant="subtitle1" color="error.light" gutterBottom>
             死亡公告
           </Typography>
-          <Typography variant="body2" color="grey.300">
+          <Typography variant="body2" color="text.secondary">
             {entry.payload.player_seat}号玩家{CAUSE_LABELS[entry.payload.cause] || '死亡'}
           </Typography>
         </Box>
@@ -219,10 +232,10 @@ function PublicEventContent({ entry }: { entry: PublicReplayEvent }) {
     case 'winner':
       return (
         <Box sx={{ ...panelSx, py: 1.8 }}>
-          <Typography variant="h6" color="warning.light">
+          <Typography variant="h6" color="secondary.light" sx={{ fontWeight: 700, letterSpacing: 2 }}>
             游戏结束
           </Typography>
-          <Typography variant="body2" color="grey.300">
+          <Typography variant="body2" color="text.secondary">
             {entry.payload.winning_camp === 'werewolf' ? '狼人阵营获胜' : '好人阵营获胜'}
           </Typography>
         </Box>
