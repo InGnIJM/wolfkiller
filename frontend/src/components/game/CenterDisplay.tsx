@@ -15,9 +15,9 @@ const PHASE_LABELS: Record<string, string> = {
   dawn: '白昼降临',
   last_words: '遗言时刻',
   sheriff_election: '警长竞选',
-  speech: '白天',
-  vote_casting: '白天',
-  vote_resolution: '白天',
+  speech: '白天 · 发言',
+  vote_casting: '白天 · 投票',
+  vote_resolution: '白天 · 揭票',
   game_over: '尘埃落定',
   error: '对局异常',
 };
@@ -72,6 +72,42 @@ function ordinalEn(n: number): string {
   return EN_ORDINAL[n] ?? String(n);
 }
 
+// 黑夜阶段：根据当前事件推导正在行动的角色（狼人/女巫/预言家/守卫/猎人）
+const NIGHT_ROLE_BY_ACTION: Record<string, string> = {
+  werewolf_kill: '狼人',
+  seer_check: '预言家',
+  witch_save: '女巫',
+  witch_poison: '女巫',
+  guard_protect: '守卫',
+  hunter_shot: '猎人',
+};
+
+const NIGHT_ROLE_BY_THOUGHT: Record<string, string> = {
+  witch_thought: '女巫',
+  witch_reasoning: '女巫',
+  seer_thought: '预言家',
+  seer_reasoning: '预言家',
+  hunter_reasoning: '猎人',
+  guard_reasoning: '守卫',
+};
+
+function nightRole(entry: PublicReplayEvent | null): string | null {
+  if (!entry) return null;
+  if (entry.event_type === 'night_action') {
+    return NIGHT_ROLE_BY_ACTION[entry.payload.action_type] ?? null;
+  }
+  if (entry.event_type === 'night_thought') {
+    return NIGHT_ROLE_BY_THOUGHT[entry.payload.action_type] ?? null;
+  }
+  if (entry.event_type === 'witch_thought' || entry.event_type === 'seer_thought') {
+    return NIGHT_ROLE_BY_THOUGHT[entry.event_type] ?? null;
+  }
+  if (entry.event_type === 'wolf_chat_message' || entry.event_type === 'wolf_vote') {
+    return '狼人';
+  }
+  return null;
+}
+
 // 战报：从已播放时间线中回溯最近的关键事件，生成叙事性一句战报
 function buildReport(phase: string, events: PublicReplayEvent[]): string {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -104,6 +140,15 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   const total = Object.keys(players).length;
   const wolvesRemain = Object.values(players).filter((p) => p.camp === 'werewolf' && p.is_alive).length;
   const report = buildReport(phase, timeline.slice(0, timelineIndex + 1));
+
+  const currentEntry = timelineIndex >= 0 && timelineIndex < timeline.length
+    ? timeline[timelineIndex]
+    : null;
+  let phaseLabel = PHASE_LABELS[phase] || phase;
+  if (phase === 'night') {
+    const role = nightRole(currentEntry);
+    if (role) phaseLabel = `黑夜 · ${role}`;
+  }
 
   return (
     <Box sx={{ ...panelSx, py: 1.5 }}>
@@ -148,7 +193,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
           borderColor: 'secondary.main',
         }}
       >
-        {PHASE_LABELS[phase] || phase}
+        {phaseLabel}
       </Typography>
 
       <Box

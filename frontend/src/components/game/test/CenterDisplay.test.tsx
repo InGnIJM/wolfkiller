@@ -45,7 +45,7 @@ describe('CenterDisplay dramatic phase page', () => {
     renderCenter({ phase: 'speech', roundNumber: 2 });
     expect(screen.getByText('THE SECOND DAY')).toBeInTheDocument();
     expect(screen.getByText('第贰天')).toBeInTheDocument();
-    expect(screen.getByText('白天')).toBeInTheDocument();
+    expect(screen.getByText('白天 · 发言')).toBeInTheDocument();
     expect(screen.getByText(/存活 0\/0 · 余狼 0/)).toBeInTheDocument();
   });
 
@@ -53,6 +53,54 @@ describe('CenterDisplay dramatic phase page', () => {
     renderCenter({ phase: 'night', roundNumber: 1 });
     expect(screen.getByText('第壹天')).toBeInTheDocument();
     expect(screen.getByText('黑夜')).toBeInTheDocument();
+  });
+
+  it('appends the acting role to the night phase label', () => {
+    renderCenter({
+      phase: 'night',
+      roundNumber: 1,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_action',
+          payload: { action_type: 'witch_save', target_seat: 2, round_number: 1 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('黑夜 · 女巫')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'night',
+      roundNumber: 1,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_chat_message',
+          payload: { round_number: 1, seat: 1, text: '刀谁' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('黑夜 · 狼人')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'night',
+      roundNumber: 1,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_thought',
+          payload: { round_number: 1, seat: 3, action_type: 'seer_reasoning', target_seat: 4, reasoning: '查验4号' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('黑夜 · 预言家')).toBeInTheDocument();
   });
 
   it('shows a paused hint when paused with no event', () => {
