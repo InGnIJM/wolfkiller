@@ -45,14 +45,14 @@ describe('CenterDisplay dramatic phase page', () => {
     renderCenter({ phase: 'speech', roundNumber: 2 });
     expect(screen.getByText('THE SECOND DAY')).toBeInTheDocument();
     expect(screen.getByText('第贰天')).toBeInTheDocument();
-    expect(screen.getByText('白天 · 真伪之辩')).toBeInTheDocument();
+    expect(screen.getByText('白天')).toBeInTheDocument();
     expect(screen.getByText(/存活 0\/0 · 余狼 0/)).toBeInTheDocument();
   });
 
   it('renders the night phase with roman day numeral', () => {
     renderCenter({ phase: 'night', roundNumber: 1 });
     expect(screen.getByText('第壹天')).toBeInTheDocument();
-    expect(screen.getByText('黑夜 · 月隐星沉')).toBeInTheDocument();
+    expect(screen.getByText('黑夜')).toBeInTheDocument();
   });
 
   it('shows a paused hint when paused with no event', () => {
@@ -234,6 +234,6 @@ describe('CenterDisplay event summary', () => {
       ],
       timelineIndex: 0,
     });
-    expect(screen.getByText('黑夜 · 月隐星沉')).toBeInTheDocument();
+    expect(screen.getByText('黑夜')).toBeInTheDocument();
   });
 });

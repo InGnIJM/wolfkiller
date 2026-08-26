@@ -11,13 +11,13 @@ const fadeIn = keyframes`
 const PHASE_LABELS: Record<string, string> = {
   waiting: '夜宴将启',
   role_deal: '身份落定',
-  night: '黑夜 · 月隐星沉',
+  night: '黑夜',
   dawn: '白昼降临',
   last_words: '遗言时刻',
   sheriff_election: '警长竞选',
-  speech: '白天 · 真伪之辩',
-  vote_casting: '白天 · 投票表决',
-  vote_resolution: '白天 · 揭票时刻',
+  speech: '白天',
+  vote_casting: '白天',
+  vote_resolution: '白天',
   game_over: '尘埃落定',
   error: '对局异常',
 };
