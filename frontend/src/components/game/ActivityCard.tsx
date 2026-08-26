@@ -160,26 +160,48 @@ function SpeechView({
       >
         {payload.text}
       </Typography>
-      <Box
-        sx={{
-          mt: 1.2,
-          pt: 0.8,
-          borderTop: '1px dashed',
-          borderColor: 'divider',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 2.5,
-          fontSize: '0.6rem',
-          color: 'text.disabled',
-          letterSpacing: 1,
-        }}
-      >
-        <span>第{payload.round_number}轮 · {isLastWords ? '遗言' : '发言'}</span>
-        <span>时点 {formatClock(timestamp)}</span>
-        <span>耗时 {durationSec === null ? '--:--' : formatDuration(durationSec)}</span>
-        <span>tokens --</span>
-      </Box>
+      <MetaRow
+        roundNumber={payload.round_number}
+        kind={isLastWords ? '遗言' : '发言'}
+        timestamp={timestamp}
+        durationSec={durationSec}
+      />
     </ActivityFrame>
+  );
+}
+
+// 卡片底部元信息行：轮次 / 时点 / 耗时（相邻事件时间差）/ tokens（待后端补字段）
+function MetaRow({
+  roundNumber,
+  kind,
+  timestamp,
+  durationSec,
+}: {
+  roundNumber: number;
+  kind: string;
+  timestamp: string;
+  durationSec: number | null;
+}) {
+  return (
+    <Box
+      sx={{
+        mt: 1.2,
+        pt: 0.8,
+        borderTop: '1px dashed',
+        borderColor: 'divider',
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 2.5,
+        fontSize: '0.6rem',
+        color: 'text.disabled',
+        letterSpacing: 1,
+      }}
+    >
+      <span>第{roundNumber}轮 · {kind}</span>
+      <span>时点 {formatClock(timestamp)}</span>
+      <span>耗时 {durationSec === null ? '--:--' : formatDuration(durationSec)}</span>
+      <span>tokens --</span>
+    </Box>
   );
 }
 
@@ -187,10 +209,16 @@ function ThoughtView({
   label,
   seat,
   text,
+  roundNumber,
+  timestamp,
+  durationSec,
 }: {
   label: string;
   seat: number | null;
   text: string;
+  roundNumber: number;
+  timestamp: string;
+  durationSec: number | null;
 }) {
   return (
     <ActivityFrame tone="#B08BE0">
@@ -222,11 +250,29 @@ function ThoughtView({
       >
         {text}
       </Typography>
+      <MetaRow
+        roundNumber={roundNumber}
+        kind={label}
+        timestamp={timestamp}
+        durationSec={durationSec}
+      />
     </ActivityFrame>
   );
 }
 
-function ChatView({ seat, text }: { seat: number; text: string }) {
+function ChatView({
+  seat,
+  text,
+  roundNumber,
+  timestamp,
+  durationSec,
+}: {
+  seat: number;
+  text: string;
+  roundNumber: number;
+  timestamp: string;
+  durationSec: number | null;
+}) {
   return (
     <ActivityFrame tone="#F4B3B6">
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
@@ -253,6 +299,12 @@ function ChatView({ seat, text }: { seat: number; text: string }) {
       >
         {text}
       </Typography>
+      <MetaRow
+        roundNumber={roundNumber}
+        kind="狼聊"
+        timestamp={timestamp}
+        durationSec={durationSec}
+      />
     </ActivityFrame>
   );
 }
@@ -356,6 +408,9 @@ export default function ActivityCard() {
           label={THOUGHT_LABELS[entry.event_type] ?? '思考'}
           seat={entry.payload.seat}
           text={entry.payload.text}
+          roundNumber={entry.payload.round_number}
+          timestamp={entry.timestamp}
+          durationSec={durationSec}
         />
       );
     case 'night_thought':
@@ -368,10 +423,21 @@ export default function ActivityCard() {
               ? `不行动：${entry.payload.reasoning || '（无理由）'}`
               : `目标 ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`
           }
+          roundNumber={entry.payload.round_number}
+          timestamp={entry.timestamp}
+          durationSec={durationSec}
         />
       );
     case 'wolf_chat_message':
-      return <ChatView seat={entry.payload.seat} text={entry.payload.text} />;
+      return (
+        <ChatView
+          seat={entry.payload.seat}
+          text={entry.payload.text}
+          roundNumber={entry.payload.round_number}
+          timestamp={entry.timestamp}
+          durationSec={durationSec}
+        />
+      );
     case 'death':
       return <DeathView payload={entry.payload} />;
     case 'vote_result':

@@ -108,6 +108,8 @@ describe('ActivityCard', () => {
 
     expect(screen.getByText('女巫思考 · 5号')).toBeInTheDocument();
     expect(screen.getByText('昨晚2号被刀，我决定救人')).toBeInTheDocument();
+    expect(screen.getByText(/第1轮 · 女巫思考/)).toBeInTheDocument();
+    expect(screen.getByText('tokens --')).toBeInTheDocument();
   });
 
   it('renders night reasoning thoughts', () => {
@@ -122,6 +124,30 @@ describe('ActivityCard', () => {
 
     expect(screen.getByText('猎人思考 · 4号')).toBeInTheDocument();
     expect(screen.getByText(/目标 6号：我开枪带走6号/)).toBeInTheDocument();
+    expect(screen.getByText(/第1轮 · 猎人思考/)).toBeInTheDocument();
+  });
+
+  it('computes night-thought duration from the previous event timestamp', () => {
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_action',
+          payload: { action_type: 'werewolf_kill', target_seat: 2, round_number: 1, vote_counts: { '2': 2 } },
+        },
+        {
+          timestamp: '2026-08-13T00:00:45Z',
+          event_type: 'night_thought',
+          payload: { round_number: 1, seat: 5, action_type: 'witch_reasoning', target_seat: null, reasoning: '' },
+        },
+      ],
+    });
+    useGameStore.getState().seekTo(1);
+    render(<ActivityCard />);
+
+    expect(screen.getByText('女巫思考 · 5号')).toBeInTheDocument();
+    expect(screen.getByText(/耗时 00:45/)).toBeInTheDocument();
   });
 
   it('renders wolf chat messages', () => {
@@ -136,6 +162,8 @@ describe('ActivityCard', () => {
 
     expect(screen.getByText('狼群密谋')).toBeInTheDocument();
     expect(screen.getByText('今晚刀谁？')).toBeInTheDocument();
+    expect(screen.getByText(/第1轮 · 狼聊/)).toBeInTheDocument();
+    expect(screen.getByText('tokens --')).toBeInTheDocument();
   });
 
   it('renders the death announcement with cause', () => {
