@@ -701,7 +701,7 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
     from app.models.pipeline import ActionCommand as PipelineActionCommand
     snapshot = builtin_registry.freeze()
 
-    def invoke(messages):
+    def invoke(messages, _tool_name, _schema, _seat):
         human = messages[1]["content"]
         if "投票" in human:
             return '{"schema_version": 1, "action_type": "kill", "target_seat": 4, "reasoning": "像神"}'
@@ -2684,7 +2684,7 @@ async def test_v2_night_records_wolf_kill_target_and_witch_save_rescues(tmp_path
     from app.models.pipeline import ActionCommand as PipelineActionCommand
     snapshot = builtin_registry.freeze()
 
-    def invoke(messages):
+    def invoke(messages, _tool_name, _schema, _seat):
         human = messages[1]["content"]
         if "投票" in human:
             return '{"schema_version": 1, "action_type": "kill", "target_seat": 4, "reasoning": "像神"}'

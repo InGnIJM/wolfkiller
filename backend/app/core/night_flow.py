@@ -18,6 +18,39 @@ logger = logging.getLogger(__name__)
 _MAX_UTTERANCE = 200
 _MAX_DAY_PLAN = 150
 
+_WOLF_DISCUSSION_TOOL_NAME = "werewolf_discussion"
+_WOLF_VOTE_TOOL_NAME = "werewolf_kill"
+
+
+def _wolf_discussion_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "speak": {"type": "boolean"},
+            "text": {"type": "string", "maxLength": _MAX_UTTERANCE},
+            "preferred_target": {"type": ["integer", "null"]},
+            "day_plan": {"type": "string", "maxLength": _MAX_DAY_PLAN},
+        },
+        "required": ["speak", "text", "preferred_target", "day_plan"],
+    }
+
+
+def _wolf_vote_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "schema_version": {"type": "integer", "const": 1},
+            "action_type": {"type": "string", "enum": ["kill", "pass"]},
+            "target_seat": {"type": ["integer", "null"]},
+            "reasoning": {"type": "string", "maxLength": 500},
+        },
+        "required": [
+            "schema_version", "action_type", "target_seat", "reasoning",
+        ],
+    }
+
 _CHINESE_DIRECTIVE = (
     "IMPORTANT: Every piece of text you produce (message, reasoning, thought) "
     "MUST be written in Simplified Chinese (简体中文)."
@@ -198,7 +231,9 @@ class NightDirector:
     def __init__(
         self,
         snapshot: RegistrySnapshot,
-        invoke: Callable[[list[dict[str, str]]], str],
+        invoke: Callable[
+            [list[dict[str, str]], str, dict[str, object], int], str
+        ],
     ) -> None:
         if type(snapshot) is not RegistrySnapshot:
             raise TypeError("snapshot must be RegistrySnapshot")
@@ -283,7 +318,7 @@ class NightDirector:
             + "\n讨论要求：\n"
             "- 这是与队友的实时对话：先简要回应队友刚提出的观点（同意、补充或反对），"
             "再给出你的新想法；不要自说自话，也不要复述队友已经说过的内容。\n"
-            "- 听完队友发言后，如果没有新的、不重复的想法，请直接跳过本轮（输出 {\"speak\": false}），"
+            "- 听完队友发言后，如果没有新的、不重复的想法，请直接跳过本轮，"
             "不要为了说话而说话。\n"
             "- 如果你有倾向的刀人目标，把该座位号填入 preferred_target；没有倾向就填 null。\n"
             "- 除了今晚的刀人目标，还应商定明天白天的配合计划：带节奏方向、嫁祸对象等，"
@@ -292,7 +327,8 @@ class NightDirector:
             + _night_notice(state)
             + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤200字)", '
             '"preferred_target": 座位号或null, "day_plan": "次日白天配合计划(≤150字，可空)"} '
-            '表示发言，{"speak": false} 表示跳过本轮发言。'
+            '表示发言；{"speak": false, "text": "", "preferred_target": null, '
+            '"day_plan": ""} 表示跳过本轮发言。'
         )
         return self._messages(system, human)
 
@@ -331,8 +367,15 @@ class NightDirector:
 
     # ── LLM turns (failure always degrades to a safe fallback) ──
 
-    def _invoke_json(self, messages: list[dict[str, str]]) -> Mapping[str, object]:
-        raw = self._invoke(messages)
+    def _invoke_json(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tool_name: str,
+        schema: dict[str, object],
+        seat: int,
+    ) -> Mapping[str, object]:
+        raw = self._invoke(messages, tool_name, schema, seat)
         if type(raw) is not str:
             raise ValueError("model response is not text")
         value = extract_json_object(raw)
@@ -345,7 +388,12 @@ class NightDirector:
         briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> DiscussionTurn:
         try:
-            value = self._invoke_json(self.discussion_prompt(state, seat, history, briefing, random_hint))
+            value = self._invoke_json(
+                self.discussion_prompt(state, seat, history, briefing, random_hint),
+                tool_name=_WOLF_DISCUSSION_TOOL_NAME,
+                schema=_wolf_discussion_schema(),
+                seat=seat,
+            )
             if value.get("speak") is not True:
                 return DiscussionTurn(seat, False)
             text = _clean(value.get("text"), "text", _MAX_UTTERANCE)
@@ -374,7 +422,14 @@ class NightDirector:
         briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> WolfVote:
         try:
-            value = self._invoke_json(self.vote_prompt(state, seat, discussion, prior_votes, briefing, random_hint))
+            value = self._invoke_json(
+                self.vote_prompt(
+                    state, seat, discussion, prior_votes, briefing, random_hint,
+                ),
+                tool_name=_WOLF_VOTE_TOOL_NAME,
+                schema=_wolf_vote_schema(),
+                seat=seat,
+            )
             if value.get("action_type") == "kill":
                 target = value.get("target_seat")
                 if type(target) is not int or target <= 0 or target not in state.players:

@@ -42,6 +42,57 @@ def test_system_prompt_demands_chinese_output() -> None:
     assert "简体中文" in _SYSTEM_PROMPT
 
 
+def test_model_failure_code_detects_nested_timeout() -> None:
+    from app.services.game_service import _model_failure_code
+
+    error = RuntimeError("provider request failed")
+    error.__cause__ = TimeoutError("timed out")
+
+    assert _model_failure_code(error, None) == "provider_timeout"
+
+
+def test_model_error_diagnostics_keeps_sanitized_nested_provider_cause() -> None:
+    from types import SimpleNamespace
+
+    from httpx import Request, Response
+    from openai import BadRequestError
+
+    from app.services.game_service import _model_error_diagnostics
+
+    request = Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    provider_error = BadRequestError(
+        "provider returned error",
+        response=Response(400, request=request),
+        body={
+            "error": {
+                "message": "Provider returned error",
+                "code": 400,
+                "metadata": {"provider_name": "Stealth", "raw": "ERROR"},
+            },
+            "user_id": "must-not-be-persisted",
+        },
+    )
+    timeout = TimeoutError("fallback timed out")
+    timeout.__context__ = provider_error
+    llm = SimpleNamespace(
+        model_name="stealth/ox-alpha",
+        provider_profile=SimpleNamespace(profile_id="openrouter"),
+    )
+
+    details = _model_error_diagnostics(timeout, llm)
+
+    assert details["failure_code"] == "provider_timeout"
+    assert details["cause_chain"] == [{
+        "exception_type": "BadRequestError",
+        "status_code": 400,
+        "error_code": 400,
+        "message": "Provider returned error",
+        "provider_name": "Stealth",
+        "provider_raw": "ERROR",
+    }]
+    assert "must-not-be-persisted" not in json.dumps(details)
+
+
 class TestGameService:
     @pytest.mark.asyncio
     async def test_create_and_list_games(self):
@@ -209,17 +260,18 @@ class TestGameService:
         create_roles.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_night_invoke_requires_text_model_response(self, monkeypatch):
+    async def test_night_invoke_requires_object_gateway_payload(self, monkeypatch):
         import app.services.game_service as service_module
+        from types import SimpleNamespace
 
         service = GameService(WSManager(), EventBus())
         service._manifest = MagicMock()
         monkeypatch.setattr(GameEngine, "start", AsyncMock())
 
         fake_llm = MagicMock()
-        fake_llm.get_model.return_value.invoke.side_effect = [
-            MagicMock(content="今晚刀2号"),
-            MagicMock(content=123),
+        fake_llm.invoke_json.side_effect = [
+            SimpleNamespace(payload={"speak": False}),
+            SimpleNamespace(payload=[]),
             object(),
         ]
         monkeypatch.setattr(
@@ -230,10 +282,174 @@ class TestGameService:
         game_id = await service.create_game(num_werewolves=1, num_villagers=3)
 
         invoke = service._engines[game_id]._director._invoke
-        assert invoke([{"role": "user", "content": "x"}]) == "今晚刀2号"
+        schema = {"type": "object"}
+        assert json.loads(invoke(
+            [{"role": "user", "content": "x"}], "test_night", schema, 1,
+        )) == {
+            "speak": False,
+        }
         with pytest.raises(ValueError):
-            invoke([{"role": "user", "content": "x"}])
-        assert isinstance(invoke([{"role": "user", "content": "x"}]), str)
+            invoke([{"role": "user", "content": "x"}], "test_night", schema, 1)
+        with pytest.raises(ValueError):
+            invoke([{"role": "user", "content": "x"}], "test_night", schema, 1)
+
+    @pytest.mark.asyncio
+    async def test_night_invoke_routes_json_through_model_gateway(self, monkeypatch):
+        import app.services.game_service as service_module
+        from types import SimpleNamespace
+
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        fake_llm = MagicMock()
+        fake_llm.invoke_json.return_value = SimpleNamespace(
+            payload={"speak": False},
+        )
+        monkeypatch.setattr(
+            service_module, "LLMClient",
+            lambda model=None, temperature=None, config=None: fake_llm,
+        )
+
+        game_id = await service.create_game(num_werewolves=1, num_villagers=3)
+        invoke = service._engines[game_id]._director._invoke
+
+        schema = {"type": "object"}
+        assert json.loads(invoke(
+            [{"role": "user", "content": "x"}], "test_night", schema, 1,
+        )) == {
+            "speak": False,
+        }
+        fake_llm.invoke_json.assert_called_once()
+        assert fake_llm.invoke_json.call_args.kwargs == {
+            "tool_name": "test_night",
+            "schema": schema,
+        }
+        fake_llm.get_model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_night_invoke_uses_distinct_wolf_response_contracts(self, monkeypatch):
+        import app.services.game_service as service_module
+        from app.models.game import GameConfig, GameState, PlayerState
+        from types import SimpleNamespace
+
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        fake_llm = MagicMock()
+        fake_llm.invoke_json.side_effect = [
+            SimpleNamespace(payload={
+                "speak": True,
+                "text": "建议刀2号",
+                "preferred_target": 2,
+                "day_plan": "明天保持低调",
+            }),
+            SimpleNamespace(payload={
+                "schema_version": 1,
+                "action_type": "kill",
+                "target_seat": 2,
+                "reasoning": "统一刀口",
+            }),
+        ]
+        monkeypatch.setattr(
+            service_module, "LLMClient",
+            lambda model=None, temperature=None, config=None: fake_llm,
+        )
+
+        game_id = await service.create_game(num_werewolves=1, num_villagers=3)
+        engine = service._engines[game_id]
+        state = GameState(game_id=game_id, config=GameConfig())
+        state.round_number = 1
+        state.players = {
+            1: PlayerState(
+                seat_number=1, role="wolf-killer-werewolf", camp="werewolf",
+            ),
+            2: PlayerState(
+                seat_number=2, role="wolf-killer-villager", camp="good",
+            ),
+        }
+        wolf_seat = 1
+
+        discussion = engine._director.wolf_discussion_turn(state, wolf_seat, [])
+        vote = engine._director.wolf_vote_turn(state, wolf_seat, [], [])
+
+        assert discussion.spoke is True
+        assert vote.target_seat == 2
+        discussion_call, vote_call = fake_llm.invoke_json.call_args_list
+        assert discussion_call.kwargs["tool_name"] == "werewolf_discussion"
+        assert discussion_call.kwargs["schema"] == {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "speak": {"type": "boolean"},
+                "text": {"type": "string", "maxLength": 200},
+                "preferred_target": {"type": ["integer", "null"]},
+                "day_plan": {"type": "string", "maxLength": 150},
+            },
+            "required": ["speak", "text", "preferred_target", "day_plan"],
+        }
+        assert vote_call.kwargs["tool_name"] == "werewolf_kill"
+        assert vote_call.kwargs["schema"]["additionalProperties"] is False
+        assert vote_call.kwargs["schema"]["required"] == [
+            "schema_version", "action_type", "target_seat", "reasoning",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_night_invoke_persists_wolf_model_error_with_seat(
+        self, monkeypatch, tmp_path,
+    ):
+        import app.services.game_service as service_module
+        from httpx import Request, Response
+        from openai import BadRequestError
+
+        service = GameService(WSManager(), EventBus())
+        service._manifest = MagicMock()
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        fake_llm = MagicMock()
+        fake_llm.model_name = "stealth/ox-alpha"
+        fake_llm.provider_profile.profile_id = "openrouter"
+        request = Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        fake_llm.invoke_json.side_effect = BadRequestError(
+            "provider returned error",
+            response=Response(400, request=request),
+            body={
+                "error": {
+                    "message": "Provider returned error",
+                    "code": 400,
+                    "metadata": {"provider_name": "Stealth", "raw": "ERROR"},
+                },
+            },
+        )
+        monkeypatch.setattr(
+            service_module, "LLMClient",
+            lambda model=None, temperature=None, config=None: fake_llm,
+        )
+
+        game_id = await service.create_game(num_werewolves=1, num_villagers=3)
+        engine = service._engines[game_id]
+        engine.state.round_number = 1
+        engine.state.players = {
+            1: service_module.PlayerState(
+                seat_number=1, role="wolf-killer-werewolf", camp="werewolf",
+            ),
+            2: service_module.PlayerState(
+                seat_number=2, role="wolf-killer-villager", camp="good",
+            ),
+        }
+
+        vote = engine._director.wolf_vote_turn(engine.state, 1, [], [])
+
+        assert vote.reasoning == "safe fallback"
+        log_path = tmp_path / "games" / game_id / "game.log"
+        assert log_path.exists(), "wolf model error should be persisted"
+        record = json.loads(log_path.read_text("utf-8").splitlines()[-1])
+        assert record["operation"] == "model_error"
+        assert record["seat"] == 1
+        assert record["data"]["contract_id"] == "werewolf_kill"
+        assert record["data"]["schedule_point"] == "night_wolf_vote"
+        assert record["data"]["status_code"] == 400
 
     def test_manifest_accepts_canonical_role_counts(self, tmp_path):
         manifest = GameManifest(str(tmp_path))
@@ -1478,18 +1694,24 @@ class TestCommandProvider:
         return IssuedActionRequest(1, role_id, contract, 0, 1, "night", "w", "k")
 
     def _provider(self, service, response_content="kill-ok"):
+        from types import SimpleNamespace
         from unittest.mock import MagicMock
+        from app.agents.output_parser import extract_json_object
         from app.core.night_flow import NightDirector
         snapshot = builtin_registry.freeze()
         renderer = MagicMock()
         renderer.render.return_value = "prompt"
         llm = MagicMock()
         if isinstance(response_content, Exception):
-            llm.get_model.return_value.invoke.side_effect = response_content
+            llm.invoke_action.side_effect = response_content
         else:
-            response = MagicMock()
-            response.content = response_content
-            llm.get_model.return_value.invoke.return_value = response
+            payload = extract_json_object(response_content)
+            if isinstance(payload, dict):
+                llm.invoke_action.return_value = SimpleNamespace(payload=payload)
+            else:
+                llm.invoke_action.side_effect = ValueError(
+                    "model gateway rejected structured response"
+                )
         director = NightDirector(snapshot, lambda messages: None)
         return service._command_provider(snapshot, renderer, lambda seat: llm, director), renderer
 
@@ -1504,6 +1726,36 @@ class TestCommandProvider:
         assert command.action_type == "check"
         assert command.target_seat == 2
 
+    def test_provider_routes_action_through_model_gateway(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from app.core.night_flow import NightDirector
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        llm = MagicMock()
+        llm.invoke_action.return_value = SimpleNamespace(payload={
+            "schema_version": 1,
+            "action_type": "check",
+            "target_seat": 2,
+            "reasoning": "x",
+        })
+        director = NightDirector(snapshot, lambda messages: None)
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        provider = service._command_provider(
+            snapshot, renderer, lambda seat: llm, director,
+        )
+
+        command = provider(
+            self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0,
+        )
+
+        assert command.action_type == "check"
+        assert command.target_seat == 2
+        llm.invoke_action.assert_called_once()
+        llm.get_model.assert_not_called()
+
     def test_provider_falls_back_on_bad_json_or_network_error(self, caplog):
         service = GameService(WSManager(), EventBus())
         from unittest.mock import MagicMock
@@ -1514,6 +1766,88 @@ class TestCommandProvider:
                 assert command.action_type == "pass"
                 assert command.target_seat is None
         assert any("degrading to safe fallback" in record.message for record in caplog.records)
+
+    def test_provider_persists_sanitized_model_error_in_game_log(self, tmp_path):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from httpx import Request, Response
+        from openai import BadRequestError
+
+        from app.core.game_logger import GameLogger
+        from app.core.night_flow import NightDirector
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        llm = MagicMock()
+        llm.model_name = "stealth/ox-alpha"
+        llm.provider_profile.profile_id = "openrouter"
+        request = Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        llm.invoke_action.side_effect = BadRequestError(
+            "provider returned error",
+            response=Response(400, request=request),
+            body={
+                "error": {
+                    "message": "Provider returned error",
+                    "code": 400,
+                    "metadata": {
+                        "provider_name": "Stealth",
+                        "raw": "ERROR",
+                    },
+                },
+                "user_id": "must-not-be-persisted",
+            },
+        )
+        engine = SimpleNamespace(
+            conversation_log=MagicMock(),
+            game_logger=GameLogger(data_dir=str(tmp_path)),
+        )
+        engine.conversation_log.get_conversations_for_role.return_value = []
+        service._engines = {"g": engine}
+        director = NightDirector(snapshot, lambda messages: None)
+        provider = service._command_provider(
+            snapshot, renderer, lambda seat: llm, director,
+        )
+        context = MagicMock(
+            game_id="g", round_number=1, phase="night", facts={},
+        )
+
+        command = provider(self._request("wolf-killer-guard"), context, 0)
+
+        assert command.action_type == "pass"
+        log_path = tmp_path / "games" / "g" / "game.log"
+        assert log_path.exists(), "model error should be persisted per game"
+        record = json.loads(log_path.read_text("utf-8").splitlines()[-1])
+        assert record["operation"] == "model_error"
+        assert record["seat"] == 1
+        assert record["data"] == {
+            "contract_id": "guard_action",
+            "schedule_point": "night_action",
+            "attempt": 0,
+            "provider_profile": "openrouter",
+            "provider_name": "Stealth",
+            "model_id": "stealth/ox-alpha",
+            "failure_code": "provider_bad_request",
+            "exception_type": "BadRequestError",
+            "status_code": 400,
+            "error_code": 400,
+            "message": "Provider returned error",
+            "provider_raw": "ERROR",
+        }
+        assert "must-not-be-persisted" not in log_path.read_text("utf-8")
+        error_log_path = tmp_path / "games" / "g" / "model_errors.log"
+        assert error_log_path.exists(), "model traceback should be persisted per game"
+        error_record = json.loads(
+            error_log_path.read_text("utf-8").splitlines()[-1]
+        )
+        assert error_record["operation"] == "model_error"
+        assert any(
+            frame["function"] == "provider"
+            for frame in error_record["data"]["stack"]
+        )
+        assert "must-not-be-persisted" not in error_log_path.read_text("utf-8")
 
     def test_provider_falls_back_on_non_text_or_disallowed_action(self):
         service = GameService(WSManager(), EventBus())

@@ -68,6 +68,50 @@ class GameLogger:
         self.log_operation(game_id, "audience_action", round_num, phase,
                            data={"event_type": event_type, "payload": _plain(payload)})
 
+    def log_model_error(
+        self, game_id: str, round_num: int, phase: str, seat: int, *,
+        contract_id: str, schedule_point: str, attempt: int,
+        provider_profile: str, model_id: str, failure_code: str,
+        exception_type: str, message: str, status_code: Optional[int] = None,
+        error_code: object = None, provider_name: Optional[str] = None,
+        provider_raw: Optional[str] = None,
+        cause_chain: Optional[list[dict[str, object]]] = None,
+        stack: Optional[list[dict[str, object]]] = None,
+    ) -> None:
+        """Persist sanitized model diagnostics without prompts or credentials."""
+        data = {
+            "contract_id": contract_id,
+            "schedule_point": schedule_point,
+            "attempt": attempt,
+            "provider_profile": provider_profile,
+            "model_id": model_id,
+            "failure_code": failure_code,
+            "exception_type": exception_type,
+        }
+        if status_code is not None:
+            data["status_code"] = status_code
+        if error_code is not None:
+            data["error_code"] = error_code
+        data["message"] = message
+        if provider_name is not None:
+            data["provider_name"] = provider_name
+        if provider_raw is not None:
+            data["provider_raw"] = provider_raw
+        if cause_chain:
+            data["cause_chain"] = _plain(cause_chain)
+        self.log_operation(
+            game_id, "model_error", round_num, phase, seat=seat, data=data,
+        )
+        error_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "round": round_num,
+            "phase": phase,
+            "operation": "model_error",
+            "seat": seat,
+            "data": {**data, "stack": _plain(stack or [])},
+        }
+        self._write_line(game_id, "model_errors.log", error_record)
+
     def log_narration(self, game_id: str, round_num: int, phase: str,
                       title: str, text: str) -> None:
         """Record one narrator page shown to the audience during the night."""

@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import shutil
+import traceback
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
@@ -23,7 +24,6 @@ from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.prompt_renderer import PromptRenderer
-from app.agents.output_parser import extract_json_object
 from app.agents.game_rules import NIGHT_SYSTEM_PROMPT as _SYSTEM_PROMPT
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
@@ -51,6 +51,91 @@ PUBLIC_NIGHT_SUBSTEPS = frozenset({
     "seer_check",
     "seer_close",
 })
+
+
+def _model_failure_code(error: Exception, status_code: int | None) -> str:
+    cause: BaseException | None = error
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if "timeout" in type(cause).__name__.lower():
+            return "provider_timeout"
+        cause = cause.__cause__ or cause.__context__
+    if status_code == 400:
+        return "provider_bad_request"
+    return "model_invocation_error"
+
+
+def _exception_diagnostics(error: BaseException) -> dict[str, object]:
+    response = getattr(error, "response", None)
+    status_code = getattr(error, "status_code", None)
+    if not isinstance(status_code, int):
+        candidate = getattr(response, "status_code", None)
+        status_code = candidate if isinstance(candidate, int) else None
+
+    body = getattr(error, "body", None)
+    body_error = body.get("error") if isinstance(body, Mapping) else None
+    if not isinstance(body_error, Mapping):
+        body_error = {}
+    metadata = body_error.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+
+    structured_message = body_error.get("message")
+    if isinstance(structured_message, str) and structured_message:
+        message = structured_message[:1000]
+    else:
+        message = f"{type(error).__name__}: model invocation failed"
+
+    details: dict[str, object] = {
+        "exception_type": type(error).__name__,
+        "message": message,
+    }
+    if status_code is not None:
+        details["status_code"] = status_code
+    error_code = body_error.get("code")
+    if isinstance(error_code, (str, int)) and not isinstance(error_code, bool):
+        details["error_code"] = error_code
+    provider_name = metadata.get("provider_name")
+    if isinstance(provider_name, str) and provider_name:
+        details["provider_name"] = provider_name[:200]
+    provider_raw = metadata.get("raw")
+    if isinstance(provider_raw, str) and provider_raw:
+        details["provider_raw"] = provider_raw[:1000]
+    return details
+
+
+def _model_error_diagnostics(error: Exception, llm_client) -> dict[str, object]:
+    primary = _exception_diagnostics(error)
+    status_code = primary.get("status_code")
+    profile = getattr(getattr(llm_client, "provider_profile", None), "profile_id", None)
+    model_id = getattr(llm_client, "model_name", None)
+    details: dict[str, object] = {
+        "provider_profile": profile if isinstance(profile, str) else "unknown",
+        "model_id": model_id if isinstance(model_id, str) else "unknown",
+        "failure_code": _model_failure_code(
+            error, status_code if isinstance(status_code, int) else None,
+        ),
+        **primary,
+    }
+    cause_chain: list[dict[str, object]] = []
+    cause = error.__cause__ or error.__context__
+    seen = {id(error)}
+    while cause is not None and id(cause) not in seen and len(cause_chain) < 8:
+        seen.add(id(cause))
+        cause_chain.append(_exception_diagnostics(cause))
+        cause = cause.__cause__ or cause.__context__
+    if cause_chain:
+        details["cause_chain"] = cause_chain
+    details["stack"] = [
+        {
+            "file": frame.filename,
+            "line": frame.lineno,
+            "function": frame.name,
+        }
+        for frame in traceback.extract_tb(error.__traceback__)[-30:]
+    ]
+    return details
 
 
 def resolve_model_config(
@@ -332,13 +417,43 @@ class GameService:
         snapshot = builtin_registry.freeze()
         renderer = PromptRenderer()
         llm_client = client_provider(0)
+        engine_ref = None
 
-        def _night_invoke(messages):
-            response = llm_client.get_model().invoke(messages)
-            content = response.content if hasattr(response, "content") else str(response)
-            if not isinstance(content, str):
-                raise ValueError("model response is not text")
-            return content
+        def _night_invoke(messages, tool_name, schema, seat):
+            try:
+                result = llm_client.invoke_json(
+                    messages,
+                    tool_name=tool_name,
+                    schema=schema,
+                )
+                payload = getattr(result, "payload", None)
+                if not isinstance(payload, Mapping):
+                    raise ValueError("model gateway response is not a JSON object")
+                return json.dumps(dict(payload), ensure_ascii=False)
+            except Exception as error:
+                if engine_ref is not None:
+                    schedule_point = (
+                        "night_wolf_vote"
+                        if tool_name == "werewolf_kill"
+                        else "night_wolf_discussion"
+                    )
+                    try:
+                        engine_ref.game_logger.log_model_error(
+                            game_id,
+                            engine_ref.state.round_number,
+                            "night",
+                            seat,
+                            contract_id=tool_name,
+                            schedule_point=schedule_point,
+                            attempt=0,
+                            **_model_error_diagnostics(error, llm_client),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to persist wolf model error for game=%s seat=%s",
+                            game_id, seat,
+                        )
+                raise
 
         director = NightDirector(snapshot, _night_invoke)
 
@@ -362,6 +477,7 @@ class GameService:
             pipeline_scheduler=scheduler,
             director=director,
         )
+        engine_ref = engine
         # Stamp the pipeline snapshot version so archives can be validated
         # and migrated against the exact registry that ran the game.
         engine.state.pipeline_version = "v2"
@@ -496,17 +612,12 @@ class GameService:
                 SystemMessage(content=_SYSTEM_PROMPT),
                 HumanMessage(content=prompt),
             ]
+            llm_client = None
             try:
                 llm_client = client_provider(request.actor_seat)
-                response = llm_client.get_model().invoke(messages)
-                content = response.content if hasattr(response, "content") else str(response)
-                if not isinstance(content, str):
-                    raise ValueError("model response is not text")
-                parsed = extract_json_object(content)
-                if parsed is None:
-                    raise ValueError("model response contains no JSON object")
-                command = PipelineActionCommand.model_validate(parsed)
-            except Exception:
+                result = llm_client.invoke_action(messages, request.contract)
+                command = PipelineActionCommand.model_validate(result.payload)
+            except Exception as error:
                 logger.warning(
                     "LLM action command failed for seat=%s contract=%s point=%s; "
                     "degrading to safe fallback",
@@ -514,6 +625,24 @@ class GameService:
                     request.contract.schedule_point.value,
                     exc_info=True,
                 )
+                if engine is not None:
+                    try:
+                        phase = getattr(context.phase, "value", context.phase)
+                        engine.game_logger.log_model_error(
+                            context.game_id,
+                            context.round_number,
+                            phase if isinstance(phase, str) else "unknown",
+                            request.actor_seat,
+                            contract_id=request.contract.contract_id,
+                            schedule_point=request.contract.schedule_point.value,
+                            attempt=attempt,
+                            **_model_error_diagnostics(error, llm_client),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to persist model error for game=%s seat=%s",
+                            context.game_id, request.actor_seat,
+                        )
                 command = None
             if command is None or command.action_type not in request.contract.action_types:
                 return PipelineActionCommand(

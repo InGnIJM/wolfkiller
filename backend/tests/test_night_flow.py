@@ -44,7 +44,10 @@ def _snapshot() -> RegistrySnapshot:
 
 
 def _director(invoke) -> NightDirector:
-    return NightDirector(_snapshot(), invoke)
+    return NightDirector(
+        _snapshot(),
+        lambda messages, _tool_name, _schema, _seat: invoke(messages),
+    )
 
 
 @pytest.fixture
