@@ -48,3 +48,7 @@
   opaque compatibility wording. Action: treat that client rejection as a
   one-time JSON fallback signal; keep authentication, rate-limit, network, and
   server failures in their original error classes.
+
+## Frontend verification under WSL (/mnt/e)
+- Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond". After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.
+- Trigger: `npm run test:coverage` gate in `frontend/vite.config.ts`. Action: known broken at HEAD in this environment (~96.4% < 100% thresholds, HistoryPanel/GameList helper branches uncovered); baseline fails identically, so treat it as pre-existing. Verify with `npm test` (all green) and only compare coverage deltas against a HEAD baseline mirror.
