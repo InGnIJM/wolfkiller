@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ELI5 · 狼人杀是怎么玩的</title>
+<style>
+  :root{
+    --bg:#0d1021;
+    --card:#181d36;
+    --card2:#20264a;
+    --ink:#eceefc;
+    --muted:#9aa0c8;
+    --blue:#7c8cff;
+    --purple:#b18cff;
+    --wolf:#ff7a8a;
+    --good:#6ee7b7;
+    --sun:#ffd166;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.5;
+  }
+  main{scroll-snap-type:y proximity}
+  section{
+    min-height:92svh;
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    padding:8vh 6vw;
+    scroll-snap-align:start;
+    position:relative;
+  }
+  .step{
+    position:absolute;top:24px;left:24px;
+    width:44px;height:44px;border-radius:50%;
+    background:var(--card2);border:2px solid var(--blue);
+    display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:1.1rem;color:var(--blue);
+  }
+  h1{font-size:clamp(2.4rem,9vw,5rem);font-weight:900;text-align:center;line-height:1.15}
+  h2{font-size:clamp(1.7rem,5.5vw,2.8rem);font-weight:850;text-align:center;margin-bottom:.4em}
+  .sub{color:var(--muted);text-align:center;font-size:clamp(1rem,3vw,1.25rem);max-width:34em}
+  .grad{
+    background:linear-gradient(100deg,var(--blue),var(--purple));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .emoji-xl{font-size:clamp(4rem,16vw,8rem);line-height:1.2}
+  .cards{
+    display:grid;gap:16px;width:min(860px,100%);
+    grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+    margin-top:32px;
+  }
+  .card{
+    background:var(--card);border-radius:20px;padding:28px 22px;
+    text-align:center;border:2px solid transparent;
+    transition:border-color .2s;
+  }
+  .card:hover{border-color:var(--purple)}
+  .card .ico{font-size:3.4rem;line-height:1.3}
+  .card b{display:block;font-size:1.25rem;margin:10px 0 6px}
+  .card span{color:var(--muted);font-size:.98rem}
+  .callout{
+    margin-top:28px;background:var(--card2);border-left:6px solid var(--sun);
+    border-radius:12px;padding:16px 20px;max-width:40em;
+    color:var(--ink);font-size:1.02rem;
+  }
+  .callout b{color:var(--sun)}
+  svg.diagram{width:min(88vw,430px);height:auto;margin-top:24px}
+  .night-row{
+    display:flex;align-items:center;gap:18px;
+    background:var(--card);border-radius:16px;
+    padding:16px 22px;margin-top:14px;width:min(520px,100%);
+  }
+  .night-row .ico{font-size:2.6rem;flex:none}
+  .night-row p{font-size:clamp(1rem,3vw,1.15rem)}
+  .night-row p b{color:var(--purple)}
+  .vs{
+    display:flex;align-items:center;gap:clamp(16px,5vw,48px);
+    margin-top:36px;flex-wrap:wrap;justify-content:center;
+  }
+  .team{text-align:center}
+  .team .ico{font-size:clamp(3.4rem,12vw,6rem)}
+  .team b{display:block;font-size:1.4rem;margin-top:6px}
+  .team.wolf b{color:var(--wolf)}
+  .team.good b{color:var(--good)}
+  .vs .mark{font-size:clamp(2rem,7vw,3.4rem);color:var(--muted);font-weight:900}
+  footer{
+    text-align:center;color:var(--muted);
+    padding:40px 6vw;font-size:.95rem;
+    border-top:1px solid #23284d;
+  }
+  footer b{color:var(--purple)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- 0 · 这是什么游戏 -->
+<section>
+  <div class="emoji-xl">🌙</div>
+  <h1>狼人杀<br><span class="grad">一场「谁在撒谎」的游戏</span></h1>
+  <p class="sub" style="margin-top:18px">一群人围坐一圈。<br>大多数人不知道谁是坏人。</p>
+  <div class="vs">
+    <div class="team wolf"><div class="ico">🐺</div><b>狼人队</b></div>
+    <div class="vs mark">VS</div>
+    <div class="team good"><div class="ico">👨‍🌾</div><b>好人队</b></div>
+  </div>
+  <p class="sub" style="margin-top:26px">坏人晚上偷偷害人，白天假装好人。<br>好人靠聊天和投票，把狼揪出来。</p>
+</section>
+
+<!-- 1 · 身份牌 -->
+<section>
+  <div class="step">1</div>
+  <div class="emoji-xl">🃏</div>
+  <h2>开局：每人抽一张<span class="grad">暗牌</span></h2>
+  <p class="sub">你的身份只有你自己知道——像扑克牌扣在桌上，谁也不许看谁的。</p>
+  <div class="cards">
+    <div class="card"><div class="ico">🐺</div><b>狼人 ×N</b><span>坏人。每晚合力「杀」一个玩家</span></div>
+    <div class="card"><div class="ico">👤</div><b>村民</b><span>没有技能，全靠听发言找狼</span></div>
+    <div class="card"><div class="ico">🔮</div><b>预言家</b><span>每晚查验一人：是狼还是好人</span></div>
+    <div class="card"><div class="ico">⚗️</div><b>女巫</b><span>一瓶解药救人，一瓶毒药杀人，各只能用一次</span></div>
+    <div class="card"><div class="ico">🏹</div><b>猎人</b><span>死的时候可以开枪，带走一个人</span></div>
+    <div class="card"><div class="ico">🛡️</div><b>守卫</b><span>每晚守护一人，狼杀不动他</span></div>
+  </div>
+  <div class="callout">🔮⚗️🏹🛡️ 有技能的好人，合称<b>「神职」</b>——记住这个词，判胜负要用。</div>
+</section>
+
+<!-- 2 · 一天的循环 -->
+<section>
+  <div class="step">2</div>
+  <h2>整个游戏就是<span class="grad">一圈圈转</span></h2>
+  <p class="sub">夜晚 → 天亮 → 发言 → 投票 → 又是夜晚……<br>直到一方全灭。</p>
+  <svg class="diagram" viewBox="0 0 400 400" role="img" aria-label="游戏循环：夜晚到天亮到遗言到发言到投票再回到夜晚">
+    <defs>
+      <marker id="arw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#b18cff"/>
+      </marker>
+    </defs>
+    <circle cx="200" cy="200" r="150" fill="none" stroke="#2a3057" stroke-width="2"/>
+    <!-- 弧线箭头：节点间隔72°，弧取节点两侧各留16° -->
+    <path d="M 231.1 63.5 A 150 150 0 0 1 340.4 122.4" fill="none" stroke="#b18cff" stroke-width="3" marker-end="url(#arw)"/>
+    <path d="M 342.7 185.6 A 150 150 0 0 1 311.9 291.4" fill="none" stroke="#b18cff" stroke-width="3" marker-end="url(#arw)"/>
+    <path d="M 279.6 331.9 A 150 150 0 0 1 120.4 331.9" fill="none" stroke="#b18cff" stroke-width="3" marker-end="url(#arw)"/>
+    <path d="M 88.1 291.4 A 150 150 0 0 1 57.3 185.6" fill="none" stroke="#b18cff" stroke-width="3" marker-end="url(#arw)"/>
+    <path d="M 59.6 68.1 A 150 150 0 0 1 168.9 63.5" fill="none" stroke="#b18cff" stroke-width="3" marker-end="url(#arw)"/>
+    <!-- 节点 -->
+    <g font-family="system-ui,'PingFang SC','Microsoft YaHei',sans-serif">
+      <circle cx="200" cy="50"  r="40" fill="#181d36" stroke="#ffd166" stroke-width="3"/>
+      <text x="200" y="58" font-size="34" text-anchor="middle">🌙</text>
+      <text x="200" y="112" font-size="17" fill="#eceefc" font-weight="700" text-anchor="middle">夜晚</text>
+
+      <circle cx="342.7" cy="153.6" r="40" fill="#181d36" stroke="#7c8cff" stroke-width="3"/>
+      <text x="342.7" y="161.6" font-size="34" text-anchor="middle">🌅</text>
+      <text x="342.7" y="216" font-size="17" fill="#eceefc" font-weight="700" text-anchor="middle">天亮报死讯</text>
+
+      <circle cx="288.2" cy="321.4" r="40" fill="#181d36" stroke="#7c8cff" stroke-width="3"/>
+      <text x="288.2" y="329.4" font-size="34" text-anchor="middle">💬</text>
+      <text x="288.2" y="384" font-size="17" fill="#eceefc" font-weight="700" text-anchor="middle">遗言</text>
+
+      <circle cx="111.8" cy="321.4" r="40" fill="#181d36" stroke="#7c8cff" stroke-width="3"/>
+      <text x="111.8" y="329.4" font-size="34" text-anchor="middle">🎤</text>
+      <text x="111.8" y="384" font-size="17" fill="#eceefc" font-weight="700" text-anchor="middle">轮流发言</text>
+
+      <circle cx="57.3" cy="153.6" r="40" fill="#181d36" stroke="#ff7a8a" stroke-width="3"/>
+      <text x="57.3" y="161.6" font-size="34" text-anchor="middle">🗳️</text>
+      <text x="57.3" y="216" font-size="17" fill="#eceefc" font-weight="700" text-anchor="middle">投票放逐</text>
+    </g>
+  </svg>
+</section>
+
+<!-- 3 · 夜晚 -->
+<section>
+  <div class="step">3</div>
+  <div class="emoji-xl">😴</div>
+  <h2>夜晚：<span style="filter:grayscale(.3)">所有人闭眼</span></h2>
+  <p class="sub">主持人（或系统）挨个叫醒角色，各干各的事。<br>像深夜的下棋——每一方都在悄悄走一步棋。</p>
+  <div style="width:min(520px,100%)">
+    <div class="night-row"><div class="ico">🐺</div><p><b>狼人睁眼</b>——互相认一下队友，商量今晚杀谁</p></div>
+    <div class="night-row"><div class="ico">🛡️</div><p><b>守卫睁眼</b>——指定一人受保护</p></div>
+    <div class="night-row"><div class="ico">🔮</div><p><b>预言家睁眼</b>——指一个人，看他是狼是民</p></div>
+    <div class="night-row"><div class="ico">⚗️</div><p><b>女巫睁眼</b>——看谁被刀了：救？还是毒另一个？</p></div>
+  </div>
+</section>
+
+<!-- 4 · 天亮 -->
+<section>
+  <div class="step">4</div>
+  <div class="emoji-xl">🌅</div>
+  <h2>天亮：宣布<span class="grad">昨晚谁死了</span></h2>
+  <p class="sub">可能没人死——被守卫护住、或被女巫救回，就平安夜。</p>
+  <div class="callout">死了的人可以留下<b>「遗言」</b>：把自己知道的线索一次说完，然后退出聊天。<br>⚠️ 猎人如果被狼咬死，可以当场 <b>🏹 开枪带走一人</b>。</div>
+</section>
+
+<!-- 5 · 白天发言 -->
+<section>
+  <div class="step">5</div>
+  <div class="emoji-xl">🎤</div>
+  <h2>活着的人<span class="grad">轮流发言</span></h2>
+  <p class="sub">从死者旁边开始，逆时针一人一句：<br>「我是谁、我怀疑谁、为什么。」</p>
+  <svg class="diagram" viewBox="0 0 400 300" role="img" aria-label="圆桌座位与逆时针发言方向">
+    <ellipse cx="200" cy="150" rx="120" ry="82" fill="#181d36" stroke="#2a3057" stroke-width="2"/>
+    <text x="200" y="158" font-size="30" text-anchor="middle">🗣️</text>
+    <g>
+      <g transform="translate(200,42)"><circle r="19" fill="#20264a" stroke="#ff7a8a" stroke-width="3"/><text y="6" font-size="15" fill="#ff7a8a" text-anchor="middle" font-weight="700">✝</text></g>
+      <g transform="translate(286,74)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">2</text></g>
+      <g transform="translate(330,150)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">3</text></g>
+      <g transform="translate(286,226)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">4</text></g>
+      <g transform="translate(200,258)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">5</text></g>
+      <g transform="translate(114,226)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">6</text></g>
+      <g transform="translate(70,150)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">7</text></g>
+      <g transform="translate(114,74)"><circle r="19" fill="#20264a" stroke="#7c8cff" stroke-width="2"/><text y="6" font-size="15" fill="#9aa0c8" text-anchor="middle">8</text></g>
+    </g>
+    <!-- 逆时针箭头 -->
+    <path d="M 236 34 A 130 88 0 0 0 96 52" fill="none" stroke="#6ee7b7" stroke-width="3" stroke-dasharray="7 6"/>
+    <polygon points="96,52 110,46 106,62" fill="#6ee7b7"/>
+    <text x="200" y="20" font-size="15" fill="#6ee7b7" text-anchor="middle" font-family="system-ui,'PingFang SC',sans-serif">从死者身边开始 ↺ 逆时针</text>
+  </svg>
+  <div class="callout" style="margin-top:24px">狼人此刻要<b>演戏</b>：装成好人，把水搅浑。<br>这就是狼人杀最好玩的地方——比的不是运气，是<b>演技和逻辑</b>。</div>
+</section>
+
+<!-- 6 · 投票 -->
+<section>
+  <div class="step">6</div>
+  <div class="emoji-xl">🗳️</div>
+  <h2>投票：<span class="grad">把最可疑的人投出去</span></h2>
+  <p class="sub">所有存活的人同时指向一人，得票最多的被「放逐」出局。</p>
+  <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+    <div class="card" style="opacity:.65"><div class="ico">🙋</div><b>3 号</b><span>2 票</span></div>
+    <div class="card" style="border-color:var(--wolf)"><div class="ico">🙅</div><b>5 号 出局！</b><span>6 票</span></div>
+    <div class="card" style="opacity:.65"><div class="ico">💁</div><b>7 号</b><span>1 票</span></div>
+  </div>
+  <div class="callout"><b>平票怎么办？</b>平票的人再各自补充一句，重新投一次；还平——那就谁都别走，<b>今天没人出局</b>。<br>被放逐的也有遗言；猎人被放逐同样能开枪 🏹。</div>
+</section>
+
+<!-- 7 · 胜负 -->
+<section>
+  <div class="step">7</div>
+  <div class="emoji-xl">🏆</div>
+  <h2>怎么算<span class="grad">赢</span>？</h2>
+  <p class="sub">每次有人出局后都检查一次：</p>
+  <div class="cards">
+    <div class="card" style="border-color:var(--good)">
+      <div class="ico">👨‍🌾</div><b style="color:var(--good)">好人赢</b>
+      <span>场上最后一个狼人出局 🐺❌</span>
+    </div>
+    <div class="card" style="border-color:var(--wolf)">
+      <div class="ico">🐺</div><b style="color:var(--wolf)">狼人赢</b>
+      <span>村民全部死亡，<br>或神职全部死亡（屠边）</span>
+    </div>
+  </div>
+  <div class="callout">⚖️ 两边同时达标？<b>狼人赢</b>——这叫「狼刀在先」，夜里动手的占先手。</div>
+  <p class="sub" style="margin-top:30px">没分出胜负？回到第 2 步，夜幕再次降临 🌙</p>
+</section>
+
+<!-- 8 · AI 版 -->
+<section>
+  <div class="emoji-xl">🤖</div>
+  <h2>在这个项目里，<span class="grad">玩家全是 AI</span></h2>
+  <p class="sub" style="max-width:36em">Wolf Killer 的每个座位后面都是一个 AI 大模型：<br>它们真的会撒谎、推理、演戏。</p>
+  <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+    <div class="card"><div class="ico">🎬</div><b>你看直播</b><span>游戏进行时实时观看每一步</span></div>
+    <div class="card"><div class="ico">⏪</div><b>也能回放</b><span>像看比赛录像一样拖进度条复盘</span></div>
+  </div>
+</section>
+
+<footer>ELI5 图解 · Wolf Killer 项目 · 用浏览器打开本文件即可阅读</footer>
+</main>
+</body>
+</html>
