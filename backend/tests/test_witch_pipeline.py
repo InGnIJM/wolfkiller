@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
 
+from app.agents.prompt_renderer import PromptRenderer
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
@@ -34,13 +36,18 @@ def command(action, target=None):
 
 def test_applicability_and_semantic_validation() -> None:
     assert witch_applicable(context()) is True
-    assert witch_applicable(context({"antidote": 0, "poison": 0})) is False
+    assert witch_applicable(context({"antidote": 0, "poison": 0})) is True
+    assert witch_applicable(replace(context(), actor_alive=False)) is False
     assert validate_witch_action(context(), command("save", 2)) == ()
     assert validate_witch_action(context(), command("poison", 3)) == ()
     assert validate_witch_action(context(), command("pass")) == ()
     assert validate_witch_action(context(), command("save", 3))
     assert validate_witch_action(context({"antidote": 0, "poison": 1}), command("save", 2))
     assert validate_witch_action(context({"antidote": 1, "poison": 0}), command("poison", 3))
+    depleted = context({"antidote": 0, "poison": 0})
+    assert validate_witch_action(depleted, command("pass")) == ()
+    assert validate_witch_action(depleted, command("save", 2))[0].code == "antidote_unavailable"
+    assert validate_witch_action(depleted, command("poison", 3))[0].code == "poison_unavailable"
 
 
 def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
@@ -189,6 +196,54 @@ def test_scheduler_poison_applies_damage_and_consumes_only_poison() -> None:
     assert result.commits[-1].revision == 2
     assert role_resource_view(game, 1) == {"antidote": 1, "poison": 0}
     assert game._pipeline_runtime.pending_damage == ({"target": 2, "amount": 1, "cause": "poison"},)
+
+
+def test_nightly_prompt_keeps_fresh_target_after_both_potions_are_consumed() -> None:
+    registry = builtin_registry.freeze()
+    game = GameState(
+        "witch-observation", phase="night",
+        players={
+            1: PlayerState(1, WITCH_SPEC.role_id, "good"),
+            2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+            3: PlayerState(3, "wolf-killer-villager", "good"),
+        },
+    )
+    prompts = []
+    actions = {1: command("save", 2), 2: command("poison", 3)}
+
+    def provider(request, projected, attempt):
+        prompt = PromptRenderer().render(WITCH_SPEC, request.contract, projected, "")
+        line = next(line for line in prompt.splitlines() if line.startswith("PROJECTED_CONTEXT="))
+        prompts.append(json.loads(line.split("=", 1)[1]))
+        return actions.get(projected.round_number, command("pass"))
+
+    scheduler = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(), provider,
+    )
+    for round_number, target in ((1, 2), (2, 3), (3, 2), (4, None)):
+        game.round_number = round_number
+        game.last_wolf_kill_target = target
+        result = scheduler.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
+
+        assert len(prompts) == round_number
+        assert prompts[-1]["facts"]["wolf_kill_target"] == target
+        assert prompts[-1]["round_number"] == round_number
+        assert not result.faults
+        assert not scheduler.issue(game, SchedulePoint.NIGHT_WITCH_ACTION, registry)
+
+    assert [prompt["resources"] for prompt in prompts] == [
+        {"antidote": 1, "poison": 1},
+        {"antidote": 0, "poison": 1},
+        {"antidote": 0, "poison": 0},
+        {"antidote": 0, "poison": 0},
+    ]
+    assert role_resource_view(game, 1) == {"antidote": 0, "poison": 0}
+    assert game._pipeline_runtime.pending_damage == ({"target": 3, "amount": 1, "cause": "poison"},)
+    assert game._pipeline_runtime.pending_protection == ({"target": 2, "amount": 1, "source": "witch_antidote"},)
+
+    game.round_number = 5
+    game.players[1].is_alive = False
+    assert not scheduler.issue(game, SchedulePoint.NIGHT_WITCH_ACTION, registry)
 
 
 def test_legacy_target_validation_branches_remain_available() -> None:

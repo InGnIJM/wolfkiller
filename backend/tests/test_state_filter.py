@@ -47,14 +47,20 @@ class TestStateFilter:
         assert wolf_view["facts"]["camp_members"] == [1, 2]
         assert "camp_members" not in villager_view["facts"]
 
-    def test_resources_projected_generically_from_spec(self):
+    @pytest.mark.parametrize("antidote,poison", [(True, True), (True, False), (False, True), (False, False)])
+    @pytest.mark.parametrize("target", [3, None])
+    def test_witch_day_view_keeps_target_regardless_of_potions(self, antidote, poison, target):
         state = wolf_state()
-        state.players[4].has_antidote = True
-        state.last_wolf_kill_target = 3
+        state.players[4].has_antidote = antidote
+        state.players[4].has_poison = poison
+        state.last_wolf_kill_target = target
         view = StateFilter().filter_for_role(state, 4, "wolf-killer-witch")
 
-        assert set(view["resources"]) == {"antidote", "poison"}
-        assert view["facts"]["wolf_kill_target"] == 3
+        assert view["resources"] == {"antidote": antidote, "poison": poison}
+        assert view["facts"]["wolf_kill_target"] == target
+        for seat, role in ((1, "wolf-killer-werewolf"), (3, "wolf-killer-villager")):
+            other = StateFilter().filter_for_role(state, seat, role)
+            assert "wolf_kill_target" not in other["facts"]
 
     def test_view_is_a_plain_independent_copy(self):
         filter_ = StateFilter()

@@ -149,7 +149,6 @@ class ContextProjector:
                     state,
                     actor,
                     spec.initial_private_data,
-                    resources,
                 )
             )
         if "CAMP" in visible:
@@ -243,7 +242,7 @@ class ContextProjector:
         resources = self._actor_resources(state, actor, spec.initial_resources)
         facts.update(
             self._actor_private_facts(
-                state, actor, spec.initial_private_data, resources
+                state, actor, spec.initial_private_data
             )
         )
         return ActionContext(
@@ -455,7 +454,6 @@ class ContextProjector:
         state: GameState,
         actor: PlayerState,
         declarations: Mapping[str, object],
-        resources: Mapping[str, object],
     ) -> dict[str, object]:
         facts: dict[str, object] = {}
         for key, default in declarations.items():
@@ -469,13 +467,10 @@ class ContextProjector:
                     if (projected := cls._project_check_result(result)) is not None
                 )
             elif key in {"wolf_kill_target", "last_wolf_kill_target"}:
-                has_antidote = bool(
-                    resources.get("antidote", resources.get("has_antidote", False))
+                # Declared private knowledge is independent of potion availability.
+                facts["wolf_kill_target"] = cls._optional_positive_int(
+                    state.last_wolf_kill_target, "wolf_kill_target"
                 )
-                if has_antidote:
-                    facts["wolf_kill_target"] = cls._optional_positive_int(
-                        state.last_wolf_kill_target, "wolf_kill_target"
-                    )
             else:
                 canonical = role_private_data_view(state, actor.seat_number)
                 facts[key] = (

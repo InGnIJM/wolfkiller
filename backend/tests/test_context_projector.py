@@ -351,7 +351,7 @@ def test_actor_resources_and_private_facts_are_minimal_and_role_name_agnostic(
     state.players[4].has_antidote = False
     no_antidote = projector.project(state, _request(registry, 4, "witch"), registry)
     assert no_antidote.resources == {"antidote": False, "poison": False}
-    assert "wolf_kill_target" not in no_antidote.facts
+    assert no_antidote.facts["wolf_kill_target"] == 6
 
 
 def test_contract_visibility_intersects_role_visibility_and_relation_is_empty(

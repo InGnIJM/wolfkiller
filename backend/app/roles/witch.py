@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def witch_applicable(context: ActionContext) -> bool:
-    return context.actor_alive and any(context.resources.get(name, 0) for name in ("antidote", "poison"))
+    # A living witch still receives nightly information after both potions are spent.
+    return context.actor_alive
 
 
 def validate_witch_action(
@@ -106,7 +107,11 @@ WITCH_SPEC = RoleSpec(
     allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
-        "The Witch has one antidote and one poison. Each night use at most one potion: "
+        "The Witch has one antidote and one poison, each usable once per game. "
+        "While alive, you learn the werewolf-kill target every night, even after "
+        "either or both potions are spent; a null target means no werewolf attack. "
+        "If both potions are spent, choose pass and use the target as information. "
+        "Each night use at most one potion: "
         "the antidote may save only that night's werewolf-kill target, while poison may "
         "target one living player. If the antidote and Guard protection both target that "
         "werewolf-kill target, the target dies by double-save penetration."
