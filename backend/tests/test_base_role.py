@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from langchain_core.messages import AIMessage
 from openai import APITimeoutError
 
+from app.agents.llm_client import StructuredResponse
 from app.agents.prompt_builder import PromptBuilder
 from app.core.action_validator import ActionValidationError
 from app.core.conversation_log import ConversationLog
@@ -33,12 +34,17 @@ class ModelStub:
 class ClientStub:
     def __init__(
         self, plain=(), tools=(), strict=(), *, supports_strict_actions=True,
+        supports_action_tools=None,
         action_timeout_seconds=90.0, action_retry_timeout_seconds=60.0,
     ):
         self.plain_model = ModelStub(plain)
         self.tools_model = ModelStub(tools)
         self.strict_model = ModelStub(strict)
         self.supports_strict_actions = supports_strict_actions
+        self.supports_action_tools = (
+            supports_strict_actions
+            if supports_action_tools is None else supports_action_tools
+        )
         self.action_timeout_seconds = action_timeout_seconds
         self.action_retry_timeout_seconds = action_retry_timeout_seconds
 
@@ -74,6 +80,35 @@ def make_role(seat=1, client=None, state=None):
 
 
 class TestBaseRoleSpeech:
+    @pytest.mark.asyncio
+    async def test_day_speech_uses_one_context_specific_gateway_tool(self):
+        class GatewayClient:
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            def __init__(self):
+                self.calls = []
+
+            async def ainvoke_json(self, messages, *, tool_name, schema):
+                self.calls.append((messages, tool_name, schema))
+                return StructuredResponse(
+                    payload={"text": "我认为三号玩家的发言存在矛盾，需要继续关注。"},
+                    transport="tool",
+                    has_tool_calls=True,
+                )
+
+        client = GatewayClient()
+        role = make_role(client=client)
+
+        text = await role.speak(make_state(), ConversationLog(), "day_speech")
+
+        assert text.startswith("我认为三号玩家")
+        assert len(client.calls) == 1
+        _, tool_name, schema = client.calls[0]
+        assert tool_name == "speak"
+        assert schema["required"] == ["text"]
+        assert "last_words" not in str(client.calls[0])
+
     @pytest.mark.asyncio
     async def test_speak_uses_tool_calling_and_validates_text(self):
         client = ClientStub(tools=[tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。")])
@@ -393,12 +428,22 @@ class TestBaseRoleAccept:
         assert "reasoning" not in data and "response" not in data
 
     @pytest.mark.asyncio
-    async def test_provider_without_strict_endpoint_uses_json_directly(self):
+    async def test_provider_without_strict_tools_uses_native_action_tool(self):
         client = ClientStub(
-            plain=[AIMessage(content=(
-                '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
-            ))],
+            strict=[AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "exile_vote",
+                    "args": {
+                        "action_type": "vote",
+                        "target_seat": 2,
+                        "reasoning": "x",
+                    },
+                    "id": "call_1",
+                }],
+            )],
             supports_strict_actions=False,
+            supports_action_tools=True,
         )
         role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
         state = make_state(phase=GamePhase.VOTE_CASTING)
@@ -408,8 +453,8 @@ class TestBaseRoleAccept:
         )
 
         assert accepted.command.target_seat == 2
-        assert len(client.plain_model.messages) == 1
-        assert client.strict_model.messages == []
+        assert len(client.strict_model.messages) == 1
+        assert client.plain_model.messages == []
 
     @pytest.mark.asyncio
     async def test_json_action_prefers_dedicated_action_model(self):

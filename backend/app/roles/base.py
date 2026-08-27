@@ -7,7 +7,12 @@ from app.models.game import GameState
 from app.models.actions import VoteAction
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
-from app.agents.output_parser import OutputParser, StrictCapabilityError, ToolCallError
+from app.agents.output_parser import (
+    OutputParser,
+    StrictCapabilityError,
+    ToolCallError,
+    ToolCallResult,
+)
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
 from app.models.pipeline import (
@@ -107,6 +112,14 @@ class BaseRole:
         failures (dead player, wrong phase, already gave last words).
         """
         tools = self.prompt_builder.get_speech_tools()
+        expected_tool_name = (
+            "last_words" if context == "last_words" else "speak"
+        )
+        if context in ("day_speech", "last_words"):
+            tools = [
+                tool for tool in tools
+                if tool.get("function", {}).get("name") == expected_tool_name
+            ]
 
         # ── Pre-validate: only reject when player legitimately cannot speak ──
         if context == "day_speech":
@@ -353,7 +366,10 @@ class BaseRole:
         supports_strict = getattr(
             self.llm_client, "supports_strict_actions", True,
         )
-        if supports_strict is False:
+        supports_tools = getattr(
+            self.llm_client, "supports_action_tools", supports_strict,
+        )
+        if supports_tools is False:
             try:
                 return await self._request_action_with_transport(
                     state, request, messages, self._invoke_json_action,
@@ -367,10 +383,11 @@ class BaseRole:
                     state, request, retry_messages, self._invoke_json_action,
                     conversation_log, "json", 2,
                 )
+        tool_transport = "strict" if supports_strict else "tool"
         try:
             return await self._request_action_with_transport(
                 state, request, messages, self._invoke_strict_action,
-                conversation_log, "strict", 1,
+                conversation_log, tool_transport, 1,
             )
         except _ActionTransportTimeout:
             retry_messages = self._build_vote_retry_messages(
@@ -654,12 +671,11 @@ class BaseRole:
                 raise mapped from error
             raise
         if not getattr(response, "tool_calls", None):
-            # The provider ignored the forced tool call (e.g. answers with the
-            # tool call as plain text instead of native tool_calls). The strict
-            # contract is not honored, so degrade to the JSON transport instead
-            # of retrying the same broken strict path.
+            # The provider ignored the action tool (e.g. answered with a tool
+            # call as plain text). Degrade to JSON instead of retrying the same
+            # unsupported native-tool path.
             raise StrictCapabilityError(
-                "strict transport returned no native tool call"
+                "action tool transport returned no native tool call"
             )
         return self.output_parser.parse_strict_action_response(response, request.contract)
 
@@ -688,6 +704,29 @@ class BaseRole:
 
     async def _invoke_llm_with_tools(self, prompt: str, tools: list[dict]):
         """Invoke LLM with tool definitions. Returns ToolCallResult or None."""
+        gateway = getattr(self.llm_client, "ainvoke_json", None)
+        if callable(gateway) and len(tools) == 1:
+            function = tools[0]["function"]
+            tool_name = function["name"]
+            fallback_prompt = (
+                prompt
+                + "\n\n如果当前接口无法调用函数，只输出一个JSON对象："
+                + '{"text":"你的5至200字中文发言"}。不要添加解释或代码块。'
+            )
+            messages = [
+                SystemMessage(content=self.prompt_builder.get_system_prompt()),
+                HumanMessage(content=fallback_prompt),
+            ]
+            result = await gateway(
+                messages,
+                tool_name=tool_name,
+                schema=function["parameters"],
+            )
+            return ToolCallResult(
+                function_name=tool_name,
+                arguments=result.payload,
+            )
+
         model = self.llm_client.get_model_with_tools(tools)
         messages = [
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
