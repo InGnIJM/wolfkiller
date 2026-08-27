@@ -418,6 +418,27 @@ class ActionContract(_FrozenValue):
     react: Callable[..., object] | None = None
     aggregate: Callable[..., object] | None = None
 
+    @property
+    def resolved_tool_name(self) -> str:
+        """Stable native-tool name used by the model gateway."""
+        return self.contract_id
+
+    def json_schema(self) -> dict[str, object]:
+        """Return the provider-neutral schema for one pipeline action."""
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "schema_version": {"type": "integer", "const": self.schema_version},
+                "action_type": {"type": "string", "enum": list(self.action_types)},
+                "target_seat": {"type": ["integer", "null"]},
+                "reasoning": {"type": "string", "maxLength": 500},
+            },
+            "required": [
+                "schema_version", "action_type", "target_seat", "reasoning",
+            ],
+        }
+
     def __post_init__(self) -> None:
         self._validate_schema_version()
         _require_str("contract_id", self.contract_id)

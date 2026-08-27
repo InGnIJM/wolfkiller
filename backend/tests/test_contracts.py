@@ -156,6 +156,22 @@ class TestActionContracts:
         assert schema["properties"]["target_seat"]["type"] == ["integer", "null"]
         assert schema["properties"]["reasoning"]["maxLength"] == 500
 
+    def test_pipeline_contract_exposes_model_gateway_tool_schema(self):
+        contract = _pipeline_contract(action_types=("check", "pass"))
+
+        schema = contract.json_schema()
+
+        assert contract.resolved_tool_name == "night-action"
+        assert schema["additionalProperties"] is False
+        assert schema["properties"]["schema_version"] == {
+            "type": "integer",
+            "const": 1,
+        }
+        assert schema["properties"]["action_type"]["enum"] == ["check", "pass"]
+        assert schema["required"] == [
+            "schema_version", "action_type", "target_seat", "reasoning",
+        ]
+
     def test_selected_target_fact_namespaces_are_strict_and_stable(self):
         first = _pipeline_contract(selected_target_fact_namespaces=frozenset({"camp_label"}))
         second = _pipeline_contract()
