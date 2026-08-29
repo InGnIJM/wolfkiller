@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+面向人类的详细文档在 `docs/`（[索引](docs/README.md)）：游戏规则 `docs/gameplay.md`、系统架构 `docs/architecture.md`、开发指南与踩坑 `docs/development.md`。本文与 `docs/architecture.md` 描述同一套架构，改动后需同步两处。
+
 ## 项目概述
 
 Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人）均由 DeepSeek 大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
@@ -26,7 +28,7 @@ cd frontend
 npm install                           # 安装依赖
 npm run dev                           # 启动前端 (localhost:5173)
 npm run build                         # 类型检查 + 生产构建
-npm test                              # Vitest（当前 162 个测试）
+npm test                              # Vitest（数量随代码演进，以实际运行为准）
 npm run lint                          # ESLint 检查
 ```
 
@@ -60,7 +62,7 @@ npm run lint                          # ESLint 检查
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
 | `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
 
-- **夜晚流程**：`GameEngine._execute_v2_night_batch()` 依次运行 `NIGHT_ACTION`（各角色发出命令）与 `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段
+- **夜晚流程**：`GameEngine._execute_night()` 分阶段执行（`_execute_staged_night()`），依次运行 `NIGHT_ACTION`（各角色发出命令）与 `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段
 - **放逐反应**：引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应
 - **白天发言/投票**：引擎内角色无关路径，经 `BaseRole`（`roles/base.py`）调用 LLM；投票通过纯校验器验证并以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）
 - **断点续跑**：调度点、夜晚批次、死亡发布、阶段推进均有持久检查点，失败后精确续跑不重放
@@ -111,12 +113,12 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等），有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
-- **发言顺序**：从死亡玩家左手边开始逆时针发言，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
-- **测试门禁**：后端当前 1902 个测试 + statement/branch 100% 覆盖（`--cov-fail-under=100`）；守卫样例证明五个核心模块 blob 不变即可扩展新角色
+- **发言顺序**：存活玩家按座位号顺序依次发言（`game_engine.py` 的 `_execute_speech_round`）；平票复投时排除已补充发言者，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
+- **测试门禁**：后端 pytest 全量 + statement/branch 100% 覆盖（`--cov-fail-under=100`），数量以实际运行为准；守卫样例证明五个核心模块 blob 不变即可扩展新角色
 
 ## 注意事项
 
-- `backend/.env` 已提交到仓库（含 API key），修改时注意不要推送到公开仓库
+- `backend/.env` 含 API key，已被 `backend/.gitignore` 忽略、**未提交到仓库**；保持该状态，不要提交或推送
 - 游戏数据存储在 `backend/data/games/`，每个游戏有独立子目录存放 JSONL 日志和角色记忆
 - 后端 Python 需要 >= 3.11
 - 前端使用 TypeScript，ESLint 平面配置格式
