@@ -23,6 +23,13 @@ class ConversationLog:
         if self._logger and self._game_id:
             self._logger.log_vote_telemetry(self._game_id, round_num, seat, **data)
 
+    def log_llm_call(
+        self, round_num: int, seat: int, phase: str, **data: object,
+    ) -> None:
+        log_call = getattr(self._logger, "log_llm_call", None)
+        if self._game_id and callable(log_call):
+            log_call(self._game_id, round_num, phase, seat, **data)
+
     def log_vote_technical_abstain(
         self, round_num: int, seat: int, *, failure_code: str,
         timeout_type: Optional[str] = None, window_id: Optional[str] = None,

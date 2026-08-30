@@ -18,6 +18,9 @@ class PromptBuilderStub:
     def build_vote_prompt(self, *args, **kwargs):
         return "choose a vote"
 
+    def build_vote_retry_prompt(self, *args, **kwargs):
+        return "compact retry prompt"
+
 
 class ModelStub:
     def __init__(self, responses):
@@ -150,14 +153,41 @@ async def test_request_action_retries_invalid_strict_action_once_with_generic_co
 @pytest.mark.asyncio
 async def test_request_action_uses_safe_fallback_after_two_invalid_actions():
     state = make_state()
-    client = ClientStub([action_tool_response(target=None), action_tool_response(target=None)])
+    client = ClientStub([
+        action_tool_response(target=None),
+        action_tool_response(target=None),
+        action_tool_response(target=None),
+    ])
     role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
 
     accepted = await role.request_action(state, object(), request_for(state))
 
     assert accepted.command.action_type == "abstain"
     assert accepted.command.target_seat is None
-    assert len(client.strict_model.messages) == 2
+    assert len(client.strict_model.messages) == 3
+
+
+@pytest.mark.asyncio
+async def test_request_action_repeats_original_prompt_without_retry_builder():
+    class PromptBuilderWithoutRetry(PromptBuilderStub):
+        build_vote_retry_prompt = None
+
+    state = make_state()
+    client = ClientStub([
+        action_tool_response(target=None),
+        action_tool_response(target=None),
+        action_tool_response(target=None),
+    ])
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderWithoutRetry(), client)
+
+    accepted = await role.request_action(state, object(), request_for(state))
+
+    assert accepted.command.action_type == "abstain"
+    assert len(client.strict_model.messages) == 3
+    # Every retry repeats the original prompt plus the correction reminder.
+    for attempt_messages in client.strict_model.messages[1:]:
+        assert attempt_messages[1].content == "choose a vote"
+        assert "previous action was invalid" in attempt_messages[-1].content
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ import { useGameStore } from '../../store/gameStore';
 
 interface Props {
   winResult: WinResult;
+  revealOnDeath: boolean;
 }
 
 const CAMP_LABELS: Record<string, string> = {
@@ -23,7 +24,7 @@ const REASON_LABELS: Record<string, string> = {
   all_villagers_dead: '所有平民出局',
 };
 
-export default function WinOverlay({ winResult }: Props) {
+export default function WinOverlay({ winResult, revealOnDeath }: Props) {
   const { dismissWinOverlay, seekTo, play } = useGameStore();
 
   const handleReplay = () => {
@@ -63,7 +64,9 @@ export default function WinOverlay({ winResult }: Props) {
         </Box>
         <Box sx={{ borderRadius: 3, px: 2, py: 1.5, bgcolor: 'action.hover' }}>
           <Typography variant="body2" color="text.secondary" align="center">
-            身份不公开：旁观回放仅展示公开事件与胜负结果。
+            {revealOnDeath
+              ? '身份公开：玩家出局时会向场上公开身份。'
+              : '身份不公开：玩家出局时不会向场上公开身份。'}
           </Typography>
         </Box>
       </DialogContent>

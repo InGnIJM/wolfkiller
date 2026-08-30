@@ -25,6 +25,15 @@ def validate_witch_action(
         return (RuleViolation("antidote_unavailable", "antidote is unavailable"),)
     if command.action_type == "save" and command.target_seat != context.facts.get("wolf_kill_target"):
         return (RuleViolation("invalid_save_target", "save target must be the wolf kill target"),)
+    if (
+        command.action_type == "save"
+        and command.target_seat == context.actor_seat
+        and context.round_number != 1
+    ):
+        return (RuleViolation(
+            "self_save_first_night_only",
+            "the witch can only save herself on the first night",
+        ),)
     if command.action_type == "poison" and context.resources.get("poison", 0) <= 0:
         return (RuleViolation("poison_unavailable", "poison is unavailable"),)
     return ()
@@ -112,7 +121,9 @@ WITCH_SPEC = RoleSpec(
         "either or both potions are spent; a null target means no werewolf attack. "
         "If both potions are spent, choose pass and use the target as information. "
         "Each night use at most one potion: "
-        "the antidote may save only that night's werewolf-kill target, while poison may "
+        "the antidote may save only that night's werewolf-kill target, and saving "
+        "yourself is allowed only on the first night (from the second night onward "
+        "you cannot use the antidote on yourself), while poison may "
         "target one living player. If the antidote and Guard protection both target that "
         "werewolf-kill target, the target dies by double-save penetration."
     ),

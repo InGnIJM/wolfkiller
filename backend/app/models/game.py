@@ -41,6 +41,7 @@ def _default_role_counts() -> dict[str, int]:
 @dataclass(init=False)
 class GameConfig:
     role_counts: dict[str, int] = field(default_factory=_default_role_counts)
+    reveal_on_death: bool = False
 
     def __init__(
         self,
@@ -51,6 +52,7 @@ class GameConfig:
         num_seers: Optional[int] = None,
         num_witches: Optional[int] = None,
         num_hunters: Optional[int] = None,
+        reveal_on_death: bool = False,
     ) -> None:
         legacy_counts = (
             ("wolf-killer-werewolf", num_werewolves, 3),
@@ -72,6 +74,7 @@ class GameConfig:
             }
         else:
             self.role_counts = _default_role_counts()
+        self.reveal_on_death = bool(reveal_on_death)
 
     @property
     def total_players(self) -> int:
@@ -153,6 +156,7 @@ class GameState:
             "game_id": self.game_id,
             "phase": self.phase.value,
             "round_number": self.round_number,
+            "reveal_on_death": self.config.reveal_on_death,
             "players": {
                 s: {
                     "seat_number": p.seat_number,

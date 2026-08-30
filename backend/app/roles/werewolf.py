@@ -71,7 +71,10 @@ WEREWOLF_SPEC = RoleSpec(
     instructions=(
         "Living Werewolves use their private channel and the registered vote to choose one "
         "living nightly kill target, or pass when the contract permits. The engine alone "
-        "resolves the selected target and every night effect."
+        "resolves the selected target and every night effect. During the day, execute the "
+        "day plan agreed in the wolf channel (who counter-claims a god role, who steers "
+        "suspicion, who stays hidden), adapting it naturally to the day's public "
+        "information without ever revealing the channel."
     ),
 )
 

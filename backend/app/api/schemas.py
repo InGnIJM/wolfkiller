@@ -13,6 +13,7 @@ class CreateGameRequest(BaseModel):
     num_seers: int = 1
     num_witches: int = 1
     num_hunters: int = 1
+    reveal_on_death: bool = False
     model_assignments: Optional[list[ModelAssignment]] = None
 
     @model_validator(mode="after")
@@ -291,6 +292,7 @@ class GameDetailResponse(_PublicResponse):
     game_id: str
     phase: PublicGamePhase
     round_number: NonNegativePublicInt
+    reveal_on_death: bool
     players: dict[PositivePublicInt, PublicPlayerResponse]
     sheriff: Optional[PositivePublicInt]
     speeches: list[PublicSpeechResponse]

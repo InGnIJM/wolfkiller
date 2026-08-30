@@ -15,6 +15,7 @@ export default function CreateGameWizard() {
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>({});
   const [constraints, setConstraints] = useState<FieldConstraints | null>(null);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [revealOnDeath, setRevealOnDeath] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -35,6 +36,7 @@ export default function CreateGameWizard() {
     try {
       const res = await createGame({
         role_counts: roleCounts,
+        reveal_on_death: revealOnDeath,
         model_assignments: [{ config_id: selectedModelId, count: total }],
       });
       navigate(`/game/${res.game_id}`);
@@ -59,6 +61,8 @@ export default function CreateGameWizard() {
           roleCounts={roleCounts}
           onRoleCountsChange={setRoleCounts}
           onConstraintsChange={setConstraints}
+          revealOnDeath={revealOnDeath}
+          onRevealOnDeathChange={setRevealOnDeath}
         />
       )}
       {step === 1 && (

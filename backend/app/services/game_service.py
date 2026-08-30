@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import shutil
+import time
 import traceback
 import uuid
 from collections.abc import Mapping
@@ -36,6 +37,7 @@ from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest, default_game_name
+from app.services.game_summary import build_and_write_summary
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,23 @@ def _model_failure_code(error: Exception, status_code: int | None) -> str:
     if status_code == 400:
         return "provider_bad_request"
     return "model_invocation_error"
+
+
+_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_retryable_model_error(error: Exception) -> bool:
+    """Transient provider failures get one immediate retry before fallback."""
+    diagnostics = _exception_diagnostics(error)
+    status_code = diagnostics.get("status_code")
+    if isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES:
+        return True
+    failure_code = _model_failure_code(
+        error, status_code if isinstance(status_code, int) else None,
+    )
+    if failure_code == "provider_timeout":
+        return True
+    return "connection" in type(error).__name__.lower()
 
 
 def _exception_diagnostics(error: BaseException) -> dict[str, object]:
@@ -138,6 +157,32 @@ def _model_error_diagnostics(error: Exception, llm_client) -> dict[str, object]:
     return details
 
 
+def _log_night_llm_telemetry(
+    game_logger, game_id: str, round_number: int, seat: int, *,
+    tool_name: str, model_id: Optional[str], prompt_chars: int,
+    elapsed_ms: int = 0, usage=None, attempts: int = 1,
+    parse_result: str, failure_code: Optional[str] = None,
+) -> None:
+    """Write one wolf-channel LLM call record; telemetry must never break the night flow."""
+    try:
+        game_logger.log_llm_call(
+            game_id, round_number, "night", seat,
+            call_kind="night", contract_id=tool_name, transport="night_json",
+            attempt=attempts, model_id=model_id, prompt_chars=prompt_chars,
+            elapsed_ms=elapsed_ms,
+            prompt_tokens=(usage.prompt_tokens if usage else None),
+            completion_tokens=(usage.completion_tokens if usage else None),
+            total_tokens=(usage.total_tokens if usage else None),
+            retried=attempts > 1, parse_result=parse_result,
+            failure_code=failure_code,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to persist wolf llm telemetry for game=%s seat=%s",
+            game_id, seat,
+        )
+
+
 def resolve_model_config(
     model_assignments: Optional[list[dict]],
     total_players: int,
@@ -199,6 +244,7 @@ def resolve_model_config(
         ),
         action_timeout_seconds=env_config.action_timeout_seconds,
         action_retry_timeout_seconds=env_config.action_retry_timeout_seconds,
+        action_final_retry_timeout_seconds=env_config.action_final_retry_timeout_seconds,
         provider_profile=config.provider_profile,
     )
     resolved_profile = ProviderRegistry().resolve(
@@ -388,6 +434,7 @@ class GameService:
         num_witches: Optional[int] = None,
         num_hunters: Optional[int] = None,
         role_counts: Optional[dict[str, int]] = None,
+        reveal_on_death: bool = False,
         model_assignments: Optional[list[dict]] = None,
     ) -> str:
         game_id = str(uuid.uuid4())[:8]
@@ -398,6 +445,7 @@ class GameService:
             num_seers=num_seers,
             num_witches=num_witches,
             num_hunters=num_hunters,
+            reveal_on_death=reveal_on_death,
         )
 
         # Resolve the stage-one model assignment into an explicit client config
@@ -420,6 +468,9 @@ class GameService:
         engine_ref = None
 
         def _night_invoke(messages, tool_name, schema, seat):
+            prompt_chars = sum(
+                len(str(message.get("content") or "")) for message in messages
+            )
             try:
                 result = llm_client.invoke_json(
                     messages,
@@ -429,7 +480,6 @@ class GameService:
                 payload = getattr(result, "payload", None)
                 if not isinstance(payload, Mapping):
                     raise ValueError("model gateway response is not a JSON object")
-                return json.dumps(dict(payload), ensure_ascii=False)
             except Exception as error:
                 if engine_ref is not None:
                     schedule_point = (
@@ -453,7 +503,29 @@ class GameService:
                             "Failed to persist wolf model error for game=%s seat=%s",
                             game_id, seat,
                         )
+                    _log_night_llm_telemetry(
+                        engine_ref.game_logger, game_id,
+                        engine_ref.state.round_number, seat,
+                        tool_name=tool_name,
+                        model_id=getattr(llm_client, "model_name", None),
+                        prompt_chars=prompt_chars,
+                        parse_result="error",
+                        failure_code=type(error).__name__,
+                    )
                 raise
+            if engine_ref is not None:
+                _log_night_llm_telemetry(
+                    engine_ref.game_logger, game_id,
+                    engine_ref.state.round_number, seat,
+                    tool_name=tool_name,
+                    model_id=getattr(llm_client, "model_name", None),
+                    prompt_chars=prompt_chars,
+                    elapsed_ms=getattr(result, "elapsed_ms", 0),
+                    usage=getattr(result, "usage", None),
+                    attempts=getattr(result, "llm_attempts", 1),
+                    parse_result="ok",
+                )
+            return json.dumps(dict(payload), ensure_ascii=False)
 
         director = NightDirector(snapshot, _night_invoke)
 
@@ -493,7 +565,10 @@ class GameService:
         # Persist to disk immediately so the game shows up after restart
         self._manifest.add_game(
             game_id,
-            {"role_counts": dict(config.role_counts)},
+            {
+                "role_counts": dict(config.role_counts),
+                "reveal_on_death": config.reveal_on_death,
+            },
             model_snapshot=model_snapshot,
             name=default_game_name(config.total_players),
         )
@@ -588,7 +663,7 @@ class GameService:
                 return command if command is not None else PipelineActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None,
-                    reasoning="safe fallback",
+                    reasoning="系统异常，本轮未行动",
                 )
             role_spec = snapshot.require(request.role_id)
             engine = self._engines.get(context.game_id)
@@ -613,11 +688,25 @@ class GameService:
                 HumanMessage(content=prompt),
             ]
             llm_client = None
+            command = None
+            failure: Exception | None = None
             try:
                 llm_client = client_provider(request.actor_seat)
                 result = llm_client.invoke_action(messages, request.contract)
                 command = PipelineActionCommand.model_validate(result.payload)
             except Exception as error:
+                failure = error
+                if _is_retryable_model_error(error):
+                    # Transient provider blips (timeout/rate limit/connection)
+                    # get one immediate retry so a night action is not
+                    # silently forfeited on a single flaky call.
+                    try:
+                        result = llm_client.invoke_action(messages, request.contract)
+                        command = PipelineActionCommand.model_validate(result.payload)
+                        failure = None
+                    except Exception as retry_error:
+                        failure = retry_error
+            if failure is not None:
                 logger.warning(
                     "LLM action command failed for seat=%s contract=%s point=%s; "
                     "degrading to safe fallback",
@@ -636,7 +725,7 @@ class GameService:
                             contract_id=request.contract.contract_id,
                             schedule_point=request.contract.schedule_point.value,
                             attempt=attempt,
-                            **_model_error_diagnostics(error, llm_client),
+                            **_model_error_diagnostics(failure, llm_client),
                         )
                     except Exception:
                         logger.exception(
@@ -648,7 +737,7 @@ class GameService:
                 return PipelineActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None,
-                    reasoning="safe fallback",
+                    reasoning="系统异常，本轮未行动",
                 )
             return command
         return provider
@@ -776,6 +865,12 @@ class GameService:
             phase="game_over",
             winner=wr_dict.get("winning_camp"),
         )
+        try:
+            build_and_write_summary(self.data_dir, game_id)
+        except Exception:
+            logger.exception(
+                "Failed to write benchmark summary for game=%s", game_id,
+            )
         await self.ws_manager.broadcast(
             game_id, "game_over", win_result=wr_dict,
             state=state.get_public_state(),

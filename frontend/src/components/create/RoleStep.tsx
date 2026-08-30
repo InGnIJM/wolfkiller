@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, Chip, IconButton, Stack, Typography } from '@mui/material';
+import { Box, Chip, FormControlLabel, IconButton, Stack, Typography } from '@mui/material';
+import Checkbox from '@mui/material/Checkbox';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 
@@ -12,10 +13,13 @@ interface Props {
   roleCounts: Record<string, number>;
   onRoleCountsChange: (counts: Record<string, number>) => void;
   onConstraintsChange: (constraints: FieldConstraints) => void;
+  revealOnDeath: boolean;
+  onRevealOnDeathChange: (value: boolean) => void;
 }
 
 export default function RoleStep({
   roleCounts, onRoleCountsChange, onConstraintsChange,
+  revealOnDeath, onRevealOnDeathChange,
 }: Props) {
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
@@ -154,6 +158,27 @@ export default function RoleStep({
       <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
         共 {total} 人
       </Typography>
+
+      <Box
+        sx={{
+          mt: 2, p: 1.5, borderRadius: 2, bgcolor: 'background.paper',
+          border: '1px solid', borderColor: 'divider',
+        }}
+      >
+        <FormControlLabel
+          control={(
+            <Checkbox
+              checked={revealOnDeath}
+              onChange={(event) => onRevealOnDeathChange(event.target.checked)}
+            />
+          )}
+          label="明牌局：玩家出局时立即公开身份"
+          slotProps={{ typography: { variant: 'body2' } }}
+        />
+        <Typography variant="body2" color="text.secondary">
+          开启后，夜晚死亡、放逐、猎人开枪带走的玩家都会当场亮明身份，所有 Agent 与观众都能看到。
+        </Typography>
+      </Box>
     </Box>
   );
 }

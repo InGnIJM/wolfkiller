@@ -50,6 +50,16 @@ def test_applicability_and_semantic_validation() -> None:
     assert validate_witch_action(depleted, command("poison", 3))[0].code == "poison_unavailable"
 
 
+def test_self_save_is_first_night_only() -> None:
+    # Night 1: the witch may spend the antidote on herself when she is the target.
+    assert validate_witch_action(context(target=1), command("save", 1)) == ()
+    # From night 2 on, self-save is rejected with a dedicated violation.
+    later = replace(context(target=1), round_number=2)
+    assert validate_witch_action(later, command("save", 1))[0].code == "self_save_first_night_only"
+    # Saving other players is unaffected on later nights.
+    assert validate_witch_action(replace(context(), round_number=2), command("save", 2)) == ()
+
+
 def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     saved = resolve_witch_action(context(), command("save", 2))
     poisoned = resolve_witch_action(context(), command("poison", 3))

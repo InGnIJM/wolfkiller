@@ -48,6 +48,9 @@ class LLMConfig:
     action_retry_timeout_seconds: float = float(
         os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "120")
     )
+    action_final_retry_timeout_seconds: float = float(
+        os.getenv("LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS", "30")
+    )
 
 
 class GameConfig:

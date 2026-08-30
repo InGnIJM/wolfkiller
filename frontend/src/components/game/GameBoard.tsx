@@ -19,7 +19,7 @@ interface Props {
 export default function GameBoard({ onBack, gameId }: Props) {
   const { connect, disconnect } = useWebSocket();
   const {
-    players, phase, roundNumber, winResult, showWinOverlay,
+    players, phase, roundNumber, winResult, showWinOverlay, revealOnDeath,
     showHistory, currentSpeaker,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
   } = useGameStore();
@@ -40,7 +40,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
         // Fetch game detail first to get all player seats
         const detail = await fetchGameDetail(gameId);
         if (!cancelled) {
-          initPlayersFromDetail(detail.players);
+          initPlayersFromDetail(detail.players, detail.reveal_on_death ?? false);
         }
         // Then fetch logs
         const logs = await fetchGameLogs(gameId);
@@ -95,7 +95,10 @@ export default function GameBoard({ onBack, gameId }: Props) {
         if (active
           && detailResult.status === 'fulfilled'
           && logsResult.status === 'fulfilled') {
-          initPlayersFromDetail(detailResult.value.players);
+          initPlayersFromDetail(
+            detailResult.value.players,
+            detailResult.value.reveal_on_death ?? false,
+          );
           mergeLogs(logsResult.value);
         }
       } catch {
@@ -206,7 +209,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
         {showHistory && <HistoryPanel onClose={toggleHistory} />}
       </Box>
 
-      {showWinOverlay && winResult && <WinOverlay winResult={winResult} />}
+      {showWinOverlay && winResult && (
+        <WinOverlay winResult={winResult} revealOnDeath={revealOnDeath} />
+      )}
     </Box>
   );
 }

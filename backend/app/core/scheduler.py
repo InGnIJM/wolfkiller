@@ -224,7 +224,7 @@ class Scheduler:
             raise PipelinePaused("rule execution timed out") from None
         elapsed = (monotonic() - started) * 1000
         if elapsed > self.hook_soft_ms and (faults := self._faults.get()) is not None:
-            faults.append({"code": "slow_rule", "label": label, "elapsed_bucket": "soft_exceeded"})
+            faults.append({"code": "slow_rule", "label": label, "elapsed_ms": int(elapsed), "elapsed_bucket": "soft_exceeded"})
         if successful: return value
         if not isinstance(value, Exception): raise value
         if isinstance(value, RuleExecutionError): raise value
@@ -304,7 +304,7 @@ class Scheduler:
     def _fallback(self, state: GameState, request: IssuedActionRequest,
                   context: ActionContext) -> tuple[ActionCommand, ActionContext]:
         contract = request.contract
-        command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="safe fallback")
+        command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="系统异常，本轮未行动")
         rule_context = self.projector.project_selected_target(
             state, request, context, command, self.registry
         )

@@ -41,15 +41,18 @@ async def test_create_game_passes_dynamic_role_counts_and_returns_canonical_conf
     service.create_game = AsyncMock(return_value="game-123")
     service.get_game_state.return_value = SimpleNamespace(
         players={1: object(), 2: object(), 3: object(), 4: object()},
-        config=SimpleNamespace(role_counts=counts),
+        config=SimpleNamespace(role_counts=counts, reveal_on_death=False),
     )
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
     response = await game_routes.create_game(CreateGameRequest(role_counts=counts))
 
-    service.create_game.assert_awaited_once_with(role_counts=counts, model_assignments=None)
+    service.create_game.assert_awaited_once_with(
+        role_counts=counts, reveal_on_death=False, model_assignments=None,
+    )
     assert response.config == {
         "role_counts": counts,
+        "reveal_on_death": False,
         "num_werewolves": 1,
         "num_villagers": 3,
         "num_seers": 0,
@@ -72,7 +75,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
     service.create_game = AsyncMock(return_value="game-456")
     service.get_game_state.return_value = SimpleNamespace(
         players={seat: object() for seat in range(1, 6)},
-        config=SimpleNamespace(role_counts=counts),
+        config=SimpleNamespace(role_counts=counts, reveal_on_death=False),
     )
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
@@ -86,6 +89,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
         num_seers=1,
         num_witches=0,
         num_hunters=0,
+        reveal_on_death=False,
         model_assignments=None,
     )
     assert response.config["role_counts"] == counts
@@ -208,6 +212,32 @@ async def test_get_game_returns_404_when_missing(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reveal_on_death", [True, False])
+async def test_get_game_returns_public_reveal_on_death(monkeypatch, reveal_on_death):
+    class PublicState:
+        def get_public_state(self):
+            return {
+                "game_id": "present",
+                "phase": "waiting",
+                "round_number": 0,
+                "reveal_on_death": reveal_on_death,
+                "players": {},
+                "sheriff": None,
+                "speeches": [],
+                "death_history": [],
+                "win_result": None,
+            }
+
+    service = MagicMock()
+    service.get_game_state.return_value = PublicState()
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.get_game("present")
+
+    assert response.model_dump()["reveal_on_death"] is reveal_on_death
+
+
+@pytest.mark.asyncio
 async def test_get_game_projects_only_public_state_without_reading_players(monkeypatch):
     class PublicOnlyState:
         def __init__(self):
@@ -223,6 +253,7 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
                 "game_id": "present",
                 "phase": "speech",
                 "round_number": 3,
+                "reveal_on_death": False,
                 "players": {
                     1: {"seat_number": 1, "is_alive": True, "is_sheriff": False,
                         "role": "wolf-killer-villager", "camp": "good"},
@@ -268,6 +299,7 @@ async def test_get_game_accepts_initial_real_game_state_without_private_fields(m
     assert response.round_number == 0
     serialized = response.model_dump()
     assert serialized["phase"] == "waiting"
+    assert serialized["reveal_on_death"] is False
     assert not {"check_results", "has_antidote", "has_poison", "has_gun"} & _all_keys(serialized)
 
 
@@ -511,6 +543,54 @@ def test_public_replay_skips_date_only_timestamp_without_changing_other_event_st
         "timestamp": "2026-01-01T00:00:01Z",
         "payload": {"phase": "speech", "round_number": 1},
     }]
+
+
+def test_public_technical_abstain_projection_hides_private_diagnostics():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "operation": "vote_technical_abstain",
+        "round": 1,
+        "phase": "vote_casting",
+        "seat": 8,
+        "data": {
+            "failure_code": "request_timeout",
+            "timeout_type": "local_deadline",
+            "window_id": "g:1:vote_casting:1:cast_vote:v2",
+        },
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "technical_abstain",
+        "payload": {
+            "voter_seat": 8,
+            "round_number": 1,
+            "failure_code": "request_timeout",
+        },
+    }]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        # wrong phase
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "vote_technical_abstain",
+         "round": 1, "phase": "speech", "seat": 8,
+         "data": {"failure_code": "request_timeout"}},
+        # missing seat
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "vote_technical_abstain",
+         "round": 1, "phase": "vote_casting",
+         "data": {"failure_code": "request_timeout"}},
+        # missing failure code
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "vote_technical_abstain",
+         "round": 1, "phase": "vote_casting", "seat": 8, "data": {}},
+        # blank failure code
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "vote_technical_abstain",
+         "round": 1, "phase": "vote_casting", "seat": 8,
+         "data": {"failure_code": ""}},
+    ],
+)
+def test_public_technical_abstain_rejects_invalid_records(record):
+    assert game_routes._public_operation_events(record) == []
 
 
 def test_public_vote_result_projection_omits_tally_and_private_fields():

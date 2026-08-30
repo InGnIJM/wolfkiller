@@ -13,3 +13,5 @@ node_modules/
 .superpowers/
 .worktrees/
 backend/scripts/
+
+.zcode/

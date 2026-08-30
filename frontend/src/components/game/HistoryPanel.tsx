@@ -267,6 +267,13 @@ function EventCard({
         </Typography>
       );
       break;
+    case 'technical_abstain':
+      content = (
+        <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
+          {event.payload.voter_seat}号 系统代投弃权 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
     case 'night_action':
       content = (
         <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>

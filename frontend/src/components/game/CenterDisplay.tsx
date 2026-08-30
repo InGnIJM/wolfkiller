@@ -283,6 +283,10 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
     case 'vote_result':
       text = entry.payload.exiled_seat === null ? '平票，无人被放逐' : `${entry.payload.exiled_seat}号被放逐`;
       break;
+    case 'technical_abstain':
+      text = `${entry.payload.voter_seat}号 系统代投弃权`;
+      tone = '#F4B3B6';
+      break;
     case 'narration':
       text = entry.payload.title;
       break;

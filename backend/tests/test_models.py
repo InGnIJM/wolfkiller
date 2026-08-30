@@ -18,6 +18,7 @@ class TestGameConfig:
             "wolf-killer-hunter": 1,
         }
         assert config.total_players == 9
+        assert config.reveal_on_death is False
 
     def test_role_distribution(self):
         config = GameConfig()

@@ -133,6 +133,7 @@ describe('CreateGameWizard step 2 and submission', () => {
     await waitFor(() =>
       expect(createGame).toHaveBeenCalledWith({
         role_counts: expect.objectContaining({ 'wolf-killer-werewolf': 3 }),
+        reveal_on_death: false,
         model_assignments: [{ config_id: null, count: 9 }],
       }),
     );

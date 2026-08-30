@@ -89,7 +89,7 @@ WolfKiller/
 
 ## 白天生命周期
 
-- 白天发言、投票、平票复投、遗言是引擎内与角色无关的行为，经 `BaseRole`（`roles/base.py`）调用 LLM：发言走 tool calling 两层防线 + 字数校验 + 兜底；投票走 strict tool → JSON 降级 → 安全 fallback，并按并发上限（`VOTE_CONCURRENCY`，默认 5）执行
+- 白天发言、投票、平票复投、遗言是引擎内与角色无关的行为，经 `BaseRole`（`roles/base.py`）调用 LLM：发言走 tool calling 两层防线 + 字数校验 + 兜底；投票走三级重试梯子（strict tool 90s → JSON 压缩上下文 120s → JSON 强格式短重试 30s，`LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS`），全部失败才显式技术弃票，并按并发上限（`VOTE_CONCURRENCY`，默认 5）执行
 - 投票通过纯校验器验证，以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）；阶段超时的缺票席位统一转换为显式技术弃票后再结算
 - 状态机（`core/state_machine.py`）以 `(current_phase, event, next_phase)` 三元组表驱动：
 

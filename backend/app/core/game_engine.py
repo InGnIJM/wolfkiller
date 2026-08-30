@@ -12,7 +12,9 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from app.models.game import GameState, GamePhase, GameConfig, PlayerState
-from app.models.actions import VoteAction, SpeechRecord, DeathReport, WinResult
+from app.models.actions import (
+    VoteAction, SpeechRecord, DeathReport, WinResult, is_last_words_eligible,
+)
 from app.models.contracts import ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
@@ -297,6 +299,13 @@ class GameEngine:
                 "camp": spec.camp_id,
                 "is_alive": True,
             }
+        self.game_logger.log_operation(
+            self.game_id, "game_config", 0, "role_deal",
+            data={
+                "role_counts": dict(self.config.role_counts),
+                "reveal_on_death": self.config.reveal_on_death,
+            },
+        )
         self.game_logger.log_role_init(self.game_id, players_dict)
 
     # =================================================================
@@ -308,6 +317,7 @@ class GameEngine:
             await self._wait_if_paused()
             phase = self.sm.get_state()
 
+            started = time.monotonic()
             if phase == GamePhase.NIGHT:
                 await self._execute_night()
             elif phase == GamePhase.DAWN:
@@ -320,6 +330,22 @@ class GameEngine:
                 await self._execute_vote_casting()
             elif phase == GamePhase.VOTE_RESOLUTION:
                 await self._execute_vote_resolution()
+            self._log_stage_telemetry("phase", phase.value, started)
+
+    def _log_stage_telemetry(self, scope: str, stage: str, started: float) -> None:
+        """Record one engine segment duration for benchmark analysis."""
+        try:
+            self.game_logger.log_operation(
+                self.game_id, "stage_telemetry", self.state.round_number,
+                self.state.phase.value,
+                data={"scope": scope, "stage": stage,
+                      "elapsed_ms": int((time.monotonic() - started) * 1000)},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist stage telemetry for game=%s stage=%s",
+                self.game_id, stage,
+            )
 
     async def _wait_if_paused(self) -> None:
         while self._paused and self._running:
@@ -480,7 +506,7 @@ class GameEngine:
             self._pending_night_batch = pending
 
         if pending.stage == 6:
-            title, text = director.narration("witch_open")
+            title, text = director.witch_narration(state.last_wolf_kill_target)
             await self._narrate(title, text)
             pending = replace(pending, stage=7); self._pending_night_batch = pending
 
@@ -527,7 +553,25 @@ class GameEngine:
 
     async def _execute_v2_point(self, point: SchedulePoint) -> PointResult:
         pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
-        return await asyncio.to_thread(pipeline.execute_v2_point, self.state, point)
+        result = await asyncio.to_thread(pipeline.execute_v2_point, self.state, point)
+        self._log_hook_faults(point, result.faults)
+        return result
+
+    def _log_hook_faults(self, point: SchedulePoint, faults) -> None:
+        """Persist scheduler hook faults (e.g. slow rules) for benchmark analysis."""
+        for fault in faults:
+            payload = dict(fault)
+            try:
+                self.game_logger.log_operation(
+                    self.game_id, "stage_telemetry", self.state.round_number,
+                    self.state.phase.value,
+                    data={"scope": "hook", "stage": point.value, **payload},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist hook fault for game=%s point=%s",
+                    self.game_id, point.value,
+                )
 
     def _pipeline_night_deaths(self, result: PipelineResult) -> tuple[_PendingDeath, ...]:
         deaths, seen = [], set()
@@ -605,6 +649,7 @@ class GameEngine:
             snapshot = pending.deaths[pending.event_cursor]
             await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id,
                 death=DeathReport(snapshot.seat, snapshot.cause, snapshot.round_number))
+            self._reveal_on_death(snapshot.seat)
             pending = replace(pending, event_cursor=pending.event_cursor + 1); self._pending_night_completion = pending
         if pending.stage == 0:
             self.game_logger.log_deaths(self.game_id, self.state.round_number,
@@ -663,16 +708,14 @@ class GameEngine:
         """Generate last words for a dying player. Standalone function with validation.
 
         Eligibility:
-        - First-night deaths (any night cause) in round 1
+        - First-night eligible night deaths
         - Vote-exiled players (any round)
 
         Validation:
         - Player must exist and not have already given last words
         - Death cause must be eligible
         """
-        is_first_night_death = cause != "exile" and death_round == 1
-        is_exile = cause == "exile"
-        if not (is_first_night_death or is_exile):
+        if not is_last_words_eligible(cause, death_round):
             return None
 
         death_key = (seat, death_round, cause)
@@ -748,6 +791,7 @@ class GameEngine:
                 for seat, player in alive
                 if seat not in self.state.supplemental_speakers
             ]
+        alive = self._rotate_speech_order(alive)
         self.state.speaking_order = [s for s, _ in alive]
         for seat, player in alive:
             self.state.current_speaker = seat
@@ -785,6 +829,41 @@ class GameEngine:
         self.state.speaking_order = []
         self.sm.transition(SM_Event.SPEECHES_COMPLETE)
         await self._broadcast_phase_change()
+
+    def _rotate_speech_order(
+        self, alive: list[tuple[int, PlayerState]],
+    ) -> list[tuple[int, PlayerState]]:
+        """Start speeches after the most recent death, wrapping around the table.
+
+        Night deaths and exiles both append to ``death_history`` before the
+        speech round runs, so its last entry is the anchor; with no deaths yet
+        (peaceful first night) the ascending seat order is kept.
+        """
+        if not alive or not self.state.death_history:
+            return alive
+        anchor = self.state.death_history[-1].player_seat
+        seats = [seat for seat, _ in alive]
+        start = next(
+            (index for index, seat in enumerate(seats) if seat > anchor), 0,
+        )
+        return alive[start:] + alive[:start]
+
+    def _reveal_on_death(self, seat: int) -> None:
+        """Announce a dead player's identity to everyone (明牌局 option)."""
+        if not self.config.reveal_on_death:
+            return
+        player = self.state.players.get(seat)
+        if player is None or player.revealed_role is not None:
+            return
+        player.revealed_role = player.role
+        try:
+            display_name = builtin_registry.freeze().specs[player.role].display_name
+        except KeyError:
+            display_name = player.role
+        self.conversation_log.add_system_message(
+            f"{seat}号玩家出局，身份是：{display_name}。",
+            self.state.round_number, "public",
+        )
 
     # =================================================================
     # Vote Casting Phase
@@ -954,6 +1033,8 @@ class GameEngine:
     async def _execute_tiebreak(self, candidates: list[int]) -> None:
         """Run exactly one persisted supplemental-speech and re-vote round."""
         if not self.state.is_tiebreak:
+            # Emit the first-round vote_result frame so replays show the tie.
+            self.resolve_votes()
             self.conversation_log.add_vote_result(
                 self.state.votes, None, self.state.round_number,
             )
@@ -976,8 +1057,9 @@ class GameEngine:
             await self._execute_speech_round()
 
         if alive_seats - self.state.voted_seats:
-            self.sm.set_state(GamePhase.VOTE_CASTING)
-            await self._broadcast_phase_change()
+            if self.sm.get_state() is not GamePhase.VOTE_CASTING:
+                self.sm.set_state(GamePhase.VOTE_CASTING)
+                await self._broadcast_phase_change()
             await self._execute_vote_casting()
         else:
             self.sm.set_state(GamePhase.VOTE_RESOLUTION)
@@ -997,6 +1079,7 @@ class GameEngine:
                         player_seat=exiled_seat, cause="exile",
                         round_number=self.state.round_number,
                     ))
+                self._reveal_on_death(exiled_seat)
                 await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(
                     exiled_seat, "exile", self.state.round_number,
@@ -1022,6 +1105,9 @@ class GameEngine:
             return
 
         if not tally:
+            # Emit the vote_result frame even when nobody voted, so replays
+            # do not silently skip this day's resolution.
+            self.resolve_votes()
             self.conversation_log.add_vote_result(
                 self.state.votes, None, self.state.round_number,
             )
@@ -1047,6 +1133,7 @@ class GameEngine:
                         player_seat=exiled_seat, cause="exile",
                         round_number=self.state.round_number,
                     ))
+                self._reveal_on_death(exiled_seat)
                 await self._run_exile_reaction(exiled_seat)
                 await self.give_last_words(exiled_seat, "exile", self.state.round_number)
 
@@ -1120,6 +1207,7 @@ class GameEngine:
             )
             for death in deaths:
                 await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
+                self._reveal_on_death(death.player_seat)
             self.game_logger.log_deaths(self.game_id, self.state.round_number,
                                         [death.to_dict() for death in deaths])
 
@@ -1144,8 +1232,10 @@ class GameEngine:
             result = await role.speak(self.state, self.conversation_log, context)
         except Exception as e:
             logger.error(f"Speech error (seat={seat}, context={context}): {e}", exc_info=True)
-            result = None
+            return self._emergency_speech(seat, context)
 
+        if result is None:
+            return None
         if not result:
             logger.warning(
                 f"Seat {seat}: role.speak() returned empty/None for context={context}. "

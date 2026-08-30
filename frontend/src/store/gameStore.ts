@@ -26,6 +26,7 @@ interface DerivedState {
 
 interface GameStore extends DerivedState {
   gameId: string | null;
+  revealOnDeath: boolean;
   connected: boolean;
   isPaused: boolean;
   timeline: PublicReplayEvent[];
@@ -49,7 +50,7 @@ interface GameStore extends DerivedState {
   setPaused: (paused: boolean) => void;
   setCurrentSpeaker: (seat: number | null) => void;
 
-  initPlayersFromDetail: (players: Record<number, PublicPlayerState>) => void;
+  initPlayersFromDetail: (players: Record<number, PublicPlayerState>, revealOnDeath?: boolean) => void;
   loadLogs: (logs: GameLogs) => void;
   mergeLogs: (logs: GameLogs) => void;
   seekTo: (index: number) => void;
@@ -77,6 +78,7 @@ const emptyDerivedState: DerivedState = {
 
 const initialState = {
   gameId: null as string | null,
+  revealOnDeath: false,
   connected: false,
   ...emptyDerivedState,
   isPaused: false,
@@ -219,6 +221,9 @@ function deriveState(
         nightActions.push(event.payload);
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
+      case 'technical_abstain':
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
       case 'narration':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         currentSpeaker = null;
@@ -279,6 +284,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const currentPublicPlayers = copyPlayers(state.players);
     set({
       gameId: state.game_id,
+      revealOnDeath: state.reveal_on_death ?? false,
       phase: state.phase,
       roundNumber: state.round_number,
       players: copyPlayers(currentPublicPlayers),
@@ -321,20 +327,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setPaused: (paused) => set({ isPaused: paused }),
   setCurrentSpeaker: (seat) => set({ currentSpeaker: seat }),
 
-  initPlayersFromDetail: (players) => {
+  initPlayersFromDetail: (players, revealOnDeath = false) => {
     const currentPublicPlayers = copyPlayers(players);
     const initialPlayers = buildInitialPlayers(currentPublicPlayers);
     const { timeline, timelineIndex } = get();
     if (timeline.length === 0) {
       const publicPlayers = copyPlayers(initialPlayers);
       applyCurrentSheriffSnapshot(publicPlayers, currentPublicPlayers);
-      set({ players: publicPlayers, initialPlayers, currentPublicPlayers });
+      set({ players: publicPlayers, initialPlayers, currentPublicPlayers, revealOnDeath });
       return;
     }
     set({
       ...deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers),
       initialPlayers,
       currentPublicPlayers,
+      revealOnDeath,
     });
   },
 

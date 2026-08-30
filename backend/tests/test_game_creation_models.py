@@ -166,6 +166,7 @@ async def test_create_game_route_passes_assignments_and_returns_snapshot(monkeyp
 
     service.create_game.assert_awaited_once_with(
         role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 1},
+        reveal_on_death=False,
         model_assignments=[{"config_id": None, "count": 2}],
     )
     assert response.model_snapshot == [{"config_id": None, "name": "环境默认 (.env)"}]

@@ -16,9 +16,9 @@ Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家�
 cd backend
 pip install -r requirements.txt            # 安装依赖
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动后端（开发模式）
-python -m pytest tests/ -q                 # 运行所有测试
+python -m pytest tests app -q              # 运行所有测试（含 app/ 内嵌测试目录）
 python -m pytest tests/test_xxx.py -q      # 运行单个测试文件
-python -m pytest tests --cov=app --cov-branch --cov-fail-under=100 -q   # 全量覆盖率门禁（当前 100%）
+python -m pytest tests app --cov=app --cov-branch -q   # 全量测试 + 覆盖率；新增代码需保持 100% 分支覆盖（llm_client 的 env 构造分支为既有未覆盖项）
 ```
 
 ### 前端
@@ -113,7 +113,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等），有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
-- **发言顺序**：存活玩家按座位号顺序依次发言（`game_engine.py` 的 `_execute_speech_round`）；平票复投时排除已补充发言者，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
+- **发言顺序**：存活玩家从"最近死亡玩家的下一位存活玩家"开始按座位号依次发言（`game_engine.py` 的 `_execute_speech_round`；无死亡记录时回退为最小存活座位开局）；平票复投时排除断点续跑中已完成补充发言的座位，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
 - **测试门禁**：后端 pytest 全量 + statement/branch 100% 覆盖（`--cov-fail-under=100`），数量以实际运行为准；守卫样例证明五个核心模块 blob 不变即可扩展新角色
 
 ## 注意事项
@@ -124,4 +124,4 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - 前端使用 TypeScript，ESLint 平面配置格式
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断
 - LLM 配置在 `backend/.env`（含 API key、model、temperature 等），游戏参数在 `backend/app/config.py`
-- 修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新 `tests/test_guard_extension.py` 中的 `CORE_BLOBS_BEFORE_GUARD` 与对应源码门禁测试
+- 修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新源码门禁测试（注意：不是 `test_guard_extension.py` 的 blob 清单）：`tests/test_game_engine.py` 的引擎禁词测试、`tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 的角色名禁词测试、`tests/test_prompt_renderer.py` 的渲染器禁词测试

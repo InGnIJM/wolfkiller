@@ -572,6 +572,29 @@ describe('public replay state', () => {
     expect(useGameStore.getState().initialPlayers[1].camp).toBe('werewolf');
   });
 
+  it('normalizes the reveal-on-death setting from public state and resets it', () => {
+    const state: PublicGameState = {
+      game_id: 'game-1',
+      phase: 'waiting',
+      round_number: 0,
+      reveal_on_death: true,
+      players: currentPlayers,
+      sheriff: null,
+      speeches: [],
+      death_history: [],
+      win_result: null,
+    };
+
+    useGameStore.getState().setGameState(state);
+    expect(useGameStore.getState().revealOnDeath).toBe(true);
+
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().revealOnDeath).toBe(false);
+
+    useGameStore.getState().setGameState({ ...state, reveal_on_death: undefined });
+    expect(useGameStore.getState().revealOnDeath).toBe(false);
+  });
+
   it('updates direct public websocket state and controls', () => {
     const state: PublicGameState = {
       game_id: 'game-1',

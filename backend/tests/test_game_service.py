@@ -214,7 +214,9 @@ class TestGameService:
 
         assert service.get_game_state(game_id).config.role_counts == counts
         service._manifest.add_game.assert_called_once_with(
-            game_id, {"role_counts": counts}, model_snapshot=[], name=ANY,
+            game_id,
+            {"role_counts": counts, "reveal_on_death": False},
+            model_snapshot=[], name=ANY,
         )
 
     @pytest.mark.asyncio
@@ -441,7 +443,7 @@ class TestGameService:
 
         vote = engine._director.wolf_vote_turn(engine.state, 1, [], [])
 
-        assert vote.reasoning == "safe fallback"
+        assert vote.reasoning == "系统异常，本轮未行动"
         log_path = tmp_path / "games" / game_id / "game.log"
         assert log_path.exists(), "wolf model error should be persisted"
         record = json.loads(log_path.read_text("utf-8").splitlines()[-1])
@@ -545,7 +547,9 @@ class TestGameService:
 
         entry = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
 
-        assert entry["config"] == {"role_counts": recovered_counts}
+        assert entry["config"] == {
+            "role_counts": recovered_counts, "reveal_on_death": False,
+        }
 
     def test_manifest_extracts_fallback_votes_and_ignores_bad_lines(self, tmp_path):
         log = tmp_path / "game.log"
@@ -724,6 +728,7 @@ class TestGameService:
         assert entries["indexed"] == valid_entry
         assert entries["recovered"]["config"] == {
             "role_counts": {"wolf-killer-villager": 1},
+            "reveal_on_death": False,
         }
 
     def test_manifest_ignores_non_mapping_role_init_players(self, tmp_path):
@@ -741,6 +746,47 @@ class TestGameService:
 
         assert entry["player_count"] == 0
         assert entry["config"] == {}
+
+    def test_manifest_extracts_reveal_on_death_from_game_config_record(self, tmp_path):
+        games = tmp_path / "games"
+        games.mkdir()
+        log = games / "flagged"
+        log.mkdir()
+        (log / "game.log").write_text(
+            json.dumps({
+                "operation": "game_config",
+                "data": {"role_counts": {"wolf-killer-villager": 1}, "reveal_on_death": True},
+            }) + "\n"
+            + json.dumps({
+                "operation": "role_init",
+                "data": {"players": {"1": {"role": "wolf-killer-villager"}}},
+            }) + "\n",
+            encoding="utf-8",
+        )
+        log2 = games / "unparsed"
+        log2.mkdir()
+        (log2 / "game.log").write_text(
+            json.dumps({
+                "operation": "game_config",
+                "data": {"reveal_on_death": "yes"},
+            }) + "\n"
+            + json.dumps({
+                "operation": "role_init",
+                "data": {"players": {"1": {"role": "wolf-killer-villager"}}},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        entries = GameManifest(str(tmp_path)).load_or_rebuild()
+
+        assert entries["flagged"]["config"] == {
+            "role_counts": {"wolf-killer-villager": 1},
+            "reveal_on_death": True,
+        }
+        assert entries["unparsed"]["config"] == {
+            "role_counts": {"wolf-killer-villager": 1},
+            "reveal_on_death": False,
+        }
 
     def test_manifest_keeps_valid_role_init_after_malformed_players_record(
         self, tmp_path, caplog
@@ -769,7 +815,7 @@ class TestGameService:
         assert entry["config"] == {"role_counts": {
             "wolf-killer-werewolf": 1,
             "wolf-killer-villager": 1,
-        }}
+        }, "reveal_on_death": False}
         assert "malformed role_init players" in caplog.text
 
     def test_manifest_ignores_invalid_phase_changes(self, tmp_path):
@@ -858,7 +904,9 @@ class TestGameService:
 
         result = GameManifest(str(tmp_path)).load_or_rebuild()["recovered"]
 
-        assert result["config"] == {"role_counts": recovered_counts}
+        assert result["config"] == {
+            "role_counts": recovered_counts, "reveal_on_death": False,
+        }
         assert result["player_count"] == 2
         assert result["created_at"] == "index-time"
         assert result["phase"] == "night"
@@ -965,7 +1013,7 @@ class TestGameService:
         assert result["config"] == {"role_counts": {
             "wolf-killer-werewolf": 1,
             "wolf-killer-villager": 1,
-        }}
+        }, "reveal_on_death": False}
 
     @pytest.mark.parametrize(
         "index_config",
@@ -1767,6 +1815,109 @@ class TestCommandProvider:
                 assert command.target_seat is None
         assert any("degrading to safe fallback" in record.message for record in caplog.records)
 
+    def _provider_with_llm(self, service, llm):
+        from unittest.mock import MagicMock
+        from app.core.night_flow import NightDirector
+        snapshot = builtin_registry.freeze()
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        director = NightDirector(snapshot, lambda messages: None)
+        return service._command_provider(
+            snapshot, renderer, lambda seat: llm, director,
+        )
+
+    def test_provider_retries_transient_timeout_and_recovers(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from app.agents.output_parser import extract_json_object
+
+        class ReadTimeout(Exception):
+            pass
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        payload = extract_json_object(
+            '{"action_type":"pass","target_seat":null,"reasoning":"ok"}'
+        )
+        llm.invoke_action.side_effect = [
+            ReadTimeout("provider read timed out"),
+            SimpleNamespace(payload=payload),
+        ]
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "pass"
+        assert llm.invoke_action.call_count == 2
+
+    def test_provider_retries_once_then_falls_back_on_persistent_timeout(self):
+        class APITimeoutError(Exception):
+            pass
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        llm.invoke_action.side_effect = APITimeoutError("provider timeout")
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "pass"
+        assert command.reasoning == "系统异常，本轮未行动"
+        assert llm.invoke_action.call_count == 2
+
+    def test_provider_retries_rate_limit_error_by_status_code(self):
+        import httpx
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from app.agents.output_parser import extract_json_object
+        from openai import RateLimitError
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        payload = extract_json_object(
+            '{"action_type":"check","target_seat":2,"reasoning":"ok"}'
+        )
+        llm.invoke_action.side_effect = [
+            RateLimitError(
+                "limited",
+                response=httpx.Response(
+                    429, request=httpx.Request("POST", "https://model.test")
+                ),
+                body={},
+            ),
+            SimpleNamespace(payload=payload),
+        ]
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "check"
+        assert command.target_seat == 2
+        assert llm.invoke_action.call_count == 2
+
+    def test_provider_logs_fallback_when_model_error_persistence_fails(self, caplog):
+        import logging
+        from unittest.mock import MagicMock
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        llm.model_name = "stealth/ox-alpha"
+        llm.provider_profile.profile_id = "openrouter"
+        llm.invoke_action.side_effect = RuntimeError("client bug")
+        engine = MagicMock()
+        engine.game_logger.log_model_error.side_effect = RuntimeError("disk full")
+        service._engines["g"] = engine
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "pass"
+        assert command.reasoning == "系统异常，本轮未行动"
+        assert any(
+            "Failed to persist model error" in record.message
+            for record in caplog.records
+        )
+
     def test_provider_persists_sanitized_model_error_in_game_log(self, tmp_path):
         from types import SimpleNamespace
         from unittest.mock import MagicMock
@@ -2009,7 +2160,7 @@ class TestCommandProvider:
         command = provider(request, MagicMock(game_id="g"), 0)
         assert command.action_type == "pass"
         assert command.target_seat is None
-        assert command.reasoning == "safe fallback"
+        assert command.reasoning == "系统异常，本轮未行动"
         llm.get_model.assert_not_called()
 
 

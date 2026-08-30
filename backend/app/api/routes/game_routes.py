@@ -72,7 +72,8 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
     try:
         if req.role_counts is not None:
             game_id = await service.create_game(
-                role_counts=req.role_counts, model_assignments=assignments,
+                role_counts=req.role_counts, reveal_on_death=req.reveal_on_death,
+                model_assignments=assignments,
             )
         else:
             game_id = await service.create_game(
@@ -81,6 +82,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 num_seers=req.num_seers,
                 num_witches=req.num_witches,
                 num_hunters=req.num_hunters,
+                reveal_on_death=req.reveal_on_death,
                 model_assignments=assignments,
             )
     except ValueError as error:
@@ -93,6 +95,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
         player_count=len(state.players),
         config={
             "role_counts": state.config.role_counts,
+            "reveal_on_death": state.config.reveal_on_death,
             **{
                 field: state.config.role_counts.get(role_id, 0)
                 for field, role_id in _LEGACY_ROLE_COUNT_FIELDS.items()
@@ -164,6 +167,7 @@ async def get_game(game_id: str):
         game_id=public_state["game_id"],
         phase=public_state["phase"],
         round_number=public_state["round_number"],
+        reveal_on_death=public_state["reveal_on_death"],
         players=public_state["players"],
         sheriff=public_state["sheriff"],
         speeches=public_state["speeches"],
@@ -364,6 +368,25 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
         return [{
             "event_type": "vote",
             "payload": {"voter_seat": seat, "target_seat": target, "round_number": round_number},
+        }]
+
+    if operation == "vote_technical_abstain":
+        seat = record.get("seat")
+        failure_code = data.get("failure_code")
+        if (
+            phase != "vote_casting"
+            or not _is_positive_int(seat)
+            or not isinstance(failure_code, str)
+            or not failure_code
+        ):
+            return []
+        return [{
+            "event_type": "technical_abstain",
+            "payload": {
+                "voter_seat": seat,
+                "round_number": round_number,
+                "failure_code": failure_code,
+            },
         }]
 
     if operation == "vote_result":

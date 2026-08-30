@@ -18,9 +18,31 @@ afterEach(() => {
 });
 
 describe('WinOverlay', () => {
+  it('shows that identities are revealed when configured', () => {
+    render(
+      <WinOverlay
+        winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }}
+        revealOnDeath={true}
+      />,
+    );
+
+    expect(screen.getByText('身份公开：玩家出局时会向场上公开身份。')).toBeVisible();
+  });
+
+  it('shows that identities stay hidden when configured', () => {
+    render(
+      <WinOverlay
+        winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }}
+        revealOnDeath={false}
+      />,
+    );
+
+    expect(screen.getByText('身份不公开：玩家出局时不会向场上公开身份。')).toBeVisible();
+  });
+
   it('uses a single labelled heading for the result dialog', () => {
     render(
-      <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} />,
+      <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} revealOnDeath={false} />,
     );
 
     const dialog = screen.getByRole('dialog');
@@ -38,7 +60,7 @@ describe('WinOverlay', () => {
     useGameStore.setState({ dismissWinOverlay, seekTo, play });
 
     render(
-      <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} />,
+      <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} revealOnDeath={false} />,
     );
     fireEvent.click(screen.getByRole('button', { name: '从头播放' }));
 
@@ -51,7 +73,7 @@ describe('WinOverlay', () => {
 
   it('styles a werewolf victory with the crimson accent', () => {
     render(
-      <WinOverlay winResult={{ winning_camp: 'werewolf', reason: 'all_villagers_dead' }} />,
+      <WinOverlay winResult={{ winning_camp: 'werewolf', reason: 'all_villagers_dead' }} revealOnDeath={false} />,
     );
 
     expect(screen.getByText('狼人阵营获胜')).toBeVisible();
@@ -68,6 +90,7 @@ describe('WinOverlay', () => {
           winning_camp: 'mystery_camp' as never,
           reason: 'unlisted_reason' as never,
         }}
+        revealOnDeath={false}
       />,
     );
 

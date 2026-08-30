@@ -147,7 +147,6 @@ def _night_notice(state: GameState) -> str:
 _NARRATIONS: dict[str, tuple[str, str]] = {
     "guard_open": ("守卫请睁眼", "请选择今晚要守护的玩家。"),
     "wolf_open": ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。"),
-    "witch_open": ("女巫请睁眼", "昨晚有人被袭击。"),
     "seer_open": ("预言家请睁眼", "请查验一名玩家的身份。"),
 }
 
@@ -442,7 +441,7 @@ class NightDirector:
                 seat, state.round_number,
                 exc_info=True,
             )
-            return WolfVote(seat, "pass", None, "safe fallback")
+            return WolfVote(seat, "pass", None, "系统异常，本轮未行动")
 
     # ── narration ──────────────────────────────────────────────
 
@@ -451,6 +450,13 @@ class NightDirector:
         if kind not in _NARRATIONS:
             raise ValueError(f"unknown narration: {kind}")
         return _NARRATIONS[kind]
+
+    @staticmethod
+    def witch_narration(kill_target: int | None) -> tuple[str, str]:
+        """Witch opening line must match whether a wolf kill actually happened."""
+        if kill_target is None:
+            return ("女巫请睁眼", "昨晚风平浪静，无人被袭击。")
+        return ("女巫请睁眼", "昨晚有人被袭击。")
 
     @staticmethod
     def dawn_narration(deaths: Sequence[int]) -> tuple[str, str]:

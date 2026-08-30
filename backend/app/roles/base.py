@@ -4,7 +4,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 from app.models.game import GameState
-from app.models.actions import VoteAction
+from app.models.actions import VoteAction, is_last_words_eligible
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import LLMClient
 from app.agents.output_parser import (
@@ -73,6 +73,7 @@ class BaseRole:
         self.output_parser = OutputParser()
         self.action_validator = ActionValidator()
         self._last_words_used = False
+        self._speech_used_fallback = False
 
     @property
     def is_good(self) -> bool:
@@ -99,8 +100,19 @@ class BaseRole:
             return await self._speak_with_tools(state, prompt, context, conversation_log)
 
         # Other contexts (e.g. werewolf chat handled elsewhere) use plain LLM
+        started = time.monotonic()
         raw = await self._invoke_llm(prompt)
-        return self.output_parser.parse_speech(raw)
+        speech = self.output_parser.parse_speech(raw)
+        self._log_llm_call(
+            conversation_log,
+            round_num=state.round_number, phase=state.phase.value,
+            call_kind="speech_plain", contract_id=context,
+            transport="text", attempt=1, prompt_chars=len(prompt),
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            retried=False,
+            parse_result="ok" if speech else "parse_failed",
+        )
+        return speech
 
     async def _speak_with_tools(
         self, state: GameState, prompt: str, context: str,
@@ -136,7 +148,11 @@ class BaseRole:
             self._last_words_used = True
 
         # ── Attempt 1: normal tool-calling prompt ──
+        started = time.monotonic()
+        self._speech_used_fallback = False
+        attempts = 0
         try:
+            attempts += 1
             tool_result = await self._invoke_llm_with_tools(prompt, tools)
         except Exception as e:
             logger.error(
@@ -148,6 +164,7 @@ class BaseRole:
 
         # ── Attempt 2 (retry): stronger prompt emphasising tool call ──
         if tool_result is None:
+            attempts += 1
             logger.warning(
                 f"Seat {self.seat}: LLM did not call any tool for context={context} "
                 f"(attempt 1). Retrying with stronger instructions."
@@ -171,14 +188,25 @@ class BaseRole:
 
         # ── Validate and return ──
         try:
-            return self._validate_tool_result(tool_result, state, context)
+            speech = self._validate_tool_result(tool_result, state, context)
         except Exception as e:
             logger.error(
                 f"Seat {self.seat}: Unexpected error validating tool result for "
                 f"context={context}: {e}. Falling back to generated speech.",
                 exc_info=True,
             )
-            return self._generate_fallback_speech(state, context)
+            speech = self._generate_fallback_speech(state, context)
+        self._log_llm_call(
+            conversation_log,
+            round_num=state.round_number, phase=state.phase.value,
+            call_kind="speech", contract_id=context,
+            transport="speech_tool", attempt=attempts,
+            prompt_chars=len(prompt),
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            retried=attempts > 1,
+            parse_result="fallback" if self._speech_used_fallback else "ok",
+        )
+        return speech
 
     def _validate_tool_result(
         self, tool_result, state: GameState, context: str,
@@ -236,6 +264,7 @@ class BaseRole:
         """Generate a minimal but valid speech when the LLM fails to produce one.
         Ensures the player never silently disappears from the conversation.
         """
+        self._speech_used_fallback = True
         from app.roles.registry import builtin_registry
         try: cn_name = builtin_registry.freeze().specs[self.role_name].display_name
         except KeyError: cn_name = "玩家"
@@ -320,10 +349,7 @@ class BaseRole:
 
         cause = death.cause
         round_num = death.round_number
-        is_first_night_death = cause in ("wolf_kill", "poison") and round_num == 1
-        is_exile = cause == "exile"
-
-        if not (is_first_night_death or is_exile):
+        if not is_last_words_eligible(cause, round_num):
             cause_cn_map = {
                 "wolf_kill": "被狼杀", "poison": "被毒",
                 "exile": "被放逐", "hunter_shot": "被猎人带走",
@@ -379,10 +405,17 @@ class BaseRole:
                 retry_messages = self._build_vote_retry_messages(
                     state, conversation_log,
                 )
+            try:
                 return await self._request_action_with_transport(
                     state, request, retry_messages, self._invoke_json_action,
                     conversation_log, "json", 2,
                 )
+            except _ActionTransportTimeout:
+                pass
+            return await self._request_action_with_transport(
+                state, request, self._final_retry_messages(state, conversation_log),
+                self._invoke_json_action, conversation_log, "json", 3,
+            )
         tool_transport = "strict" if supports_strict else "tool"
         try:
             return await self._request_action_with_transport(
@@ -393,15 +426,33 @@ class BaseRole:
             retry_messages = self._build_vote_retry_messages(
                 state, conversation_log,
             )
+        except StrictCapabilityError:
+            retry_messages = self._build_vote_retry_messages(
+                state, conversation_log,
+            )
+        try:
             return await self._request_action_with_transport(
                 state, request, retry_messages, self._invoke_json_action,
                 conversation_log, "json", 2,
             )
-        except StrictCapabilityError:
-            return await self._request_action_with_transport(
-                state, request, messages, self._invoke_json_action,
-                conversation_log, "json", 2,
-            )
+        except _ActionTransportTimeout:
+            pass
+        return await self._request_action_with_transport(
+            state, request, self._final_retry_messages(state, conversation_log),
+            self._invoke_json_action, conversation_log, "json", 3,
+        )
+
+    def _final_retry_messages(
+        self, state: GameState, conversation_log: ConversationLog,
+    ) -> list:
+        """Last-chance prompt: compact context plus a strict format reminder."""
+        return [
+            *self._build_vote_retry_messages(state, conversation_log),
+            HumanMessage(content=(
+                "The previous attempts failed. Respond with exactly one JSON "
+                "object that matches the issued schema, and nothing else."
+            )),
+        ]
 
     def _build_vote_retry_messages(
         self, state: GameState, conversation_log: ConversationLog,
@@ -440,13 +491,48 @@ class BaseRole:
                 parse_result=parse_result, failure_code=failure_code,
                 timeout_type=timeout_type, window_id=request.idempotency_key,
             )
-
-    def _action_timeout_seconds(self, *, retried: bool) -> float:
-        attribute = (
-            "action_retry_timeout_seconds" if retried
-            else "action_timeout_seconds"
+        self._log_llm_call(
+            conversation_log,
+            round_num=request.round_id, phase=request.phase.value,
+            call_kind="action", contract_id=request.contract.contract_id,
+            transport=transport, attempt=attempt, prompt_chars=prompt_chars,
+            elapsed_ms=elapsed_ms, retried=retried, parse_result=parse_result,
+            failure_code=failure_code, timeout_type=timeout_type,
+            window_id=request.idempotency_key,
         )
-        fallback = 90.0
+
+    def _log_llm_call(
+        self, conversation_log: ConversationLog, *, round_num: int, phase: str,
+        call_kind: str, contract_id: str | None, transport: str | None,
+        attempt: int, prompt_chars: int, elapsed_ms: int, retried: bool,
+        parse_result: str | None, failure_code: str | None = None,
+        timeout_type: str | None = None, window_id: str | None = None,
+    ) -> None:
+        """Write one universal LLM call record used by benchmark analysis."""
+        log_call = getattr(conversation_log, "log_llm_call", None)
+        if not callable(log_call):
+            return
+        log_call(
+            round_num, self.seat, phase,
+            call_kind=call_kind, contract_id=contract_id,
+            transport=transport, attempt=attempt,
+            model_id=getattr(self.llm_client, "model_name", None),
+            prompt_chars=prompt_chars, elapsed_ms=elapsed_ms,
+            retried=retried, parse_result=parse_result,
+            failure_code=failure_code, timeout_type=timeout_type,
+            window_id=window_id,
+        )
+
+    def _action_timeout_seconds(self, *, retried: bool, final: bool = False) -> float:
+        if final:
+            attribute = "action_final_retry_timeout_seconds"
+            fallback = 30.0
+        elif retried:
+            attribute = "action_retry_timeout_seconds"
+            fallback = 90.0
+        else:
+            attribute = "action_timeout_seconds"
+            fallback = 90.0
         value = getattr(self.llm_client, attribute, fallback)
         return float(value) if isinstance(value, (int, float)) and value > 0 else fallback
 
@@ -466,17 +552,19 @@ class BaseRole:
         transport: str, first_attempt: int,
     ) -> AcceptedAction:
         active_messages = messages
-        for attempt_number in range(first_attempt, 3):
+        for attempt_number in range(first_attempt, 4):
             prompt_chars = sum(len(message.content) for message in active_messages)
             started = time.monotonic()
             try:
                 command = await asyncio.wait_for(
                     invoke(active_messages, request),
-                    timeout=self._action_timeout_seconds(retried=attempt_number > 1),
+                    timeout=self._action_timeout_seconds(
+                        retried=attempt_number > 1, final=attempt_number > 2,
+                    ),
                 )
                 accepted = self._accept_command(state, request, command)
             except asyncio.TimeoutError:
-                should_retry = attempt_number == 1
+                should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
@@ -492,7 +580,7 @@ class BaseRole:
                 )
                 fallback = ActionCommand(
                     action_type=request.contract.fallback_action_type,
-                    target_seat=None, reasoning="timeout fallback",
+                    target_seat=None, reasoning="系统超时，代投弃权",
                 )
                 return self._accept_command(
                     state, request, fallback,
@@ -500,7 +588,7 @@ class BaseRole:
                     timeout_type="local_deadline",
                 )
             except APITimeoutError:
-                should_retry = attempt_number == 1
+                should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
@@ -516,7 +604,7 @@ class BaseRole:
                 )
                 fallback = ActionCommand(
                     action_type=request.contract.fallback_action_type,
-                    target_seat=None, reasoning="timeout fallback",
+                    target_seat=None, reasoning="系统超时，代投弃权",
                 )
                 return self._accept_command(
                     state, request, fallback,
@@ -524,7 +612,7 @@ class BaseRole:
                     timeout_type="provider_timeout",
                 )
             except (RateLimitError, InternalServerError, APIConnectionError) as error:
-                should_retry = attempt_number == 1
+                should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
@@ -542,7 +630,7 @@ class BaseRole:
                 )
                 fallback = ActionCommand(
                     action_type=request.contract.fallback_action_type,
-                    target_seat=None, reasoning="provider error fallback",
+                    target_seat=None, reasoning="系统异常，代投弃权",
                 )
                 return self._accept_command(
                     state, request, fallback,
@@ -565,9 +653,9 @@ class BaseRole:
                 logger.warning(
                     f"Seat {self.seat}: action validation failed for "
                     f"contract={request.contract.contract_id} "
-                    f"(attempt {attempt_number}/2): {error}"
+                    f"(attempt {attempt_number}): {error}"
                 )
-                if attempt_number == 2:
+                if attempt_number == 3:
                     self._log_vote_technical_abstain(
                         conversation_log, request,
                         failure_code=_validation_failure_code(error),
@@ -575,7 +663,7 @@ class BaseRole:
                     fallback = ActionCommand(
                         action_type=request.contract.fallback_action_type,
                         target_seat=None,
-                        reasoning="safe fallback",
+                        reasoning="系统异常，代投弃权",
                     )
                     return self._accept_command(
                         state, request, fallback,
@@ -614,7 +702,7 @@ class BaseRole:
                     retried=attempt_number > 1, parse_result="accepted",
                 )
                 return accepted
-        raise AssertionError("unreachable")  # pragma: no cover - transport always returns or re-raises within two attempts
+        raise AssertionError("unreachable")  # pragma: no cover - transport always returns or re-raises within the attempt window
 
     def _accept_command(
         self, state: GameState, request: ActionRequest, command: ActionCommand,

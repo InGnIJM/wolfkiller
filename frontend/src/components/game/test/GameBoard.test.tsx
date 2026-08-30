@@ -147,10 +147,13 @@ describe('GameBoard public replay', () => {
   });
 
   it('shows the public winner overlay after loading a winner event', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, reveal_on_death: true });
+
     render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('好人阵营获胜')).toBeInTheDocument();
+    expect(screen.getByText('身份公开：玩家出局时会向场上公开身份。')).toBeVisible();
     expect(screen.getByRole('button', { name: '从头播放' })).toBeVisible();
   });
 
@@ -267,7 +270,12 @@ describe('GameBoard public replay', () => {
 
   it('refreshes the public player snapshot before merging each successful poll', async () => {
     vi.useFakeTimers();
-    const activeDetail = { ...detail, phase: 'speech' as const, win_result: null };
+    const activeDetail = {
+      ...detail,
+      phase: 'speech' as const,
+      win_result: null,
+      reveal_on_death: false,
+    };
     const refreshedDetail: PublicGameState = {
       ...activeDetail,
       players: {
@@ -275,6 +283,7 @@ describe('GameBoard public replay', () => {
         1: { ...activeDetail.players[1], is_sheriff: true },
       },
       sheriff: 1,
+      reveal_on_death: true,
     };
     const activeLogs: GameLogs = {
       game_id: 'game-1',
@@ -310,6 +319,7 @@ describe('GameBoard public replay', () => {
     expect(initPlayersFromDetail.mock.invocationCallOrder[1])
       .toBeLessThan(mergeLogs.mock.invocationCallOrder[0]);
     expect(useGameStore.getState().players[1].is_sheriff).toBe(true);
+    expect(useGameStore.getState().revealOnDeath).toBe(true);
     expect(useGameStore.getState().timeline).toEqual(refreshedLogs.events);
   });
 

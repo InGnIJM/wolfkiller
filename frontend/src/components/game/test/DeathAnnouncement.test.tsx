@@ -34,6 +34,16 @@ describe('DeathAnnouncement', () => {
     expect(screen.getByText(/夜间死亡 · 第3轮/)).toBeInTheDocument();
   });
 
+  it('shows the revealed role only when provided', () => {
+    const { rerender } = render(<DeathAnnouncement deaths={[record('exile')]} />);
+    expect(screen.queryByText(/身份：/)).not.toBeInTheDocument();
+
+    rerender(
+      <DeathAnnouncement deaths={[record('exile')]} revealedRole="wolf-killer-werewolf" />,
+    );
+    expect(screen.getByText('身份：狼人')).toBeInTheDocument();
+  });
+
   it.each([
     ['poison', '毒杀'],
     ['hunter_shot', '猎人带走'],

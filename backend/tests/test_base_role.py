@@ -11,7 +11,7 @@ from app.agents.prompt_builder import PromptBuilder
 from app.core.action_validator import ActionValidationError
 from app.core.conversation_log import ConversationLog
 from app.core.game_engine import VOTE_CONTRACT
-from app.models.actions import VoteAction
+from app.models.actions import DeathReport, VoteAction, is_last_words_eligible
 from app.models.contracts import ActionCommand, ActionRequest
 from app.models.game import GameState, GamePhase, PlayerState
 from app.roles.base import BaseRole
@@ -80,6 +80,20 @@ def make_role(seat=1, client=None, state=None):
 
 
 class TestBaseRoleSpeech:
+    @pytest.mark.parametrize(("cause", "round_number", "expected"), [
+        ("wolf_kill", 1, True),
+        ("poison", 1, True),
+        ("exile", 2, True),
+        ("hunter_shot", 1, False),
+        ("self_explode", 1, False),
+        ("love_death", 1, False),
+        ("other", 1, False),
+        ("wolf_kill", 2, False),
+        ("poison", 2, False),
+    ])
+    def test_last_words_eligibility_is_cause_specific(self, cause, round_number, expected):
+        assert is_last_words_eligible(cause, round_number) is expected
+
     @pytest.mark.asyncio
     async def test_day_speech_uses_one_context_specific_gateway_tool(self):
         class GatewayClient:
@@ -202,6 +216,18 @@ class TestBaseRoleSpeech:
         assert await BaseRole(1, "wolf-killer-villager", PromptBuilder(), ClientStub()).speak(
             ineligible, log, "last_words",
         ) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cause", ["hunter_shot", "self_explode", "love_death"])
+    async def test_last_words_rejects_ineligible_cause_before_model_invocation(self, cause):
+        client = ClientStub(tools=[tool_msg("last_words", "这段内容不应被模型生成。")])
+        role = make_role(client=client)
+        state = make_state(phase=GamePhase.LAST_WORDS)
+        state.death_history = [DeathReport(1, cause, 1)]
+        state.players[1].is_alive = False
+
+        assert await role.speak(state, ConversationLog(), "last_words") is None
+        assert client.tools_model.messages == []
 
     @pytest.mark.asyncio
     async def test_fallback_speech_covers_last_words_and_alone_cases(self):
@@ -573,6 +599,58 @@ class TestBaseRoleAccept:
         assert retry_chars < first_chars * 0.75
 
     @pytest.mark.asyncio
+    async def test_final_retry_adds_format_tail_and_uses_short_deadline(self, monkeypatch):
+        deadlines = []
+
+        real_wait_for = asyncio.wait_for
+
+        async def spy_wait_for(coro, timeout):
+            deadlines.append(timeout)
+            return await real_wait_for(coro, timeout=timeout)
+
+        monkeypatch.setattr(asyncio, "wait_for", spy_wait_for)
+
+        class FinalModel:
+            def __init__(self):
+                self.messages = []
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                self.messages.append(messages)
+                if self.calls < 3:
+                    await asyncio.sleep(0.05)
+                return AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+                ))
+
+        class FinalClient:
+            supports_strict_actions = False
+            action_timeout_seconds = 0.001
+            action_retry_timeout_seconds = 0.001
+            action_final_retry_timeout_seconds = 5.0
+
+            def __init__(self):
+                self.model = FinalModel()
+
+            def get_action_model(self):
+                return self.model
+
+        client = FinalClient()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert deadlines == [0.001, 0.001, 5.0]
+        final_messages = client.model.messages[2]
+        assert final_messages[-1].content.startswith("The previous attempts failed")
+        assert "exactly one JSON" in final_messages[-1].content
+
+    @pytest.mark.asyncio
     async def test_strict_timeout_retries_json_without_writing_state(self):
         class SlowStrictModel:
             def __init__(self):
@@ -662,6 +740,7 @@ class TestBaseRoleAccept:
         class SlowClient:
             action_timeout_seconds = 0.001
             action_retry_timeout_seconds = 0.001
+            action_final_retry_timeout_seconds = 0.001
 
             def get_model_with_action_tool(self, contract):
                 return SlowModel()
@@ -678,7 +757,7 @@ class TestBaseRoleAccept:
         )
 
         assert command.command.action_type == "abstain"
-        assert len(logger.records) == 2
+        assert len(logger.records) == 3
         assert logger.records[0]["transport"] == "strict"
         assert logger.records[0]["attempt"] == 1
         assert logger.records[0]["retried"] is False
@@ -686,13 +765,17 @@ class TestBaseRoleAccept:
         assert logger.records[1]["transport"] == "json"
         assert logger.records[1]["attempt"] == 2
         assert logger.records[1]["retried"] is True
-        assert logger.records[1]["parse_result"] == "timeout_fallback"
+        assert logger.records[1]["parse_result"] == "timeout_retry"
+        assert logger.records[2]["transport"] == "json"
+        assert logger.records[2]["attempt"] == 3
+        assert logger.records[2]["retried"] is True
+        assert logger.records[2]["parse_result"] == "timeout_fallback"
 
     @pytest.mark.asyncio
-    async def test_provider_timeouts_retry_then_use_safe_fallback(self):
+    async def test_provider_timeouts_retry_then_technical_abstain(self):
         timeout = APITimeoutError(request=httpx.Request("POST", "https://model.test"))
         client = ClientStub(
-            plain=[timeout, timeout], supports_strict_actions=False,
+            plain=[timeout, timeout, timeout], supports_strict_actions=False,
         )
         role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
         state = make_state(phase=GamePhase.VOTE_CASTING)
@@ -702,8 +785,8 @@ class TestBaseRoleAccept:
         )
 
         assert accepted.command.action_type == "abstain"
-        assert accepted.command.reasoning == "timeout fallback"
-        assert len(client.plain_model.messages) == 2
+        assert accepted.command.reasoning == "系统超时，代投弃权"
+        assert len(client.plain_model.messages) == 3
 
     @pytest.mark.asyncio
     async def test_accept_command_only_returns_validated_decision(self):
@@ -741,6 +824,14 @@ class TestBaseRoleAccept:
                     "name": "exile_vote",
                     "args": {"action_type": "vote", "target_seat": 2, "reasoning": "x"},
                     "id": "call_2",
+                }],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "exile_vote",
+                    "args": {"action_type": "vote", "target_seat": 2, "reasoning": "x"},
+                    "id": "call_3",
                 }],
             ),
         ])

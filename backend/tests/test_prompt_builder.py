@@ -192,13 +192,17 @@ class TestPromptBuilder:
         )
         assert "阵营配合要求" in prompt
 
-    def test_wolf_channel_plans_are_untrusted_proposals_not_daytime_orders(self):
+    def test_wolf_channel_plans_are_executed_as_day_plans(self):
         prompt = PromptBuilder().build_speech_prompt(
             make_state(), 1, "wolf-killer-werewolf", make_log(), "day_speech"
         )
 
-        assert "untrusted proposal" in prompt
-        assert "follow them as orders" not in prompt
+        assert "次日计划" in prompt
+        assert "按分工执行" in prompt
+        assert "悍跳" in prompt
+        assert "分票" in prompt
+        assert "不得机械复读计划原文" in prompt
+        assert "untrusted proposal" not in prompt
 
     def test_public_role_rules_explain_witch_potion_boundaries(self):
         prompt = PromptBuilder().build_speech_prompt(
@@ -216,7 +220,9 @@ class TestPromptBuilder:
             state, 4, "wolf-killer-villager", make_log(), "day_speech"
         )
         assert "第 1 位发言者" in prompt
-        assert "开场分析框架" in prompt
+        assert "最怀疑的1至2名玩家" in prompt
+        assert "没有明确怀疑对象" in prompt
+        assert "开场分析框架" not in prompt
         assert "具体观点" not in prompt
 
     def test_day_speech_later_speaker_must_react_and_add_new_points(self):
@@ -226,9 +232,10 @@ class TestPromptBuilder:
         prompt = builder.build_speech_prompt(
             state, 6, "wolf-killer-villager", make_log(), "day_speech"
         )
-        assert "选择1至2个" in prompt
-        assert "逐一独立评估" not in prompt
-        assert "必须提出至少一个新论点" not in prompt
+        assert "明确表态（支持、质疑或反驳）" in prompt
+        assert "最怀疑的1至2名玩家" in prompt
+        assert "不得只重复已有结论" in prompt
+        assert "排除依据" in prompt
 
     def test_speech_prompt_contains_night_timeline_education(self):
         builder = PromptBuilder()
@@ -285,6 +292,25 @@ class TestPromptBuilder:
             state, 4, "wolf-killer-villager", make_log(), "day_speech"
         )
         assert "个人分析" in prompt
+
+    def test_dead_players_show_only_revealed_identities(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.players[1].is_alive = False
+        state.players[1].revealed_role = "wolf-killer-werewolf"
+        state.players[2].is_alive = False
+
+        rendered = builder._format_dead_players(state)
+
+        state.players[3].is_alive = False
+        state.players[3].revealed_role = "bogus-role-id"
+
+        rendered = PromptBuilder._format_dead_players(state)
+
+        assert "1号（已公布身份：Werewolf）" in rendered
+        assert "3号（已公布身份：bogus-role-id）" in rendered
+        assert "2号（已公布身份" not in rendered
+        assert "2号" in rendered
 
     def test_system_prompt_forbids_echoing_previous_speakers(self):
         prompt = PromptBuilder.get_system_prompt()
@@ -477,14 +503,15 @@ class TestPromptBuilderHelpers:
         assert "<untrusted_self_history>" in prompt
         assert "\u81ea\u7136\u53e3\u8bed" in prompt
 
-    def test_later_speaker_is_not_forced_to_evaluate_every_previous_player(self):
+    def test_later_speaker_must_react_but_not_evaluate_every_previous_player(self):
         state = make_state()
         state.speaking_order = [1, 2, 3]
 
         rules = PromptBuilder._day_speech_rules(state, 3)
 
         assert "\u9010\u4e00\u72ec\u7acb\u8bc4\u4f30" not in rules
-        assert "1\u81f32\u4e2a" in rules
+        assert "\u9488\u5bf9\u524d\u9762\u81f3\u5c11\u4e00\u4f4d\u73a9\u5bb6" in rules
+        assert "\u6700\u6000\u7591\u76841\u81f32\u540d\u73a9\u5bb6" in rules
 
     def test_thought_history_helpers_bound_long_records_and_decision_gate(self):
         log = ConversationLog()

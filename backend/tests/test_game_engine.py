@@ -8,7 +8,7 @@ import pytest
 import app.core.game_engine as game_engine_module
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
-from app.models.actions import VoteAction, DeathReport, WinResult
+from app.models.actions import VoteAction, DeathReport, WinResult, is_last_words_eligible
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.night_flow import DiscussionTurn, NightBriefing, WolfVote
@@ -66,6 +66,7 @@ class _FakeDirector:
         self.discussion_briefings: list[object] = []
         self.vote_briefings: list[object] = []
     def narration(self, kind): return ("标题", "正文")
+    def witch_narration(self, kill_target): return ("标题", "正文")
     def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
     def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing(), random_hint=None):
         self.discussion_briefings.append(briefing)
@@ -182,6 +183,9 @@ async def test_staged_night_narrates_guard_open_only_on_guard_boards(with_guard)
             self.narration_kinds = []
         def narration(self, kind):
             self.narration_kinds.append(kind)
+            return ("标题", "正文")
+        def witch_narration(self, kill_target):
+            self.narration_kinds.append("witch_open")
             return ("标题", "正文")
 
     role_counts = {
@@ -715,7 +719,7 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
         if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
             command = director.collected_vote(request.actor_seat)
             return command if command is not None else PipelineActionCommand(
-                action_type="pass", target_seat=None, reasoning="safe fallback",
+                action_type="pass", target_seat=None, reasoning="系统异常，本轮未行动",
             )
         if request.contract.contract_id == "witch_action":
             return PipelineActionCommand(action_type="pass", target_seat=None, reasoning="wait")
@@ -1467,17 +1471,78 @@ class TestGameEngine:
         assert speeches[0]["game_id"] == engine.game_id
 
     @pytest.mark.asyncio
-    async def test_last_words_eligibility_is_cause_generic(self):
+    async def test_give_last_words_uses_cause_specific_eligibility(self):
         roles = {1: make_mock_role(1, "wolf-killer-villager")}
         engine = GameEngine(game_id="test", roles=roles)
         engine._assign_roles()
         engine.state.players[1].is_alive = False
 
-        # First-night death of any night cause is eligible in round 1.
         assert await engine.give_last_words(1, "wolf_kill", 1)
         assert await engine.give_last_words(1, "wolf_kill", 1) is None  # already given
         assert await engine.give_last_words(1, "wolf_kill", 2) is None  # not first night
         assert await engine.give_last_words(1, "exile", 2) is not None  # exile any round
+        assert is_last_words_eligible("hunter_shot", 1) is False
+        assert await engine.give_last_words(1, "hunter_shot", 1) is None
+        roles[1].speak.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_last_words_scan_skips_hunter_shot_without_side_effects(self, tmp_path):
+        bus = EventBus()
+        speech_events = []
+
+        async def record_speech(**kwargs):
+            speech_events.append(kwargs)
+
+        bus.subscribe(BusEvent.SPEECH_MADE, record_speech)
+        role = make_mock_role(1, "wolf-killer-villager")
+        engine = GameEngine(
+            game_id="hunter-last-words", roles={1: role}, event_bus=bus,
+            data_dir=str(tmp_path),
+        )
+        engine._assign_roles()
+        engine.state.round_number = 2
+        engine.state.players[1].is_alive = False
+        engine.state.death_history = [DeathReport(1, "hunter_shot", 1)]
+        engine.sm.set_state(GamePhase.LAST_WORDS)
+
+        await engine._execute_last_words()
+
+        role.speak.assert_not_awaited()
+        assert engine.state.speeches == []
+        assert engine.conversation_log.get_all() == []
+        assert speech_events == []
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "games" / "hunter-last-words" / "game.log")
+            .read_text("utf-8").splitlines()
+        ]
+        assert not any(
+            record["operation"] == "speak"
+            and record["seat"] == 1
+            and record["phase"] == "last_words"
+            for record in records
+        )
+
+    @pytest.mark.asyncio
+    async def test_speak_preserves_none_as_eligibility_rejection(self):
+        role = MagicMock()
+        role.speak = AsyncMock(return_value=None)
+        engine = GameEngine(game_id="speak-rejected", roles={1: role})
+
+        assert await engine.speak(1, "last_words") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("outcome", ["", RuntimeError("provider unavailable")])
+    async def test_speak_uses_emergency_speech_for_empty_or_exception(self, outcome):
+        role = MagicMock()
+        role.speak = AsyncMock(
+            side_effect=outcome if isinstance(outcome, Exception) else None,
+            return_value=None if isinstance(outcome, Exception) else outcome,
+        )
+        engine = GameEngine(game_id="speak-fallback", roles={1: role})
+        engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good")}
+
+        assert await engine.speak(1, "day_speech") == engine._emergency_speech(1, "day_speech")
 
     @pytest.mark.asyncio
     async def test_vote_resolution_wolf_wins(self):
@@ -1808,6 +1873,128 @@ class TestGameEngine:
         assert engine.sm.get_state() == GamePhase.VOTE_CASTING
 
     @pytest.mark.asyncio
+    async def test_speech_round_starts_after_most_recent_death(self):
+        roles = make_9_mock_roles()
+        bus = EventBus()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        for seat in (2, 7):
+            engine.state.players[seat].is_alive = False
+        engine.state.death_history = [
+            DeathReport(player_seat=2, cause="exile", round_number=1),
+            DeathReport(player_seat=7, cause="wolf_kill", round_number=2),
+        ]
+        engine.sm.set_state(GamePhase.SPEECH)
+
+        orders, seats = [], []
+
+        async def capture_speak(seat, kind):
+            orders.append(list(engine.state.speaking_order))
+            seats.append(seat)
+            return "speech"
+
+        engine.speak = capture_speak
+        await engine._execute_speech_round()
+
+        # Seat 7 died last: speeches wrap from the first alive seat after 7.
+        assert orders[0] == [8, 9, 1, 3, 4, 5, 6]
+        assert seats == [8, 9, 1, 3, 4, 5, 6]
+
+    @pytest.mark.asyncio
+    async def test_speech_order_wraps_when_anchor_is_last_seat(self):
+        roles = make_9_mock_roles()
+        bus = EventBus()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.state.players[9].is_alive = False
+        engine.state.death_history = [
+            DeathReport(player_seat=9, cause="exile", round_number=1),
+        ]
+        engine.sm.set_state(GamePhase.SPEECH)
+
+        orders = []
+
+        async def capture_speak(seat, kind):
+            orders.append(list(engine.state.speaking_order))
+            return "speech"
+
+        engine.speak = capture_speak
+        await engine._execute_speech_round()
+
+        assert orders[0] == [1, 2, 3, 4, 5, 6, 7, 8]
+
+    @pytest.mark.asyncio
+    async def test_speech_order_keeps_ascending_without_deaths(self):
+        roles = make_9_mock_roles()
+        bus = EventBus()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.sm.set_state(GamePhase.SPEECH)
+
+        orders = []
+
+        async def capture_speak(seat, kind):
+            orders.append(list(engine.state.speaking_order))
+            return "speech"
+
+        engine.speak = capture_speak
+        await engine._execute_speech_round()
+
+        assert orders[0] == list(range(1, 10))
+
+    @pytest.mark.asyncio
+    async def test_reveal_on_death_announces_identity_publicly(self):
+        roles = make_9_mock_roles()
+        bus = EventBus()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.config.reveal_on_death = True
+        engine.state.players[2].mark_dead("exile")
+
+        engine._reveal_on_death(2)
+        engine._reveal_on_death(2)  # idempotent
+
+        assert engine.state.players[2].revealed_role == "wolf-killer-werewolf"
+        announcements = [
+            record.content for record in engine.conversation_log.get_all()
+            if record.scope.value == "public"
+        ]
+        assert announcements.count("2号玩家出局，身份是：Werewolf。") == 1
+
+    @pytest.mark.asyncio
+    async def test_reveal_on_death_falls_back_to_raw_role_for_unknown_id(self):
+        roles = make_9_mock_roles()
+        bus = EventBus()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        engine.config.reveal_on_death = True
+        engine.state.players[2].role = "unknown-role-id"
+        engine.state.players[2].mark_dead("exile")
+
+        engine._reveal_on_death(2)
+
+        assert engine.state.players[2].revealed_role == "unknown-role-id"
+        announcements = [
+            record.content for record in engine.conversation_log.get_all()
+            if record.scope.value == "public"
+        ]
+        assert announcements == ["2号玩家出局，身份是：unknown-role-id。"]
+
+    @pytest.mark.asyncio
+    async def test_reveal_on_death_is_silent_by_default(self):
+        roles = make_9_mock_roles()
+        bus = EventBus()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=bus)
+        engine._assign_roles()
+        assert engine.config.reveal_on_death is False
+        engine.state.players[2].mark_dead("exile")
+
+        engine._reveal_on_death(2)
+
+        assert engine.state.players[2].revealed_role is None
+        assert engine.conversation_log.get_all() == []
+
+    @pytest.mark.asyncio
     async def test_execute_vote_casting(self):
         roles = make_9_mock_roles()
         bus = EventBus()
@@ -1902,6 +2089,12 @@ class TestGameEngine:
     async def test_vote_resolution_tie_no_exile(self):
         roles = make_9_mock_roles()
         bus = EventBus()
+        phases = []
+
+        async def record_phase(**kwargs):
+            phases.append(kwargs["phase"])
+
+        bus.subscribe(BusEvent.PHASE_CHANGED, record_phase)
         engine = GameEngine(game_id="test", roles=roles, event_bus=bus,
                             pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
@@ -1933,14 +2126,22 @@ class TestGameEngine:
         assert engine.state.players[2].is_alive
 
     @pytest.mark.asyncio
-    async def test_vote_resolution_first_tie_gives_all_alive_one_supplemental_speech_then_exiles_revote_winner(self):
+    async def test_vote_resolution_first_tie_gives_all_alive_one_supplemental_speech_then_exiles_revote_winner(self, tmp_path):
         roles = {
             1: make_mock_role(1, "wolf-killer-werewolf"),
             2: make_mock_role(2, "wolf-killer-villager"),
             3: make_mock_role(3, "wolf-killer-villager"),
             4: make_mock_role(4, "wolf-killer-villager"),
         }
-        engine = GameEngine(game_id="first-tie", roles=roles,
+        bus = EventBus()
+        phases = []
+
+        async def record_phase(**kwargs):
+            phases.append(kwargs["phase"])
+
+        bus.subscribe(BusEvent.PHASE_CHANGED, record_phase)
+        engine = GameEngine(game_id="first-tie", roles=roles, event_bus=bus,
+                            data_dir=str(tmp_path),
                             pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
         engine.state.votes = [
@@ -1984,16 +2185,32 @@ class TestGameEngine:
         assert all(state == (2, True, {1, 2}, {1, 2, 3, 4}) for state in revote_states)
         assert engine.state.vote_round == 1
         assert engine.state.is_tiebreak is False
+        records = [json.loads(line) for line in (tmp_path / "games" / "first-tie" / "game.log").read_text("utf-8").splitlines()]
+        vote_results = [r for r in records if r["operation"] == "vote_result"]
+        assert len(vote_results) == 2
+        assert vote_results[0]["data"] == {"exiled": None, "tally": {"1": 2, "2": 2}}
+        assert vote_results[1]["data"] == {"exiled": 1, "tally": {"1": 3}}
+        assert phases.count(GamePhase.VOTE_CASTING) == 1
+        phase_changes = [r for r in records if r["operation"] == "phase_change"]
+        assert sum(r["data"]["new_phase"] == "vote_casting" for r in phase_changes) == 1
 
     @pytest.mark.asyncio
-    async def test_execute_tiebreak_resumes_only_missing_speakers_and_voters(self):
+    async def test_execute_tiebreak_resumes_only_missing_speakers_and_voters(self, tmp_path):
         roles = {
             1: make_mock_role(1, "wolf-killer-werewolf"),
             2: make_mock_role(2, "wolf-killer-villager"),
             3: make_mock_role(3, "wolf-killer-villager"),
             4: make_mock_role(4, "wolf-killer-villager"),
         }
-        engine = GameEngine(game_id="resume-tiebreak", roles=roles,
+        bus = EventBus()
+        phases = []
+
+        async def record_phase(**kwargs):
+            phases.append(kwargs["phase"])
+
+        bus.subscribe(BusEvent.PHASE_CHANGED, record_phase)
+        engine = GameEngine(game_id="resume-tiebreak", roles=roles, event_bus=bus,
+                            data_dir=str(tmp_path),
                             pipeline_scheduler=ScheduleStub(PointResult((), (), (), "d")))
         engine._assign_roles()
         engine.state.is_tiebreak = True
@@ -2029,6 +2246,13 @@ class TestGameEngine:
         assert [call.args[0] for call in supplemental_calls] == [2, 4]
         assert vote_calls == [2, 3]
         assert engine.state.players[1].is_alive is False
+        assert phases.count(GamePhase.VOTE_CASTING) == 1
+        records = [json.loads(line) for line in (tmp_path / "games" / "resume-tiebreak" / "game.log").read_text("utf-8").splitlines()]
+        assert sum(
+            record["operation"] == "phase_change"
+            and record["data"]["new_phase"] == "vote_casting"
+            for record in records
+        ) == 1
 
     @pytest.mark.asyncio
     async def test_vote_resolution_second_tie_exiles_nobody_and_enters_night(self):
@@ -2067,13 +2291,13 @@ class TestGameEngine:
         assert engine.state.is_tiebreak is False
 
     @pytest.mark.asyncio
-    async def test_vote_resolution_all_abstain_skips_tiebreak_and_supplemental_speech(self):
+    async def test_vote_resolution_all_abstain_skips_tiebreak_and_supplemental_speech(self, tmp_path):
         roles = {
             1: make_mock_role(1, "wolf-killer-werewolf"),
             2: make_mock_role(2, "wolf-killer-seer"),
             3: make_mock_role(3, "wolf-killer-villager"),
         }
-        engine = GameEngine(game_id="all-abstain", roles=roles)
+        engine = GameEngine(game_id="all-abstain", roles=roles, data_dir=str(tmp_path))
         engine._assign_roles()
         engine.state.votes = [
             VoteAction(voter_seat=1, target_seat=0),
@@ -2088,6 +2312,10 @@ class TestGameEngine:
         assert engine.speak.await_count == 0
         assert engine.sm.get_state() == GamePhase.NIGHT
         assert engine.state.is_tiebreak is False
+        records = [json.loads(line) for line in (tmp_path / "games" / "all-abstain" / "game.log").read_text("utf-8").splitlines()]
+        vote_results = [r for r in records if r["operation"] == "vote_result"]
+        assert len(vote_results) == 1
+        assert vote_results[0]["data"] == {"exiled": None, "tally": {}}
 
     @pytest.mark.asyncio
     async def test_get_night_deaths(self):
@@ -2698,7 +2926,7 @@ async def test_v2_night_records_wolf_kill_target_and_witch_save_rescues(tmp_path
         if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
             command = director.collected_vote(request.actor_seat)
             return command if command is not None else PipelineActionCommand(
-                action_type="pass", target_seat=None, reasoning="safe fallback",
+                action_type="pass", target_seat=None, reasoning="系统异常，本轮未行动",
             )
         if request.contract.contract_id == "witch_action":
             target = context.facts.get("wolf_kill_target")

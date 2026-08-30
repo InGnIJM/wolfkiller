@@ -3,6 +3,13 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+def is_last_words_eligible(cause: str, round_number: int) -> bool:
+    """Return whether a death cause grants the player last words."""
+    return cause == "exile" or (
+        round_number == 1 and cause in {"wolf_kill", "poison"}
+    )
+
+
 @dataclass
 class NightAction:
     player_seat: int

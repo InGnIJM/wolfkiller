@@ -52,6 +52,12 @@ export interface VoteResult {
   exiled_seat: number | null;
 }
 
+export interface TechnicalAbstainPayload {
+  voter_seat: number;
+  round_number: number;
+  failure_code: string;
+}
+
 export type NightActionType =
   | 'werewolf_kill'
   | 'witch_save'
@@ -126,6 +132,7 @@ export interface PublicGameState {
   game_id: string;
   phase: GamePhase;
   round_number: number;
+  reveal_on_death?: boolean;
   players: Record<number, PublicPlayerState>;
   sheriff: number | null;
   speeches: SpeechRecord[];
@@ -144,6 +151,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'death', DeathRecord>
   | PublicReplayEnvelope<'vote', VoteRecord>
   | PublicReplayEnvelope<'vote_result', VoteResult>
+  | PublicReplayEnvelope<'technical_abstain', TechnicalAbstainPayload>
   | PublicReplayEnvelope<'night_action', NightActionRecord>
   | PublicReplayEnvelope<'narration', NarrationPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>

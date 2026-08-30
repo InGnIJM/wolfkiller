@@ -31,6 +31,7 @@ class JsonClient:
     supports_strict_actions = False
     action_timeout_seconds = 0.1
     action_retry_timeout_seconds = 0.1
+    action_final_retry_timeout_seconds = 0.1
 
     def __init__(self, responses):
         self.model = RecordingModel(responses)
@@ -131,7 +132,11 @@ async def test_invalid_vote_logs_stable_non_secret_failure_code():
 
 @pytest.mark.asyncio
 async def test_repeated_invalid_vote_logs_technical_abstention():
-    client = JsonClient([AIMessage(content="not json"), AIMessage(content="still invalid")])
+    client = JsonClient([
+        AIMessage(content="not json"),
+        AIMessage(content="still invalid"),
+        AIMessage(content="still invalid"),
+    ])
     logger = TelemetryLogger()
     state = make_state()
     role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
@@ -158,6 +163,7 @@ async def test_local_deadline_is_distinguished_in_vote_telemetry():
     client.model = SlowModel()
     client.action_timeout_seconds = 0.001
     client.action_retry_timeout_seconds = 0.001
+    client.action_final_retry_timeout_seconds = 0.001
     logger = TelemetryLogger()
     state = make_state()
     role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
@@ -168,7 +174,7 @@ async def test_local_deadline_is_distinguished_in_vote_telemetry():
     assert accepted.technical_failure_code == "request_timeout"
     assert accepted.timeout_type == "local_deadline"
     assert [record["timeout_type"] for record in logger.records] == [
-        "local_deadline", "local_deadline",
+        "local_deadline", "local_deadline", "local_deadline",
     ]
     assert logger.technical_abstentions == [{
         "failure_code": "request_timeout", "timeout_type": "local_deadline",
@@ -179,7 +185,7 @@ async def test_local_deadline_is_distinguished_in_vote_telemetry():
 @pytest.mark.asyncio
 async def test_provider_timeout_is_distinguished_in_vote_telemetry():
     timeout = APITimeoutError(request=httpx.Request("POST", "https://model.test"))
-    client = JsonClient([timeout, timeout])
+    client = JsonClient([timeout, timeout, timeout])
     logger = TelemetryLogger()
     state = make_state()
     role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
@@ -190,7 +196,7 @@ async def test_provider_timeout_is_distinguished_in_vote_telemetry():
     assert accepted.technical_failure_code == "request_timeout"
     assert accepted.timeout_type == "provider_timeout"
     assert [record["timeout_type"] for record in logger.records] == [
-        "provider_timeout", "provider_timeout",
+        "provider_timeout", "provider_timeout", "provider_timeout",
     ]
     assert logger.technical_abstentions == [{
         "failure_code": "request_timeout", "timeout_type": "provider_timeout",
@@ -233,7 +239,7 @@ async def test_provider_timeout_is_distinguished_in_vote_telemetry():
 async def test_transient_provider_failure_retries_then_technically_abstains(
     make_error, failure_code,
 ):
-    client = JsonClient([make_error(), make_error()])
+    client = JsonClient([make_error(), make_error(), make_error()])
     logger = TelemetryLogger()
     state = make_state()
     role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
@@ -243,10 +249,10 @@ async def test_transient_provider_failure_retries_then_technically_abstains(
     assert accepted.command.action_type == "abstain"
     assert accepted.technical_failure_code == failure_code
     assert [record["failure_code"] for record in logger.records] == [
-        failure_code, failure_code,
+        failure_code, failure_code, failure_code,
     ]
     assert [record["parse_result"] for record in logger.records] == [
-        "invoke_error_retry", "invoke_error_fallback",
+        "invoke_error_retry", "invoke_error_retry", "invoke_error_fallback",
     ]
     assert logger.technical_abstentions == [{
         "failure_code": failure_code,

@@ -146,7 +146,7 @@ class TestSchemas:
             (GameDetailResponse, {
                 "game_id": "initial", "phase": "waiting", "round_number": 0,
                 "players": {}, "sheriff": None, "speeches": [],
-                "death_history": [], "win_result": None,
+                "death_history": [], "win_result": None, "reveal_on_death": False,
             }),
             (PublicSpeechResponse, {"player_seat": 1, "text": "public", "round_number": 0}),
             (PublicDeathResponse, {"player_seat": 1, "cause": "exile", "round_number": 0}),
@@ -185,10 +185,15 @@ class TestSchemas:
         req = CreateGameRequest()
         assert req.num_werewolves == 3
         assert req.num_villagers == 3
+        assert req.reveal_on_death is False
 
     def test_create_game_request_custom(self):
         req = CreateGameRequest(num_werewolves=4, num_villagers=4)
         assert req.num_werewolves == 4
+
+    def test_create_game_request_accepts_reveal_on_death(self):
+        req = CreateGameRequest(reveal_on_death=True)
+        assert req.reveal_on_death is True
 
     def test_create_game_request_rejects_mixed_role_count_formats(self):
         with pytest.raises(ValidationError, match="role_counts cannot be combined"):
@@ -233,16 +238,25 @@ class TestSchemas:
         resp = GameDetailResponse(
             game_id="abc", phase="speech", round_number=2,
             players={}, sheriff=None, speeches=[],
-            death_history=[], win_result=None,
+            death_history=[], win_result=None, reveal_on_death=True,
         )
         assert resp.game_id == "abc"
+        assert resp.model_dump()["reveal_on_death"] is True
+
+    def test_game_detail_response_requires_reveal_on_death(self):
+        with pytest.raises(ValidationError):
+            GameDetailResponse(
+                game_id="abc", phase="speech", round_number=2,
+                players={}, sheriff=None, speeches=[],
+                death_history=[], win_result=None,
+            )
 
     def test_game_detail_response_rejects_votes_outside_public_contract(self):
         with pytest.raises(ValidationError):
             GameDetailResponse(
                 game_id="abc", phase="speech", round_number=2,
                 players={}, sheriff=None, speeches=[], votes=[],
-                death_history=[], win_result=None,
+                death_history=[], win_result=None, reveal_on_death=False,
             )
 
     @pytest.mark.parametrize("invalid_key", [0, -1, "1", True])
@@ -255,6 +269,7 @@ class TestSchemas:
                     role="wolf-killer-villager", camp="good",
                 )},
                 sheriff=None, speeches=[], death_history=[], win_result=None,
+                reveal_on_death=False,
             )
 
     def test_game_detail_keeps_valid_player_map_key_in_model_dump(self):
@@ -265,6 +280,7 @@ class TestSchemas:
                 role="wolf-killer-villager", camp="good",
             )},
             sheriff=None, speeches=[], death_history=[], win_result=None,
+            reveal_on_death=False,
         )
 
         assert response.model_dump()["players"] == {
@@ -281,6 +297,7 @@ class TestSchemas:
                     role="wolf-killer-villager", camp="good",
                 )},
                 sheriff=None, speeches=[], death_history=[], win_result=None,
+                reveal_on_death=False,
             )
 
     def test_public_vote_result_replay_event_is_closed(self):
@@ -374,6 +391,7 @@ class TestSchemas:
                 winning_camp="good",
                 reason="all_wolves_dead",
             ),
+            reveal_on_death=False,
         )
         logs = GameLogsResponse(
             game_id="abc",

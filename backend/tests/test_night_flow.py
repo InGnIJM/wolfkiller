@@ -688,7 +688,7 @@ def test_wolf_vote_turn_fallback_invoke_raises(state: GameState, caplog):
     director = _director(invoke)
     with caplog.at_level(logging.WARNING, logger="app.core.night_flow"):
         assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-            1, "pass", None, "safe fallback"
+            1, "pass", None, "系统异常，本轮未行动"
         )
     assert any("degrading to safe pass" in record.message for record in caplog.records)
     assert any("boom" in record.exc_text for record in caplog.records)
@@ -697,21 +697,21 @@ def test_wolf_vote_turn_fallback_invoke_raises(state: GameState, caplog):
 def test_wolf_vote_turn_fallback_non_str(state: GameState):
     director = _director(lambda _messages: 123)  # type: ignore[arg-type,return-value]
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
 def test_wolf_vote_turn_fallback_invalid_json(state: GameState):
     director = _director(lambda _messages: "not json")
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
 def test_wolf_vote_turn_fallback_list(state: GameState):
     director = _director(lambda _messages: "[]")
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
@@ -720,7 +720,7 @@ def test_wolf_vote_turn_kill_missing_target(state: GameState):
         lambda _messages: '{"action_type": "kill", "reasoning": "可疑"}'
     )
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
@@ -729,7 +729,7 @@ def test_wolf_vote_turn_kill_non_int_target(state: GameState):
         lambda _messages: '{"action_type": "kill", "target_seat": "2", "reasoning": "可疑"}'
     )
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
@@ -738,7 +738,7 @@ def test_wolf_vote_turn_kill_out_of_seats_target(state: GameState):
         lambda _messages: '{"action_type": "kill", "target_seat": 99, "reasoning": "可疑"}'
     )
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
@@ -747,14 +747,14 @@ def test_wolf_vote_turn_kill_missing_reasoning(state: GameState):
         lambda _messages: '{"action_type": "kill", "target_seat": 2}'
     )
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
 def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
     director = _director(lambda _messages: '{"action_type": "pass", "target_seat": null}')
     assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "safe fallback"
+        1, "pass", None, "系统异常，本轮未行动"
     )
 
 
@@ -764,8 +764,14 @@ def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
 def test_narration_known():
     assert NightDirector.narration("wolf_open") == ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。")
     assert NightDirector.narration("guard_open") == ("守卫请睁眼", "请选择今晚要守护的玩家。")
-    assert NightDirector.narration("witch_open") == ("女巫请睁眼", "昨晚有人被袭击。")
     assert NightDirector.narration("seer_open") == ("预言家请睁眼", "请查验一名玩家的身份。")
+    with pytest.raises(ValueError):
+        NightDirector.narration("witch_open")
+
+
+def test_witch_narration_matches_kill_target():
+    assert NightDirector.witch_narration(4) == ("女巫请睁眼", "昨晚有人被袭击。")
+    assert NightDirector.witch_narration(None) == ("女巫请睁眼", "昨晚风平浪静，无人被袭击。")
 
 
 def test_narration_unknown():

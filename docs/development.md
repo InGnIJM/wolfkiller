@@ -74,10 +74,15 @@ npm run lint       # ESLint
 | 前端覆盖率 | `vite.config.ts` 对 8 个核心文件（gameStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 门禁存在，但基线在部分环境下不达标（见下方踩坑） |
 | 隐私扫描 | 公开 DTO 与前端消费链不得含私有字段（`role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等） | 生效（测试门禁） |
 | 核心源码门禁 | 五个核心模块 blob 不变测试（守卫样例证明扩展性） | 生效（测试门禁） |
+| Benchmark 工具链 | 对局质量评测与引擎性能基准（见 `docs/benchmark.md`） | 工具链，非门禁 |
 
 ### 新增角色
 
 参照守卫样例 `backend/app/roles/guard.py`：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`），不需要改动任何核心模块。在 `roles/registry.py` 注册后补充对应 `tests/test_*_pipeline.py`。注意：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新 `tests/test_guard_extension.py` 中的 `CORE_BLOBS_BEFORE_GUARD`。
+
+### Benchmark 基准评测
+
+采集层（token / 计时 / `summary.json`）随对局自动落盘；批量真实对局评测用 `backend/scripts/run_benchmark.py`，引擎性能回归用 `backend/scripts/perf_benchmark.py`（mock LLM、零成本）。指标定义与用法见 `docs/benchmark.md`。
 
 ## 数据存储
 

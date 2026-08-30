@@ -12,6 +12,7 @@ import type { DeathRecord } from '../../store/types';
 
 interface Props {
   deaths: DeathRecord[];
+  revealedRole?: string | null;
 }
 
 const CAUSE_LABELS: Record<string, string> = {
@@ -21,6 +22,15 @@ const CAUSE_LABELS: Record<string, string> = {
   hunter_shot: '猎人带走',
 };
 
+const ROLE_LABELS: Record<string, string> = {
+  'wolf-killer-werewolf': '狼人',
+  'wolf-killer-villager': '村民',
+  'wolf-killer-seer': '预言家',
+  'wolf-killer-witch': '女巫',
+  'wolf-killer-hunter': '猎人',
+  'wolf-killer-guard': '守卫',
+};
+
 const CAUSE_ICONS: Record<string, SvgIconComponent> = {
   wolf_kill: Bloodtype,
   poison: Science,
@@ -28,12 +38,15 @@ const CAUSE_ICONS: Record<string, SvgIconComponent> = {
   exile: Gavel,
 };
 
-export default function DeathAnnouncement({ deaths }: Props) {
+export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
   const latest = deaths[deaths.length - 1];
   if (!latest) return null;
 
   const causeLabel = CAUSE_LABELS[latest.cause] || latest.cause;
   const Icon = CAUSE_ICONS[latest.cause] ?? PersonOff;
+  const roleLabel = revealedRole
+    ? (ROLE_LABELS[revealedRole] ?? revealedRole)
+    : null;
 
   return (
     <Dialog open maxWidth="xs" fullWidth aria-label="死亡公告">
@@ -59,6 +72,11 @@ export default function DeathAnnouncement({ deaths }: Props) {
         <Typography variant="h5" gutterBottom sx={{ fontWeight: 900, letterSpacing: 3 }}>
           {latest.player_seat}号玩家出局
         </Typography>
+        {roleLabel && (
+          <Typography variant="body1" sx={{ fontWeight: 700, color: '#D4A853' }}>
+            身份：{roleLabel}
+          </Typography>
+        )}
         <Typography variant="body1" color="text.secondary">
           {causeLabel} · 第{latest.round_number}轮
         </Typography>

@@ -118,9 +118,12 @@ def _has_valid_config(config: object) -> bool:
     if not isinstance(config, dict) or not config:
         return False
     if "role_counts" in config:
+        allowed = {"role_counts", "reveal_on_death"}
         return (
-            set(config) == {"role_counts"}
+            set(config) <= allowed
+            and "role_counts" in config
             and _is_valid_role_counts(config["role_counts"])
+            and isinstance(config.get("reveal_on_death", False), bool)
         )
     return (
         set(config) == _LEGACY_ROLE_COUNT_KEYS
@@ -325,6 +328,7 @@ class GameManifest:
             "finished_at": None,
         }
         players: dict = {}
+        reveal_on_death: bool = False
 
         for line in lines:
             try:
@@ -345,6 +349,12 @@ class GameManifest:
                 meta["created_at"] = rec.get("timestamp")
 
             op = rec.get("operation")
+
+            if op == "game_config":
+                flag = data.get("reveal_on_death")
+                if isinstance(flag, bool):
+                    reveal_on_death = flag
+                continue
 
             if op == "role_init":
                 raw_players = data.get("players")
@@ -398,6 +408,8 @@ class GameManifest:
                 meta["winner"] = data.get("winner")
                 meta["finished_at"] = rec.get("timestamp")
 
+        if isinstance(meta.get("config"), dict) and meta["config"].get("role_counts"):
+            meta["config"]["reveal_on_death"] = reveal_on_death
         return meta
 
     def _persist(self) -> None:
