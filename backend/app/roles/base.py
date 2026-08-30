@@ -12,6 +12,7 @@ from app.agents.output_parser import (
     StrictCapabilityError,
     ToolCallError,
     ToolCallResult,
+    extract_tool_call_xml,
 )
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
@@ -759,9 +760,21 @@ class BaseRole:
                 raise mapped from error
             raise
         if not getattr(response, "tool_calls", None):
-            # The provider ignored the action tool (e.g. answered with a tool
-            # call as plain text). Degrade to JSON instead of retrying the same
-            # unsupported native-tool path.
+            # Reasoning models (e.g. MiMo) answer tool-bound requests with a
+            # Hermes-style <tool_call> block as plain content. Accept it when
+            # it names the issued contract and validates; incomplete blocks
+            # fall through to the JSON transport for repair.
+            content = response.content if isinstance(response.content, str) else ""
+            xml_call = extract_tool_call_xml(content)
+            if xml_call is not None and xml_call[0] == request.contract.resolved_tool_name:
+                try:
+                    return self.output_parser.parse_action_payload(
+                        dict(xml_call[1]), request.contract,
+                    )
+                except ActionValidationError:
+                    pass
+            # The provider ignored the action tool. Degrade to JSON instead
+            # of retrying the same unsupported native-tool path.
             raise StrictCapabilityError(
                 "action tool transport returned no native tool call"
             )

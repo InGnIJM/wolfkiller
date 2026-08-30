@@ -112,13 +112,26 @@ class TestOutputParser:
         assert command.target_seat == 3
         assert command.reasoning == "suspicious"
 
+    def test_parse_action_payload_coerces_string_values_per_schema(self, werewolf_contract):
+        command = OutputParser().parse_action_payload(
+            {"action_type": "kill", "target_seat": "3", "reasoning": "x"},
+            werewolf_contract,
+        )
+        assert command.target_seat == 3
+
+    def test_parse_action_payload_coerces_null_marker_to_none(self, werewolf_contract):
+        command = OutputParser().parse_action_payload(
+            {"action_type": "pass", "target_seat": "null", "reasoning": "x"},
+            werewolf_contract,
+        )
+        assert command.target_seat is None
+
     @pytest.mark.parametrize(
         "payload",
         [
             {"action_type": "kill", "target_seat": 3},
             {"action_type": "kill", "target_seat": 3, "reasoning": "x", "extra": True},
             {"action_type": "poison", "target_seat": 3, "reasoning": "x"},
-            {"action_type": "kill", "target_seat": "3", "reasoning": "x"},
         ],
     )
     def test_parse_action_payload_rejects_invalid_contract_payload(

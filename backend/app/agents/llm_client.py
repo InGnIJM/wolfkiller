@@ -15,7 +15,8 @@ from openai import BadRequestError, UnprocessableEntityError
 
 from app.config import config as app_config
 from app.agents.output_parser import (
-    StrictCapabilityError, extract_json_object, extract_tool_call_xml,
+    StrictCapabilityError, coerce_payload_to_schema, extract_json_object,
+    extract_tool_call_xml,
 )
 from app.agents.providers.base import CallPurpose
 from app.agents.providers.openai_compatible import OpenAICompatibleTransport
@@ -311,40 +312,11 @@ class LLMClient:
     def _coerce_payload_types(
         result: StructuredResponse, schema: dict[str, Any],
     ) -> StructuredResponse:
-        """Coerce string parameter values to the schema's primitive types.
-
-        XML-fallback arguments arrive as strings while contracts demand real
-        integers, booleans and nulls. Idempotent for already-typed payloads;
-        values that cannot be converted are left for schema validation to
-        reject downstream.
-        """
-        properties = schema.get("properties")
-        if not isinstance(properties, Mapping) or not result.payload:
-            return result
-        coerced = dict(result.payload)
-        for key, value in result.payload.items():
-            spec = properties.get(key)
-            if not isinstance(spec, Mapping) or not isinstance(value, str):
-                continue
-            declared = spec.get("type")
-            types = [declared] if isinstance(declared, str) else list(declared or [])
-            normalized = value.strip().lower()
-            if "null" in types and normalized in {"", "null", "none"}:
-                coerced[key] = None
-            elif "integer" in types or "number" in types:
-                try:
-                    coerced[key] = int(value)
-                except ValueError:
-                    try:
-                        coerced[key] = float(value)
-                    except ValueError:
-                        pass
-            elif "boolean" in types:
-                if normalized == "true":
-                    coerced[key] = True
-                elif normalized == "false":
-                    coerced[key] = False
-        return replace(result, payload=coerced)
+        """Coerce string parameter values to the schema's primitive types."""
+        return replace(
+            result,
+            payload=coerce_payload_to_schema(result.payload, schema),
+        )
 
     @staticmethod
     def _structured_response(response, expected_tool_name: str) -> StructuredResponse:

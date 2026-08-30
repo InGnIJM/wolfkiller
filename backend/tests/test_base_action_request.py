@@ -135,6 +135,30 @@ async def test_request_action_falls_back_to_json_when_strict_response_lacks_nati
 
 
 @pytest.mark.asyncio
+async def test_request_action_accepts_complete_xml_tool_call_without_json_fallback():
+    """MiMo-style pseudo-XML naming the contract validates on the spot."""
+    state = make_state()
+    xml_complete = AIMessage(
+        content=(
+            "<tool_call><function=cast_vote>"
+            "<parameter=action_type>vote</parameter>"
+            "<parameter=target_seat>2</parameter>"
+            "<parameter=reasoning>x</parameter>"
+            "</function></tool_call>"
+        ),
+        tool_calls=[],
+    )
+    client = ClientStub([xml_complete], [])
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
+
+    accepted = await role.request_action(state, object(), request_for(state))
+
+    assert accepted.command.action_type == "vote"
+    assert accepted.command.target_seat == 2
+    assert client.json_model.messages == []
+
+
+@pytest.mark.asyncio
 async def test_request_action_retries_invalid_strict_action_once_with_generic_correction():
     state = make_state()
     client = ClientStub([action_tool_response(target=None), action_tool_response(target=2)])

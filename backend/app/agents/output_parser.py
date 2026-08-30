@@ -140,6 +140,43 @@ def _last_balanced_json_object(text: str) -> object | None:
     return best
 
 
+def coerce_payload_to_schema(payload: dict, schema: dict) -> dict:
+    """Coerce string parameter values to the schema's primitive types.
+
+    Text-extracted arguments (pseudo-XML tool calls) arrive as strings while
+    contracts demand real integers, booleans and nulls. Idempotent for
+    already-typed payloads; values that cannot be converted are left for
+    schema validation to reject downstream.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not payload:
+        return payload
+    coerced = dict(payload)
+    for key, value in payload.items():
+        spec = properties.get(key)
+        if not isinstance(spec, dict) or not isinstance(value, str):
+            continue
+        declared = spec.get("type")
+        types = [declared] if isinstance(declared, str) else list(declared or [])
+        normalized = value.strip().lower()
+        if "null" in types and normalized in {"", "null", "none"}:
+            coerced[key] = None
+        elif "integer" in types or "number" in types:
+            try:
+                coerced[key] = int(value)
+            except ValueError:
+                try:
+                    coerced[key] = float(value)
+                except ValueError:
+                    pass
+        elif "boolean" in types:
+            if normalized == "true":
+                coerced[key] = True
+            elif normalized == "false":
+                coerced[key] = False
+    return coerced
+
+
 class NightActionModel(BaseModel):
     action_type: str
     target_seat: int | None = None
@@ -177,6 +214,7 @@ class OutputParser:
                 code="action_payload_not_json",
             )
 
+        payload = coerce_payload_to_schema(payload, contract.json_schema())
         try:
             command = ActionCommand.model_validate(payload, strict=True)
         except ValidationError as error:
