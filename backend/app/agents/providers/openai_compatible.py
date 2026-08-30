@@ -1,7 +1,14 @@
+import os
+
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from .base import CallPurpose, ProviderProfile
+
+
+def _provider_max_retries() -> int:
+    """SDK-level retries for transient 429/5xx; honors Retry-After headers."""
+    return int(os.getenv("LLM_PROVIDER_MAX_RETRIES", "4"))
 
 
 class OpenAICompatibleTransport:
@@ -29,6 +36,7 @@ class OpenAICompatibleTransport:
                 if is_action
                 else config.action_timeout_seconds
             ),
+            "max_retries": _provider_max_retries(),
         }
         if purpose is CallPurpose.ACTION_STRICT and profile.strict_endpoint:
             kwargs["base_url"] = config.strict_base_url
