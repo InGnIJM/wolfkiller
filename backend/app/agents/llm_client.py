@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 from urllib.parse import urlparse
@@ -12,7 +14,9 @@ from langchain_core.language_models import BaseChatModel
 from openai import BadRequestError, UnprocessableEntityError
 
 from app.config import config as app_config
-from app.agents.output_parser import StrictCapabilityError, extract_json_object
+from app.agents.output_parser import (
+    StrictCapabilityError, extract_json_object, extract_tool_call_xml,
+)
 from app.agents.providers.base import CallPurpose
 from app.agents.providers.openai_compatible import OpenAICompatibleTransport
 from app.agents.providers.registry import ProviderRegistry
@@ -54,7 +58,17 @@ class LLMClientConfig:
     action_max_tokens: int = 2048
     action_timeout_seconds: float = 90.0
     action_retry_timeout_seconds: float = 120.0
+    action_final_retry_timeout_seconds: float = 30.0
     provider_profile: str = "auto"
+
+
+@dataclass(frozen=True)
+class LLMUsage:
+    """Token consumption reported by the provider for one or more model calls."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
 
 
 @dataclass(frozen=True)
@@ -66,6 +80,53 @@ class StructuredResponse:
     has_tool_calls: bool
     finish_reason: str | None = None
     content_length: int = 0
+    usage: LLMUsage | None = None
+    elapsed_ms: int = 0
+    llm_attempts: int = 1
+
+
+def _usage_from_map(mapping: Any) -> LLMUsage | None:
+    """Build LLMUsage from a LangChain or OpenAI-style token mapping."""
+    if not isinstance(mapping, Mapping):
+        return None
+    prompt_tokens = mapping.get("input_tokens", mapping.get("prompt_tokens"))
+    completion_tokens = mapping.get("output_tokens", mapping.get("completion_tokens"))
+    if type(prompt_tokens) is not int or type(completion_tokens) is not int:
+        return None
+    total_tokens = mapping.get("total_tokens")
+    if type(total_tokens) is not int:
+        total_tokens = prompt_tokens + completion_tokens
+    return LLMUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def extract_usage(response: Any) -> LLMUsage | None:
+    """Read token usage from a model response in either metadata dialect."""
+    usage = _usage_from_map(getattr(response, "usage_metadata", None))
+    if usage is not None:
+        return usage
+    response_metadata = getattr(response, "response_metadata", None)
+    token_usage = (
+        response_metadata.get("token_usage")
+        if isinstance(response_metadata, Mapping) else None
+    )
+    return _usage_from_map(token_usage)
+
+
+def merge_usage(first: LLMUsage | None, second: LLMUsage | None) -> LLMUsage | None:
+    """Accumulate token usage across attempts, tolerating missing reports."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return LLMUsage(
+        prompt_tokens=first.prompt_tokens + second.prompt_tokens,
+        completion_tokens=first.completion_tokens + second.completion_tokens,
+        total_tokens=first.total_tokens + second.total_tokens,
+    )
 
 
 def env_default_client_config() -> LLMClientConfig:
@@ -82,6 +143,9 @@ def env_default_client_config() -> LLMClientConfig:
         action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 90.0),
         action_retry_timeout_seconds=getattr(
             llm_cfg, "action_retry_timeout_seconds", 120.0,
+        ),
+        action_final_retry_timeout_seconds=getattr(
+            llm_cfg, "action_final_retry_timeout_seconds", 30.0,
         ),
         provider_profile=getattr(llm_cfg, "provider_profile", "auto"),
     )
@@ -116,6 +180,7 @@ class LLMClient:
         self.action_max_tokens = self._config.action_max_tokens
         self.action_timeout_seconds = self._config.action_timeout_seconds
         self.action_retry_timeout_seconds = self._config.action_retry_timeout_seconds
+        self.action_final_retry_timeout_seconds = self._config.action_final_retry_timeout_seconds
         self.provider_profile = ProviderRegistry().resolve(
             self._config.provider_profile,
             self._config.base_url,
@@ -185,7 +250,9 @@ class LLMClient:
             CallPurpose.TOOLS,
             replace(self._config, temperature=_ACTION_TEMPERATURE),
         )
-        return model.bind_tools([tool], tool_choice=tool_name)
+        if self._forced_tool_choice():
+            return model.bind_tools([tool], tool_choice=tool_name)
+        return model.bind_tools([tool])
 
     def probe(self) -> dict[str, bool]:
         """Invoke a minimal text request and return this profile's capabilities."""
@@ -230,7 +297,54 @@ class LLMClient:
             return model.bind_tools(
                 [tool], tool_choice=contract.resolved_tool_name, strict=True
             )
+        if not self._forced_tool_choice():
+            return model.bind_tools([tool])
         return model.bind_tools([tool], tool_choice=contract.resolved_tool_name)
+
+    def _forced_tool_choice(self) -> bool:
+        """Duck-type friendly read; scripted/partial profiles default to True."""
+        return bool(getattr(
+            self.provider_profile.capabilities, "forced_tool_choice", True,
+        ))
+
+    @staticmethod
+    def _coerce_payload_types(
+        result: StructuredResponse, schema: dict[str, Any],
+    ) -> StructuredResponse:
+        """Coerce string parameter values to the schema's primitive types.
+
+        XML-fallback arguments arrive as strings while contracts demand real
+        integers, booleans and nulls. Idempotent for already-typed payloads;
+        values that cannot be converted are left for schema validation to
+        reject downstream.
+        """
+        properties = schema.get("properties")
+        if not isinstance(properties, Mapping) or not result.payload:
+            return result
+        coerced = dict(result.payload)
+        for key, value in result.payload.items():
+            spec = properties.get(key)
+            if not isinstance(spec, Mapping) or not isinstance(value, str):
+                continue
+            declared = spec.get("type")
+            types = [declared] if isinstance(declared, str) else list(declared or [])
+            normalized = value.strip().lower()
+            if "null" in types and normalized in {"", "null", "none"}:
+                coerced[key] = None
+            elif "integer" in types or "number" in types:
+                try:
+                    coerced[key] = int(value)
+                except ValueError:
+                    try:
+                        coerced[key] = float(value)
+                    except ValueError:
+                        pass
+            elif "boolean" in types:
+                if normalized == "true":
+                    coerced[key] = True
+                elif normalized == "false":
+                    coerced[key] = False
+        return replace(result, payload=coerced)
 
     @staticmethod
     def _structured_response(response, expected_tool_name: str) -> StructuredResponse:
@@ -254,6 +368,16 @@ class LLMClient:
                 payload=payload,
                 transport="tool",
                 has_tool_calls=True,
+                finish_reason=finish_reason,
+                content_length=content_length,
+            )
+
+        xml_call = extract_tool_call_xml(content)
+        if xml_call is not None and xml_call[0] == expected_tool_name:
+            return StructuredResponse(
+                payload=dict(xml_call[1]),
+                transport="xml_tool_fallback",
+                has_tool_calls=False,
                 finish_reason=finish_reason,
                 content_length=content_length,
             )
@@ -288,9 +412,14 @@ class LLMClient:
 
     def invoke_action(self, messages, contract: ActionContract) -> StructuredResponse:
         """Invoke one action contract through native tools with JSON fallback."""
+        started = time.monotonic()
+        usage = None
+        attempts = 0
         if self.supports_action_tools:
             try:
+                attempts += 1
                 response = self.get_model_with_action_tool(contract).invoke(messages)
+                usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
                 )
@@ -302,28 +431,49 @@ class LLMClient:
                     self.model_name,
                     type(error).__name__,
                 )
+                attempts += 1
                 response = self.get_action_model().invoke(messages)
+                usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
                 )
         else:
+            attempts += 1
             response = self.get_action_model().invoke(messages)
+            usage = merge_usage(usage, extract_usage(response))
             result = self._structured_response(
                 response, contract.resolved_tool_name,
             )
         if self.supports_strict_actions and result.transport == "tool":
-            return replace(result, transport="strict_tool")
-        return result
+            result = replace(result, transport="strict_tool")
+        result = self._coerce_payload_types(result, contract.json_schema())
+        return replace(
+            result,
+            usage=usage,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            llm_attempts=attempts,
+        )
 
     def invoke_json(
         self, messages, *, tool_name: str, schema: dict[str, Any],
     ) -> StructuredResponse:
         """Request arbitrary structured JSON through tools when available."""
+        started = time.monotonic()
+        usage = None
+        attempts = 0
         if self.supports_action_tools:
             try:
+                attempts += 1
                 response = self.get_model_with_json_tool(tool_name, schema).invoke(messages)
+                usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
-                return self._require_schema_fields(result, schema)
+                result = self._coerce_payload_types(result, schema)
+                return replace(
+                    self._require_schema_fields(result, schema),
+                    usage=usage,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    llm_attempts=attempts,
+                )
             except (BadRequestError, UnprocessableEntityError, ValueError) as error:
                 logger.warning(
                     "Native JSON tool failed for provider=%s model=%s; "
@@ -332,23 +482,45 @@ class LLMClient:
                     self.model_name,
                     type(error).__name__,
                 )
+                attempts += 1
                 response = self.get_action_model().invoke(messages)
+                usage = merge_usage(usage, extract_usage(response))
         else:
+            attempts += 1
             response = self.get_action_model().invoke(messages)
+            usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)
-        return self._require_schema_fields(result, schema)
+        result = self._require_schema_fields(result, schema)
+        result = self._coerce_payload_types(result, schema)
+        return replace(
+            result,
+            usage=usage,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            llm_attempts=attempts,
+        )
 
     async def ainvoke_json(
         self, messages, *, tool_name: str, schema: dict[str, Any],
     ) -> StructuredResponse:
         """Async structured JSON request with native-tool to JSON fallback."""
+        started = time.monotonic()
+        usage = None
+        attempts = 0
         if self.supports_action_tools:
+            attempts += 1
             try:
                 response = await self.get_model_with_json_tool(
                     tool_name, schema,
                 ).ainvoke(messages)
+                usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
-                return self._require_schema_fields(result, schema)
+                result = self._coerce_payload_types(result, schema)
+                return replace(
+                    self._require_schema_fields(result, schema),
+                    usage=usage,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    llm_attempts=attempts,
+                )
             except (BadRequestError, UnprocessableEntityError, ValueError) as error:
                 logger.warning(
                     "Native async JSON tool failed for provider=%s model=%s; "
@@ -357,6 +529,14 @@ class LLMClient:
                     self.model_name,
                     type(error).__name__,
                 )
+        attempts += 1
         response = await self.get_action_model().ainvoke(messages)
+        usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)
-        return self._require_schema_fields(result, schema)
+        result = self._require_schema_fields(result, schema)
+        return replace(
+            result,
+            usage=usage,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            llm_attempts=attempts,
+        )
