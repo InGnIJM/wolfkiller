@@ -1,9 +1,47 @@
 import pytest
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
-from app.agents.output_parser import OutputParser, ToolCallError, ToolCallResult, extract_json_object
+from app.agents.output_parser import (
+    OutputParser, ToolCallError, ToolCallResult, extract_json_object,
+    extract_tool_call_xml,
+)
 from app.core.action_validator import ActionValidationError
 from app.roles.registry import builtin_registry
+
+
+class TestExtractToolCallXml:
+    def test_parses_function_and_string_parameters(self):
+        raw = (
+            '一些思考文字\n<tool_call>\n<function=cast_vote>\n'
+            '<parameter=action_type>vote</parameter>\n'
+            '<parameter=target_seat>4</parameter>\n'
+            '<parameter=reasoning>4号发言矛盾</parameter>\n'
+            '</function>\n</tool_call>'
+        )
+        assert extract_tool_call_xml(raw) == (
+            "cast_vote",
+            {"action_type": "vote", "target_seat": "4", "reasoning": "4号发言矛盾"},
+        )
+
+    def test_returns_none_without_markup(self):
+        assert extract_tool_call_xml('{"action_type": "vote"}') is None
+        assert extract_tool_call_xml(None) is None
+        assert extract_tool_call_xml('<tool_call>未闭合' ) is None
+
+    def test_parse_tool_call_uses_xml_fallback(self):
+        parser = OutputParser()
+        msg = MagicMock(content=(
+            '<tool_call>\n<function=speak>\n'
+            '<parameter=text>我怀疑5号玩家</parameter>\n'
+            '</function>\n</tool_call>'
+        ))
+        msg.tool_calls = None
+
+        result = parser.parse_tool_call(msg)
+
+        assert result is not None
+        assert result.function_name == "speak"
+        assert result.arguments == {"text": "我怀疑5号玩家"}
 
 
 class TestExtractJsonObject:
@@ -27,9 +65,22 @@ class TestExtractJsonObject:
     def test_markdown_fence_with_invalid_json_returns_none(self):
         assert extract_json_object('```json\n{not valid}\n```') is None
 
-    def test_prose_around_json_returns_none(self):
-        assert extract_json_object('I choose {"a": 1}') is None
-        assert extract_json_object('文本前缀 {"a": 1} 文本后缀') is None
+    def test_prose_wrapped_json_is_extracted(self):
+        assert extract_json_object('I choose {"a": 1}') == {"a": 1}
+        assert extract_json_object('文本前缀 {"a": 1} 文本后缀') == {"a": 1}
+
+    def test_prose_with_multiple_objects_returns_the_last(self):
+        text = '先看 {"a": 1} 这个选项，最终提交 {"a": 2}'
+        assert extract_json_object(text) == {"a": 2}
+
+    def test_prose_with_braces_inside_strings_extracts_object(self):
+        text = '理由是"{}不合法"，提交 {"a": 1}'
+        assert extract_json_object(text) == {"a": 1}
+
+    def test_embedded_json_that_fails_to_parse_returns_none(self):
+        assert extract_json_object('只有半个 {"a": 1') is None
+        assert extract_json_object('说明 {not valid} 结束') is None
+        assert extract_json_object('没有任何对象') is None
 
     def test_empty_and_non_string_returns_none(self):
         assert extract_json_object("") is None
@@ -122,7 +173,9 @@ class TestOutputParser:
                 werewolf_contract,
             )
 
-    def test_parse_tool_action_accepts_only_a_single_json_object(self, werewolf_contract):
+    def test_parse_tool_action_accepts_bare_and_prose_wrapped_json(
+        self, werewolf_contract,
+    ):
         parser = OutputParser()
 
         command = parser.parse_tool_action(
@@ -132,10 +185,16 @@ class TestOutputParser:
         )
 
         assert command.target_seat == 3
+        wrapped = parser.parse_tool_action(
+            werewolf_contract.contract_id,
+            'I choose {"action_type":"kill","target_seat":3,"reasoning":"x"}',
+            werewolf_contract,
+        )
+        assert wrapped.target_seat == 3
         with pytest.raises(ToolCallError):
             parser.parse_tool_action(
                 werewolf_contract.contract_id,
-                'I choose {"action_type":"kill","target_seat":3,"reasoning":"x"}',
+                "没有任何 JSON 对象",
                 werewolf_contract,
             )
 
@@ -224,12 +283,12 @@ class TestOutputParser:
         speech = parser.parse_speech(raw)
         assert speech == "我怀疑5号是狼"
 
-    def test_parse_night_action_rejects_json_embedded_in_text(self):
+    def test_parse_night_action_accepts_json_embedded_in_text(self):
         parser = OutputParser()
         raw = '我的想法如下：\n{"action_type": "kill", "target_seat": 2, "reasoning": "必须刀预言家"}'
         action = parser.parse_night_action(raw, player_seat=1)
-        assert action.action_type == "pass"
-        assert action.target_seat is None
+        assert action.action_type == "kill"
+        assert action.target_seat == 2
 
     def test_parse_speech_from_json_with_text_key(self):
         parser = OutputParser()
@@ -253,10 +312,16 @@ class TestOutputParser:
         vote = parser.parse_vote_action("", voter_seat=1)
         assert vote.target_seat is None
 
-    def test_parse_night_action_rejects_brace_json_with_surrounding_text(self):
+    def test_parse_night_action_accepts_brace_json_with_surrounding_text(self):
         parser = OutputParser()
         raw = '文本前缀 {"action_type": "check", "target_seat": 3, "reasoning": "test"} 文本后缀'
         action = parser.parse_night_action(raw, player_seat=1)
+        assert action.action_type == "check"
+        assert action.target_seat == 3
+
+    def test_parse_night_action_degrades_to_pass_without_any_json(self):
+        parser = OutputParser()
+        action = parser.parse_night_action("今晚没有明确目标，先观察", player_seat=1)
         assert action.action_type == "pass"
         assert action.target_seat is None
 

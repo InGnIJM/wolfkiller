@@ -34,6 +34,35 @@ class StrictCapabilityError(RuntimeError):
     """The configured provider explicitly rejects strict tool support."""
 
 
+_TOOL_CALL_XML = re.compile(
+    r"<tool_call>\s*<function=([\w.-]+)>(.*?)</function>\s*</tool_call>",
+    re.DOTALL,
+)
+_TOOL_CALL_PARAM = re.compile(r"<parameter=([\w.-]+)>(.*?)</parameter>", re.DOTALL)
+
+
+def extract_tool_call_xml(raw: object) -> Optional[tuple[str, dict[str, str]]]:
+    """Parse a pseudo-XML tool call emitted as plain message content.
+
+    Some reasoning models (e.g. MiMo) answer tool-bound requests with their
+    chat template's ``<tool_call>`` markup instead of the API's structured
+    ``tool_calls`` field. Returns ``(function_name, string arguments)`` or
+    None when the content carries no such block. Values stay strings; schema
+    coercion happens where the contract schema is known.
+    """
+    if not isinstance(raw, str) or "<tool_call>" not in raw:
+        return None
+    match = _TOOL_CALL_XML.search(raw)
+    if match is None:
+        return None
+    name, body = match.group(1), match.group(2)
+    arguments = {
+        key: value.strip()
+        for key, value in _TOOL_CALL_PARAM.findall(body)
+    }
+    return name, arguments
+
+
 def _schema_failure_code(error_types: set[str]) -> str:
     """Classify Pydantic schema failures without retaining response content."""
     if "missing" in error_types:
@@ -49,13 +78,13 @@ def _schema_failure_code(error_types: set[str]) -> str:
 
 
 def extract_json_object(raw: object) -> object:
-    """Extract one JSON object from a model response, tolerating only the
-    common markdown code-fence wrapper.
+    """Extract one JSON object from a model response.
 
-    Reasoning models frequently wrap the payload in ```json ... ``` fences;
-    accepting that wrapper is the safe fallback. Anything else — prose before
-    or after the JSON, multiple objects, invalid JSON — returns None so the
-    caller degrades instead of accidentally trusting model thinking text.
+    Accepted forms, in order: a bare JSON object, a ```json```-fenced object,
+    and finally the last balanced ``{...}`` span embedded in surrounding prose
+    (models often prefix the payload with a sentence of reasoning). The
+    returned value is still validated against the action schema by the
+    caller, so prose text itself is never trusted as an action.
     """
     if not isinstance(raw, str):
         return None
@@ -72,8 +101,43 @@ def extract_json_object(raw: object) -> object:
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
-            return None
-    return None
+            pass
+    return _last_balanced_json_object(text)
+
+
+def _last_balanced_json_object(text: str) -> object | None:
+    """Return the last balanced ``{...}`` span in ``text`` that parses."""
+    best: object | None = None
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}":
+            if depth == 0:
+                continue
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    best = json.loads(text[start:index + 1])
+                except json.JSONDecodeError:
+                    pass
+                start = -1
+    return best
 
 
 class NightActionModel(BaseModel):
@@ -241,6 +305,15 @@ class OutputParser:
         content = response.content if hasattr(response, "content") else str(response)
         if not content:
             return None
+
+        # Pseudo-XML tool call markup (e.g. MiMo reasoning models)
+        xml_call = extract_tool_call_xml(content)
+        if xml_call is not None:
+            fn_name, arguments = xml_call
+            logger.info(f"Tool call parsed (xml fallback): {fn_name}")
+            return ToolCallResult(
+                function_name=fn_name, arguments=arguments, raw_text=content,
+            )
 
         # Try: speak(text="...") or last_words(text="...")
         for fn_name in ("speak", "last_words"):
