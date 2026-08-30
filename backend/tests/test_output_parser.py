@@ -28,6 +28,18 @@ class TestExtractToolCallXml:
         assert extract_tool_call_xml(None) is None
         assert extract_tool_call_xml('<tool_call>未闭合' ) is None
 
+    def test_parses_hermes_canonical_json_body(self):
+        raw = (
+            '思考...\n<tool_call>\n'
+            '{"name": "cast_vote", "arguments": '
+            '{"action_type": "vote", "target_seat": 4, "reasoning": "x"}}\n'
+            '</tool_call>'
+        )
+        assert extract_tool_call_xml(raw) == (
+            "cast_vote",
+            {"action_type": "vote", "target_seat": 4, "reasoning": "x"},
+        )
+
     def test_parse_tool_call_uses_xml_fallback(self):
         parser = OutputParser()
         msg = MagicMock(content=(

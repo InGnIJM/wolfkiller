@@ -39,28 +39,48 @@ _TOOL_CALL_XML = re.compile(
     re.DOTALL,
 )
 _TOOL_CALL_PARAM = re.compile(r"<parameter=([\w.-]+)>(.*?)</parameter>", re.DOTALL)
+_TOOL_CALL_JSON_BODY = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+    re.DOTALL,
+)
 
 
-def extract_tool_call_xml(raw: object) -> Optional[tuple[str, dict[str, str]]]:
+def extract_tool_call_xml(raw: object) -> Optional[tuple[str, dict[str, object]]]:
     """Parse a pseudo-XML tool call emitted as plain message content.
 
     Some reasoning models (e.g. MiMo) answer tool-bound requests with their
     chat template's ``<tool_call>`` markup instead of the API's structured
-    ``tool_calls`` field. Returns ``(function_name, string arguments)`` or
-    None when the content carries no such block. Values stay strings; schema
-    coercion happens where the contract schema is known.
+    ``tool_calls`` field. Two body forms are accepted: the parameter-tag
+    variant (``<function=name><parameter=k>v</parameter>...``) and the
+    Hermes-canonical JSON body (``{"name": ..., "arguments": {...}}``).
+    Returns ``(function_name, arguments)`` or None when the content carries
+    no such block. Values stay as extracted; schema coercion happens where
+    the contract schema is known.
     """
     if not isinstance(raw, str) or "<tool_call>" not in raw:
         return None
     match = _TOOL_CALL_XML.search(raw)
-    if match is None:
-        return None
-    name, body = match.group(1), match.group(2)
-    arguments = {
-        key: value.strip()
-        for key, value in _TOOL_CALL_PARAM.findall(body)
-    }
-    return name, arguments
+    if match is not None:
+        name, body = match.group(1), match.group(2)
+        arguments: dict[str, object] = {
+            key: value.strip()
+            for key, value in _TOOL_CALL_PARAM.findall(body)
+        }
+        if arguments:
+            return name, arguments
+    json_match = _TOOL_CALL_JSON_BODY.search(raw)
+    if json_match is not None:
+        try:
+            parsed = json.loads(json_match.group(1))
+        except json.JSONDecodeError:
+            return None
+        if (
+            isinstance(parsed, dict)
+            and isinstance(parsed.get("name"), str)
+            and isinstance(parsed.get("arguments"), dict)
+        ):
+            return parsed["name"], parsed["arguments"]
+    return None
 
 
 def _schema_failure_code(error_types: set[str]) -> str:
