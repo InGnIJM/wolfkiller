@@ -32,7 +32,9 @@ class ProviderRegistry:
         "custom-openai": ProviderProfile(
             profile_id="custom-openai",
             api_mode=_CHAT_COMPLETIONS,
-            capabilities=ModelCapabilities(True, False, True, False, True),
+            capabilities=ModelCapabilities(
+                True, False, True, False, True, forced_tool_choice=False,
+            ),
             default_action_max_tokens=2048,
         ),
     }

@@ -203,3 +203,126 @@ class TestLLMClient:
             tool_choice=contract.contract_id,
             strict=True,
         )
+
+    @staticmethod
+    def _custom_openai_client() -> LLMClient:
+        from app.agents.llm_client import LLMClientConfig
+
+        return LLMClient(config=LLMClientConfig(
+            base_url="https://gateway.example/v1", api_key="key", model_id="m",
+            temperature=0.7, max_tokens=512,
+            strict_base_url="https://gateway.example/v1",
+        ))
+
+    @patch("app.agents.llm_client.ChatOpenAI")
+    def test_custom_openai_binds_action_tool_without_forced_choice(self, mock_chat):
+        """Gateways that reject named tool_choice still get tool transport."""
+        contract = builtin_registry.require("wolf-killer-werewolf").contracts[0]
+
+        self._custom_openai_client().get_model_with_action_tool(contract)
+
+        mock_chat.return_value.bind_tools.assert_called_once_with(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": contract.contract_id,
+                        "description": "Submit the issued game action.",
+                        "parameters": contract.json_schema(),
+                    },
+                }
+            ]
+        )
+
+    @patch("app.agents.llm_client.ChatOpenAI")
+    def test_custom_openai_binds_json_tool_without_forced_choice(self, mock_chat):
+        schema = {
+            "type": "object", "required": ["x"],
+            "properties": {"x": {"type": "integer"}},
+        }
+
+        self._custom_openai_client().get_model_with_json_tool("submit", schema)
+
+        mock_chat.return_value.bind_tools.assert_called_once()
+        assert mock_chat.return_value.bind_tools.call_args.kwargs == {}
+
+    @staticmethod
+    def _xml_response(content: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            tool_calls=None, content=content, response_metadata={},
+        )
+
+    def test_structured_response_parses_pseudo_xml_tool_fallback(self):
+        response = self._xml_response(
+            '<tool_call>\n<function=cast_vote>\n'
+            '<parameter=action_type>vote</parameter>\n'
+            '<parameter=target_seat>4</parameter>\n'
+            '<parameter=reasoning>4号发言矛盾</parameter>\n'
+            '</function>\n</tool_call>'
+        )
+
+        result = LLMClient._structured_response(response, "cast_vote")
+
+        assert result.transport == "xml_tool_fallback"
+        assert result.payload == {
+            "action_type": "vote", "target_seat": "4",
+            "reasoning": "4号发言矛盾",
+        }
+
+    def test_structured_response_ignores_xml_with_unexpected_tool(self):
+        response = self._xml_response(
+            '<tool_call>\n<function=other_tool>\n'
+            '<parameter=x>1</parameter>\n</function>\n</tool_call>'
+        )
+
+        with pytest.raises(ValueError):
+            LLMClient._structured_response(response, "cast_vote")
+
+    def test_coerce_payload_types_converts_strings_per_schema(self):
+        from app.agents.llm_client import LLMClientConfig, StructuredResponse
+
+        client = self._custom_openai_client()
+        response = StructuredResponse(
+            payload={
+                "action_type": "vote", "target_seat": "4",
+                "reasoning": "4号发言矛盾",
+            },
+            transport="xml_tool_fallback",
+            has_tool_calls=False,
+        )
+        schema = {
+            "type": "object",
+            "properties": {
+                "action_type": {"type": "string", "enum": ["vote", "abstain"]},
+                "target_seat": {"type": ["integer", "null"]},
+                "reasoning": {"type": "string"},
+            },
+            "required": ["action_type", "target_seat", "reasoning"],
+        }
+
+        coerced = client._coerce_payload_types(response, schema)
+
+        assert coerced.payload["target_seat"] == 4
+        assert coerced.payload["action_type"] == "vote"
+
+    def test_coerce_payload_types_maps_null_marker_to_none(self):
+        from app.agents.llm_client import StructuredResponse
+
+        response = StructuredResponse(
+            payload={"action_type": "abstain", "target_seat": "null", "reasoning": "x"},
+            transport="xml_tool_fallback", has_tool_calls=False,
+        )
+        schema = {
+            "type": "object",
+            "properties": {
+                "action_type": {"type": "string"},
+                "target_seat": {"type": ["integer", "null"]},
+                "reasoning": {"type": "string"},
+            },
+        }
+
+        coerced = self._custom_openai_client()._coerce_payload_types(response, schema)
+
+        assert coerced.payload["target_seat"] is None

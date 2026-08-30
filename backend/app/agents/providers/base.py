@@ -16,6 +16,9 @@ class ModelCapabilities:
     json_output: bool
     reasoning_effort: bool
     temperature: bool
+    # Some OpenAI-compatible gateways reject a named tool_choice with 400
+    # (e.g. scnet); binding the tool and letting the model choose still works.
+    forced_tool_choice: bool = True
 
 
 @dataclass(frozen=True)
