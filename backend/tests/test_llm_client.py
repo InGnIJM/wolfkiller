@@ -326,3 +326,35 @@ class TestLLMClient:
         coerced = self._custom_openai_client()._coerce_payload_types(response, schema)
 
         assert coerced.payload["target_seat"] is None
+
+    @patch("app.agents.llm_client.ChatOpenAI")
+    def test_build_caches_one_model_per_purpose(self, mock_chat):
+        from app.agents.providers.base import CallPurpose
+
+        client = LLMClient(model="deepseek-chat")
+
+        first = client._build(CallPurpose.TEXT)
+        second = client._build(CallPurpose.TEXT)
+
+        assert first is second
+        mock_chat.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_cached_clients_and_clears_cache(self):
+        from types import SimpleNamespace
+
+        client = LLMClient(model="deepseek-chat")
+        closed = []
+
+        async def fake_aclose():
+            closed.append(True)
+
+        fake_model = SimpleNamespace(
+            root_async_client=SimpleNamespace(aclose=fake_aclose),
+        )
+        client._built_models[("text", client._config)] = fake_model
+
+        await client.aclose()
+
+        assert closed == [True]
+        assert client._built_models == {}

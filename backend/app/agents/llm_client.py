@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -188,6 +189,10 @@ class LLMClient:
             self.model_name,
         )
         self._transport = OpenAICompatibleTransport()
+        # One ChatModel per (purpose, config) instead of one per call: every
+        # build creates a fresh httpx/openai client, and unclosed clients
+        # segfault the interpreter at shutdown on Windows.
+        self._built_models: dict[tuple[CallPurpose, LLMClientConfig], BaseChatModel] = {}
 
     @property
     def supports_strict_actions(self) -> bool:
@@ -202,13 +207,37 @@ class LLMClient:
     def _build(
         self, purpose: CallPurpose, config: LLMClientConfig | None = None,
     ) -> BaseChatModel:
-        factory = ChatOpenAI if ChatOpenAI is not _DEFAULT_CHAT_OPENAI else None
-        return self._transport.build(
-            config or self._config,
-            self.provider_profile,
-            purpose,
-            chat_model_factory=factory,
-        )
+        effective = config or self._config
+        key = (purpose, effective)
+        model = self._built_models.get(key)
+        if model is None:
+            factory = ChatOpenAI if ChatOpenAI is not _DEFAULT_CHAT_OPENAI else None
+            model = self._transport.build(
+                effective,
+                self.provider_profile,
+                purpose,
+                chat_model_factory=factory,
+            )
+            self._built_models[key] = model
+        return model
+
+    async def aclose(self) -> None:
+        """Close every httpx/openai client behind the cached chat models."""
+        for model in self._built_models.values():
+            for attr in ("root_async_client", "async_client", "root_client"):
+                client = getattr(model, attr, None)
+                closer = getattr(client, "aclose", None) or getattr(
+                    client, "close", None,
+                )
+                if not callable(closer):
+                    continue
+                try:
+                    result = closer()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.debug("Failed to close %s client", attr, exc_info=True)
+        self._built_models.clear()
 
     def get_model(self) -> BaseChatModel:
         return self._build(CallPurpose.TEXT)

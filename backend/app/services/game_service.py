@@ -285,6 +285,7 @@ class GameService:
         self._engines: dict[str, GameEngine] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._model_snapshots: dict[str, list[dict]] = {}
+        self._llm_clients: dict[str, list[LLMClient]] = {}
         self._manifest = GameManifest(data_dir=data_dir)
 
         # Restore completed games so list / detail endpoints still work
@@ -455,7 +456,9 @@ class GameService:
         self._model_snapshots[game_id] = model_snapshot
 
         def client_provider(seat: int) -> LLMClient:
-            return LLMClient(config=client_config)
+            client = LLMClient(config=client_config)
+            self._llm_clients.setdefault(game_id, []).append(client)
+            return client
 
         prompt_builder = PromptBuilder()
         roles = self._create_roles(config, prompt_builder, client_provider)
@@ -785,7 +788,27 @@ class GameService:
         self._engines.pop(game_id, None)
         self._tasks.pop(game_id, None)
         self._model_snapshots.pop(game_id, None)
+        for client in self._llm_clients.pop(game_id, []):
+            try:
+                await client.aclose()
+            except Exception:
+                logger.debug("Failed to close LLM client", exc_info=True)
         self._manifest.remove_game(game_id)
+
+    async def aclose(self) -> None:
+        """Close every LLM client this service created.
+
+        Headless callers (benchmark scripts) must invoke this before exit:
+        unclosed httpx/openai clients crash interpreter finalization on
+        Windows (segfault, reported as exit code 2816).
+        """
+        for clients in self._llm_clients.values():
+            for client in clients:
+                try:
+                    await client.aclose()
+                except Exception:
+                    logger.debug("Failed to close LLM client", exc_info=True)
+        self._llm_clients.clear()
 
     # ── Event Handlers ─────────────────────────────────────────
 
