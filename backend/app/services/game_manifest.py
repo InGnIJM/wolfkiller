@@ -27,6 +27,11 @@ _LEGACY_ROLE_COUNT_KEYS = frozenset({
 
 _VALID_PIPELINE_VERSIONS = frozenset({"v1", "v2"})
 _CURRENT_EFFECT_SCHEMA = 1
+_MODEL_SNAPSHOT_VERSION = 2
+_MODEL_SNAPSHOT_FIELDS = (
+    "config_id", "name", "model_id", "base_url", "provider_profile",
+    "count", "seats",
+)
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -131,6 +136,102 @@ def _has_valid_config(config: object) -> bool:
     )
 
 
+def _has_known_model_assignment(entry: Mapping) -> bool:
+    """Whether an archive contains a complete, trustworthy seat mapping.
+
+    Legacy model snapshots deliberately remain untouched.  Absence of the
+    v2 marker, or any malformed count/seat data, therefore means that the
+    historical seat assignment is unknown.
+    """
+    if entry.get("model_snapshot_version") != _MODEL_SNAPSHOT_VERSION:
+        return False
+    player_count = entry.get("player_count")
+    snapshot = entry.get("model_snapshot")
+    if (
+        not isinstance(player_count, int)
+        or isinstance(player_count, bool)
+        or player_count <= 0
+        or not isinstance(snapshot, list)
+        or not snapshot
+    ):
+        return False
+
+    all_seats: list[int] = []
+    seen_config_ids: set[Optional[str]] = set()
+    for item in snapshot:
+        if not isinstance(item, Mapping):
+            return False
+        config_id = item.get("config_id")
+        if config_id is not None and (
+            not isinstance(config_id, str) or not config_id
+        ):
+            return False
+        if config_id in seen_config_ids:
+            return False
+        seen_config_ids.add(config_id)
+        count = item.get("count")
+        seats = item.get("seats")
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count <= 0
+            or not isinstance(seats, list)
+            or len(seats) != count
+        ):
+            return False
+        if any(
+            not isinstance(seat, int) or isinstance(seat, bool) or seat <= 0
+            for seat in seats
+        ):
+            return False
+        if seats != sorted(seats):
+            return False
+        all_seats.extend(seats)
+
+    return sorted(all_seats) == list(range(1, player_count + 1))
+
+
+def _recover_model_assignment(data: Mapping) -> Optional[dict]:
+    """Validate and sanitize a v2 ``model_assignment`` log payload."""
+    if data.get("model_snapshot_version") != _MODEL_SNAPSHOT_VERSION:
+        return None
+    raw_snapshot = data.get("model_snapshot")
+    if not isinstance(raw_snapshot, list) or not raw_snapshot:
+        return None
+
+    snapshot: list[dict] = []
+    for raw_entry in raw_snapshot:
+        if not isinstance(raw_entry, Mapping):
+            return None
+        config_id = raw_entry.get("config_id")
+        if config_id is not None and (
+            not isinstance(config_id, str) or not config_id
+        ):
+            return None
+        for field in ("name", "model_id", "base_url", "provider_profile"):
+            value = raw_entry.get(field)
+            if not isinstance(value, str) or not value:
+                return None
+        snapshot.append({field: raw_entry.get(field) for field in _MODEL_SNAPSHOT_FIELDS})
+
+    recovered = {
+        "model_snapshot_version": _MODEL_SNAPSHOT_VERSION,
+        "model_snapshot": snapshot,
+        "player_count": sum(
+            item["count"]
+            for item in snapshot
+            if isinstance(item.get("count"), int)
+            and not isinstance(item.get("count"), bool)
+        ),
+    }
+    if not _has_known_model_assignment(recovered):
+        return None
+    return {
+        "model_snapshot_version": _MODEL_SNAPSHOT_VERSION,
+        "model_snapshot": snapshot,
+    }
+
+
 class GameManifest:
     """Lightweight on-disk registry of all games (running + completed)."""
 
@@ -223,6 +324,7 @@ class GameManifest:
     def add_game(
         self, game_id: str, config: dict,
         model_snapshot: Optional[list] = None,
+        model_snapshot_version: Optional[int] = None,
         name: Optional[str] = None,
     ) -> None:
         entry = self._entries.get(game_id, {})
@@ -244,6 +346,8 @@ class GameManifest:
         })
         if model_snapshot is not None:
             entry["model_snapshot"] = model_snapshot
+        if model_snapshot_version is not None:
+            entry["model_snapshot_version"] = model_snapshot_version
         if name is not None:
             entry["name"] = name
         self._entries[game_id] = entry
@@ -263,6 +367,7 @@ class GameManifest:
         state_revision: Optional[int] = None,
         last_consistent_checkpoint: Optional[str] = None,
         model_snapshot: Optional[list] = None,
+        model_snapshot_version: Optional[int] = None,
         name: Optional[str] = None,
     ) -> None:
         entry = self._entries.get(game_id)
@@ -293,6 +398,8 @@ class GameManifest:
             entry["last_consistent_checkpoint"] = last_consistent_checkpoint
         if model_snapshot is not None:
             entry["model_snapshot"] = model_snapshot
+        if model_snapshot_version is not None:
+            entry["model_snapshot_version"] = model_snapshot_version
         if name is not None:
             entry["name"] = name
         self._persist()
@@ -349,6 +456,12 @@ class GameManifest:
                 meta["created_at"] = rec.get("timestamp")
 
             op = rec.get("operation")
+
+            if op == "model_assignment":
+                recovered = _recover_model_assignment(data)
+                if recovered is not None:
+                    meta.update(recovered)
+                continue
 
             if op == "game_config":
                 flag = data.get("reveal_on_death")

@@ -129,7 +129,7 @@ def test_ten_player_standard_board_creates_roles_via_legacy_registry() -> None:
         "wolf-killer-guard": 1,
     }
     roles = builtin_registry.create_roles(
-        role_counts, 10, object(), lambda: object(),
+        role_counts, 10, object(), lambda seat: object(),
     )
     assert sorted(roles) == list(range(1, 11))
     assert sorted(role.role_name for role in roles.values()) == [

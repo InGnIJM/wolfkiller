@@ -185,6 +185,8 @@ class GameEngine:
         data_dir: str = "data",
         pipeline_scheduler: object | None = None,
         director: object | None = None,
+        checkpoint_hook=None,
+        fault_injector=None,
     ):
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
@@ -218,6 +220,11 @@ class GameEngine:
         self._pending_night_completion: _PendingNightCompletion | None = None
         self._pending_night_batch: _PendingNightBatch | None = None
         self._night_task: asyncio.Task | None = None
+        self._rng = random.Random()
+        self._checkpoint_hook = checkpoint_hook
+        self._fault_injector = fault_injector
+        self._checkpoint_counter = 0
+        self._checkpoint_lock = asyncio.Lock()
 
     @staticmethod
     def _public_state_digest(state: GameState) -> str:
@@ -235,6 +242,9 @@ class GameEngine:
         pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
         result = await asyncio.to_thread(pipeline.run_points, self.state, points)
         if type(result) is not PipelineResult: raise TypeError("pipeline must return exact PipelineResult")
+        await self._durable_checkpoint(
+            "schedule:" + ",".join(point.value for point in points)
+        )
         return result
 
     @property
@@ -250,25 +260,77 @@ class GameEngine:
     # =================================================================
 
     async def start(self) -> None:
+        """Compatibility entry point for a newly created game."""
+        await self.create_new()
+
+    async def create_new(self) -> None:
         if self._night_task is not None and not self._night_task.done():
             raise ValueError("night execution is active")
         self._night_task = None
         self._running = True
         self.sm.reset()
+        previous_state = self.state
         self.state = GameState(game_id=self.game_id, config=self.config)
+        self.state.pipeline_version = previous_state.pipeline_version
+        self.state.registry_digest = previous_state.registry_digest
+        self.state.spec_versions = dict(previous_state.spec_versions)
+        self.state.effect_schema_version = previous_state.effect_schema_version
         self._vote_service = VoteService(self.state)
         self._active_vote_window_id = None
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self._pending_night_completion = None
         self._pending_night_batch = None
+        self._checkpoint_counter = 0
 
         self.sm.transition(SM_Event.START)
-        await self._broadcast_phase_change()
+        await self._broadcast_phase_change(checkpoint=False)
 
         self._assign_roles()
         self.sm.transition(SM_Event.ROLES_ASSIGNED)
-        await self._broadcast_phase_change()
+        await self._broadcast_phase_change(checkpoint=False)
+        await self._durable_checkpoint("game_initialized")
 
+        await self._game_loop()
+
+    async def _durable_checkpoint(self, label: str) -> None:
+        if self._checkpoint_hook is None:
+            return
+        async with self._checkpoint_lock:
+            step_key = f"{self._checkpoint_counter:08d}:{label}"
+            result = self._checkpoint_hook(step_key)
+            if hasattr(result, "__await__"):
+                await result
+            self._checkpoint_counter += 1
+
+    def export_orchestration(self, codec, *, model_assignments=None) -> dict[str, object]:
+        from app.persistence.engine_checkpoint import encode_engine_orchestration
+        return encode_engine_orchestration(
+            self, codec, model_assignments=model_assignments,
+        )
+
+    def load_restored_state(self, state: GameState, orchestration, codec) -> None:
+        """Rebind dependencies around decoded state without running new-game reset logic."""
+        if type(state) is not GameState or state.game_id != self.game_id:
+            raise ValueError("restored state does not belong to this engine")
+        if self._night_task is not None and not self._night_task.done():
+            raise ValueError("night execution is active")
+        self._night_task = None
+        self.state = state
+        self.config = state.config
+        self.sm.reset()
+        self.sm.set_state(state.phase)
+        self._vote_service = VoteService(self.state)
+        self.conversation_log = ConversationLog(
+            logger=self.game_logger, game_id=self.game_id,
+        )
+        from app.persistence.engine_checkpoint import restore_engine_orchestration
+        restore_engine_orchestration(self, codec, orchestration)
+        self._running = False
+
+    async def restore(self, state: GameState, orchestration, codec) -> None:
+        """Continue a decoded checkpoint; this path never calls ``start``."""
+        self.load_restored_state(state, orchestration, codec)
+        self._running = True
         await self._game_loop()
 
     async def stop(self) -> None:
@@ -413,6 +475,9 @@ class GameEngine:
             await self._log_stage_audience(raw)
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=2)
             self._pending_night_batch = pending
+            await self._durable_checkpoint(
+                f"night_point:{self.state.round_number}:{_NIGHT_POINTS[0].value}"
+            )
 
         if pending.stage == 2:
             title, text = director.narration("wolf_open")
@@ -427,7 +492,7 @@ class GameEngine:
                     briefing = build_briefing(self.conversation_log, wolves[0], self.state.round_number)
                     if not briefing.public_lines:
                         pending = replace(
-                            pending, wolf_random_hint=random.choice(sorted(state.alive_players())),
+                            pending, wolf_random_hint=self._rng.choice(sorted(state.alive_players())),
                         )
                         self._pending_night_batch = pending
                 # Serial discussion rounds: each wolf speaks in turn and sees
@@ -463,6 +528,9 @@ class GameEngine:
                     pending = replace(pending, discussion_history=tuple(history),
                                       discussion_leads=tuple(sorted(leads.items())))
                     self._pending_night_batch = pending
+                    await self._durable_checkpoint(
+                        f"wolf_discussion:{self.state.round_number}:{seat}:{len(history)}"
+                    )
                     if (len(history) >= len(wolves)
                             and all(line.endswith("（跳过）") for line in history[-len(wolves):])):
                         break
@@ -491,6 +559,9 @@ class GameEngine:
                     )
                     pending = replace(pending, wolf_votes=tuple(votes))
                     self._pending_night_batch = pending
+                    await self._durable_checkpoint(
+                        f"wolf_vote:{self.state.round_number}:{seat}"
+                    )
                 director.record_votes(tuple(votes))
             else:
                 director.record_votes(())
@@ -504,6 +575,9 @@ class GameEngine:
                 state.last_wolf_kill_target = _wolf_kill_target(tuple(runtime.pending_damage))
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=6)
             self._pending_night_batch = pending
+            await self._durable_checkpoint(
+                f"night_point:{self.state.round_number}:{_NIGHT_POINTS[1].value}"
+            )
 
         if pending.stage == 6:
             title, text = director.witch_narration(state.last_wolf_kill_target)
@@ -515,6 +589,9 @@ class GameEngine:
             await self._log_stage_audience(raw)
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=8)
             self._pending_night_batch = pending
+            await self._durable_checkpoint(
+                f"night_point:{self.state.round_number}:{_NIGHT_POINTS[2].value}"
+            )
 
         if pending.stage == 8:
             title, text = director.narration("seer_open")
@@ -526,12 +603,18 @@ class GameEngine:
             await self._log_stage_audience(raw)
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=10)
             self._pending_night_batch = pending
+            await self._durable_checkpoint(
+                f"night_point:{self.state.round_number}:{_NIGHT_POINTS[3].value}"
+            )
 
         if pending.stage == 10:
             raw = await self._execute_v2_point(_NIGHT_POINTS[4])
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=11)
             self._pending_night_batch = pending
             await self._log_stage_audience(raw)
+            await self._durable_checkpoint(
+                f"night_point:{self.state.round_number}:{_NIGHT_POINTS[4].value}"
+            )
 
         if pending.stage == 11:
             deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
@@ -651,6 +734,9 @@ class GameEngine:
                 death=DeathReport(snapshot.seat, snapshot.cause, snapshot.round_number))
             self._reveal_on_death(snapshot.seat)
             pending = replace(pending, event_cursor=pending.event_cursor + 1); self._pending_night_completion = pending
+            await self._durable_checkpoint(
+                f"night_death:{self.state.round_number}:{snapshot.seat}"
+            )
         if pending.stage == 0:
             self.game_logger.log_deaths(self.game_id, self.state.round_number,
                 [DeathReport(item.seat, item.cause, item.round_number).to_dict() for item in pending.deaths])
@@ -703,6 +789,9 @@ class GameEngine:
             await self.event_bus.publish(BusEvent.PHASE_CHANGED, game_id=self.game_id,
                 phase=self.state.phase.value, round_number=self.state.round_number, state=self.state)
             self._pending_night_completion = None
+            await self._durable_checkpoint(
+                f"night_complete:{self.state.round_number}:{self.state.phase.value}"
+            )
 
     async def give_last_words(self, seat: int, cause: str, death_round: int) -> Optional[str]:
         """Generate last words for a dying player. Standalone function with validation.
@@ -750,6 +839,10 @@ class GameEngine:
                 self.game_id, self.state.round_number, "last_words",
                 seat, speech_text,
             )
+
+        await self._durable_checkpoint(
+            f"last_words:{death_round}:{seat}:{cause}"
+        )
 
         return speech_text
 
@@ -818,6 +911,9 @@ class GameEngine:
                 )
                 if self.state.is_tiebreak:
                     self.state.supplemental_speakers.add(seat)
+                await self._durable_checkpoint(
+                    f"speech:{self.state.round_number}:{self.state.vote_round}:{seat}"
+                )
             else:
                 logger.warning(
                     f"Seat {seat}: speak() returned None/empty in speech round "
@@ -935,6 +1031,9 @@ class GameEngine:
                             ),
                             received_at=received_at,
                         )
+                await self._durable_checkpoint(
+                    f"vote_received:{self.state.round_number}:{self.state.vote_round}:{seat}"
+                )
 
         window = self._vote_service.arm_window(
             window.window_id,
@@ -1049,6 +1148,9 @@ class GameEngine:
                 self.state.round_number,
                 "public",
             )
+            await self._durable_checkpoint(
+                f"vote_result:{self.state.round_number}:1:none"
+            )
 
         alive_seats = set(self.state.alive_players())
         if alive_seats - self.state.supplemental_speakers:
@@ -1081,12 +1183,19 @@ class GameEngine:
                     ))
                 self._reveal_on_death(exiled_seat)
                 await self._run_exile_reaction(exiled_seat)
+                await self._durable_checkpoint(
+                    f"exile_reaction:{self.state.round_number}:{exiled_seat}"
+                )
                 await self.give_last_words(
                     exiled_seat, "exile", self.state.round_number,
                 )
 
         self.conversation_log.add_vote_result(
             self.state.votes, exiled_seat, self.state.round_number,
+        )
+        await self._durable_checkpoint(
+            f"vote_result:{self.state.round_number}:{self.state.vote_round}:"
+            f"{exiled_seat if exiled_seat is not None else 'none'}"
         )
         self._clear_tiebreak_state()
         if not await self._check_game_over():
@@ -1110,6 +1219,9 @@ class GameEngine:
             self.resolve_votes()
             self.conversation_log.add_vote_result(
                 self.state.votes, None, self.state.round_number,
+            )
+            await self._durable_checkpoint(
+                f"vote_result:{self.state.round_number}:1:none"
             )
             self._clear_tiebreak_state()
             if not await self._check_game_over():
@@ -1135,6 +1247,9 @@ class GameEngine:
                     ))
                 self._reveal_on_death(exiled_seat)
                 await self._run_exile_reaction(exiled_seat)
+                await self._durable_checkpoint(
+                    f"exile_reaction:{self.state.round_number}:{exiled_seat}"
+                )
                 await self.give_last_words(exiled_seat, "exile", self.state.round_number)
 
         # Reset this round's votes and casting bookkeeping so the next round
@@ -1152,6 +1267,11 @@ class GameEngine:
             self.conversation_log.add_vote_result(
                 self.state.votes, None, self.state.round_number,
             )
+
+        await self._durable_checkpoint(
+            f"vote_result:{self.state.round_number}:1:"
+            f"{exiled_seat if exiled_seat is not None else 'none'}"
+        )
 
         if not await self._check_game_over():
             self.sm.transition(SM_Event.VOTE_RESOLVED)
@@ -1265,8 +1385,7 @@ class GameEngine:
         # Day speech: reference another alive player as plausible content
         alive = [s for s in self.state.alive_players() if s != seat]
         if alive:
-            import random
-            suspect = random.choice(alive)
+            suspect = self._rng.choice(alive)
             return (
                 f"我是{seat}号，我目前比较关注{suspect}号玩家的发言。"
                 f"前面几位的发言我都认真听了，"
@@ -1416,8 +1535,10 @@ class GameEngine:
     # Helpers
     # =================================================================
 
-    async def _broadcast_phase_change(self) -> None:
+    async def _broadcast_phase_change(self, *, checkpoint: bool = True) -> None:
         self.state.phase = self.sm.get_state()
+        if self._fault_injector is not None:
+            self._fault_injector("after_phase_transition")
         self.game_logger.log_phase_change(
             self.game_id, self.state.phase.value, self.state.round_number,
         )
@@ -1425,3 +1546,7 @@ class GameEngine:
             BusEvent.PHASE_CHANGED, game_id=self.game_id, phase=self.state.phase.value,
             round_number=self.state.round_number, state=self.state,
         )
+        if checkpoint:
+            await self._durable_checkpoint(
+                f"phase:{self.state.round_number}:{self.state.phase.value}:vote:{self.state.vote_round}"
+            )

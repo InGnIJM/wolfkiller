@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import random
 import re
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from threading import RLock
@@ -300,12 +301,32 @@ class RoleRegistry:
         if total != player_count:
             raise ValueError("role count sum must equal player_count")
 
+    def validate_role_assignments(
+        self, role_counts: Mapping[str, int], player_count: int,
+        role_by_seat: Mapping[int, str],
+    ) -> None:
+        self.validate_role_counts(role_counts, player_count)
+        if (
+            not isinstance(role_by_seat, Mapping)
+            or any(type(seat) is not int for seat in role_by_seat)
+            or set(role_by_seat) != set(range(1, player_count + 1))
+        ):
+            raise ValueError("role assignments must cover every seat with integer seats")
+        if (
+            any(type(role) is not str for role in role_by_seat.values())
+            or Counter(role_by_seat.values()) != Counter(role_counts)
+        ):
+            raise ValueError("role assignments must match configured role counts")
+
     def create_roles(
         self,
         role_counts: Mapping[str, int],
         player_count: int,
         prompt_builder: object,
-        llm_client_factory: Callable[[], object],
+        llm_client_factory: Callable[[int], object],
+        *,
+        role_by_seat: Mapping[int, str] | None = None,
+        rng: random.Random | None = None,
     ) -> dict[int, object]:
         self.validate_role_counts(role_counts, player_count)
         role_ids = [
@@ -313,11 +334,15 @@ class RoleRegistry:
             for role_id, count in role_counts.items()
             for _ in range(count)
         ]
-        random.shuffle(role_ids)
+        if role_by_seat is None:
+            (rng or random).shuffle(role_ids)
+        else:
+            self.validate_role_assignments(role_counts, player_count, role_by_seat)
+            role_ids = [role_by_seat[seat] for seat in range(1, player_count + 1)]
 
         return {
             seat: self.require(role_id).role_factory(
-                seat, role_id, prompt_builder, llm_client_factory()
+                seat, role_id, prompt_builder, llm_client_factory(seat)
             )
             for seat, role_id in enumerate(role_ids, start=1)
         }

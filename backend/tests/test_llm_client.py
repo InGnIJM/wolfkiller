@@ -1,4 +1,4 @@
-import importlib
+import runpy
 
 import pytest
 from unittest.mock import patch
@@ -162,7 +162,7 @@ class TestLLMClient:
 
     def test_llm_config_selects_models_from_environment(self, monkeypatch):
         monkeypatch.setenv("LLM_MODELS", "alpha, beta")
-        assert LLMConfig().models == ["alpha", "beta"]
+        assert LLMConfig().models == ["alpha"]
 
         monkeypatch.setenv("LLM_MODELS", "")
         monkeypatch.setenv("LLM_MODEL", "single")
@@ -174,10 +174,8 @@ class TestLLMClient:
     def test_llm_config_loads_strict_base_url_from_environment(self, monkeypatch):
         with monkeypatch.context() as environment:
             environment.setenv("DEEPSEEK_STRICT_BASE_URL", "https://strict.example")
-            reloaded_config = importlib.reload(config_module)
-            assert reloaded_config.config.llm.strict_base_url == "https://strict.example"
-
-        importlib.reload(config_module)
+            isolated_config = runpy.run_path(config_module.__file__)
+            assert isolated_config["config"].llm.strict_base_url == "https://strict.example"
 
     @patch("app.agents.llm_client.ChatOpenAI")
     def test_get_model_with_action_tool_binds_contract_schema_strictly(self, mock_chat):
@@ -358,3 +356,25 @@ class TestLLMClient:
 
         assert closed == [True]
         assert client._built_models == {}
+
+
+
+@pytest.mark.asyncio
+async def test_close_continues_after_a_client_cleanup_error():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    client = LLMClient()
+    failed = Mock(side_effect=RuntimeError("already closed"))
+    synchronous = Mock()
+    asynchronous = AsyncMock()
+    client._built_models = {"fake": SimpleNamespace(
+        root_async_client=SimpleNamespace(aclose=failed),
+        async_client=SimpleNamespace(aclose=asynchronous),
+        root_client=SimpleNamespace(close=synchronous),
+    )}
+    await client.aclose()
+    failed.assert_called_once()
+    synchronous.assert_called_once()
+    asynchronous.assert_awaited_once()
+    assert client._built_models == {}

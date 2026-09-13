@@ -18,7 +18,7 @@ from app.core.game_engine import VOTE_CONTRACT
             "action_payload_extra_field",
         ),
         (
-            {"action_type": "vote", "target_seat": "1", "reasoning": "x"},
+            {"action_type": "vote", "target_seat": "one", "reasoning": "x"},
             "action_payload_wrong_type",
         ),
     ],

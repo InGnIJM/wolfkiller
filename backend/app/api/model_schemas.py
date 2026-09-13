@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -78,4 +78,18 @@ class ModelTestResponse(BaseModel):
 
 class ModelAssignment(BaseModel):
     config_id: Optional[str] = None
-    count: int = Field(ge=1)
+    count: Annotated[int, Field(strict=True, ge=1)]
+
+
+class ModelSnapshotEntry(BaseModel):
+    """Public, credential-free snapshot of one model assignment group."""
+
+    config_id: Optional[str] = None
+    name: str
+    model_id: str
+    base_url: str
+    provider_profile: Literal[
+        "openai", "deepseek", "openrouter", "custom-openai",
+    ]
+    count: Annotated[int, Field(strict=True, ge=1)]
+    seats: list[Annotated[int, Field(strict=True, ge=1)]]

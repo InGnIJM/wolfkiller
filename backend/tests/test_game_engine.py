@@ -2972,3 +2972,25 @@ async def test_v2_night_records_wolf_kill_target_and_witch_save_rescues(tmp_path
     assert by_type["SEER_REASONING"]["action_type"] == "check"
     assert by_type["SEER_REASONING"]["target_seat"] == 1
 
+
+
+@pytest.mark.asyncio
+async def test_tiebreak_restore_enters_missing_vote_phase_without_repeating_speech(tmp_path):
+    roles = {
+        1: make_mock_role(1, "wolf-killer-werewolf"),
+        2: make_mock_role(2, "wolf-killer-villager"),
+    }
+    engine = GameEngine("restore-voting", roles=roles, data_dir=str(tmp_path))
+    engine._assign_roles()
+    engine.state.round_number = 1
+    engine.state.is_tiebreak = True
+    engine.state.vote_round = 2
+    engine.state.tiebreak_candidates = {1, 2}
+    engine.state.supplemental_speakers = {1, 2}
+    engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine.speak = AsyncMock(side_effect=AssertionError("speech already checkpointed"))
+    await engine._execute_tiebreak([1, 2])
+    engine.speak.assert_not_awaited()
+    for role in roles.values(): role.request_action.assert_awaited_once()
+    assert engine.sm.get_state() is GamePhase.NIGHT

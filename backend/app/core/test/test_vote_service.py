@@ -21,6 +21,27 @@ def vote(target: int, reasoning: str = "reason") -> CastVoteArgs:
     )
 
 
+def test_checkpoint_restores_remaining_time_instead_of_old_monotonic_deadline():
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    now = [100.0]
+    service = VoteService(state, clock=lambda: now[0])
+    window = service.open_window(timeout_seconds=30.0)
+    service.arm_window(window.window_id, timeout_seconds=20.0)
+    now[0] = 105.0
+
+    snapshot = service.checkpoint()
+
+    assert snapshot["windows"][0]["remaining_ms"] == 15000
+    assert "deadline" not in snapshot["windows"][0]
+    restored_now = [900.0]
+    restored = VoteService(state, clock=lambda: restored_now[0])
+    restored.restore_checkpoint(snapshot)
+    assert restored.window(window.window_id).deadline == 915.0
+    assert restored.missing_voters(window.window_id) == window.eligible_voters
+
+
 def test_submit_atomically_records_receipt_and_legacy_projection():
     from app.core.vote_service import VoteService
 
@@ -257,3 +278,30 @@ def test_effect_failures_are_mapped_or_propagated_and_missing_receipt_is_detecte
     monkeypatch.setattr(EffectApplier, "apply", lambda *args, **kwargs: None)
     with pytest.raises(RuntimeError, match="did not produce a receipt"):
         service.submit(window.window_id, 1, vote(2))
+
+
+
+@pytest.mark.parametrize("corruption", [
+    "root", "lists", "entry", "negative_time", "invalid_voters",
+    "wrong_id", "duplicate_window", "unknown_closed", "duplicate_closed",
+])
+def test_invalid_vote_checkpoint_never_replaces_existing_windows(corruption):
+    import copy
+    from app.core.vote_service import VoteService
+
+    service = VoteService(make_state(), clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=5.0)
+    original = service.checkpoint()
+    value = copy.deepcopy(original)
+    if corruption == "root": value = []
+    elif corruption == "lists": value["closed"] = "not-a-list"
+    elif corruption == "entry": value["windows"][0] = {}
+    elif corruption == "negative_time": value["windows"][0]["remaining_ms"] = -1
+    elif corruption == "invalid_voters": value["windows"][0]["eligible_voters"] = None
+    elif corruption == "wrong_id": value["windows"][0]["window_id"] = "different"
+    elif corruption == "duplicate_window": value["windows"].append(value["windows"][0])
+    elif corruption == "unknown_closed": value["closed"] = ["unknown"]
+    elif corruption == "duplicate_closed": value["closed"] = [window.window_id, window.window_id]
+    with pytest.raises(ValueError):
+        service.restore_checkpoint(value)
+    assert service.checkpoint() == original

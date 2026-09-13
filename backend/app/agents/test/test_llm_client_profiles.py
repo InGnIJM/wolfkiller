@@ -297,4 +297,5 @@ def test_probe_invokes_plain_model_and_returns_capabilities(deepseek_config):
         "json_output": True,
         "reasoning_effort": True,
         "temperature": True,
+        "forced_tool_choice": True,
     }

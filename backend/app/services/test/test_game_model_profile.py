@@ -61,7 +61,7 @@ async def test_create_game_passes_only_llm_clients_to_game_core(
 
     def create_roles(*args, **kwargs):
         assert_core_has_no_provider_objects((*args, *kwargs.values()))
-        assert isinstance(kwargs["llm_client_factory"](), FakeLLMClient)
+        assert isinstance(kwargs["llm_client_factory"](1), FakeLLMClient)
         return real_create_roles(*args, **kwargs)
 
     def director(*args, **kwargs):

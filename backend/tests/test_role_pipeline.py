@@ -67,7 +67,7 @@ def test_pipeline_mode_from_env_is_strict_and_reads_at_call_time(monkeypatch) ->
 
 
 def test_existing_llm_model_environment_branches_remain_stable(monkeypatch) -> None:
-    monkeypatch.setenv("LLM_MODELS", " a, ,b "); assert LLMConfig().models == ["a", "b"]
+    monkeypatch.setenv("LLM_MODELS", " a, ,b "); assert LLMConfig().models == ["a"]
     monkeypatch.delenv("LLM_MODELS"); monkeypatch.setenv("LLM_MODEL", "single")
     assert LLMConfig().models == ["single"]
     monkeypatch.delenv("LLM_MODEL"); assert LLMConfig().models == ["deepseek-v4-pro"]

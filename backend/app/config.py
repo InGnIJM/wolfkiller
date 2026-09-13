@@ -1,8 +1,12 @@
+import logging
 import os
 from enum import StrEnum
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+_llm_models_deprecation_warned = False
 
 
 class PipelineMode(StrEnum):
@@ -31,10 +35,25 @@ class LLMConfig:
 
     @property
     def models(self) -> list[str]:
-        """Available models for random assignment across players."""
+        """Return the single environment-default model.
+
+        ``LLM_MODELS`` is retained only for backward compatibility.  Its
+        historical multi-value behavior is deprecated; only the first
+        non-empty item is effective.
+        """
         models_env = os.getenv("LLM_MODELS", "")
         if models_env:
-            return [m.strip() for m in models_env.split(",") if m.strip()]
+            models = [m.strip() for m in models_env.split(",") if m.strip()]
+            if models:
+                if len(models) > 1:
+                    global _llm_models_deprecation_warned
+                    if not _llm_models_deprecation_warned:
+                        logger.warning(
+                            "LLM_MODELS with multiple values is deprecated; "
+                            "only the first non-empty value is used",
+                        )
+                        _llm_models_deprecation_warned = True
+                return models[:1]
         # Fall back to single model
         single = os.getenv("LLM_MODEL", "")
         if single:

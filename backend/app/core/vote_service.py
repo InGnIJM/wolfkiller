@@ -64,6 +64,63 @@ class VoteService:
             self._windows[window_id] = armed
             return armed
 
+    def checkpoint(self) -> dict[str, object]:
+        """Serialize windows using remaining active time, never a process deadline."""
+        with state_transaction_lock(self._state):
+            now = float(self._clock())
+            windows = []
+            for window_id, window in sorted(self._windows.items()):
+                windows.append({
+                    "window_id": window_id,
+                    "game_id": window.game_id,
+                    "round_number": window.round_number,
+                    "vote_round": window.vote_round,
+                    "eligible_voters": sorted(window.eligible_voters),
+                    "eligible_targets": sorted(window.eligible_targets),
+                    "remaining_ms": max(0, round((window.deadline - now) * 1000)),
+                })
+            return {"windows": windows, "closed": sorted(self._closed)}
+
+    def restore_checkpoint(self, value: object) -> None:
+        """Replace window orchestration and rebase deadlines on this process clock."""
+        if not isinstance(value, dict) or set(value) != {"windows", "closed"}:
+            raise ValueError("invalid vote checkpoint")
+        windows_raw, closed_raw = value["windows"], value["closed"]
+        if type(windows_raw) is not list or type(closed_raw) is not list:
+            raise ValueError("invalid vote checkpoint")
+        now = float(self._clock())
+        windows: dict[str, VoteWindow] = {}
+        for raw in windows_raw:
+            names = {
+                "window_id", "game_id", "round_number", "vote_round",
+                "eligible_voters", "eligible_targets", "remaining_ms",
+            }
+            if not isinstance(raw, dict) or set(raw) != names:
+                raise ValueError("invalid vote window checkpoint")
+            remaining = raw["remaining_ms"]
+            if type(remaining) is not int or remaining < 0:
+                raise ValueError("invalid vote remaining time")
+            try:
+                window = VoteWindow(
+                    game_id=raw["game_id"], round_number=raw["round_number"],
+                    vote_round=raw["vote_round"],
+                    eligible_voters=frozenset(raw["eligible_voters"]),
+                    eligible_targets=frozenset(raw["eligible_targets"]),
+                    deadline=max(1e-9, now + remaining / 1000.0),
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError("invalid vote window checkpoint") from error
+            if raw["window_id"] != window.window_id or window.window_id in windows:
+                raise ValueError("invalid vote window id")
+            windows[window.window_id] = window
+        if any(type(item) is not str or item not in windows for item in closed_raw):
+            raise ValueError("invalid closed vote window")
+        if len(closed_raw) != len(set(closed_raw)):
+            raise ValueError("duplicate closed vote window")
+        with state_transaction_lock(self._state):
+            self._windows = windows
+            self._closed = set(closed_raw)
+
     def submit(
         self, window_id: str, voter_seat: int, command: CastVoteArgs,
         *, received_at: float | None = None,

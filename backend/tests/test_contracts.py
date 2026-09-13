@@ -228,7 +228,7 @@ class TestRoleRegistry:
             {"wolf-killer-villager": 2},
             player_count=2,
             prompt_builder=object(),
-            llm_client_factory=lambda: object(),
+            llm_client_factory=lambda seat: object(),
         )
 
         assert sorted(roles) == [1, 2]
@@ -238,7 +238,7 @@ class TestRoleRegistry:
         registry = RoleRegistry()
         calls = []
         prompt_builder = object()
-        clients = iter([object(), object(), object()])
+        clients = {seat: object() for seat in range(1, 4)}
 
         def factory(factory_name):
             def create(seat, role_name, received_prompt_builder, llm_client):
@@ -256,7 +256,7 @@ class TestRoleRegistry:
             {"role-a": 2, "role-b": 1},
             player_count=3,
             prompt_builder=prompt_builder,
-            llm_client_factory=lambda: next(clients),
+            llm_client_factory=clients.__getitem__,
         )
 
         assert sorted(roles) == [1, 2, 3]
@@ -267,6 +267,7 @@ class TestRoleRegistry:
         assert all(roles[seat].role_name == role_name for _, seat, role_name, *_ in calls)
         assert all(builder is prompt_builder for *_, builder, _ in calls)
         assert len({id(client) for *_, client in calls}) == 3
+        assert all(client is clients[seat] for _, seat, *_, client in calls)
 
     def test_build_requests_only_for_alive_roles_with_current_phase_contracts(self):
         state = GameState(game_id="contracts", phase=GamePhase.NIGHT, round_number=4)

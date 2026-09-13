@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import random
 import time
 from typing import TYPE_CHECKING
 from app.models.game import GameState
@@ -72,6 +73,8 @@ class BaseRole:
         self.prompt_builder = prompt_builder
         self.llm_client = llm_client
         self.output_parser = OutputParser()
+        # The game service replaces this with its checkpointed RNG.
+        self._rng = random
         self.action_validator = ActionValidator()
         self._last_words_used = False
         self._speech_used_fallback = False
@@ -283,8 +286,7 @@ class BaseRole:
         # Day speech fallback
         if alive_others:
             # Pick a plausible suspect — prefer players with suspicious behavior
-            import random
-            suspect = random.choice(alive_others)
+            suspect = self._rng.choice(alive_others)
             return (
                 f"我是{self.seat}号，我目前比较关注{suspect}号玩家的发言，"
                 f"希望能听到更多信息来做出判断。前面几位的发言我都认真听了，"

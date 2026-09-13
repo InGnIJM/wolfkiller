@@ -546,3 +546,33 @@ class TestOutputParser:
         )
         with pytest.raises(ActionValidationError, match="does not match issued contract"):
             parser.parse_strict_action_response(wrong_name, werewolf_contract)
+
+
+
+def test_embedded_nested_json_preserves_escaped_strings():
+    import json
+    from app.agents.output_parser import extract_json_object
+
+    payload = {"outer": {"message": 'quoted " and slash \\'}}
+    assert extract_json_object('prose } ' + json.dumps(payload) + ' trailing') == payload
+
+
+def test_incomplete_and_malformed_tool_markup_does_not_become_an_action():
+    from app.agents.output_parser import extract_tool_call_xml
+
+    for raw in (
+        '<tool_call><function=vote></function></tool_call>',
+        '<tool_call>{bad json}</tool_call>',
+        '<tool_call>{"name":7,"arguments":{}}</tool_call>',
+        '<tool_call>{"name":"vote","arguments":"untrusted"}</tool_call>',
+    ):
+        assert extract_tool_call_xml(raw) is None
+
+
+def test_xml_boolean_coercion_leaves_invalid_values_for_schema_validation():
+    from app.agents.output_parser import coerce_payload_to_schema
+
+    schema = {"properties": {name: {"type": "boolean"} for name in ("a", "b", "c")}}
+    payload = {"a": " TRUE ", "b": "false", "c": "yes"}
+    assert coerce_payload_to_schema(payload, schema) == {"a": True, "b": False, "c": "yes"}
+    assert payload["a"] == " TRUE "

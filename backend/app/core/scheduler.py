@@ -4,6 +4,7 @@ import hashlib
 import logging
 import math
 import re
+import weakref
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
@@ -33,12 +34,34 @@ _EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _INT32 = 2_147_483_647
 _RULE_SLOTS = Semaphore(32)
+_EXECUTION_GUARD = RLock()
+_EXECUTION_LOCKS: dict[int, tuple[weakref.ReferenceType[GameState], RLock]] = {}
 
 logger = logging.getLogger(__name__)
 
 
 class ResponseLimitExceeded(RuntimeError): pass
 class PipelinePaused(RuntimeError): pass
+
+
+def _execution_lock(state: GameState) -> RLock:
+    """Serialize one game's scheduler while allowing short state transactions."""
+    key = id(state)
+    with _EXECUTION_GUARD:
+        existing = _EXECUTION_LOCKS.get(key)
+        if existing is not None and existing[0]() is state:
+            return existing[1]
+
+        def drop(reference, *, identity=key):
+            with _EXECUTION_GUARD:
+                current = _EXECUTION_LOCKS.get(identity)
+                if current is not None and current[0] is reference:
+                    _EXECUTION_LOCKS.pop(identity, None)
+
+        reference = weakref.ref(state, drop)
+        lock = RLock()
+        _EXECUTION_LOCKS[key] = (reference, lock)
+        return lock
 
 
 def _text(value: object, name: str, token: bool = False) -> str:
@@ -122,6 +145,21 @@ class PointResult:
         _text(self.state_digest, "state_digest")
         object.__setattr__(self, "events", tuple(_freeze(event) for event in self.events))
         object.__setattr__(self, "faults", tuple(_freeze(fault) for fault in self.faults))
+
+
+@dataclass(frozen=True)
+class PreparedModelWork:
+    state: GameState
+    request: IssuedActionRequest
+    context: ActionContext
+    expected_revision: int
+
+
+@dataclass(frozen=True)
+class CollectedModelWork:
+    prepared: PreparedModelWork
+    command: ActionCommand
+    rule_context: ActionContext
 
 
 def _digest(*parts: object) -> str:
@@ -281,6 +319,41 @@ class Scheduler:
                                    request.round_number, request.phase, request.window_id,
                                    request.action_key if action_key is None else action_key)
 
+    def prepare_next_work(
+        self, state: GameState, request: IssuedActionRequest,
+        context: ActionContext,
+    ) -> PreparedModelWork:
+        """Freeze one model work item during a short, I/O-free state read."""
+        if type(state) is not GameState or type(request) is not IssuedActionRequest:
+            raise TypeError("invalid model work")
+        if type(context) is not ActionContext:
+            raise TypeError("invalid model work context")
+        with state_transaction_lock(state):
+            expected = self._revision(state)
+            if request.context_revision != expected:
+                raise PipelinePaused("model work was prepared from a stale revision")
+            return PreparedModelWork(state, request, context, expected)
+
+    def collect_model_results(self, prepared: PreparedModelWork) -> CollectedModelWork:
+        """Call the command provider without holding the state transaction lock."""
+        if type(prepared) is not PreparedModelWork:
+            raise TypeError("prepared work must be PreparedModelWork")
+        command, rule_context = self._command(
+            prepared.state, prepared.request, prepared.context,
+        )
+        return CollectedModelWork(prepared, command, rule_context)
+
+    def apply_collected_results(
+        self, state: GameState, collected: CollectedModelWork,
+    ) -> tuple[ActionCommand, ActionContext]:
+        """Reject a late provider result before any rule effect is applied."""
+        if type(state) is not GameState or type(collected) is not CollectedModelWork:
+            raise TypeError("invalid collected work")
+        with state_transaction_lock(state):
+            if self._revision(state) != collected.prepared.expected_revision:
+                raise PipelinePaused("model result belongs to a stale state revision")
+            return collected.command, collected.rule_context
+
     def _command(self, state: GameState, request: IssuedActionRequest,
                  context: ActionContext) -> tuple[ActionCommand, ActionContext]:
         for attempt in (0, 1):
@@ -401,10 +474,11 @@ class Scheduler:
 
     def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
-        with state_transaction_lock(state):
-            phase = state.phase.value if hasattr(state.phase, "value") else state.phase
-            key = PointKey(state.game_id, state.round_number, phase, point, self.registry.digest)
-            journal = point_journal(state); saved = journal.get(key)
+        with _execution_lock(state):
+            with state_transaction_lock(state):
+                phase = state.phase.value if hasattr(state.phase, "value") else state.phase
+                key = PointKey(state.game_id, state.round_number, phase, point, self.registry.digest)
+                journal = point_journal(state); saved = journal.get(key)
             faults = list(saved.faults) if saved is not None else []
             token = self._faults.set(faults)
             try:
@@ -442,14 +516,27 @@ class Scheduler:
             elif kind == "normal":
                 member = members[0]; contract = member.contract; role = self.registry.require(member.role_id)
                 request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
-                command, rule_context = self._command(state, request, context)
+                command, rule_context = self.apply_collected_results(
+                    state,
+                    self.collect_model_results(
+                        self.prepare_next_work(state, request, context)
+                    ),
+                )
                 effects = self._resolve_with_fallback(state, request, rule_context, role, command)
                 actual.append(request); self._apply(state, rule_context, role, contract, effects, commits, events)
             else:
                 contract = members[0].contract; role = self.registry.require(members[0].role_id)
                 bound = tuple(self._bind(member, state) for member in members)
                 contexts = tuple(self.projector.project(state, request, self.registry) for request in bound)
-                commands = tuple(self._command(state, request, context)[0] for request, context in zip(bound, contexts))
+                commands = tuple(
+                    self.apply_collected_results(
+                        state,
+                        self.collect_model_results(
+                            self.prepare_next_work(state, request, context)
+                        ),
+                    )[0]
+                    for request, context in zip(bound, contexts)
+                )
                 group_key = _digest(*(sorted(request.action_key for request in bound)))
                 group_request = self._bind(bound[0], state, action_key=group_key)
                 group_context = self.projector.project(state, group_request, self.registry)
@@ -503,7 +590,12 @@ class Scheduler:
                         try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
                         except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
                     else:
-                        command, rule_context = self._command(state, base, context)
+                        command, rule_context = self.apply_collected_results(
+                            state,
+                            self.collect_model_results(
+                                self.prepare_next_work(state, base, context)
+                            ),
+                        )
                         effects = self._resolve_with_fallback(state, base, rule_context, role, command); context = rule_context
                     actual.append(base); new_commit = self._apply(state, context, role, contract, effects, commits, events)
                     commit_index = len(commits) - 1

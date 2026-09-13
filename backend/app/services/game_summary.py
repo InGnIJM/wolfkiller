@@ -13,6 +13,8 @@ import math
 import os
 from typing import Optional
 
+from app.services.game_manifest import _has_known_model_assignment
+
 _SUMMARY_FILENAME = "summary.json"
 
 # Audience events that carry decision information usable by benchmarks.
@@ -192,6 +194,8 @@ def _summarize(
         "engine": {"phase_ms": phase_ms, "slow_rules": slow_rules},
         "model_errors": model_errors,
         "model_snapshot": manifest.get("model_snapshot"),
+        "model_snapshot_version": manifest.get("model_snapshot_version"),
+        "model_assignment_known": _has_known_model_assignment(manifest),
         "pipeline_version": manifest.get("pipeline_version"),
     }
 

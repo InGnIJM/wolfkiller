@@ -1027,7 +1027,7 @@ def test_response_queue_enqueue_is_thread_safe_and_idempotent() -> None:
     assert sorted(results) == [False, True]
 
 
-def test_run_point_serializes_with_direct_effect_applier_mutation() -> None:
+def test_model_collection_releases_state_lock_and_rejects_late_stale_result() -> None:
     registry = snapshot(spec("r", contract("c"))); game = state("r")
     provider_entered, release_provider = Event(), Event()
     direct_started, direct_done, scheduler_done = Event(), Event(), Event()
@@ -1062,16 +1062,18 @@ def test_run_point_serializes_with_direct_effect_applier_mutation() -> None:
     assert provider_entered.wait(1)
     direct_thread = Thread(target=apply_directly); direct_thread.start()
     assert direct_started.wait(1)
-    try:
-        assert not direct_done.wait(.05)
-    finally:
-        release_provider.set()
+    # Model I/O must not hold the state transaction lock. A competing writer
+    # can commit, and the collected provider result is then rejected by CAS.
+    assert direct_done.wait(.2)
+    release_provider.set()
     assert scheduler_done.wait(1)
     assert direct_done.wait(1)
     scheduler_thread.join(); direct_thread.join()
-    assert failures == []
-    assert game._pipeline_runtime.revision == 2
-    assert tuple(game._pipeline_runtime.commits)[-1] == external_key
+    assert len(failures) == 1
+    assert isinstance(failures[0], PipelinePaused)
+    assert "stale state revision" in str(failures[0])
+    assert game._pipeline_runtime.revision == 1
+    assert tuple(game._pipeline_runtime.commits) == (external_key,)
 
 
 def test_rule_call_propagates_arbitrary_non_exception_base_exception() -> None:
@@ -1295,3 +1297,35 @@ def test_response_limit_gate_skips_react_hook(monkeypatch) -> None:
     result = scheduler(registry).run_point(game, SchedulePoint.DAY_ACTION)
     assert len(result.requests) == len(result.commits) == 1
     assert all(event["event_type"] != "REACTED" for event in result.events)
+
+
+
+def test_model_work_rejects_invalid_and_stale_inputs_before_provider_call():
+    from dataclasses import replace
+    from unittest.mock import Mock
+
+    registry = snapshot(spec("r", contract("work")))
+    game = state("r")
+    provider = Mock(return_value=ActionCommand(action_type="pass", target_seat=None, reasoning=""))
+    runner = scheduler(registry, provider)
+    request = runner.issue(game, SchedulePoint.NIGHT_ACTION, registry)[0]
+    context = runner.projector.project(game, request, registry)
+    for args in ((object(), request, context), (game, object(), context), (game, request, object())):
+        with pytest.raises(TypeError): runner.prepare_next_work(*args)
+    with pytest.raises(PipelinePaused, match="stale revision"):
+        runner.prepare_next_work(game, replace(request, context_revision=request.context_revision + 1), context)
+    with pytest.raises(TypeError): runner.collect_model_results(object())
+    with pytest.raises(TypeError): runner.apply_collected_results(game, object())
+    provider.assert_not_called()
+
+
+def test_stale_execution_lock_finalizer_cannot_remove_a_replacement_lock():
+    game = state("r")
+    first = scheduler_module._execution_lock(game)
+    reference, _ = scheduler_module._EXECUTION_LOCKS[id(game)]
+    reference.__callback__(reference)
+    reference.__callback__(reference)
+    second = scheduler_module._execution_lock(game)
+    reference.__callback__(reference)
+    assert first is not second
+    assert scheduler_module._execution_lock(game) is second

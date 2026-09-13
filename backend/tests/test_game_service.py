@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import json
 import logging
+import random
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, mock_open, patch, PropertyMock
 from app.services.game_service import GameService
@@ -213,11 +214,18 @@ class TestGameService:
         game_id = await service.create_game(role_counts=counts)
 
         assert service.get_game_state(game_id).config.role_counts == counts
-        service._manifest.add_game.assert_called_once_with(
+        service._manifest.add_game.assert_called_once()
+        args = service._manifest.add_game.call_args.args
+        kwargs = service._manifest.add_game.call_args.kwargs
+        assert args == (
             game_id,
             {"role_counts": counts, "reveal_on_death": False},
-            model_snapshot=[], name=ANY,
         )
+        assert kwargs["model_snapshot_version"] == 2
+        assert kwargs["name"] is not None
+        assert kwargs["model_snapshot"][0]["config_id"] is None
+        assert kwargs["model_snapshot"][0]["count"] == 4
+        assert kwargs["model_snapshot"][0]["seats"] == [1, 2, 3, 4]
 
     @pytest.mark.asyncio
     async def test_create_game_accepts_ten_player_standard_board(self, monkeypatch):
@@ -1571,6 +1579,18 @@ class TestDeleteGame:
         assert "game-1" not in service._tasks
 
     @pytest.mark.asyncio
+    async def test_delete_closes_each_seat_client_only_once(self, tmp_path):
+        service, _ = self._seed(tmp_path)
+        client = MagicMock()
+        client.aclose = AsyncMock()
+        service._llm_clients["game-1"] = {1: client, 2: client}
+
+        await service.delete_game("game-1")
+        await service.aclose()
+
+        client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_delete_missing_game_raises_key_error(self, tmp_path):
         service, _ = self._seed(tmp_path)
         with pytest.raises(KeyError):
@@ -1736,10 +1756,12 @@ class TestPipelineSnapshotVersioning:
 
 
 class TestCommandProvider:
-    def _request(self, role_id="wolf-killer-werewolf"):
+    def _request(self, role_id="wolf-killer-werewolf", actor_seat=1):
         from app.models.pipeline import IssuedActionRequest
         contract = builtin_registry.freeze().require(role_id).contracts[0]
-        return IssuedActionRequest(1, role_id, contract, 0, 1, "night", "w", "k")
+        return IssuedActionRequest(
+            actor_seat, role_id, contract, 0, 1, "night", "w", "k",
+        )
 
     def _provider(self, service, response_content="kill-ok"):
         from types import SimpleNamespace
@@ -1850,6 +1872,52 @@ class TestCommandProvider:
         assert command.action_type == "pass"
         assert llm.invoke_action.call_count == 2
 
+    def test_provider_routes_actor_seat_and_keeps_retry_on_same_client(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from app.agents.output_parser import extract_json_object
+        from app.core.night_flow import NightDirector
+
+        class ReadTimeout(Exception):
+            pass
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        clients = {1: MagicMock(), 2: MagicMock()}
+        clients[2].invoke_action.side_effect = [
+            ReadTimeout("provider read timed out"),
+            SimpleNamespace(payload=extract_json_object(
+                '{"action_type":"check","target_seat":1,"reasoning":"ok"}'
+            )),
+        ]
+        requested_seats = []
+
+        def client_provider(seat):
+            requested_seats.append(seat)
+            return clients[seat]
+
+        provider = service._command_provider(
+            snapshot,
+            renderer,
+            client_provider,
+            NightDirector(snapshot, lambda *args: None),
+        )
+
+        command = provider(
+            self._request("wolf-killer-seer", actor_seat=2),
+            MagicMock(game_id="g"),
+            0,
+        )
+
+        assert command.action_type == "check"
+        assert command.target_seat == 1
+        assert requested_seats == [2]
+        assert clients[2].invoke_action.call_count == 2
+        clients[1].invoke_action.assert_not_called()
+
     def test_provider_retries_once_then_falls_back_on_persistent_timeout(self):
         class APITimeoutError(Exception):
             pass
@@ -1954,6 +2022,7 @@ class TestCommandProvider:
         engine = SimpleNamespace(
             conversation_log=MagicMock(),
             game_logger=GameLogger(data_dir=str(tmp_path)),
+            _rng=random.Random(7),
         )
         engine.conversation_log.get_conversations_for_role.return_value = []
         service._engines = {"g": engine}
@@ -2351,11 +2420,484 @@ class TestModelAssignmentIntegration:
                 num_seers=1, num_witches=1, num_hunters=1,
             )
 
-        assert service.get_game_model_snapshot(game_id) == []
+        model_snapshot = service.get_game_model_snapshot(game_id)
+        assert len(model_snapshot) == 1
+        assert model_snapshot[0]["config_id"] is None
+        assert model_snapshot[0]["count"] == 9
+        assert model_snapshot[0]["seats"] == list(range(1, 10))
         service._manifest.add_game.assert_called_once()
         kwargs = service._manifest.add_game.call_args.kwargs
-        assert kwargs["model_snapshot"] == []
+        assert kwargs["model_snapshot"] == model_snapshot
+        assert kwargs["model_snapshot_version"] == 2
         assert any(
             call.kwargs.get("config") is not None
             for call in mock_client.call_args_list
         )
+
+    @pytest.mark.asyncio
+    async def test_clients_are_created_once_per_seat_and_reused_by_roles_and_night(
+        self, monkeypatch, tmp_path,
+    ):
+        from types import SimpleNamespace
+
+        import app.services.game_service as service_module
+        from app.agents.llm_client import LLMClientConfig
+
+        def config(model_id: str) -> LLMClientConfig:
+            return LLMClientConfig(
+                base_url=f"https://{model_id}.test/v1",
+                api_key=f"secret-{model_id}",
+                model_id=model_id,
+                temperature=0.1,
+                max_tokens=100,
+                strict_base_url=f"https://{model_id}.test/v1",
+            )
+
+        seat_configs = {
+            1: config("model-a"),
+            2: config("model-b"),
+            3: config("model-a"),
+            4: config("model-b"),
+        }
+        snapshot = [
+            {
+                "config_id": "a", "name": "A", "model_id": "model-a",
+                "base_url": "https://model-a.test/v1",
+                "provider_profile": "custom-openai", "count": 2,
+                "seats": [1, 3],
+            },
+            {
+                "config_id": "b", "name": "B", "model_id": "model-b",
+                "base_url": "https://model-b.test/v1",
+                "provider_profile": "custom-openai", "count": 2,
+                "seats": [2, 4],
+            },
+        ]
+
+        class FakeClient:
+            instances = []
+
+            def __init__(self, *, config):
+                self.config = config
+                self.model_name = config.model_id
+                self.provider_profile = SimpleNamespace(profile_id="custom-openai")
+                self.supports_strict_actions = False
+                self.supports_action_tools = False
+                self.json_calls = []
+                self.async_json_calls = []
+                self.model_calls = []
+                self.close_count = 0
+                self.instances.append(self)
+
+            def invoke_json(self, messages, **kwargs):
+                self.json_calls.append((messages, kwargs))
+                return SimpleNamespace(payload={"speak": False})
+
+            async def ainvoke_json(self, messages, **kwargs):
+                self.async_json_calls.append((messages, kwargs))
+                return SimpleNamespace(payload={"text": "我是2号，今天先听大家发言再判断。"})
+
+            def get_model(self):
+                owner = self
+
+                class Model:
+                    async def ainvoke(self, messages):
+                        owner.model_calls.append(messages)
+                        return SimpleNamespace(content=json.dumps({
+                            "action_type": "vote",
+                            "target_seat": 1,
+                            "reasoning": "根据白天发言投票",
+                        }, ensure_ascii=False))
+
+                return Model()
+
+            async def aclose(self):
+                self.close_count += 1
+
+        monkeypatch.setattr(
+            service_module,
+            "resolve_model_assignments",
+            lambda assignments, total: (seat_configs, snapshot),
+        )
+        monkeypatch.setattr(service_module, "LLMClient", FakeClient)
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+        game_id = await service.create_game(
+            role_counts={
+                "wolf-killer-werewolf": 1,
+                "wolf-killer-villager": 3,
+            },
+            model_assignments=[
+                {"config_id": "a", "count": 2},
+                {"config_id": "b", "count": 2},
+            ],
+        )
+
+        clients = {seat: FakeClient.instances[seat - 1] for seat in range(1, 5)}
+        engine = service._engines[game_id]
+        assert len(FakeClient.instances) == 4
+        assert all(
+            engine.roles[seat].llm_client is clients[seat]
+            for seat in range(1, 5)
+        )
+
+        invoke = engine._director._invoke
+        assert json.loads(invoke(
+            [{"role": "user", "content": "seat two"}], "night_test", {}, 2,
+        )) == {"speak": False}
+        assert clients[2].json_calls
+        assert not clients[1].json_calls
+
+        engine._assign_roles()
+        engine.state.phase = GamePhase.SPEECH
+        speech = await engine.speak(2, "day_speech")
+        assert speech == "我是2号，今天先听大家发言再判断。"
+        assert clients[2].async_json_calls
+        assert not clients[1].async_json_calls
+
+        engine.state.phase = GamePhase.VOTE_CASTING
+        vote = await engine.vote(2)
+        assert vote is not None
+        assert vote.target_seat == 1
+        assert clients[2].model_calls
+        assert not clients[1].model_calls
+
+        log_path = tmp_path / "games" / game_id / "game.log"
+        assignment_record = json.loads(log_path.read_text("utf-8").splitlines()[0])
+        assert assignment_record["operation"] == "model_assignment"
+        assert assignment_record["data"] == {
+            "model_snapshot_version": 2,
+            "model_snapshot": snapshot,
+        }
+        assert "secret-" not in log_path.read_text("utf-8")
+
+        await service._tasks[game_id]
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert [client.close_count for client in FakeClient.instances] == [1, 1, 1, 1]
+        await service.aclose()
+        assert [client.close_count for client in FakeClient.instances] == [1, 1, 1, 1]
+
+    @pytest.mark.asyncio
+    async def test_partial_client_construction_failure_closes_and_leaves_no_game(
+        self, monkeypatch, tmp_path,
+    ):
+        import app.services.game_service as service_module
+        from app.agents.llm_client import LLMClientConfig
+
+        client_config = LLMClientConfig(
+            base_url="https://model.test/v1",
+            api_key="secret",
+            model_id="model",
+            temperature=0.1,
+            max_tokens=100,
+            strict_base_url="https://model.test/v1",
+        )
+
+        class SharedClient:
+            def __init__(self):
+                self.close_count = 0
+
+            async def aclose(self):
+                self.close_count += 1
+
+        shared_client = SharedClient()
+        construction_count = 0
+
+        def failing_client_factory(*, config):
+            nonlocal construction_count
+            construction_count += 1
+            if construction_count == 3:
+                raise RuntimeError("client construction failed")
+            return shared_client
+
+        monkeypatch.setattr(
+            service_module,
+            "resolve_model_assignments",
+            lambda assignments, total: (
+                {1: client_config, 2: client_config, 3: client_config},
+                [{
+                    "config_id": None, "name": "env", "model_id": "model",
+                    "base_url": "https://model.test/v1", "count": 3,
+                    "provider_profile": "custom-openai", "seats": [1, 2, 3],
+                }],
+            ),
+        )
+        monkeypatch.setattr(service_module, "LLMClient", failing_client_factory)
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+
+        with pytest.raises(RuntimeError, match="construction failed"):
+            await service.create_game(
+                role_counts={
+                    "wolf-killer-werewolf": 1,
+                    "wolf-killer-villager": 2,
+                },
+            )
+
+        assert shared_client.close_count == 1
+        assert service._games == {}
+        assert service._engines == {}
+        assert service._tasks == {}
+        assert service._model_snapshots == {}
+        assert service._llm_clients == {}
+        assert not (tmp_path / "games").exists()
+
+    @pytest.mark.asyncio
+    async def test_client_cleanup_is_idempotent_across_concurrent_lifecycle_paths(
+        self, tmp_path,
+    ):
+        client = MagicMock()
+        client.aclose = AsyncMock()
+        shutdown_client = MagicMock()
+        shutdown_client.aclose = AsyncMock()
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._llm_clients["g"] = {1: client, 2: client}
+        service._llm_clients["shutdown"] = {1: shutdown_client}
+
+        await asyncio.gather(
+            service._close_game_clients("g"),
+            service._close_game_clients("g"),
+        )
+        await service.aclose()
+        await service.aclose()
+
+        client.aclose.assert_awaited_once()
+        shutdown_client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_game_over_closes_clients_only_once(
+        self, monkeypatch, tmp_path,
+    ):
+        import app.services.game_service as service_module
+
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+        state = MagicMock(game_id="g")
+        state.get_public_state.return_value = {}
+        service._games["g"] = state
+        client = MagicMock()
+        client.aclose = AsyncMock()
+        service._llm_clients["g"] = {1: client}
+        monkeypatch.setattr(
+            service_module, "build_and_write_summary", lambda *args: {},
+        )
+
+        await service._on_game_over(
+            game_id="g", win_result={"winning_camp": "good"},
+        )
+        await service._close_game_clients("g")
+        await service.aclose()
+
+        client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_role_factory_rejects_a_seat_without_model_assignment(
+        self, monkeypatch, tmp_path,
+    ):
+        import app.services.game_service as service_module
+
+        real_create_roles = service_module.builtin_registry.create_roles
+
+        def create_roles(*args, **kwargs):
+            with pytest.raises(ValueError, match="unknown model seat"):
+                kwargs["llm_client_factory"](5)
+            return real_create_roles(*args, **kwargs)
+
+        monkeypatch.setattr(
+            service_module.builtin_registry, "create_roles", create_roles,
+        )
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+
+        game_id = await service.create_game(
+            role_counts={
+                "wolf-killer-werewolf": 1,
+                "wolf-killer-villager": 3,
+            },
+        )
+
+        await service._tasks[game_id]
+
+    @pytest.mark.asyncio
+    async def test_benchmark_creation_injects_frozen_roles_and_runtime_rng(
+        self, monkeypatch, tmp_path,
+    ):
+        import app.services.game_service as service_module
+
+        real_create_roles = service_module.builtin_registry.create_roles
+        captured = {}
+
+        def create_roles(*args, **kwargs):
+            captured.update(kwargs)
+            return real_create_roles(*args, **kwargs)
+
+        monkeypatch.setattr(
+            service_module.builtin_registry, "create_roles", create_roles,
+        )
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+        role_by_seat = {
+            1: "wolf-killer-villager",
+            2: "wolf-killer-werewolf",
+            3: "wolf-killer-villager",
+            4: "wolf-killer-villager",
+        }
+
+        game_id = await service.create_game(
+            role_counts={
+                "wolf-killer-werewolf": 1,
+                "wolf-killer-villager": 3,
+            },
+            role_by_seat=role_by_seat,
+            runtime_seed=123456,
+        )
+        engine = service._engines[game_id]
+
+        assert captured["role_by_seat"] == role_by_seat
+        assert captured["rng"] is engine._rng
+        assert {
+            seat: role.role_name for seat, role in engine.roles.items()
+        } == role_by_seat
+        assert engine._rng.random() == random.Random(123456).random()
+
+        await service._tasks[game_id]
+        await service.aclose()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("invoke_fails", [False, True])
+    async def test_night_invoke_is_safe_before_engine_reference_is_bound(
+        self, invoke_fails, monkeypatch, tmp_path,
+    ):
+        from types import SimpleNamespace
+
+        import app.services.game_service as service_module
+
+        class ProbeStopped(RuntimeError):
+            pass
+
+        class FakeClient:
+            def __init__(self, *, config):
+                pass
+
+            def invoke_json(self, messages, **kwargs):
+                if invoke_fails:
+                    raise RuntimeError("early invoke failed")
+                return SimpleNamespace(payload={"speak": False})
+
+            async def aclose(self):
+                pass
+
+        class ProbeDirector:
+            def __init__(self, snapshot, invoke):
+                if invoke_fails:
+                    with pytest.raises(RuntimeError, match="early invoke failed"):
+                        invoke([], "werewolf_discussion", {}, 1)
+                else:
+                    assert json.loads(invoke(
+                        [], "werewolf_discussion", {}, 1,
+                    )) == {"speak": False}
+                raise ProbeStopped("probe complete")
+
+        monkeypatch.setattr(service_module, "LLMClient", FakeClient)
+        monkeypatch.setattr(service_module, "NightDirector", ProbeDirector)
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+
+        with pytest.raises(ProbeStopped, match="probe complete"):
+            await service.create_game(
+                role_counts={
+                    "wolf-killer-werewolf": 1,
+                    "wolf-killer-villager": 3,
+                },
+            )
+
+        assert service._games == {}
+        assert service._llm_clients == {}
+
+    @pytest.mark.asyncio
+    async def test_night_error_logging_failure_does_not_hide_provider_error(
+        self, monkeypatch, tmp_path, caplog,
+    ):
+        import app.services.game_service as service_module
+
+        fake_llm = MagicMock()
+        fake_llm.model_name = "model-a"
+        fake_llm.provider_profile.profile_id = "custom-openai"
+        fake_llm.invoke_json.side_effect = RuntimeError("provider failed")
+        fake_llm.aclose = AsyncMock()
+        monkeypatch.setattr(service_module, "LLMClient", lambda **kwargs: fake_llm)
+        monkeypatch.setattr(GameEngine, "start", AsyncMock())
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+        game_id = await service.create_game(
+            role_counts={
+                "wolf-killer-werewolf": 1,
+                "wolf-killer-villager": 3,
+            },
+        )
+        engine = service._engines[game_id]
+        engine.game_logger.log_model_error = MagicMock(
+            side_effect=OSError("log unavailable"),
+        )
+
+        with caplog.at_level(logging.ERROR, logger="app.services.game_service"):
+            with pytest.raises(RuntimeError, match="provider failed"):
+                engine._director._invoke(
+                    [], "werewolf_kill", {}, 1,
+                )
+
+        assert "Failed to persist wolf model error" in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cleanup_fails", [False, True])
+    async def test_setup_failure_rolls_back_runtime_manifest_and_directory(
+        self, cleanup_fails, monkeypatch, tmp_path,
+    ):
+        import app.services.game_service as service_module
+
+        class FakeClient:
+            def __init__(self, *, config):
+                self.close_count = 0
+
+            async def aclose(self):
+                self.close_count += 1
+
+        game_dirs = []
+
+        def fail_after_creating_directory(*args, **kwargs):
+            game_dir = tmp_path / "games" / args[0]
+            game_dir.mkdir(parents=True)
+            game_dirs.append(game_dir)
+            raise RuntimeError("manifest setup failed")
+
+        monkeypatch.setattr(service_module, "LLMClient", FakeClient)
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        service._manifest = MagicMock()
+        service._manifest.add_game.side_effect = fail_after_creating_directory
+        if cleanup_fails:
+            service._manifest.remove_game.side_effect = OSError("index unavailable")
+            monkeypatch.setattr(
+                service_module.shutil,
+                "rmtree",
+                MagicMock(side_effect=OSError("directory busy")),
+            )
+
+        with pytest.raises(RuntimeError, match="manifest setup failed"):
+            await service.create_game(
+                role_counts={
+                    "wolf-killer-werewolf": 1,
+                    "wolf-killer-villager": 3,
+                },
+            )
+
+        assert service._games == {}
+        assert service._engines == {}
+        assert service._tasks == {}
+        assert service._model_snapshots == {}
+        assert service._llm_clients == {}
+        service._manifest.remove_game.assert_called_once()
+        assert game_dirs[0].exists() is cleanup_fails
