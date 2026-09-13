@@ -18,8 +18,8 @@
                              └──────┬──────────────┬────────────────────┘
                                     │              │
                           ┌─────────▼─────┐  ┌─────▼──────────────┐
-                          │ LLM 客户端     │  │ 持久化              │
-                          │ agents/       │  │ JSONL 日志/记忆/存档  │
+                          │ LLM 客户端     │  │ 耐久存储             │
+                          │ agents/       │  │ SQLite/WAL + 兼容日志 │
                           └───────────────┘  └────────────────────┘
 ```
 
@@ -37,7 +37,8 @@ WolfKiller/
 │   │   ├── agents/              # LLM 客户端、providers、提示渲染、输出解析、状态过滤
 │   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫）
 │   │   ├── api/                 # REST 路由（routes/）+ WebSocket 处理（websocket/）
-│   │   ├── services/            # 游戏服务、记忆持久化、存档清单与版本校验
+│   │   ├── persistence/         # SQLite repository、检查点编解码、引擎恢复
+│   │   ├── services/            # 游戏/benchmark 服务、公开投影、派生任务
 │   │   └── stores/              # 模型配置持久化 + API Key 加密存储
 │   └── tests/                   # pytest 测试（statement/branch 100% 覆盖门禁）
 ├── frontend/
@@ -111,14 +112,21 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 - `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束
 - `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
-- 前端：`components/create/CreateGameWizard.tsx` 两步向导；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
+- `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 NightDirector 都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
+- 分配只引用创建时物化的配置快照；之后编辑或删除 `models.json` 中的配置不会改变进行中的对局
+- 前端：`components/create/CreateGameWizard.tsx` 两步向导；`ModelStep.tsx` 以数量分配环境默认与已存配置；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
 
 ## 持久化与存档
 
-- **游戏日志**：`GameLogger` 以 JSONL 写 `backend/data/games/<id>/game.log`；LLM 对话记录写 `conversation.log`
-- **游戏清单**：`GameManifest` 维护 `backend/data/games/index.json`（位于 games 根目录），携带流水线版本信息，重启后可恢复并校验兼容性
-- **记忆系统**：`MemoryService` 每个角色一个 JSON 文件（`memories/seat_N_<role>.json`）
-- **快照版本化**：`GameState` 携带 `pipeline_version / registry_digest / spec_versions / effect_schema_version / state_revision / last_consistent_checkpoint`；`game_manifest.restore_snapshot()` 校验兼容性（缺规范/迁移器、V2 回滚到 V1 均抛 `SnapshotVersionError`），旧档经显式 v1→v2 迁移器读取
+- **事实源**：`backend/data/wolfkiller.sqlite3` 保存对局、版本化检查点、领域事件、公开事件/快照、模型请求/尝试、运行时计时、benchmark 计划/条目/报告与派生任务。外键开启，写入由单写线程串行化；每次规则步骤以 `BEGIN IMMEDIATE` 事务同时提交检查点、事件、消费的模型请求和派生任务，`step_key` 与 digest 提供幂等冲突检测。
+- **WAL**：连接使用 SQLite WAL，`synchronous=FULL`，并设置 5 秒 busy timeout。WAL 提升并发读取能力，但 `-wal` 不是独立备份；运行时只复制主 `.sqlite3` 文件可能漏掉尚未 checkpoint 的已提交事务。
+- **兼容数据**：`GameLogger` 的 JSONL 日志、`GameManifest` 的 `games/index.json`、对话日志和逐座位记忆仍服务于旧格式/审计链。新运行时的恢复判断以 SQLite 检查点及其 SHA-256 digest 为准，不能用旧 JSON 文件覆盖数据库事实。
+- **启动恢复**：进程启动会把原先 `running` 的执行标为 `interrupted`，把 `in_flight` 模型尝试标为 `unknown`；不会假定外部模型请求未执行。只有可恢复且版本兼容的对局/benchmark 才能通过显式 resume 继续，恢复重试也受持久化次数约束。
+- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器或 digest 不匹配时拒绝恢复。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。
+
+### 公开事件同步
+
+公开视图由领域事件白名单投影，私有推理与身份信息不会进入 audience 表。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
 
 ## 前端架构
 

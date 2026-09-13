@@ -12,8 +12,8 @@
 | `LLM_PROVIDER` | `deepseek` | 提供方标识（决定 provider profile） |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` | 常规请求端点 |
 | `DEEPSEEK_STRICT_BASE_URL` | `https://api.deepseek.com/beta` | strict tool 请求端点（仅当 provider 声明 `strict_tools` 时使用） |
-| `LLM_MODEL` | 无 | 单模型；未配置且无 `LLM_MODELS` 时回退到代码内置兜底值 |
-| `LLM_MODELS` | 空 | 多模型随机分配（逗号分隔），优先于 `LLM_MODEL` |
+| `LLM_MODEL` | 无 | 环境默认模型；未配置且 `LLM_MODELS` 无有效值时回退到代码内置兜底值 |
+| `LLM_MODELS` | 空 | **已弃用的兼容变量**；只使用首个非空值（优先于 `LLM_MODEL`），配置多个值时每个进程仅警告一次 |
 | `LLM_TEMPERATURE` | `1.2` | 常规请求温度（行动请求固定为 0.1） |
 | `LLM_MAX_TOKENS` | `768` | 常规请求 token 上限 |
 | `LLM_ACTION_MAX_TOKENS` | `2048` | 行动请求 token 上限 |
@@ -36,6 +36,8 @@ DEBUG=true
 LOG_LEVEL=INFO
 ```
 
+多模型不再通过 `LLM_MODELS` 逗号列表随机分配。请在「模型管理」保存配置，并在创建向导中为环境默认和各个已存配置填写人数；后端校验数量总和后独立随机落座，同一座位在发言、投票、狼人讨论、夜间行动和重试中始终复用同一客户端。
+
 ## 常用命令
 
 ### 后端
@@ -46,9 +48,14 @@ pip install -r requirements.txt                              # 安装依赖
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动（开发模式）
 python -m pytest tests/ -q                                   # 全部测试
 python -m pytest tests --cov=app --cov-branch --cov-fail-under=100 -q   # 覆盖率门禁
+python scripts/run_benchmark.py list                         # 查询已启动服务中的 benchmark
 ```
 
 后端运行在 `http://localhost:8000`，OpenAPI 文档在 `http://localhost:8000/docs`（REST API 以此自动生成文档为准，仓库内不再手工维护接口表）。
+
+后端目前是本机应用，没有远程账户鉴权：HTTP 与 WebSocket 只接受回环地址连接及本机 Host，浏览器来源限于 localhost / 127.0.0.1 / [::1] 的 5173、4173、8000 端口或后端同源页面。即使监听 `0.0.0.0`，远程连接也会被拒绝。自定义开发端口需同步调整 `app/api/local_access.py` 的来源列表；不要用通配 CORS 代替访问控制。
+
+修改已存密钥的模型端点时必须重新填写 Key，防止原密钥被自动发送到新地址。模型连通性测试在后台线程执行并关闭客户端，不阻塞对局事件循环。
 
 ### 前端
 
@@ -71,10 +78,11 @@ npm run lint       # ESLint
 | 门禁 | 内容 | 状态 |
 | --- | --- | --- |
 | 后端覆盖率 | statement/branch 100%（`--cov-fail-under=100`） | 生效 |
-| 前端覆盖率 | `vite.config.ts` 对 8 个核心文件（gameStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 门禁存在，但基线在部分环境下不达标（见下方踩坑） |
+| 前端覆盖率 | `vite.config.ts` 对 9 个核心文件（gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效 |
 | 隐私扫描 | 公开 DTO 与前端消费链不得含私有字段（`role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等） | 生效（测试门禁） |
 | 核心源码门禁 | 五个核心模块 blob 不变测试（守卫样例证明扩展性） | 生效（测试门禁） |
 | Benchmark 工具链 | 对局质量评测与引擎性能基准（见 `docs/benchmark.md`） | 工具链，非门禁 |
+| CI 浏览器 E2E | Playwright 使用临时目录和无真实 Key 的 FastAPI，验证生命周期、进程恢复、断网重连、时间线、benchmark UI 和旧存档 | 生效 |
 
 ### 新增角色
 
@@ -82,14 +90,36 @@ npm run lint       # ESLint
 
 ### Benchmark 基准评测
 
-采集层（token / 计时 / `summary.json`）随对局自动落盘；批量真实对局评测用 `backend/scripts/run_benchmark.py`，引擎性能回归用 `backend/scripts/perf_benchmark.py`（mock LLM、零成本）。指标定义与用法见 `docs/benchmark.md`。
+采集层随对局事务性落入 SQLite；批量真实对局评测用 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。引擎性能回归用 `backend/scripts/perf_benchmark.py`（mock LLM、零成本）。指标定义与用法见 `docs/benchmark.md`。
 
 ## 数据存储
 
-- 游戏数据：`backend/data/games/<game_id>/`（JSONL 日志 `game.log`、LLM 对话 `conversation.log`、角色记忆 `memories/`）
-- 游戏清单：`backend/data/games/index.json`（重启后恢复游戏列表并校验流水线版本兼容性）
+- 耐久事实库：`backend/data/wolfkiller.sqlite3`；SQLite 使用 WAL 与 `synchronous=FULL`，同目录可能出现 `wolfkiller.sqlite3-wal` / `wolfkiller.sqlite3-shm`
+- 游戏数据：`backend/data/games/<game_id>/`（JSONL 日志 `game.log`、LLM 对话 `conversation.log`、角色记忆 `memories/`）；`game.log` 的无密钥 `model_assignment` 记录可用于重建模型分配
+- 游戏清单：`backend/data/games/index.json`（重启后恢复游戏列表并校验流水线版本兼容性）；新对局以 `model_snapshot_version: 2` 保存按配置分组的 `count` 与 `seats`
 - 模型配置：`backend/data/models.json`（API Key 加密存储）
+- 设置 `WOLFKILLER_DATA_DIR` 后，默认模型配置随数据目录迁移；`MODEL_CONFIG_PATH` 可显式覆盖模型配置路径。测试同时隔离两个路径，不使用真实 Key。
 - **禁止删除正在进行的游戏数据，否则会导致游戏中断**
+
+旧存档不会虚构或迁移座位映射：快照缺少 `model_snapshot_version: 2`、`count` 或 `seats` 时，汇总中的 `model_assignment_known` 为 `false`。
+
+### SQLite 备份与手动恢复
+
+运行中备份应使用 SQLite 在线备份命令，它会生成单个一致文件并包含当时 WAL 中已提交的数据：
+
+```bash
+cd backend
+sqlite3 data/wolfkiller.sqlite3 ".backup 'data/backups/wolfkiller-2026-09-06.sqlite3'"
+sqlite3 data/backups/wolfkiller-2026-09-06.sqlite3 "PRAGMA integrity_check;"
+```
+
+若没有 `sqlite3` CLI，请先正常停止后端，确认进程退出，再整体复制 `wolfkiller.sqlite3`、`wolfkiller.sqlite3-wal` 和 `wolfkiller.sqlite3-shm`。不能在服务运行时只复制主数据库文件，也不要把 `-wal` 文件单独当备份。
+
+手动恢复没有自动回滚按钮：先停止后端，把当前 `data/` 完整移到隔离目录留作取证；再将已通过 `PRAGMA integrity_check` 的备份复制为 `data/wolfkiller.sqlite3`，删除的仅应是由旧库遗留且已确认不配套的 `-wal/-shm`，随后用相同或兼容的新版本启动。启动后检查 `/api/health`、对局/benchmark 状态和日志；恢复点上处于 `running` 的任务会变为 `interrupted`，确认模型配置仍可用后再显式 resume。不要直接编辑表或把旧 JSON 清单覆盖到 SQLite。
+
+### CI
+
+`.github/workflows/ci.yml` 分别运行后端 pytest 与覆盖率门禁、前端 Vitest/lint/build，以及 `npm run test:e2e`。后端测试通过 `conftest.py` 将数据和模型配置隔离到临时目录，并清空真实 Key。Playwright 启动独立前后端进程，以真实 API 验证生命周期、进程恢复和观战同步；benchmark 页面交互使用受控 API 响应。浏览器失败时 CI 上传 trace 等产物，保留 7 天。工作流不注入真实 API Key。
 
 ## 已知的坑
 

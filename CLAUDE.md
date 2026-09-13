@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人）均由 DeepSeek 大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
+Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
 
 ## 常用命令
 
@@ -40,7 +40,7 @@ npm run lint                          # ESLint 检查
 
 **游戏引擎 (`backend/app/core/game_engine.py`)** 是白天的编排器，通过 asyncio 事件循环驱动游戏：
 
-1. `GameService.create_game()` 冻结 `builtin_registry` 快照、构建 `Scheduler`（LLM 命令提供者）并实例化 GameEngine，在 asyncio 任务中启动引擎
+1. `GameService.create_game()` 校验并物化对局级模型数量分配、冻结 `builtin_registry` 快照、构建 `Scheduler`（LLM 命令提供者）并实例化 GameEngine，在 asyncio 任务中启动引擎
 2. `GameEngine.start()` 运行完整游戏循环（发放身份 → 夜晚/白天循环 → 游戏结束）
 3. 夜晚行动完全交给**通用角色流水线**（见下）；白天发言、投票、平票复投、遗言是引擎内与角色无关的生命周期行为
 4. 所有事件通过 `EventBus` 异步发布/订阅，WebSocket 推送给前端
@@ -91,13 +91,15 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 - `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录（roles）、标准预设（presets）与角色人数约束（constraints）
 - `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
-- 前端：`components/create/CreateGameWizard.tsx` 两步向导（人数身份配置 → 整局模型选择，一期整局一个模型，可选「环境默认 .env」或已存配置）；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
+- `GameService` 将环境默认与已存配置按数量独立随机落座，并为每个座位创建一个稳定客户端；角色工厂、Scheduler、NightDirector 及其重试都按行为发起座位路由
+- 前端：`components/create/CreateGameWizard.tsx` 两步向导（人数身份配置 → 多模型数量分配）；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
 
 ### 持久化与存档
 
-- **游戏日志**：`GameLogger` 以 JSONL 写 `backend/data/games/<id>/game.log`；`GameManifest` 维护 `index.json`（重启后可恢复游戏列表）
+- **游戏日志**：`GameLogger` 以 JSONL 写 `backend/data/games/<id>/game.log`，启动前记录无密钥的 `model_assignment`；`GameManifest` 维护 `index.json`，索引损坏时可从日志恢复模型座位映射
 - **记忆系统**：`MemoryService` 每个角色一个 JSON 文件（`memories/seat_N_<role>.json`）
 - **快照版本化**：`GameState` 携带 `pipeline_version / registry_digest / spec_versions / effect_schema_version / state_revision / last_consistent_checkpoint`；`game_manifest.restore_snapshot()` 校验兼容性（缺规范/迁移器、V2 回滚到 V1 均抛 `SnapshotVersionError`），旧档经显式 v1→v2 迁移器读取
+- **模型快照版本化**：新档以 `model_snapshot_version: 2` 保存按配置分组的 `count/seats`；旧快照不补写座位，summary 以 `model_assignment_known: false` 标记分配未知
 
 ### 前端架构
 
@@ -123,5 +125,5 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - 后端 Python 需要 >= 3.11
 - 前端使用 TypeScript，ESLint 平面配置格式
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断
-- LLM 配置在 `backend/.env`（含 API key、model、temperature 等），游戏参数在 `backend/app/config.py`
+- 环境默认 LLM 配置在 `backend/.env`（含 API key、model、temperature 等），已存模型由模型管理页维护；`LLM_MODELS` 仅兼容首个非空值且已弃用
 - 修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新源码门禁测试（注意：不是 `test_guard_extension.py` 的 blob 清单）：`tests/test_game_engine.py` 的引擎禁词测试、`tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 的角色名禁词测试、`tests/test_prompt_renderer.py` 的渲染器禁词测试

@@ -1,7 +1,7 @@
 # 模型可视化配置 与 新建游戏配置向导 设计
 
 日期：2026-08-16
-状态：已确认（分节确认完毕，待用户审阅书面规格）
+状态：已确认；一期已交付，二期对局级多模型分配于 2026-09-04 实施
 
 ## 1. 背景与目标
 
@@ -35,11 +35,11 @@ Wolf Killer 目前所有 LLM 调用都走 `backend/.env` 里的全局单一配�
 - 引擎：`LLMClient` 显式配置化；`create_game` 接受 `model_assignments`（**契约按数组设计**），一期恰好 1 条且 count=总人数
 - 前端：react-router 四路由；模型管理页；两步创建向导
 
-### 第二期（后续）
+### 第二期（已实施）
 - 第二步改为每个模型配数量（多条 `model_assignments`，count 之和=总人数）
 - 后端按数量随机物化到座位；夜晚管道 / NightDirector 按座位取各自模型
-- 存档记录每座位模型快照
-- **一期已把"单一 client"写成 client 提供器（provider）结构，二期只换提供器实现，游戏域零改动**
+- 存档以分组的 `count / seats` 记录每座位模型快照，并写入无密钥日志供索引重建
+- 每个座位创建并复用一个稳定客户端，角色、Scheduler、NightDirector 与重试路径均按行为发起座位路由
 
 ## 4. 架构总览
 
@@ -125,23 +125,23 @@ class ModelConfigStore(Protocol):
 ```python
 class ModelAssignment(BaseModel):
     config_id: str | None   # None = .env 环境默认
-    count: int              # 一期：恰好 1 条且 count == 总人数；二期：多条、count 之和 == 总人数
+    count: int              # 正整数；多条之和必须等于总人数
 
 class CreateGameRequest(BaseModel):
     # ...现有字段不变
     model_assignments: list[ModelAssignment] | None = None
 ```
-- 校验（后端兜底）：一期 `len == 1` 且 `count == total_players`；`config_id` 非 None 时必须存在且 `key_invalid == False`，否则 400；不传 `model_assignments` = 环境默认（向后兼容）
-- 响应新增 `model_snapshot: [{config_id, name, model_id, base_url}]`（无 key）
-- 旧档无该字段 → 前端显示"未知"；manifest 持久化模型快照
+- 校验（后端兜底）：数组非空、`config_id` 唯一、`count` 为正整数且总和等于玩家数；未知配置、失效密钥和重复环境默认项返回 400；不传 `model_assignments` = 环境默认 × 全部玩家（向后兼容）
+- 响应返回按配置分组的 `model_snapshot: [{config_id, name, model_id, base_url, provider_profile, count, seats}]`；`seats` 升序并恰好覆盖所有座位，且快照不含 key
+- 旧档按原格式读取且不迁移；缺少 v2 的 `count/seats` 时由汇总标记分配未知
 
-## 7. 引擎改造（一期）
+## 7. 引擎改造（一期基础 + 二期路由）
 
 1. 新增 `LLMClientConfig`（frozen dataclass）：`base_url / api_key / model_id / temperature / max_tokens / strict_base_url`
 2. `LLMClient(config: LLMClientConfig | None = None)`：None 时从 `.env` 构造（`env_default_client_config()` 工厂）；`get_model / get_model_with_temperature / get_model_with_tools / get_model_with_action_tool` 全部改用实例配置，不再读全局 `app_config.llm`
-3. `GameService.create_game(..., model_assignments=None)`：解析为一个 `LLMClientConfig`；构造 `client_provider: Callable[[int], LLMClient]`（一期返回同一实例，二期按座位路由）
-4. `_create_roles` 的 `llm_client_factory` 改为 `lambda seat: client_provider(seat)`；Scheduler 的 `_command_provider` 接受 provider，按 `request.actor_seat` 取 client；NightDirector 的 `_night_invoke` 使用 provider(0)（一期单模型语义无差异）
-5. manifest 记录 `model_snapshot`；`llm_client.py` / `game_service.py` 不在 5 个核心 blob 门禁（`test_guard_extension.py`）内，改造不触犯门禁，但必须全量跑测试确认
+3. `GameService.create_game(..., model_assignments=None)`：先完整校验和解密所有配置，再独立洗牌生成 `seat → LLMClientConfig` 与分组快照；任一步失败都不启动游戏
+4. 每座位创建一个稳定 `LLMClient`；`_create_roles`、Scheduler 与 NightDirector 都以真实 `actor_seat` 获取客户端，重试继续复用同一实例
+5. manifest 与 `summary.json` 记录 `model_snapshot_version: 2` 和 `model_snapshot`；`game.log` 写入同内容的无密钥 `model_assignment`。旧快照不迁移，缺少 `count/seats` 时标记分配未知
 
 ## 8. 前端设计
 
@@ -157,8 +157,8 @@ class CreateGameRequest(BaseModel):
 
 ### 创建向导 `/create`（两步 Stepper）
 - **第 1 步 RoleStep**：三张预设卡片（九人场/十人场/自定义场，来自 `/api/presets`）→ 角色加减列表（来自 `/api/roles`：图标、中文名、阵营 chip、`− n +`，按角色 min/max 与全局约束禁用按钮）；**选标准场后再加减角色 = 自动切换为"自定义场"**；底部显示"共 N 人"+「下一步」
-- **第 2 步 ModelStep**：「环境默认 (.env)」卡片置顶（永远可选）→ 已存配置单选卡片（key_invalid 的置灰）→ 虚线「+ 当场新建模型配置」（弹 ModelConfigDialog，保存后刷新列表并自动选中）；「上一步 / 创建游戏」→ `POST /api/games` 携带 `model_assignments: [{config_id|null, count: 总人数}]` → 跳转 `/game/:id`
-- 一期单选；二期同位置换成每模型数量 stepper，布局与接口不变
+- **第 2 步 ModelStep**：「环境默认 (.env)」初始占满总人数，已存配置逐行提供减号、数量和加号；顶部显示已分配、总数及剩余/超出。失效或已删除配置保留警告行并可减至零；修改玩家人数时保留原分配并阻止数量不守恒的提交
+- 「+ 当场新建模型配置」保存后以数量 0 加入并聚焦；创建请求过滤零数量项，只有总数匹配且所有已用配置有效时才可提交
 
 ### 组件复用与规范
 - 复用 `RoleIcon`（按目录下发的 icon key 扩展守卫图标）、现有 MUI 主题与设计 token
@@ -196,17 +196,16 @@ class CreateGameRequest(BaseModel):
 3. **key 加密机器绑定**：换机器/改主机名后 key 解不开需重输 🟡（文档写明）
 4. **多进程并发写 models.json**：单 uvicorn 进程无碍；多 worker 时靠预留的 SQLite 实现 🟢
 5. **泄露面**：GET 脱敏 + 日志禁打 key + 错误不回显 key 🟢
-6. **二期兼容**：`model_assignments` 一期就是数组结构，二期放宽为多条；manifest 模型快照同为数组——无迁移 🟢
+6. **二期兼容**：`model_assignments` 沿用一期数组结构；旧模型快照不迁移、不伪造座位，缺少 v2 字段时显式标记分配未知 🟢
 7. **路由引入冲击现有测试**：GameList 等组件用 Link/useNavigate 后单测需 Router 包裹，可控工作量 🟡
 7. **核心模块门禁**：`llm_client.py` / `game_service.py` 不在 5 个核心 blob 门禁内，改造不触犯 `test_guard_extension.py`；实施时跑全量门禁确认 🟢
-8. **旧存档兼容**：不动 registry / effect schema，旧档继续可回放；旧档缺模型快照字段显示"未知" 🟢
+8. **旧存档兼容**：不动 registry / effect schema，旧档继续可回放；旧档缺完整模型分配时仅在汇总中标记为未知，不新增对局页展示或查询接口 🟢
 9. **图标规范冲突**：全局规范要求 Material Symbols 禁 emoji，现有 `RoleIcon` 用 emoji；实施时二选一（迁移图标库或维持现状豁免），不阻塞本设计 🟡
 10. **`.env` 已在仓库**：现有 key 已暴露过，建议另行轮换（不在本次范围） 🟡
 
 ## 12. 明确不做（YAGNI）
 - SQLite 存储实现（仅预留接口）
-- 二期多模型数量落座与按座位快照
 - 标准场预设的 UI 编辑
-- 模型按角色绑定 / 指定到座位
+- 模型按角色绑定 / 指定座位 / 运行中换模型
 - 多用户、鉴权、key 轮换与审计
 - 模型配置导入导出
