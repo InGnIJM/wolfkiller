@@ -188,3 +188,19 @@ def test_journal_drop_is_reentrant_under_guard() -> None:
     thread = Thread(target=work, daemon=True); thread.start(); thread.join(timeout=5)
     assert not thread.is_alive(), "journal drop deadlocked while guard was held"
     assert results == [True]
+
+
+
+@pytest.mark.parametrize("corruption", ["list", "shape", "types", "duplicate"])
+def test_invalid_restored_entries_leave_previous_journal_intact(corruption):
+    game = GameState("journal-restore")
+    journal = point_journal(game)
+    entry = (key(), checkpoint())
+    journal.restore_entries((entry,))
+    entries = {
+        "list": [entry], "shape": ((entry[0],),),
+        "types": ((entry[0], object()),), "duplicate": (entry, entry),
+    }[corruption]
+    with pytest.raises((TypeError, ValueError)):
+        journal.restore_entries(entries)
+    assert journal.entries() == (entry,)

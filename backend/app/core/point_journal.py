@@ -174,6 +174,36 @@ class PointJournal:
         if type(checkpoint) is not PointCheckpoint: raise TypeError("checkpoint must be PointCheckpoint")
         with self._lock(): self._values[key] = checkpoint
 
+    def entries(self) -> tuple[tuple[PointKey, PointCheckpoint], ...]:
+        """Return a stable snapshot of all durable scheduling checkpoints."""
+        with self._lock():
+            return tuple(sorted(
+                self._values.items(),
+                key=lambda item: (
+                    item[0].round_number, item[0].phase,
+                    item[0].point.value, item[0].registry_digest,
+                ),
+            ))
+
+    def restore_entries(
+        self, entries: tuple[tuple[PointKey, PointCheckpoint], ...]
+    ) -> None:
+        """Replace the journal atomically with validated decoded entries."""
+        if type(entries) is not tuple:
+            raise TypeError("entries must be a tuple")
+        restored: dict[PointKey, PointCheckpoint] = {}
+        for item in entries:
+            if type(item) is not tuple or len(item) != 2:
+                raise TypeError("invalid journal entry")
+            key, checkpoint = item
+            if type(key) is not PointKey or type(checkpoint) is not PointCheckpoint:
+                raise TypeError("invalid journal entry")
+            if key in restored:
+                raise ValueError("duplicate journal key")
+            restored[key] = checkpoint
+        with self._lock():
+            self._values = restored
+
     def clear(self, key: PointKey | None = None) -> bool:
         if key is not None and type(key) is not PointKey: raise TypeError("key must be PointKey")
         with self._lock():
