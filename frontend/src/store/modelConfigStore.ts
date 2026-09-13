@@ -7,6 +7,7 @@ interface ModelConfigState {
   configs: ModelConfig[];
   loading: boolean;
   error: string | null;
+  loadError: string | null;
   load: () => Promise<void>;
   create: (input: ModelConfigInput) => Promise<ModelConfig | null>;
   update: (id: string, input: ModelConfigInput) => Promise<ModelConfig | null>;
@@ -21,14 +22,16 @@ export const useModelConfigStore = create<ModelConfigState>((set) => ({
   configs: [],
   loading: false,
   error: null,
+  loadError: null,
 
   load: async () => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, loadError: null });
     try {
       const configs = await api.listModels();
-      set({ configs, loading: false });
+      set({ configs, loading: false, loadError: null });
     } catch (error) {
-      set({ error: messageOf(error), loading: false });
+      const message = messageOf(error);
+      set({ error: message, loadError: message, loading: false });
     }
   },
 

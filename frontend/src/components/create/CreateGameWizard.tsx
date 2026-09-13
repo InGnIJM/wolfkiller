@@ -7,17 +7,22 @@ import {
 import RoleStep from './RoleStep';
 import ModelStep from './ModelStep';
 import { createGame } from '../../api/client';
-import type { FieldConstraints } from '../../store/types';
+import { useModelConfigStore } from '../../store/modelConfigStore';
+import type { FieldConstraints, ModelAssignment } from '../../store/types';
 
 export default function CreateGameWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>({});
   const [constraints, setConstraints] = useState<FieldConstraints | null>(null);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [modelAssignments, setModelAssignments] = useState<ModelAssignment[]>([]);
+  const [modelAssignmentsInitialized, setModelAssignmentsInitialized] = useState(false);
   const [revealOnDeath, setRevealOnDeath] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const modelConfigs = useModelConfigStore((state) => state.configs);
+  const modelConfigsLoading = useModelConfigStore((state) => state.loading);
+  const modelConfigsLoadError = useModelConfigStore((state) => state.loadError);
 
   const total = Object.values(roleCounts).reduce((sum, n) => sum + n, 0);
 
@@ -30,6 +35,28 @@ export default function CreateGameWizard() {
     return true;
   })();
 
+  const assignedTotal = modelAssignments.reduce(
+    (sum, assignment) => sum + Math.max(0, assignment.count),
+    0,
+  );
+  const modelAssignmentsValid = total > 0
+    && assignedTotal === total
+    && modelAssignments.some((assignment) => assignment.count > 0)
+    && modelAssignments.every((assignment) => {
+      if (assignment.count <= 0 || assignment.config_id === null) return true;
+      if (modelConfigsLoading || modelConfigsLoadError) return false;
+      const config = modelConfigs.find((entry) => entry.id === assignment.config_id);
+      return Boolean(config && !config.key_invalid);
+    });
+
+  const handleNext = () => {
+    if (!modelAssignmentsInitialized) {
+      setModelAssignments([{ config_id: null, count: total }]);
+      setModelAssignmentsInitialized(true);
+    }
+    setStep(1);
+  };
+
   const handleCreate = async () => {
     setCreating(true);
     setError(null);
@@ -37,7 +64,7 @@ export default function CreateGameWizard() {
       const res = await createGame({
         role_counts: roleCounts,
         reveal_on_death: revealOnDeath,
-        model_assignments: [{ config_id: selectedModelId, count: total }],
+        model_assignments: modelAssignments.filter((assignment) => assignment.count > 0),
       });
       navigate(`/game/${res.game_id}`);
     } catch (err) {
@@ -68,13 +95,14 @@ export default function CreateGameWizard() {
       {step === 1 && (
         <ModelStep
           totalPlayers={total}
-          selectedModelId={selectedModelId}
-          onSelect={setSelectedModelId}
+          assignments={modelAssignments}
+          onAssignmentsChange={setModelAssignments}
+          disabled={creating}
         />
       )}
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
-        <Button color="inherit" disabled={step === 0} onClick={() => setStep(0)}>
+        <Button color="inherit" disabled={step === 0 || creating} onClick={() => setStep(0)}>
           上一步
         </Button>
         {step === 0 ? (
@@ -82,7 +110,7 @@ export default function CreateGameWizard() {
             variant="contained"
             disableElevation
             disabled={!roleValid}
-            onClick={() => setStep(1)}
+            onClick={handleNext}
           >
             下一步
           </Button>
@@ -90,10 +118,11 @@ export default function CreateGameWizard() {
           <Button
             variant="contained"
             disableElevation
-            disabled={creating}
+            disabled={creating || !modelAssignmentsValid}
+            aria-busy={creating}
             onClick={() => void handleCreate()}
           >
-            创建游戏
+            {creating ? '创建中…' : '创建游戏'}
           </Button>
         )}
       </Box>

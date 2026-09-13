@@ -1,9 +1,10 @@
+import { lazy, Suspense } from 'react';
 import {
   BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams,
 } from 'react-router-dom';
 import {
   ThemeProvider, CssBaseline, Box, Typography, AppBar, Toolbar,
-  Container, Button,
+  Container, Button, CircularProgress,
 } from '@mui/material';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import theme from './theme';
@@ -11,6 +12,14 @@ import GameList from './components/lobby/GameList';
 import GameBoard from './components/game/GameBoard';
 import ModelConfigPage from './components/models/ModelConfigPage';
 import CreateGameWizard from './components/create/CreateGameWizard';
+
+const BenchmarkListPage = lazy(() => import('./components/benchmarks/BenchmarkListPage'));
+const NewBenchmarkPage = lazy(() => import('./components/benchmarks/NewBenchmarkPage'));
+const BenchmarkDetailPage = lazy(() => import('./components/benchmarks/BenchmarkDetailPage'));
+
+function RouteFallback() {
+  return <Box role="status" aria-label="正在加载页面" sx={{ flex: 1, display: 'grid', placeItems: 'center' }}><CircularProgress size={28} /></Box>;
+}
 
 function GameRoute() {
   const { gameId } = useParams<{ gameId: string }>();
@@ -46,7 +55,7 @@ export function AppShell() {
           ].join(', '),
         }}
       />
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'relative', zIndex: 1 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh', position: 'relative', zIndex: 1 }}>
         <AppBar
           position="static"
           elevation={0}
@@ -56,7 +65,7 @@ export function AppShell() {
           }}
         >
           <Container maxWidth={false}>
-            <Toolbar disableGutters sx={{ minHeight: 56, gap: 1.2 }}>
+            <Toolbar disableGutters sx={{ minHeight: 56, gap: 1.2, flexWrap: { xs: 'wrap', sm: 'nowrap' }, py: { xs: 0.5, sm: 0 } }}>
               <Box
                 aria-hidden="true"
                 sx={{
@@ -106,7 +115,10 @@ export function AppShell() {
                   血月剧场 · AI WEREWOLF
                 </Typography>
               </Box>
-              <Button color="inherit" onClick={() => navigate('/models')}>
+              <Button color="inherit" size="small" onClick={() => navigate('/benchmarks')}>
+                模型评测
+              </Button>
+              <Button color="inherit" size="small" onClick={() => navigate('/models')}>
                 模型管理
               </Button>
             </Toolbar>
@@ -126,6 +138,9 @@ export function AppShell() {
             <Route path="/models" element={<ModelConfigPage />} />
             <Route path="/create" element={<CreateGameWizard />} />
             <Route path="/game/:gameId" element={<GameRoute />} />
+            <Route path="/benchmarks" element={<Suspense fallback={<RouteFallback />}><BenchmarkListPage /></Suspense>} />
+            <Route path="/benchmarks/new" element={<Suspense fallback={<RouteFallback />}><NewBenchmarkPage /></Suspense>} />
+            <Route path="/benchmarks/:id" element={<Suspense fallback={<RouteFallback />}><BenchmarkDetailPage /></Suspense>} />
           </Routes>
         </Box>
       </Box>

@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { Card, CardActionArea, Typography, Chip, Box, IconButton, Menu, MenuItem } from '@mui/material';
 import GroupsIcon from '@mui/icons-material/Groups';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import PauseCircleIcon from '@mui/icons-material/PauseCircle';
+import PlayCircleIcon from '@mui/icons-material/PlayCircle';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import type { ExecutionStatus } from '../../store/types';
 
 interface Props {
   gameId: string;
@@ -14,6 +18,13 @@ interface Props {
   onClick: () => void;
   onRename: () => void;
   onDelete: () => void;
+  executionStatus?: ExecutionStatus;
+  recoverable?: boolean;
+  recoveryBlockCode?: string | null;
+  controlBusy?: boolean;
+  onPause?: () => void;
+  onResume?: () => void;
+  onRecover?: () => void;
 }
 
 const WINNER_META: Record<string, { label: string; color: 'success' | 'error' }> = {
@@ -25,8 +36,19 @@ const PHASE_LABELS: Record<string, string> = {
   error: '异常终止',
 };
 
+const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
+  running: '运行中',
+  paused: '已暂停',
+  interrupted: '已中断',
+  recovery_blocked: '恢复受阻',
+  completed: '已完成',
+  failed: '执行失败',
+};
+
 export default function GameCard({
   name, phase, roundNumber, playerCount, aliveCount, winner, onClick, onRename, onDelete,
+  executionStatus, recoverable = false, recoveryBlockCode, controlBusy = false,
+  onPause, onResume, onRecover,
 }: Props) {
   const win = winner ? WINNER_META[winner] : null;
   const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
@@ -55,6 +77,15 @@ export default function GameCard({
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                {executionStatus && (
+                  <Chip
+                    label={EXECUTION_LABELS[executionStatus]}
+                    size="small"
+                    color={executionStatus === 'failed' || executionStatus === 'recovery_blocked' ? 'error' : 'default'}
+                    variant="outlined"
+                    title={recoveryBlockCode ?? undefined}
+                  />
+                )}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <GroupsIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
                   <Typography variant="body2" color="text.secondary">
@@ -86,6 +117,25 @@ export default function GameCard({
             open={Boolean(menuEl)}
             onClose={() => setMenuEl(null)}
           >
+            {executionStatus === 'running' && onPause && (
+              <MenuItem disabled={controlBusy} onClick={() => { setMenuEl(null); onPause(); }}>
+                <PauseCircleIcon fontSize="small" sx={{ mr: 1 }} />暂停执行
+              </MenuItem>
+            )}
+            {executionStatus === 'paused' && onResume && (
+              <MenuItem disabled={controlBusy} onClick={() => { setMenuEl(null); onResume(); }}>
+                <PlayCircleIcon fontSize="small" sx={{ mr: 1 }} />继续执行
+              </MenuItem>
+            )}
+            {(executionStatus === 'interrupted' || executionStatus === 'recovery_blocked') && onRecover && (
+              <MenuItem
+                disabled={controlBusy || !recoverable}
+                title={!recoverable ? recoveryBlockCode ?? '此对局无法恢复' : undefined}
+                onClick={() => { setMenuEl(null); onRecover(); }}
+              >
+                <RestartAltIcon fontSize="small" sx={{ mr: 1 }} />恢复对局
+              </MenuItem>
+            )}
             <MenuItem onClick={() => { setMenuEl(null); onRename(); }}>重命名</MenuItem>
             <MenuItem onClick={() => { setMenuEl(null); onDelete(); }}>删除</MenuItem>
           </Menu>

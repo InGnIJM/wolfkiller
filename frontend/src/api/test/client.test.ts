@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createGame, createModel, deleteGame, deleteModel, fetchConstraints, fetchPresets,
-  fetchRoleCatalog, listModels, renameGame, testModelConnection, updateModel,
+  fetchBenchmarkGames, fetchBenchmarkReport, createBenchmark, createGame, createModel, deleteGame, deleteModel,
+  fetchAudienceEvents, fetchAudienceSnapshot, fetchConstraints, fetchPresets,
+  fetchRoleCatalog, getWsUrl, listBenchmarks, listModels, renameGame,
+  testModelConnection, updateModel,
 } from '../client';
 
 const BASE = 'http://localhost:8000';
@@ -118,5 +120,53 @@ describe('model config api', () => {
   it('rejects non-ok responses', async () => {
     mockFetch({}, false, 500);
     await expect(listModels()).rejects.toThrow('List models failed: 500');
+  });
+});
+
+describe('audience and benchmark api', () => {
+  it('preserves benchmark pagination totals and report generation states', async () => {
+    mockFetch({ items: [], total: 51 });
+    expect(await fetchBenchmarkGames('r')).toEqual({ games: [], total: 51 });
+    mockFetch({ status: 'pending' }, true, 202);
+    expect(await fetchBenchmarkReport('r')).toEqual({ status: 'pending' });
+    mockFetch({ status: 'failed', error: 'generation failed' }, false, 503);
+    expect(await fetchBenchmarkReport('r')).toEqual({ status: 'failed', error: 'generation failed' });
+    mockFetch({ detail: 'unavailable' }, false, 503);
+    await expect(fetchBenchmarkReport('r')).rejects.toThrow('503');
+  });
+
+  it('normalizes durable snapshot and event cursor field names', async () => {
+    const fetchFn = mockFetch({
+      game_id: 'g1', last_seq: 4, projection_version: 1,
+      state: { game_id: 'g1' },
+    });
+    expect((await fetchAudienceSnapshot('g1')).seq).toBe(4);
+    expect(fetchFn.mock.calls[0][0]).toBe(`${BASE}/api/games/g1/snapshot`);
+
+    mockFetch({
+      game_id: 'g1', events: [], next_seq: 4, high_watermark: 4, has_more: false,
+    });
+    const page = await fetchAudienceEvents('g1', 2, { limit: 25, throughSeq: 4 });
+    expect(page).toMatchObject({ after_seq: 2, last_seq: 4, caught_up: true });
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(
+      `${BASE}/api/games/g1/events?after_seq=2&limit=25&through_seq=4`,
+    );
+    expect(getWsUrl('g1', 7)).toBe('ws://localhost:8000/ws/game/g1?protocol=2&after_seq=7');
+  });
+
+  it('unwraps benchmark lists and creates a frozen draft request', async () => {
+    mockFetch({ benchmarks: [{ run_id: 'run-1' }], total: 1 });
+    expect((await listBenchmarks()).runs).toEqual([{ run_id: 'run-1' }]);
+
+    const fetchFn = mockFetch({ run_id: 'run-2', status: 'pending' });
+    await createBenchmark({
+      client_request_id: 'request-1', name: '回归', mode: 'paired_regression', seed: 42,
+      scenario: { scenario_id: 'standard', role_counts: { villager: 2 } },
+      repetitions: 2,
+      baseline: { model_config_id: 'a' },
+      candidate: { model_config_id: 'b' },
+    });
+    expect(fetchFn.mock.calls[0][0]).toBe(`${BASE}/api/benchmarks`);
+    expect(fetchFn.mock.calls[0][1].method).toBe('POST');
   });
 });

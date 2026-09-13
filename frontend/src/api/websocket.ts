@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { getWsUrl } from '../api/client';
+import type { AudienceEvent } from '../store/types';
 
 const PUBLIC_NIGHT_SUBSTEPS = new Set([
   'werewolf_open',
@@ -43,6 +44,27 @@ function isNightSubstep(value: unknown): value is {
     && value.round_number > 0;
 }
 
+function isAudienceEvent(value: unknown): value is AudienceEvent {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  return Number.isInteger(event.seq)
+    && typeof event.event_id === 'string'
+    && typeof event.event_type === 'string'
+    && typeof event.payload === 'object'
+    && event.payload !== null
+    && !Array.isArray(event.payload)
+    && Number.isInteger(event.schema_version);
+}
+
+function audienceEventsFromMessage(value: unknown): AudienceEvent[] {
+  if (isAudienceEvent(value)) return [value];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+  const message = value as Record<string, unknown>;
+  if (isAudienceEvent(message.event)) return [message.event];
+  if (Array.isArray(message.events)) return message.events.filter(isAudienceEvent);
+  return [];
+}
+
 function detachSocket(socket: WebSocket | null): void {
   if (socket === null) return;
   socket.onopen = null;
@@ -55,11 +77,11 @@ function detachSocket(socket: WebSocket | null): void {
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
 
-  const connect = useCallback((gameId: string) => {
+  const connect = useCallback((gameId: string, onCursorAhead?: () => void) => {
     detachSocket(wsRef.current);
     useGameStore.getState().setConnected(false);
 
-    const url = getWsUrl(gameId);
+    const url = getWsUrl(gameId, useGameStore.getState().audienceCursor);
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
@@ -77,6 +99,19 @@ export function useWebSocket() {
       if (wsRef.current !== ws) return;
       try {
         const msg: unknown = JSON.parse(event.data);
+        if (typeof msg === 'object' && msg !== null && (msg as { type?: unknown }).type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+        if (typeof msg === 'object' && msg !== null
+          && (msg as { type?: unknown }).type === 'error'
+          && (msg as { code?: unknown }).code === 'cursor_ahead') {
+          wsRef.current = null;
+          detachSocket(ws);
+          useGameStore.getState().setConnected(false);
+          onCursorAhead?.();
+          return;
+        }
         if (isPausedState(msg)) {
           useGameStore.getState().setPaused(msg.paused);
         } else if (isNightSubstep(msg)) {
@@ -84,6 +119,22 @@ export function useWebSocket() {
             substep: msg.substep,
             roundNumber: msg.round_number,
           });
+        } else {
+          const events = audienceEventsFromMessage(msg);
+          if (events.length > 0) {
+            const lastSeq = Math.max(...events.map((item) => item.seq));
+            useGameStore.getState().mergeAudienceEvents({
+              game_id: gameId,
+              after_seq: useGameStore.getState().audienceCursor,
+              last_seq: lastSeq,
+              events,
+              caught_up: true,
+            });
+            ws.send(JSON.stringify({
+              type: 'ack',
+              last_seq: useGameStore.getState().audienceCursor,
+            }));
+          }
         }
       } catch (e) {
         console.error('WS message parse error:', e);

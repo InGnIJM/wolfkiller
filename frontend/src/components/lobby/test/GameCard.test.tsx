@@ -88,4 +88,79 @@ describe('GameCard', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(onClick).not.toHaveBeenCalled();
   });
+
+  it('exposes execution status and the matching recovery control', () => {
+    const onRecover = vi.fn();
+    renderCard({
+      executionStatus: 'interrupted', recoverable: true, onRecover,
+    });
+    expect(screen.getByText('已中断')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /恢复对局/ }));
+    expect(onRecover).toHaveBeenCalledOnce();
+  });
+
+  it('runs pause and resume controls only when their callbacks are available', () => {
+    const onPause = vi.fn();
+    const { unmount } = render(
+      <GameCard
+        gameId="running"
+        name="运行局"
+        phase="night"
+        roundNumber={1}
+        playerCount={8}
+        aliveCount={8}
+        winner={null}
+        executionStatus="running"
+        onClick={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onPause={onPause}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /暂停执行/ }));
+    expect(onPause).toHaveBeenCalledOnce();
+
+    unmount();
+    const onResume = vi.fn();
+    renderCard({ executionStatus: 'paused', onResume });
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /继续执行/ }));
+    expect(onResume).toHaveBeenCalledOnce();
+
+    cleanup();
+    renderCard({ executionStatus: 'running' });
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    expect(screen.queryByRole('menuitem', { name: /暂停执行/ })).not.toBeInTheDocument();
+    cleanup();
+    renderCard({ executionStatus: 'paused' });
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    expect(screen.queryByRole('menuitem', { name: /继续执行/ })).not.toBeInTheDocument();
+  });
+
+  it('explains and disables a blocked recovery', () => {
+    const onRecover = vi.fn();
+    renderCard({
+      executionStatus: 'recovery_blocked', recoverable: false,
+      recoveryBlockCode: 'checkpoint_missing', onRecover,
+    });
+    expect(screen.getByText('恢复受阻')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    const item = screen.getByRole('menuitem', { name: /恢复对局/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveAttribute('title', 'checkpoint_missing');
+    fireEvent.click(item);
+    expect(onRecover).not.toHaveBeenCalled();
+
+    cleanup();
+    renderCard({ executionStatus: 'interrupted', recoverable: false, onRecover });
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    expect(screen.getByRole('menuitem', { name: /恢复对局/ }))
+      .toHaveAttribute('title', '此对局无法恢复');
+
+    cleanup();
+    renderCard({ executionStatus: 'failed' });
+    expect(screen.getByText('执行失败')).toBeInTheDocument();
+  });
 });

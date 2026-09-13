@@ -189,6 +189,21 @@ describe('TimelineController accessibility', () => {
       '暂无回放事件',
     );
   });
+
+  it('offers a direct return to the live edge while browsing history', () => {
+    const goLive = vi.fn();
+    useGameStore.setState({
+      timeline,
+      timelineIndex: 1,
+      isFollowingLive: false,
+      goLive,
+    });
+
+    render(<TimelineController />);
+    fireEvent.click(screen.getByRole('button', { name: '回到直播' }));
+
+    expect(goLive).toHaveBeenCalledOnce();
+  });
 });
 
 describe('HistoryPanel accessibility', () => {
@@ -217,7 +232,8 @@ describe('HistoryPanel accessibility', () => {
     expect(pause).toHaveBeenCalledTimes(3);
 
     fireEvent.click(screen.getByRole('tab', { name: /发言/ }));
-    expect(screen.getByRole('button', { name: /1号发言/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /1号发言/ }));
+    expect(pause).toHaveBeenCalledTimes(4);
     fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
     expect(screen.getByRole('button', { name: /平票/ })).toBeVisible();
     expect(screen.getByRole('button', { name: /2号被放逐/ })).toBeVisible();

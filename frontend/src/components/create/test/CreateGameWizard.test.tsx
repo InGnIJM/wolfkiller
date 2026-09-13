@@ -10,6 +10,7 @@ import {
   listModels, testModelConnection,
 } from '../../../api/client';
 import type { GamePreset } from '../../../store/types';
+import { useModelConfigStore } from '../../../store/modelConfigStore';
 
 vi.mock('../../../api/client', () => ({
   createGame: vi.fn(),
@@ -52,7 +53,17 @@ const MODEL = {
   created_at: '', updated_at: '',
 };
 
+const INVALID_MODEL = {
+  ...MODEL,
+  id: 'invalid-model',
+  name: '失效模型',
+  key_invalid: true,
+};
+
 beforeEach(() => {
+  useModelConfigStore.setState({
+    configs: [], loading: false, error: null, loadError: null,
+  });
   vi.mocked(fetchPresets).mockResolvedValue(PRESETS);
   vi.mocked(fetchRoleCatalog).mockResolvedValue(ROLES);
   vi.mocked(fetchConstraints).mockResolvedValue(CONSTRAINTS);
@@ -124,6 +135,10 @@ describe('CreateGameWizard step 2 and submission', () => {
     await goToStep2();
     expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument();
     expect(screen.getByText('当场新建模型配置')).toBeInTheDocument();
+    expect(screen.getByText('已分配 9 / 总人数 9')).toBeInTheDocument();
+    expect(screen.getByText('分配完成')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '减少 DeepSeek Pro 人数' })).toBeDisabled();
   });
 
   it('creates the game with the env default and navigates', async () => {
@@ -140,19 +155,58 @@ describe('CreateGameWizard step 2 and submission', () => {
     expect(navigateMock).toHaveBeenCalledWith('/game/g1');
   });
 
-  it('selects a stored config and submits its id', async () => {
+  it('splits players across the env default and a stored config', async () => {
     await goToStep2();
-    fireEvent.click(screen.getByText('DeepSeek Pro'));
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getByRole('button', { name: '减少环境默认模型人数' }));
+      fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
+    }
     fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
 
     await waitFor(() =>
       expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
-        model_assignments: [{ config_id: 'm1', count: 9 }],
+        model_assignments: [
+          { config_id: null, count: 5 },
+          { config_id: 'm1', count: 4 },
+        ],
       })),
     );
   });
 
-  it('creates a model config inline and selects it', async () => {
+  it('preserves allocations when the player total changes and blocks a deficit', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '减少环境默认模型人数' }));
+    fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(await screen.findByText('十人标准场'));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(screen.getByText('已分配 9 / 总人数 10')).toBeInTheDocument());
+    expect(screen.getByText('还需分配 1 人')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '减少 DeepSeek Pro 人数' })).toBeEnabled();
+  });
+
+  it('preserves allocations when the player total shrinks and reports excess', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(await screen.findByText('十人标准场'));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    await waitFor(() => expect(screen.getByText('已分配 9 / 总人数 10')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
+    expect(screen.getByText('已分配 10 / 总人数 10')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(await screen.findByText('九人标准场'));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(screen.getByText('已分配 10 / 总人数 9')).toBeInTheDocument());
+    expect(screen.getByText('已超出 1 人')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeDisabled();
+  });
+
+  it('creates a model config inline with zero players, focuses it, and filters it from submit', async () => {
     vi.mocked(createModel).mockResolvedValue({ ...MODEL, id: 'm2', name: 'New Model' });
     vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     await goToStep2();
@@ -170,12 +224,109 @@ describe('CreateGameWizard step 2 and submission', () => {
     );
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
+    const newModelRow = screen.getByRole('group', { name: 'New Model 人数分配' });
+    await waitFor(() => expect(newModelRow).toHaveFocus());
+    expect(screen.getByRole('button', { name: '减少 New Model 人数' })).toBeDisabled();
+
     fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
     await waitFor(() =>
       expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
-        model_assignments: [{ config_id: 'm2', count: 9 }],
+        model_assignments: [{ config_id: null, count: 9 }],
       })),
     );
+  });
+
+  it('keeps a now-invalid used config visible until its allocation is reduced to zero', async () => {
+    vi.mocked(listModels)
+      .mockResolvedValueOnce([MODEL])
+      .mockResolvedValueOnce([{ ...MODEL, key_invalid: true }]);
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '减少环境默认模型人数' }));
+    fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(screen.getByText(/密钥失效/)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '减少 DeepSeek Pro 人数' }));
+    expect(screen.getByText('还需分配 1 人')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '增加环境默认模型人数' }));
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeEnabled();
+  });
+
+  it('keeps a deleted used config as a warning row that can be reduced to zero', async () => {
+    vi.mocked(listModels)
+      .mockResolvedValueOnce([MODEL])
+      .mockResolvedValueOnce([]);
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '减少环境默认模型人数' }));
+    fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(screen.getByText(/配置已删除或不可用/)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '减少 已删除配置 m1 人数' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '增加 已删除配置 m1 人数' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeDisabled();
+  });
+
+  it('allows an env-only game when loading stored configs fails', async () => {
+    vi.mocked(listModels).mockRejectedValue(new Error('模型列表加载失败'));
+    await goToStep2();
+    await waitFor(() => expect(screen.getByText(/模型列表加载失败/)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+    await waitFor(() => expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+      model_assignments: [{ config_id: null, count: 9 }],
+    })));
+  });
+
+  it('blocks a cached stored assignment when refreshing the model list fails', async () => {
+    vi.mocked(listModels)
+      .mockResolvedValueOnce([MODEL])
+      .mockRejectedValueOnce(new Error('刷新失败'));
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '减少环境默认模型人数' }));
+    fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    await screen.findByText('十人标准场');
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(screen.getByText(/刷新失败/)).toBeInTheDocument());
+    expect(screen.getByText(/无法确认此配置仍然可用/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeDisabled();
+  });
+
+  it('disables quantity controls and navigation while creating, then restores them on failure', async () => {
+    let rejectRequest: (error: Error) => void = () => undefined;
+    vi.mocked(createGame).mockImplementation(() => new Promise((_, reject) => {
+      rejectRequest = reject;
+    }));
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+
+    expect(screen.getByRole('button', { name: '上一步' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '创建中…' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: '减少环境默认模型人数' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '当场新建模型配置' })).toBeDisabled();
+    rejectRequest(new Error('boom'));
+
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '上一步' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '减少环境默认模型人数' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '创建游戏' })).toBeEnabled();
+  });
+
+  it('does not allow assigning players to an already-invalid config', async () => {
+    vi.mocked(listModels).mockResolvedValue([INVALID_MODEL]);
+    await goToStep2();
+    await waitFor(() => expect(screen.getByText('失效模型')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '增加 失效模型 人数' })).toBeDisabled();
   });
 
   it('shows an error alert when creation fails', async () => {

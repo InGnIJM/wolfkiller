@@ -26,7 +26,16 @@ export interface PublicPlayerState {
   is_sheriff: boolean;
   role?: string;
   camp?: string;
+  revealed_role?: string | null;
 }
+
+export type ExecutionStatus =
+  | 'running'
+  | 'paused'
+  | 'interrupted'
+  | 'recovery_blocked'
+  | 'completed'
+  | 'failed';
 
 export interface SpeechRecord {
   player_seat: number;
@@ -138,12 +147,18 @@ export interface PublicGameState {
   speeches: SpeechRecord[];
   death_history: DeathRecord[];
   win_result: WinResult | null;
+  execution_status?: ExecutionStatus;
+  recoverable?: boolean;
+  recovery_block_code?: string | null;
 }
 
 type PublicReplayEnvelope<TType extends string, TPayload> = {
   timestamp: UtcTimestamp;
   event_type: TType;
   payload: TPayload;
+  seq?: number;
+  event_id?: string;
+  schema_version?: number;
 };
 
 export type PublicReplayEvent =
@@ -159,7 +174,49 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'witch_thought' | 'seer_thought', ThoughtPayload>
   | PublicReplayEnvelope<'night_thought', NightThoughtPayload>
   | PublicReplayEnvelope<'phase', { phase: GamePhase; round_number: number }>
-  | PublicReplayEnvelope<'winner', WinResult>;
+  | PublicReplayEnvelope<'winner', WinResult>
+  | PublicReplayEnvelope<'game_initialized', {
+      players?: Record<string, PublicPlayerState> | PublicPlayerState[];
+      config?: { reveal_on_death?: boolean };
+    }>
+  | PublicReplayEnvelope<'player_revealed', {
+      seat_number: number;
+      role: string;
+      camp: string;
+    }>
+  | PublicReplayEnvelope<'execution_state', {
+      execution_status: ExecutionStatus;
+      recoverable: boolean;
+      recovery_block_code: string | null;
+    }>;
+
+export interface AudienceEvent {
+  seq: number;
+  event_id: string;
+  event_type: PublicReplayEvent['event_type'];
+  payload: Record<string, unknown>;
+  schema_version: number;
+  created_at?: string;
+  timestamp?: string;
+}
+
+export interface AudienceSnapshot {
+  game_id: string;
+  seq: number;
+  state: PublicGameState;
+  projection_version: number;
+  state_digest?: string;
+}
+
+export interface AudienceEventPage {
+  game_id: string;
+  after_seq: number;
+  through_seq?: number | null;
+  last_seq: number;
+  high_watermark?: number;
+  events: AudienceEvent[];
+  caught_up: boolean;
+}
 
 export interface GameLogs {
   game_id: string;
@@ -174,6 +231,10 @@ export interface GameListItem {
   player_count: number;
   alive_count: number;
   winner: WinningCamp | null;
+  execution_status?: ExecutionStatus;
+  recoverable?: boolean;
+  recovery_block_code?: string | null;
+  source?: 'native' | 'legacy' | 'benchmark' | string;
 }
 
 export interface GameListResponse {
@@ -268,4 +329,99 @@ export interface ModelSnapshotEntry {
   name: string;
   model_id: string;
   base_url: string;
+  provider_profile: string;
+  count: number;
+  seats: number[];
+}
+
+// Benchmark contracts intentionally accept additive server fields. Reports are
+// versioned JSON and the UI renders the stable summary subset defensively.
+export type BenchmarkMode = 'mixed_arena' | 'paired_regression';
+export type BenchmarkStatus =
+  | 'draft'
+  | 'pending'
+  | 'running'
+  | 'pausing'
+  | 'paused'
+  | 'interrupted'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface BenchmarkRun {
+  run_id: string;
+  client_request_id: string;
+  name: string;
+  mode: BenchmarkMode;
+  status: BenchmarkStatus;
+  config: Record<string, unknown>;
+  schedule_digest?: string;
+  planned_count?: number;
+  terminal_count?: number;
+  completed_count?: number;
+  failed_count?: number;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface BenchmarkRunList {
+  runs: BenchmarkRun[];
+  total?: number;
+}
+
+export interface BenchmarkItem {
+  run_id: string;
+  item_index: number;
+  scenario_id: string;
+  pair_id: string | null;
+  block_index: number;
+  assignment: Record<string, unknown>;
+  game_id: string | null;
+  status: string;
+  terminal_reason: string | null;
+  created_at?: string;
+  updated_at?: string;
+  event_seq?: number | null;
+  [key: string]: unknown;
+}
+
+export interface BenchmarkItemsPage {
+  games: BenchmarkItem[];
+  total?: number;
+}
+
+export interface BenchmarkReport {
+  status?: 'pending' | 'ready' | string;
+  metric_version?: string;
+  input_digest?: string;
+  generated_at?: string;
+  provisional?: boolean;
+  summary?: Record<string, unknown>;
+  metrics?: Record<string, unknown>;
+  uncertainty?: Record<string, unknown>;
+  data_quality?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface BenchmarkCreateInput {
+  client_request_id: string;
+  name: string;
+  mode: BenchmarkMode;
+  seed: number;
+  scenario: {
+    scenario_id: string;
+    role_counts: Record<string, number>;
+  };
+  games?: number;
+  repetitions?: number;
+  models?: Array<{ model_config_id: string }>;
+  baseline?: { model_config_id: string; temperature?: number };
+  candidate?: { model_config_id: string; temperature?: number };
+  concurrency?: number;
+  game_timeout_seconds?: number;
+  max_games?: number;
+  block_count?: number;
+  max_attempts_per_game?: number;
 }

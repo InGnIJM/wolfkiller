@@ -52,6 +52,7 @@ const originalSetNightSubstep = useGameStore.getState().setNightSubstep;
 const originalSetPaused = useGameStore.getState().setPaused;
 
 beforeEach(() => {
+  vi.clearAllMocks();
   MockWebSocket.instances = [];
   vi.stubGlobal('WebSocket', MockWebSocket);
   vi.mocked(getWsUrl).mockImplementation(
@@ -78,6 +79,27 @@ afterEach(() => {
 });
 
 describe('useWebSocket', () => {
+  it('closes a rejected stream even without a resynchronization callback', () => {
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1'));
+    const socket = MockWebSocket.instances[0];
+    act(() => socket.emit({ type: 'error', code: 'cursor_ahead' }));
+    expect(socket.close).toHaveBeenCalledOnce();
+    expect(useGameStore.getState().connected).toBe(false);
+  });
+
+  it('requests resynchronization on cursor_ahead without accepting late socket data', () => {
+    const resync = vi.fn();
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1', resync));
+    const socket = MockWebSocket.instances[0];
+    act(() => socket.emit({ type: 'error', code: 'cursor_ahead' }));
+    expect(resync).toHaveBeenCalledOnce();
+    expect(socket.close).toHaveBeenCalledOnce();
+    act(() => socket.emit({ type: 'error', code: 'cursor_ahead' }));
+    expect(resync).toHaveBeenCalledOnce();
+  });
+
   it('replaces the prior socket and ignores every late callback from it', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const setNightSubstep = vi.fn();
@@ -98,8 +120,8 @@ describe('useWebSocket', () => {
 
     act(() => result.current.connect('game-2'));
     const currentSocket = MockWebSocket.instances[1];
-    expect(getWsUrl).toHaveBeenNthCalledWith(1, 'game-1');
-    expect(getWsUrl).toHaveBeenNthCalledWith(2, 'game-2');
+    expect(getWsUrl).toHaveBeenNthCalledWith(1, 'game-1', 0);
+    expect(getWsUrl).toHaveBeenNthCalledWith(2, 'game-2', 0);
     expect(currentSocket.url).toBe('ws://example.test/ws/game/game-2');
     expect(staleSocket.close).toHaveBeenCalledOnce();
     expect(staleSocket.onopen).toBeNull();
@@ -267,5 +289,53 @@ describe('useWebSocket', () => {
     expect(unmountedSocket.onmessage).toBeNull();
     expect(unmountedSocket.close).toHaveBeenCalledOnce();
     expect(useGameStore.getState().connected).toBe(false);
+  });
+
+  it('applies protocol v2 event batches, acknowledges the contiguous cursor, and answers ping', () => {
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        game_id: 'game-1', phase: 'waiting', round_number: 0,
+        players: { 1: { seat_number: 1, is_alive: true, is_sheriff: false } },
+        sheriff: null, speeches: [], death_history: [], win_result: null,
+      },
+    });
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1'));
+    const socket = MockWebSocket.instances[0];
+
+    act(() => {
+      socket.emit({
+        type: 'events',
+        events: [{
+          game_id: 'game-1', seq: 1, event_id: 'event-1', schema_version: 1,
+          event_type: 'phase', timestamp: '2026-09-06T00:00:00Z',
+          payload: { phase: 'night', round_number: 1 },
+        }],
+      });
+      socket.emit({
+        game_id: 'game-1', seq: 2, event_id: 'event-2', schema_version: 1,
+        event_type: 'phase', timestamp: '2026-09-06T00:00:01Z',
+        payload: { phase: 'dawn', round_number: 1 },
+      });
+      socket.emit({
+        type: 'event',
+        event: {
+          game_id: 'game-1', seq: 3, event_id: 'event-3', schema_version: 1,
+          event_type: 'phase', timestamp: '2026-09-06T00:00:02Z',
+          payload: { phase: 'speech', round_number: 1 },
+        },
+      });
+      socket.emit({ type: 'ping' });
+    });
+
+    expect(useGameStore.getState().audienceCursor).toBe(3);
+    expect(useGameStore.getState().phase).toBe('speech');
+    expect(socket.send.mock.calls.map(([payload]) => payload)).toEqual([
+      JSON.stringify({ type: 'ack', last_seq: 1 }),
+      JSON.stringify({ type: 'ack', last_seq: 2 }),
+      JSON.stringify({ type: 'ack', last_seq: 3 }),
+      JSON.stringify({ type: 'pong' }),
+    ]);
   });
 });

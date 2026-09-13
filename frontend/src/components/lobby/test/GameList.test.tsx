@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { deleteGame, listGames, renameGame } from '../../../api/client';
+import { controlGame, deleteGame, listGames, renameGame } from '../../../api/client';
 import type { GameListItem } from '../../../store/types';
 import GameList from '../GameList';
 
@@ -12,6 +12,7 @@ vi.mock('../../../api/client', () => ({
   listGames: vi.fn(),
   renameGame: vi.fn(),
   deleteGame: vi.fn(),
+  controlGame: vi.fn(),
 }));
 
 vi.mock('../GameCard', () => ({
@@ -22,6 +23,9 @@ vi.mock('../GameCard', () => ({
     onClick,
     onRename,
     onDelete,
+    onPause,
+    onResume,
+    onRecover,
   }: {
     gameId: string;
     name: string;
@@ -29,6 +33,9 @@ vi.mock('../GameCard', () => ({
     onClick: () => void;
     onRename: () => void;
     onDelete: () => void;
+    onPause: () => void;
+    onResume: () => void;
+    onRecover: () => void;
   }) => (
     <div>
       <button data-testid={`game-${gameId}`} data-phase={phase} onClick={onClick}>
@@ -36,6 +43,9 @@ vi.mock('../GameCard', () => ({
       </button>
       <button data-testid={`rename-${gameId}`} onClick={onRename}>rename</button>
       <button data-testid={`delete-${gameId}`} onClick={onDelete}>delete</button>
+      <button data-testid={`pause-${gameId}`} onClick={onPause}>pause</button>
+      <button data-testid={`resume-${gameId}`} onClick={onResume}>resume</button>
+      <button data-testid={`recover-${gameId}`} onClick={onRecover}>recover</button>
     </div>
   ),
 }));
@@ -62,6 +72,7 @@ const game = (id: string, phase: GameListItem['phase'] = 'night'): GameListItem 
 
 beforeEach(() => {
   vi.mocked(listGames).mockResolvedValue({ games: [] });
+  vi.mocked(controlGame).mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -149,6 +160,51 @@ describe('GameList polling', () => {
 });
 
 describe('GameList management', () => {
+  it('applies lifecycle response fields to only the controlled game', async () => {
+    vi.mocked(listGames).mockResolvedValueOnce({ games: [game('game-1'), game('game-2')] });
+    vi.mocked(controlGame)
+      .mockResolvedValueOnce({ ...game('game-1'), execution_status: 'paused' })
+      .mockResolvedValueOnce({ ...game('game-2'), execution_status: 'running' });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByTestId('pause-game-1'));
+    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-1', 'pause'));
+    fireEvent.click(screen.getByTestId('resume-game-2'));
+    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-2', 'resume'));
+
+    expect(listGames).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('game-game-1')).toBeInTheDocument();
+    expect(screen.getByTestId('game-game-2')).toBeInTheDocument();
+  });
+
+  it.each([
+    [new Error('control failed'), 'control failed'],
+    ['control denied', 'control denied'],
+  ])('shows and dismisses lifecycle control failures', async (failure, message) => {
+    vi.mocked(listGames).mockResolvedValueOnce({ games: [game('game-1')] });
+    vi.mocked(controlGame).mockRejectedValueOnce(failure);
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByTestId('pause-game-1'));
+    expect(await screen.findByText(message)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+  });
+
+  it('sends lifecycle controls and refreshes when the response has no list fields', async () => {
+    vi.mocked(listGames)
+      .mockResolvedValueOnce({ games: [{ ...game('game-1'), execution_status: 'interrupted', recoverable: true }] })
+      .mockResolvedValueOnce({ games: [{ ...game('game-1'), execution_status: 'running' }] });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByTestId('recover-game-1'));
+    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-1', 'recover'));
+    await waitFor(() => expect(listGames).toHaveBeenCalledTimes(2));
+  });
+
   it('renames a game from the dialog and updates the card title', async () => {
     vi.mocked(listGames).mockResolvedValue({ games: [game('game-1'), game('game-2')] });
     vi.mocked(renameGame).mockResolvedValue({ ...game('game-1'), name: '新名字' });
@@ -217,7 +273,7 @@ describe('GameList management', () => {
     expect(screen.getByText(/对局正在进行，删除将立即中断/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     await waitFor(() => expect(deleteGame).toHaveBeenCalledWith('game-1'));
-    expect(screen.queryByTestId('game-game-1')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('game-game-1')).not.toBeInTheDocument());
   });
 
   it('does not warn when deleting a finished or error game', async () => {

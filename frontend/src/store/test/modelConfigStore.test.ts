@@ -27,21 +27,26 @@ const sample = {
 const input = { name: 'n', base_url: 'https://x', model_id: 'm' };
 
 beforeEach(() => {
-  useModelConfigStore.setState({ configs: [], loading: false, error: null });
+  useModelConfigStore.setState({
+    configs: [], loading: false, error: null, loadError: null,
+  });
 });
 
 describe('modelConfigStore', () => {
   it('loads configs and clears loading', async () => {
+    useModelConfigStore.setState({ loadError: 'stale' });
     vi.mocked(listModels).mockResolvedValue([sample]);
     await useModelConfigStore.getState().load();
     expect(useModelConfigStore.getState().configs).toEqual([sample]);
     expect(useModelConfigStore.getState().loading).toBe(false);
+    expect(useModelConfigStore.getState().loadError).toBeNull();
   });
 
   it('stores load errors', async () => {
     vi.mocked(listModels).mockRejectedValue(new Error('boom'));
     await useModelConfigStore.getState().load();
     expect(useModelConfigStore.getState().error).toBe('boom');
+    expect(useModelConfigStore.getState().loadError).toBe('boom');
     expect(useModelConfigStore.getState().loading).toBe(false);
   });
 
@@ -59,6 +64,7 @@ describe('modelConfigStore', () => {
     const result = await useModelConfigStore.getState().create(input);
     expect(result).toBeNull();
     expect(useModelConfigStore.getState().error).toBe('dup');
+    expect(useModelConfigStore.getState().loadError).toBeNull();
   });
 
   it('replaces updated configs', async () => {

@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Container, Dialog, DialogActions, DialogContent,
   DialogTitle, Stack, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import GameCard from './GameCard';
-import { deleteGame, listGames, renameGame } from '../../api/client';
+import { controlGame, deleteGame, listGames, renameGame } from '../../api/client';
 import type { GameListItem } from '../../store/types';
 
 interface Props {
@@ -32,10 +32,17 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
   const [renameError, setRenameError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<GameListItem | null>(null);
   const [deleteError, setDeleteError] = useState('');
+  const [controlError, setControlError] = useState('');
+  const [controlBusyId, setControlBusyId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const res = await listGames();
+    setGames(res.games);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    const refresh = async () => {
+    const refreshWhileMounted = async () => {
       try {
         const res = await listGames();
         if (active) setGames(res.games);
@@ -44,13 +51,35 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       }
     };
 
-    void Promise.resolve().then(refresh);
-    const t = setInterval(() => void refresh(), 3000);
+    void Promise.resolve().then(refreshWhileMounted);
+    const t = setInterval(() => void refreshWhileMounted(), 3000);
     return () => {
       active = false;
       clearInterval(t);
     };
   }, []);
+
+  const runControl = async (
+    gameId: string,
+    action: 'pause' | 'resume' | 'recover',
+  ) => {
+    setControlBusyId(gameId);
+    setControlError('');
+    try {
+      const updated = await controlGame(gameId, action);
+      if (Object.keys(updated).length > 0) {
+        setGames((current) => current.map((game) => (
+          game.game_id === gameId ? { ...game, ...updated } : game
+        )));
+      } else {
+        await refresh();
+      }
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setControlBusyId(null);
+    }
+  };
 
   const openRename = (g: GameListItem) => {
     setRenameTarget(g);
@@ -92,8 +121,8 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     && deleteTarget.phase !== 'error';
 
   return (
-    <Container maxWidth="sm" sx={{ py: 4 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+    <Container maxWidth="sm" sx={{ py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 } }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
         <Box>
           <Typography
             variant="caption"
@@ -118,6 +147,12 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         </Button>
       </Box>
 
+      {controlError && (
+        <Alert severity="error" onClose={() => setControlError('')} sx={{ mb: 2 }}>
+          {controlError}
+        </Alert>
+      )}
+
       {games.length === 0 && (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.disabled" sx={{ fontWeight: 400, mb: 1 }}>
@@ -140,9 +175,16 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
             playerCount={g.player_count}
             aliveCount={g.alive_count}
             winner={g.winner}
+            executionStatus={g.execution_status}
+            recoverable={g.recoverable}
+            recoveryBlockCode={g.recovery_block_code}
+            controlBusy={controlBusyId === g.game_id}
             onClick={() => onJoinGame(g.game_id)}
             onRename={() => openRename(g)}
             onDelete={() => { setDeleteTarget(g); setDeleteError(''); }}
+            onPause={() => void runControl(g.game_id, 'pause')}
+            onResume={() => void runControl(g.game_id, 'resume')}
+            onRecover={() => void runControl(g.game_id, 'recover')}
           />
         ))}
       </Stack>

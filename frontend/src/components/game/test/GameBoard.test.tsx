@@ -4,7 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchGameDetail, fetchGameLogs, GameNotFoundError } from '../../../api/client';
+import {
+  AudienceApiError, fetchAudienceEvents, fetchAudienceSnapshot,
+  fetchGameDetail, fetchGameLogs, GameNotFoundError,
+} from '../../../api/client';
 import { useGameStore } from '../../../store/gameStore';
 import type { GameLogs, PublicGameState } from '../../../store/types';
 import GameBoard from '../GameBoard';
@@ -17,6 +20,12 @@ const { connect, disconnect } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../api/client', () => ({
+  fetchAudienceSnapshot: vi.fn(),
+  fetchAudienceEvents: vi.fn(),
+  AudienceApiError: class AudienceApiError extends Error {
+    status: number;
+    constructor(status: number) { super(`Audience API unavailable: ${status}`); this.status = status; }
+  },
   fetchGameDetail: vi.fn(),
   fetchGameLogs: vi.fn(),
   GameNotFoundError: class GameNotFoundError extends Error {
@@ -93,16 +102,184 @@ beforeEach(() => {
   useGameStore.getState().reset();
   vi.mocked(fetchGameDetail).mockResolvedValue(detail);
   vi.mocked(fetchGameLogs).mockResolvedValue(completedLogs);
+  vi.mocked(fetchAudienceSnapshot).mockRejectedValue(new AudienceApiError(409));
+  vi.mocked(fetchAudienceEvents).mockResolvedValue({
+    game_id: 'game-1', after_seq: 0, last_seq: 0, events: [], caught_up: true,
+  });
 });
 
 afterEach(() => {
   cleanup();
   useGameStore.getState().reset();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   vi.useRealTimers();
+  window.history.replaceState({}, '', '/');
 });
 
 describe('GameBoard public replay', () => {
+  it('reloads the snapshot and reconnects from zero when the server rejects the cursor', async () => {
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await screen.findByTestId('seat-map');
+    useGameStore.setState({ audienceCursor: 100 });
+    await act(async () => { connect.mock.calls[0][1](); });
+    expect(fetchAudienceSnapshot).toHaveBeenCalledTimes(2);
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(useGameStore.getState().audienceCursor).toBe(0);
+  });
+
+  it('resets the previous game cursor before connecting', () => {
+    useGameStore.setState({ gameId: 'old-game', audienceCursor: 200 });
+    connect.mockImplementationOnce(() => {
+      expect(useGameStore.getState().audienceCursor).toBe(0);
+    });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+  });
+  it('loads a new game from snapshot and incremental events without reading full logs', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 1, projection_version: 1,
+      state: { ...detail, phase: 'speech', win_result: null, execution_status: 'running' },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: true,
+      events: [{
+        seq: 1, event_id: 'event-1', schema_version: 1, event_type: 'phase',
+        timestamp: '2026-08-13T00:00:00Z', payload: { phase: 'speech', round_number: 1 },
+      }],
+    });
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
+    expect(fetchAudienceSnapshot).toHaveBeenCalledWith('game-1');
+    expect(fetchGameDetail).not.toHaveBeenCalled();
+    expect(fetchGameLogs).not.toHaveBeenCalled();
+    expect(useGameStore.getState().syncMode).toBe('incremental');
+  });
+
+  it('loads a zero-sequence snapshot without requesting an empty history page', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: { ...detail, phase: 'speech', win_result: null },
+    });
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
+    expect(fetchAudienceEvents).not.toHaveBeenCalled();
+  });
+
+  it('pages public history to the snapshot boundary and seeks to a requested sequence', async () => {
+    window.history.replaceState({}, '', '/?seq=2');
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 3, projection_version: 1,
+      state: { ...detail, phase: 'speech', win_result: null },
+    });
+    vi.mocked(fetchAudienceEvents)
+      .mockResolvedValueOnce({
+        game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: false,
+        events: [{
+          seq: 1, event_id: 'event-1', schema_version: 1, event_type: 'phase',
+          timestamp: replayEventMeta.timestamp, payload: { phase: 'night', round_number: 1 },
+        }],
+      })
+      .mockResolvedValueOnce({
+        game_id: 'game-1', after_seq: 1, last_seq: 3, caught_up: true,
+        events: [
+          {
+            seq: 2, event_id: 'event-2', schema_version: 1, event_type: 'phase',
+            timestamp: replayEventMeta.timestamp, payload: { phase: 'dawn', round_number: 1 },
+          },
+          {
+            seq: 3, event_id: 'event-3', schema_version: 1, event_type: 'phase',
+            timestamp: replayEventMeta.timestamp, payload: { phase: 'speech', round_number: 1 },
+          },
+        ],
+      });
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
+    expect(fetchAudienceEvents).toHaveBeenNthCalledWith(1, 'game-1', 0, { limit: 100, throughSeq: 3 });
+    expect(fetchAudienceEvents).toHaveBeenNthCalledWith(2, 'game-1', 1, { limit: 100, throughSeq: 3 });
+    expect(useGameStore.getState().timelineIndex).toBe(1);
+  });
+
+  it('keeps the initial position when a requested sequence is beyond the archive', async () => {
+    window.history.replaceState({}, '', '/?seq=99');
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 1, projection_version: 1,
+      state: { ...detail, phase: 'speech', win_result: null },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: true,
+      events: [{
+        seq: 1, event_id: 'event-1', schema_version: 1, event_type: 'phase',
+        timestamp: replayEventMeta.timestamp, payload: { phase: 'speech', round_number: 1 },
+      }],
+    });
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
+    expect(useGameStore.getState().timelineIndex).toBe(0);
+  });
+
+  it('stops paging when an audience page makes no cursor progress', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 2, projection_version: 1,
+      state: { ...detail, phase: 'speech', win_result: null },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: false, events: [],
+    });
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
+    expect(fetchAudienceEvents).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [new AudienceApiError(500), 'Audience API unavailable: 500'],
+    [new Error('snapshot network failure'), 'snapshot network failure'],
+  ])('surfaces unexpected audience snapshot failures', async (failure, message) => {
+    vi.mocked(fetchAudienceSnapshot).mockRejectedValueOnce(failure);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(fetchGameDetail).not.toHaveBeenCalled();
+  });
+
+  it('does not apply a snapshot that resolves after unmount', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof fetchAudienceSnapshot>>>();
+    vi.mocked(fetchAudienceSnapshot).mockReturnValueOnce(pending.promise);
+    const { unmount } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    unmount();
+
+    await act(async () => pending.resolve({
+      game_id: 'game-1', seq: 0, projection_version: 1, state: detail,
+    }));
+    expect(useGameStore.getState().players).toEqual({});
+  });
+
+  it('does not apply public history that resolves after unmount', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof fetchAudienceEvents>>>();
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 1, projection_version: 1, state: detail,
+    });
+    vi.mocked(fetchAudienceEvents).mockReturnValueOnce(pending.promise);
+    const { unmount } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await waitFor(() => expect(fetchAudienceEvents).toHaveBeenCalledOnce());
+    unmount();
+
+    await act(async () => pending.resolve({
+      game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: true, events: [],
+    }));
+    expect(useGameStore.getState().timeline).toEqual([]);
+  });
+
   it('connects to the game websocket once without waiting for REST loading', () => {
     const pendingDetail = deferred<PublicGameState>();
     vi.mocked(fetchGameDetail).mockReturnValueOnce(pendingDetail.promise);
@@ -110,7 +287,7 @@ describe('GameBoard public replay', () => {
     render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
 
     expect(connect).toHaveBeenCalledOnce();
-    expect(connect).toHaveBeenCalledWith('game-1');
+    expect(connect).toHaveBeenCalledWith('game-1', expect.any(Function));
   });
 
   it('does not reconnect when rerendered with the same game id', () => {
@@ -132,8 +309,8 @@ describe('GameBoard public replay', () => {
     rerender(<GameBoard gameId="game-2" onBack={vi.fn()} />);
 
     expect(disconnect).toHaveBeenCalledOnce();
-    expect(connect).toHaveBeenNthCalledWith(1, 'game-1');
-    expect(connect).toHaveBeenNthCalledWith(2, 'game-2');
+    expect(connect).toHaveBeenNthCalledWith(1, 'game-1', expect.any(Function));
+    expect(connect).toHaveBeenNthCalledWith(2, 'game-2', expect.any(Function));
   });
 
   it('disconnects the websocket when the board unmounts', () => {
@@ -233,6 +410,64 @@ describe('GameBoard public replay', () => {
     expect(fetchGameDetail).toHaveBeenCalledTimes(4);
     expect(fetchGameLogs).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId('seat-map')).toBeInTheDocument();
+  });
+
+  it('polls incremental audience events and renders stream and execution failures', async () => {
+    vi.useFakeTimers();
+    const mergeAudienceEvents = vi.spyOn(useGameStore.getState(), 'mergeAudienceEvents');
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'failed',
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: true,
+      events: [{
+        seq: 1, event_id: 'event-1', schema_version: 1, event_type: 'phase',
+        timestamp: replayEventMeta.timestamp, payload: { phase: 'dawn', round_number: 1 },
+      }],
+    });
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => useGameStore.setState({ streamError: '事件流暂时中断' }));
+
+    expect(screen.getByText('执行：failed')).toBeVisible();
+    expect(screen.getByText('事件流暂时中断')).toBeVisible();
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(mergeAudienceEvents).toHaveBeenCalledOnce();
+    expect(useGameStore.getState().phase).toBe('dawn');
+  });
+
+  it('does not merge an incremental poll that resolves after unmount', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Awaited<ReturnType<typeof fetchAudienceEvents>>>();
+    const mergeAudienceEvents = vi.spyOn(useGameStore.getState(), 'mergeAudienceEvents');
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: { ...detail, phase: 'speech', win_result: null },
+    });
+    vi.mocked(fetchAudienceEvents).mockReturnValueOnce(pending.promise);
+
+    const { unmount } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    unmount();
+    await act(async () => pending.resolve({
+      game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: true, events: [],
+    }));
+
+    expect(mergeAudienceEvents).not.toHaveBeenCalled();
   });
 
   it('shows a friendly notice and stops polling when the game disappears', async () => {
@@ -562,6 +797,18 @@ describe('GameBoard public replay', () => {
     expect(useGameStore.getState().players).toEqual({});
   });
 
+  it('does not load legacy logs that resolve after unmount', async () => {
+    const pendingLogs = deferred<GameLogs>();
+    vi.mocked(fetchGameLogs).mockReturnValueOnce(pendingLogs.promise);
+
+    const { unmount } = render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await waitFor(() => expect(fetchGameLogs).toHaveBeenCalledOnce());
+    unmount();
+    await act(async () => pendingLogs.resolve(completedLogs));
+
+    expect(useGameStore.getState().timeline).toEqual([]);
+  });
+
   it('does not update an unmounted board when loading rejects', async () => {
     const pendingDetail = deferred<PublicGameState>();
     vi.mocked(fetchGameDetail).mockReturnValueOnce(pendingDetail.promise);
@@ -579,6 +826,6 @@ describe('GameBoard public replay', () => {
     render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
 
     expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
-    expect(useGameStore.getState().timelineIndex).toBe(-1);
+    await waitFor(() => expect(useGameStore.getState().timelineIndex).toBe(-1));
   });
 });

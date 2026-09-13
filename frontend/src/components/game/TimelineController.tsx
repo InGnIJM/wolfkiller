@@ -4,6 +4,7 @@ import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
+import LiveTvIcon from '@mui/icons-material/LiveTv';
 import { useGameStore, isAtTimelineEnd } from '../../store/gameStore';
 
 const SPEEDS = [0.5, 1, 2, 4, 8];
@@ -24,7 +25,7 @@ export default function TimelineController() {
   const {
     timeline, timelineIndex, isPlaying, playSpeed,
     stepBack, play, pause, stepForward, setSpeed, seekTo,
-    phase, roundNumber, isPaused,
+    phase, roundNumber, isPaused, isFollowingLive, goLive,
   } = useGameStore();
 
   const total = timeline.length;
@@ -79,6 +80,7 @@ export default function TimelineController() {
           gap: 0.4,
           px: 1.5,
           py: 0.5,
+          flexWrap: { xs: 'wrap', sm: 'nowrap' },
           bgcolor: 'background.paper',
           borderBottom: '1px solid',
           borderColor: 'divider',
@@ -102,7 +104,7 @@ export default function TimelineController() {
           <SkipNextIcon fontSize="small" />
         </IconButton>
 
-        <Box sx={{ display: 'flex', gap: 0.3, ml: 1.5 }}>
+        <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 0.3, ml: 1.5 }}>
           {SPEEDS.map((s) => (
             <Chip
               key={s}
@@ -123,6 +125,17 @@ export default function TimelineController() {
             />
           ))}
         </Box>
+
+        {!isFollowingLive && (
+          <Chip
+            icon={<LiveTvIcon />}
+            label="回到直播"
+            size="small"
+            color="primary"
+            onClick={goLive}
+            sx={{ minHeight: 32 }}
+          />
+        )}
 
         <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto', fontSize: '0.8rem' }}>
           第{roundNumber}轮 · {currentPhaseLabel}

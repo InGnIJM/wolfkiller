@@ -34,6 +34,16 @@ vi.mock('../components/create/CreateGameWizard', () => ({
   default: () => <div data-testid="wizard-page" />,
 }));
 
+vi.mock('../components/benchmarks/BenchmarkListPage', () => ({
+  default: () => <div data-testid="benchmarks-page" />,
+}));
+vi.mock('../components/benchmarks/NewBenchmarkPage', () => ({
+  default: () => <div data-testid="new-benchmark-page" />,
+}));
+vi.mock('../components/benchmarks/BenchmarkDetailPage', () => ({
+  default: () => <div data-testid="benchmark-detail-page" />,
+}));
+
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router-dom')>();
@@ -83,5 +93,14 @@ describe('AppShell routing', () => {
   it('renders the 模型管理 nav button', () => {
     renderAt('/');
     expect(screen.getByRole('button', { name: '模型管理' })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['/benchmarks', 'benchmarks-page'],
+    ['/benchmarks/new', 'new-benchmark-page'],
+    ['/benchmarks/run-1', 'benchmark-detail-page'],
+  ])('lazy-loads benchmark route %s', async (path, testId) => {
+    renderAt(path);
+    expect(await screen.findByTestId(testId)).toBeInTheDocument();
   });
 });

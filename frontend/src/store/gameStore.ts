@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import type {
+  AudienceEvent,
+  AudienceEventPage,
+  AudienceSnapshot,
   DeathRecord,
+  ExecutionStatus,
   GameLogs,
   GamePhase,
   NightActionRecord,
@@ -38,6 +42,15 @@ interface GameStore extends DerivedState {
   showHistory: boolean;
   initialPlayers: Record<number, PublicPlayerState>;
   currentPublicPlayers: Record<number, PublicPlayerState>;
+  syncMode: 'unknown' | 'incremental' | 'legacy';
+  audienceCursor: number;
+  audienceHighWatermark: number;
+  pendingAudienceEvents: Record<number, AudienceEvent>;
+  streamError: string | null;
+  isFollowingLive: boolean;
+  executionStatus: ExecutionStatus | null;
+  recoverable: boolean;
+  recoveryBlockCode: string | null;
 
   setGameState: (state: PublicGameState) => void;
   setPhase: (phase: GamePhase, roundNumber: number) => void;
@@ -53,6 +66,10 @@ interface GameStore extends DerivedState {
   initPlayersFromDetail: (players: Record<number, PublicPlayerState>, revealOnDeath?: boolean) => void;
   loadLogs: (logs: GameLogs) => void;
   mergeLogs: (logs: GameLogs) => void;
+  loadAudienceSnapshot: (snapshot: AudienceSnapshot) => void;
+  loadAudienceHistory: (gameId: string, events: AudienceEvent[]) => void;
+  mergeAudienceEvents: (page: AudienceEventPage) => void;
+  goLive: () => void;
   seekTo: (index: number) => void;
   stepForward: () => void;
   stepBack: () => void;
@@ -91,6 +108,15 @@ const initialState = {
   showHistory: false,
   initialPlayers: {} as Record<number, PublicPlayerState>,
   currentPublicPlayers: {} as Record<number, PublicPlayerState>,
+  syncMode: 'unknown' as const,
+  audienceCursor: 0,
+  audienceHighWatermark: 0,
+  pendingAudienceEvents: {} as Record<number, AudienceEvent>,
+  streamError: null as string | null,
+  isFollowingLive: true,
+  executionStatus: null as ExecutionStatus | null,
+  recoverable: false,
+  recoveryBlockCode: null as string | null,
 };
 
 let playTimer: ReturnType<typeof setInterval> | null = null;
@@ -135,6 +161,42 @@ function applyCurrentSheriffSnapshot(
 
 function buildTimeline(logs: GameLogs): PublicReplayEvent[] {
   return logs.events.map((event) => ({ ...event }));
+}
+
+function toReplayEvent(event: AudienceEvent): PublicReplayEvent {
+  return {
+    timestamp: (event.created_at ?? event.timestamp ?? new Date(0).toISOString()) as PublicReplayEvent['timestamp'],
+    event_type: event.event_type,
+    payload: event.payload,
+    seq: event.seq,
+    event_id: event.event_id,
+    schema_version: event.schema_version,
+  } as PublicReplayEvent;
+}
+
+function latestExecutionPayload(events: AudienceEvent[]): Record<string, unknown> | undefined {
+  return [...events].reverse().find((event) => (
+    event.event_type === 'execution_state'
+    && typeof event.payload.execution_status === 'string'
+    && typeof event.payload.recoverable === 'boolean'
+    && (event.payload.recovery_block_code === null
+      || typeof event.payload.recovery_block_code === 'string')
+  ))?.payload;
+}
+
+function eventPlayers(value: unknown): Record<number, PublicPlayerState> {
+  if (Array.isArray(value)) {
+    return Object.fromEntries(value
+      .filter((player): player is PublicPlayerState => (
+        typeof player === 'object' && player !== null
+        && typeof (player as PublicPlayerState).seat_number === 'number'
+      ))
+      .map((player) => [player.seat_number, { ...player }]));
+  }
+  if (typeof value !== 'object' || value === null) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([, player]) => typeof player === 'object' && player !== null)
+    .map(([seat, player]) => [Number(seat), { ...(player as PublicPlayerState) }]));
 }
 
 function eventKey(event: PublicReplayEvent): string {
@@ -205,7 +267,7 @@ function deriveState(
         break;
       case 'vote_result':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
-        if (event.payload.exiled_seat !== null) {
+        if (event.seq === undefined && event.payload.exiled_seat !== null) {
           const player = players[event.payload.exiled_seat];
           if (player) {
             players[event.payload.exiled_seat] = { ...player, is_alive: false };
@@ -254,6 +316,27 @@ function deriveState(
         phase = 'game_over';
         currentSpeaker = null;
         break;
+      case 'game_initialized': {
+        const initialized = eventPlayers(event.payload.players);
+        for (const [seat, player] of Object.entries(initialized)) {
+          players[Number(seat)] = { ...player };
+        }
+        break;
+      }
+      case 'player_revealed': {
+        const player = players[event.payload.seat_number];
+        if (player) {
+          players[event.payload.seat_number] = {
+            ...player,
+            role: event.payload.role,
+            camp: event.payload.camp,
+            revealed_role: event.payload.role,
+          };
+        }
+        break;
+      }
+      case 'execution_state':
+        break;
     }
   }
 
@@ -295,6 +378,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       nightActions: [],
       winResult: state.win_result,
       currentSpeaker: null,
+      executionStatus: state.execution_status ?? null,
+      recoverable: state.recoverable ?? false,
+      recoveryBlockCode: state.recovery_block_code ?? null,
     });
   },
 
@@ -356,6 +442,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       isPlaying: false,
       winOverlayDismissed: false,
       showWinOverlay: false,
+      syncMode: 'legacy',
+      isFollowingLive: true,
     });
   },
 
@@ -384,6 +472,174 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  loadAudienceSnapshot: (snapshot) => {
+    const state = snapshot.state;
+    const currentPublicPlayers = copyPlayers(state.players);
+    const initialPlayers = buildInitialPlayers(currentPublicPlayers);
+    set({
+      gameId: snapshot.game_id,
+      revealOnDeath: state.reveal_on_death ?? false,
+      phase: state.phase,
+      roundNumber: state.round_number,
+      players: copyPlayers(currentPublicPlayers),
+      initialPlayers,
+      currentPublicPlayers,
+      speeches: state.speeches ?? [],
+      votes: [],
+      deathHistory: state.death_history ?? [],
+      nightActions: [],
+      winResult: state.win_result,
+      currentSpeaker: null,
+      syncMode: 'incremental',
+      audienceCursor: 0,
+      audienceHighWatermark: snapshot.seq,
+      pendingAudienceEvents: {},
+      streamError: null,
+      isFollowingLive: true,
+      executionStatus: state.execution_status ?? null,
+      recoverable: state.recoverable ?? false,
+      recoveryBlockCode: state.recovery_block_code ?? null,
+      timeline: [],
+      timelineIndex: -1,
+      isPlaying: false,
+      showWinOverlay: Boolean(state.win_result),
+      winOverlayDismissed: false,
+    });
+  },
+
+  loadAudienceHistory: (gameId, events) => {
+    if (get().gameId !== gameId || get().syncMode !== 'incremental') return;
+    const ordered = [...events].sort((left, right) => left.seq - right.seq);
+    const contiguous: AudienceEvent[] = [];
+    const pending: Record<number, AudienceEvent> = {};
+    let cursor = 0;
+    for (const event of ordered) {
+      if (!Number.isInteger(event.seq) || event.seq <= 0 || event.seq <= cursor) continue;
+      if (event.seq === cursor + 1) {
+        contiguous.push(event);
+        cursor = event.seq;
+      } else {
+        pending[event.seq] = event;
+      }
+    }
+    const timeline = contiguous.map(toReplayEvent);
+    if (timeline.length === 0) {
+      set({
+        audienceCursor: cursor,
+        pendingAudienceEvents: pending,
+        isFollowingLive: true,
+      });
+      return;
+    }
+    const { initialPlayers, currentPublicPlayers, winOverlayDismissed } = get();
+    const timelineIndex = timeline.length - 1;
+    const derived = deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers);
+    const payload = latestExecutionPayload(contiguous);
+    set({
+      timeline,
+      timelineIndex,
+      ...derived,
+      audienceCursor: cursor,
+      pendingAudienceEvents: pending,
+      isFollowingLive: true,
+      showWinOverlay: derived.winResult !== null && !winOverlayDismissed,
+      executionStatus: typeof payload?.execution_status === 'string'
+        ? payload.execution_status as ExecutionStatus
+        : get().executionStatus,
+      recoverable: typeof payload?.recoverable === 'boolean'
+        ? payload.recoverable
+        : get().recoverable,
+      recoveryBlockCode: typeof payload?.recovery_block_code === 'string'
+        ? payload.recovery_block_code
+        : payload?.recovery_block_code === null ? null : get().recoveryBlockCode,
+    });
+  },
+
+  mergeAudienceEvents: (page) => {
+    const state = get();
+    if (state.gameId !== page.game_id || state.syncMode !== 'incremental') return;
+    const pending = { ...state.pendingAudienceEvents };
+    let streamError = state.streamError;
+    for (const event of page.events) {
+      if (!Number.isInteger(event.seq) || event.seq <= 0) {
+        streamError = '收到无效的观众事件序号，已停止应用该事件。';
+        continue;
+      }
+      if (event.seq <= state.audienceCursor) continue;
+      const existing = pending[event.seq];
+      if (existing && existing.event_id !== event.event_id) {
+        streamError = `事件序号 ${event.seq} 存在冲突，等待重新同步。`;
+        continue;
+      }
+      pending[event.seq] = event;
+    }
+
+    const consumed: AudienceEvent[] = [];
+    let cursor = state.audienceCursor;
+    while (pending[cursor + 1]) {
+      const event = pending[cursor + 1];
+      delete pending[cursor + 1];
+      consumed.push(event);
+      cursor = event.seq;
+    }
+    if (consumed.length === 0) {
+      set({
+        pendingAudienceEvents: pending,
+        audienceHighWatermark: Math.max(
+          state.audienceHighWatermark,
+          page.high_watermark ?? page.last_seq,
+        ),
+        streamError,
+      });
+      return;
+    }
+
+    const oldTimeline = state.timeline;
+    const timeline = [...oldTimeline, ...consumed.map(toReplayEvent)];
+    const shouldFollowTail = state.isFollowingLive
+      && (oldTimeline.length === 0 || state.timelineIndex >= oldTimeline.length - 1);
+    const timelineIndex = shouldFollowTail ? timeline.length - 1 : state.timelineIndex;
+    const derived = deriveState(
+      timeline,
+      timelineIndex,
+      state.initialPlayers,
+      state.currentPublicPlayers,
+    );
+    const payload = latestExecutionPayload(consumed);
+    set({
+      timeline,
+      timelineIndex,
+      ...derived,
+      audienceCursor: cursor,
+      audienceHighWatermark: Math.max(
+        state.audienceHighWatermark,
+        page.high_watermark ?? page.last_seq,
+      ),
+      pendingAudienceEvents: pending,
+      streamError,
+      showWinOverlay: derived.winResult !== null && !state.winOverlayDismissed,
+      executionStatus: typeof payload?.execution_status === 'string'
+        ? payload.execution_status as ExecutionStatus
+        : state.executionStatus,
+      recoverable: typeof payload?.recoverable === 'boolean'
+        ? payload.recoverable
+        : state.recoverable,
+      recoveryBlockCode: typeof payload?.recovery_block_code === 'string'
+        ? payload.recovery_block_code
+        : payload?.recovery_block_code === null ? null : state.recoveryBlockCode,
+    });
+  },
+
+  goLive: () => {
+    const { timeline } = get();
+    if (timeline.length === 0) {
+      set({ isFollowingLive: true });
+      return;
+    }
+    get().seekTo(timeline.length - 1);
+    set({ isFollowingLive: true });
+  },
+
   seekTo: (index) => {
     const { timeline, initialPlayers, currentPublicPlayers, winOverlayDismissed } = get();
     if (timeline.length === 0) return;
@@ -393,6 +649,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       timelineIndex,
       ...derived,
       showWinOverlay: derived.winResult !== null && !winOverlayDismissed,
+      isFollowingLive: timelineIndex === timeline.length - 1,
     });
   },
 

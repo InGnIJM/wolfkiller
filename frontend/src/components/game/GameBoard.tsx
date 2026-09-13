@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
-import { Box, Typography, Button, Chip, CircularProgress } from '@mui/material';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, Box, Typography, Button, Chip, CircularProgress } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useGameStore } from '../../store/gameStore';
-import { fetchGameLogs, fetchGameDetail, GameNotFoundError } from '../../api/client';
+import {
+  AudienceApiError, fetchAudienceEvents, fetchAudienceSnapshot,
+  fetchGameLogs, fetchGameDetail, GameNotFoundError,
+} from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
@@ -16,42 +19,80 @@ interface Props {
   gameId: string;
 }
 
+async function fetchAudienceHistory(gameId: string, throughSeq: number) {
+  if (throughSeq <= 0) return [];
+  const events = [] as Awaited<ReturnType<typeof fetchAudienceEvents>>['events'];
+  let cursor = 0;
+  while (cursor < throughSeq) {
+    const page = await fetchAudienceEvents(gameId, cursor, { limit: 100, throughSeq });
+    events.push(...page.events);
+    if (page.last_seq <= cursor) break;
+    cursor = page.last_seq;
+    if (page.caught_up) break;
+  }
+  return events;
+}
+
 export default function GameBoard({ onBack, gameId }: Props) {
   const { connect, disconnect } = useWebSocket();
   const {
     players, phase, roundNumber, winResult, showWinOverlay, revealOnDeath,
     showHistory, currentSpeaker,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
+    loadAudienceSnapshot, loadAudienceHistory, mergeAudienceEvents, reset,
+    syncMode, streamError, executionStatus,
   } = useGameStore();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [syncRevision, setSyncRevision] = useState(0);
+  const resync = useCallback(() => setSyncRevision((revision) => revision + 1), []);
+
   useEffect(() => {
-    connect(gameId);
+    reset();
+    connect(gameId, resync);
     return disconnect;
-  }, [connect, disconnect, gameId]);
+  }, [connect, disconnect, gameId, reset, resync, syncRevision]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         setLoading(true);
-        // Fetch game detail first to get all player seats
-        const detail = await fetchGameDetail(gameId);
-        if (!cancelled) {
-          initPlayersFromDetail(detail.players, detail.reveal_on_death ?? false);
-        }
-        // Then fetch logs
-        const logs = await fetchGameLogs(gameId);
-        if (!cancelled) {
-          loadLogs(logs);
-          const t = useGameStore.getState().timeline;
-          if (t.length > 0) {
-            useGameStore.getState().seekTo(t.length - 1);
+        setError(null);
+        try {
+          const snapshot = await fetchAudienceSnapshot(gameId);
+          if (cancelled) return;
+          loadAudienceSnapshot(snapshot);
+          const events = await fetchAudienceHistory(gameId, snapshot.seq);
+          if (cancelled) return;
+          loadAudienceHistory(gameId, events);
+          const requestedSeq = Number(new URLSearchParams(window.location.search).get('seq'));
+          if (Number.isInteger(requestedSeq) && requestedSeq > 0) {
+            const index = useGameStore.getState().timeline.findIndex(
+              (event) => event.seq !== undefined && event.seq >= requestedSeq,
+            );
+            if (index >= 0) useGameStore.getState().seekTo(index);
           }
           setLoading(false);
+          return;
+        } catch (error) {
+          if (!(error instanceof AudienceApiError)
+            || ![404, 409, 410, 501].includes(error.status)) throw error;
         }
+
+        // Old archives do not have an audience projection. Keep their existing
+        // detail + log replay path without advertising recovery.
+        const detail = await fetchGameDetail(gameId);
+        if (cancelled) return;
+        initPlayersFromDetail(detail.players, detail.reveal_on_death ?? false);
+        const logs = await fetchGameLogs(gameId);
+        if (cancelled) return;
+        loadLogs(logs);
+        const t = useGameStore.getState().timeline;
+        if (t.length > 0) useGameStore.getState().seekTo(t.length - 1);
+        setLoading(false);
       } catch (error: unknown) {
         if (!cancelled) {
           setError(error instanceof Error ? error.message : 'Failed to load game logs');
@@ -61,7 +102,10 @@ export default function GameBoard({ onBack, gameId }: Props) {
     }
     load();
     return () => { cancelled = true; };
-  }, [gameId, loadLogs, initPlayersFromDetail]);
+  }, [
+    gameId, initPlayersFromDetail, loadAudienceHistory, loadAudienceSnapshot,
+    loadLogs, syncRevision,
+  ]);
 
   // Poll for new logs while game is in progress
   useEffect(() => {
@@ -74,6 +118,12 @@ export default function GameBoard({ onBack, gameId }: Props) {
       if (inFlight) return;
       inFlight = true;
       try {
+        if (syncMode === 'incremental') {
+          const cursor = useGameStore.getState().audienceCursor;
+          const page = await fetchAudienceEvents(gameId, cursor, { limit: 100 });
+          if (active) mergeAudienceEvents(page);
+          return;
+        }
         const [detailResult, logsResult] = await Promise.allSettled([
           fetchGameDetail(gameId),
           fetchGameLogs(gameId),
@@ -114,7 +164,10 @@ export default function GameBoard({ onBack, gameId }: Props) {
       active = false;
       clearInterval(interval);
     };
-  }, [gameId, loading, winResult, error, initPlayersFromDetail, mergeLogs]);
+  }, [
+    error, gameId, initPlayersFromDetail, loading, mergeAudienceEvents,
+    mergeLogs, syncMode, winResult,
+  ]);
 
   const aliveCount = Object.values(players).filter((p) => p.is_alive).length;
   const totalPlayers = Object.keys(players).length;
@@ -148,11 +201,13 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {streamError && <Alert severity="warning">{streamError}</Alert>}
       <TimelineController />
 
       {/* 游戏信息条：存活统计 / 对局编号 / 视角标识 + 操作 */}
       <Box sx={{
         display: 'flex', alignItems: 'center', gap: 2,
+        flexWrap: { xs: 'wrap', md: 'nowrap' },
         px: 2.5, py: 0.9, flexShrink: 0,
         borderBottom: '1px solid', borderColor: 'divider',
         bgcolor: 'rgba(23,18,33,0.5)',
@@ -170,7 +225,15 @@ export default function GameBoard({ onBack, gameId }: Props) {
         >
           # {gameId.slice(0, 8)}
         </Typography>
-        <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
+        <Box sx={{ ml: { xs: 0, md: 'auto' }, width: { xs: '100%', md: 'auto' }, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+          {executionStatus && (
+            <Chip
+              label={`执行：${executionStatus}`}
+              size="small"
+              color={executionStatus === 'failed' || executionStatus === 'recovery_blocked' ? 'error' : 'default'}
+              variant="outlined"
+            />
+          )}
           <Chip
             icon={<VisibilityIcon sx={{ fontSize: 14 }} />}
             label="上帝视角"

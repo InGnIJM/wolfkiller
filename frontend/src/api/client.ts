@@ -1,4 +1,6 @@
 import type {
+  AudienceEventPage, AudienceSnapshot, BenchmarkCreateInput, BenchmarkItem,
+  BenchmarkItemsPage, BenchmarkReport, BenchmarkRun, BenchmarkRunList,
   FieldConstraints, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
   ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
   ModelTestResult, PublicGameState, RoleCatalogItem,
@@ -77,8 +79,63 @@ export async function fetchGameMemories(gameId: string): Promise<GameMemories> {
   return res.json();
 }
 
-export function getWsUrl(gameId: string): string {
-  return `${getWsBase()}/ws/game/${gameId}`;
+export class AudienceApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`Audience API unavailable: ${status}`);
+    this.name = 'AudienceApiError';
+    this.status = status;
+  }
+}
+
+export async function fetchAudienceSnapshot(gameId: string): Promise<AudienceSnapshot> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/snapshot`);
+  if (!res.ok) throw new AudienceApiError(res.status);
+  const data = await res.json() as AudienceSnapshot & { last_seq?: number };
+  return { ...data, seq: data.seq ?? data.last_seq ?? 0 };
+}
+
+export async function fetchAudienceEvents(
+  gameId: string,
+  afterSeq: number,
+  options: { limit?: number; throughSeq?: number } = {},
+): Promise<AudienceEventPage> {
+  const params = new URLSearchParams({
+    after_seq: String(afterSeq),
+    limit: String(options.limit ?? 100),
+  });
+  if (options.throughSeq !== undefined) {
+    params.set('through_seq', String(options.throughSeq));
+  }
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/events?${params.toString()}`);
+  if (!res.ok) throw new AudienceApiError(res.status);
+  const data = await res.json() as AudienceEventPage & {
+    next_seq?: number;
+    high_watermark?: number;
+    has_more?: boolean;
+  };
+  return {
+    ...data,
+    after_seq: data.after_seq ?? afterSeq,
+    last_seq: data.last_seq ?? data.next_seq ?? afterSeq,
+    caught_up: data.caught_up ?? !data.has_more,
+  };
+}
+
+export async function controlGame(
+  gameId: string,
+  action: 'pause' | 'resume' | 'recover',
+): Promise<Partial<GameListItem>> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/${action}`, { method: 'POST' });
+  if (!res.ok) throwHttpError(res, `${action} game failed`);
+  if (res.status === 204) return {};
+  return res.json();
+}
+
+export function getWsUrl(gameId: string, afterSeq = 0): string {
+  const params = new URLSearchParams({ protocol: '2', after_seq: String(Math.max(0, afterSeq)) });
+  return `${getWsBase()}/ws/game/${gameId}?${params.toString()}`;
 }
 
 export async function listModels(): Promise<ModelConfig[]> {
@@ -146,4 +203,83 @@ export async function fetchConstraints(): Promise<FieldConstraints> {
   const res = await fetch(`${getApiBase()}/api/catalog/constraints`);
   if (!res.ok) throw new Error(`Fetch constraints failed: ${res.status}`);
   return res.json();
+}
+
+export async function listBenchmarks(offset = 0, limit = 50): Promise<BenchmarkRunList> {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  const res = await fetch(`${getApiBase()}/api/benchmarks?${params.toString()}`);
+  if (!res.ok) throw new Error(`List benchmarks failed: ${res.status}`);
+  const data = await res.json() as BenchmarkRunList | BenchmarkRun[] | { benchmarks: BenchmarkRun[] };
+  if (Array.isArray(data)) return { runs: data };
+  if ('benchmarks' in data) return { runs: data.benchmarks };
+  return data;
+}
+
+export async function createBenchmark(input: BenchmarkCreateInput): Promise<BenchmarkRun> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Create benchmark failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchBenchmark(runId: string): Promise<BenchmarkRun> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}`);
+  if (!res.ok) throw new Error(`Fetch benchmark failed: ${res.status}`);
+  return res.json();
+}
+
+export async function controlBenchmark(
+  runId: string,
+  action: 'start' | 'pause' | 'resume' | 'cancel',
+): Promise<BenchmarkRun> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}/${action}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`${action} benchmark failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchBenchmarkGames(
+  runId: string,
+  offset = 0,
+  limit = 50,
+  status?: string,
+): Promise<BenchmarkItemsPage> {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (status) params.set('status', status);
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}/games?${params.toString()}`);
+  if (!res.ok) throw new Error(`Fetch benchmark games failed: ${res.status}`);
+  const data = await res.json() as BenchmarkItemsPage | BenchmarkItem[] | { items: BenchmarkItem[]; total?: number };
+  if (Array.isArray(data)) return { games: data };
+  if ('items' in data) return { games: data.items, total: data.total };
+  return data;
+}
+
+export async function fetchBenchmarkReport(runId: string): Promise<BenchmarkReport> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}/report`);
+  if (!res.ok && res.status !== 503) throw new Error(`Fetch benchmark report failed: ${res.status}`);
+  const data = await res.json() as BenchmarkReport | { report: BenchmarkReport };
+  if (!res.ok && (!('status' in data) || data.status !== 'failed')) throw new Error(`Fetch benchmark report failed: ${res.status}`);
+  return 'report' in data && data.report && typeof data.report === 'object'
+    ? data.report as BenchmarkReport
+    : data;
+}
+
+export async function rebuildBenchmarkReport(runId: string): Promise<BenchmarkReport> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}/report/rebuild`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(`Rebuild benchmark report failed: ${res.status}`);
+  const data = await res.json() as BenchmarkReport | { report: BenchmarkReport };
+  return 'report' in data && data.report && typeof data.report === 'object'
+    ? data.report as BenchmarkReport
+    : data;
+}
+
+export function benchmarkExportUrl(
+  runId: string,
+  format: 'json' | 'csv' | 'markdown',
+): string {
+  return `${getApiBase()}/api/benchmarks/${runId}/export?format=${format}`;
 }
