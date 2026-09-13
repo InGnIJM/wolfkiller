@@ -110,7 +110,7 @@ async def test_update_keeps_existing_key_when_blank(store, monkeypatch):
 
     response = await model_routes.update_model(
         cfg.id, ModelConfigRequest(
-            name="Renamed", base_url="https://x", model_id="m",
+            name="Renamed", base_url=cfg.base_url, model_id="m",
         ),
     )
 
@@ -118,6 +118,61 @@ async def test_update_keeps_existing_key_when_blank(store, monkeypatch):
     assert response.api_key_masked == "sk-***1234"
     stored = store.get(cfg.id)
     assert crypto.decrypt(stored.api_key_encrypted) == "sk-original-1234"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changes", [
+    {"base_url": "https://untrusted.invalid/v1"},
+    {"strict_base_url": "https://untrusted.invalid/beta"},
+])
+async def test_changing_endpoint_requires_a_new_key(store, monkeypatch, changes):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store, api_key_encrypted=ModelKeyCrypto().encrypt("fake-only-key"))
+    fields = {"name": cfg.name, "base_url": cfg.base_url, "model_id": cfg.model_id, **changes}
+    with pytest.raises(HTTPException) as error:
+        await model_routes.update_model(cfg.id, ModelConfigRequest(**fields))
+    assert error.value.status_code == 400
+    assert store.get(cfg.id) == cfg
+
+
+@pytest.mark.asyncio
+async def test_probe_does_not_block_event_loop_and_always_closes_client(monkeypatch):
+    import asyncio
+    import threading
+    from unittest.mock import AsyncMock, MagicMock
+
+    released = threading.Event()
+    saw_release = []
+    client = MagicMock()
+    client.aclose = AsyncMock()
+    def probe():
+        saw_release.append(released.wait(timeout=1))
+        return _CAPABILITIES
+    client.probe.side_effect = probe
+    monkeypatch.setattr(model_routes, "LLMClient", lambda **kwargs: client)
+    task = asyncio.create_task(model_routes.test_model(ModelTestRequest(
+        base_url="https://example.invalid/v1", model_id="fake", provider_profile="custom-openai",
+    )))
+    asyncio.get_running_loop().call_soon(released.set)
+    response = await task
+    assert response.ok
+    assert saw_release == [True]
+    client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_closes_client(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    client = MagicMock()
+    client.probe.side_effect = TimeoutError("fake timeout")
+    client.aclose = AsyncMock()
+    monkeypatch.setattr(model_routes, "LLMClient", lambda **kwargs: client)
+    response = await model_routes.test_model(ModelTestRequest(
+        base_url="https://example.invalid/v1", model_id="fake", provider_profile="custom-openai",
+    ))
+    assert response.error == "TimeoutError"
+    client.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -170,9 +225,33 @@ async def test_get_update_delete_missing_returns_404(store, monkeypatch):
 @pytest.mark.asyncio
 async def test_delete_removes_config(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    monkeypatch.setattr(model_routes, "get_repository", lambda: None)
     cfg = _stored(store)
     await model_routes.delete_model(cfg.id)
     assert store.list_all() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_config_referenced_by_unfinished_work(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store)
+    repository = type("Repository", (), {
+        "model_config_references": lambda self, config_id: {
+            "game_ids": ["game-1"], "benchmark_run_ids": ["run-1"],
+        },
+    })()
+    monkeypatch.setattr(model_routes, "get_repository", lambda: repository)
+
+    with pytest.raises(HTTPException) as caught:
+        await model_routes.delete_model(cfg.id)
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == {
+        "code": "model_config_referenced",
+        "game_ids": ["game-1"],
+        "benchmark_run_ids": ["run-1"],
+    }
+    assert store.get(cfg.id) is not None
 
 
 @pytest.mark.asyncio
@@ -205,7 +284,7 @@ async def test_connection_test_by_id_uses_stored_key(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     crypto = ModelKeyCrypto()
     cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.return_value = _CAPABILITIES
         response = await model_routes.test_model(
             ModelTestRequest(config_id=cfg.id),
@@ -226,7 +305,7 @@ async def test_connection_test_by_id_with_provided_key_overrides_stored_key(stor
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     crypto = ModelKeyCrypto()
     cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.return_value = _CAPABILITIES
         await model_routes.test_model(ModelTestRequest(
             config_id=cfg.id, api_key="sk-provided-key",
@@ -248,7 +327,7 @@ async def test_connection_test_by_id_missing_returns_404(store, monkeypatch):
 async def test_connection_test_by_id_without_stored_key_uses_blank(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     cfg = _stored(store, api_key_encrypted="")
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.return_value = _CAPABILITIES
         await model_routes.test_model(ModelTestRequest(config_id=cfg.id))
     assert mock_client.call_args_list[0].kwargs["config"].api_key == ""
@@ -274,7 +353,7 @@ async def test_connection_test_by_fields_requires_base_url_and_model_id(store, m
 @pytest.mark.asyncio
 async def test_connection_test_by_fields_uses_given_values(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.return_value = _CAPABILITIES
         await model_routes.test_model(ModelTestRequest(
             base_url="https://form.test/v1", api_key="sk-form-key",
@@ -289,7 +368,7 @@ async def test_connection_test_by_fields_uses_given_values(store, monkeypatch):
 @pytest.mark.asyncio
 async def test_connection_test_maps_provider_errors(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.side_effect = TimeoutError("slow")
         response = await model_routes.test_model(ModelTestRequest(
             base_url="https://x", model_id="m",
@@ -305,7 +384,7 @@ async def test_connection_test_by_id_reports_strict_endpoint_failure(store, monk
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     crypto = ModelKeyCrypto()
     cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.side_effect = [
             _CAPABILITIES, TimeoutError("slow"),
         ]
@@ -325,7 +404,7 @@ async def test_connection_test_by_id_non_deepseek_config_uses_single_endpoint(st
         model_id="mimo-v2.5", api_key_encrypted=crypto.encrypt("sk-x"),
     )
     store.upsert(cfg)
-    with patch.object(model_routes, "LLMClient") as mock_client:
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
         mock_client.return_value.probe.return_value = _CAPABILITIES
         await model_routes.test_model(ModelTestRequest(config_id=cfg.id))
 
@@ -371,3 +450,48 @@ async def test_update_preserves_created_at_and_refreshes_updated_at(store, monke
 
     assert response.created_at == "2026-01-01T00:00:00+00:00"
     assert response.updated_at != "2026-01-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_closes_only_after_worker_finishes(monkeypatch):
+    import asyncio
+    import threading
+    from unittest.mock import AsyncMock, MagicMock
+
+    started, released, closed = threading.Event(), threading.Event(), threading.Event()
+    client = MagicMock()
+    client.aclose = AsyncMock(side_effect=closed.set)
+    def probe():
+        started.set()
+        released.wait(timeout=3)
+        return _CAPABILITIES
+    client.probe.side_effect = probe
+    monkeypatch.setattr(model_routes, "LLMClient", lambda **kwargs: client)
+    task = asyncio.create_task(model_routes.test_model(ModelTestRequest(
+        base_url="https://example.invalid/v1", model_id="fake", provider_profile="custom-openai",
+    )))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not closed.is_set()
+    finally:
+        released.set()
+        await asyncio.gather(task, return_exceptions=True)
+    assert await asyncio.to_thread(closed.wait, 2)
+    client.aclose.assert_awaited_once()
+
+
+
+@pytest.mark.asyncio
+async def test_unreferenced_model_can_be_deleted_with_repository_attached(store, monkeypatch):
+    from unittest.mock import Mock
+
+    cfg = _stored(store)
+    repository = Mock()
+    repository.model_config_references.return_value = {"game_ids": [], "benchmark_run_ids": []}
+    monkeypatch.setattr(model_routes, "get_repository", lambda: repository)
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    await model_routes.delete_model(cfg.id)
+    assert store.get(cfg.id) is None

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from app.api.routes import game_routes
 from app.api.schemas import CreateGameRequest, RenameGameRequest
+from app.persistence.repository import GameReferencedByBenchmark
 
 
 def test_create_game_request_accepts_dynamic_role_counts():
@@ -32,6 +33,111 @@ def test_get_service_reads_main_game_service(monkeypatch):
     monkeypatch.setitem(sys.modules, "app.main", SimpleNamespace(game_service=service))
 
     assert game_routes.get_service() is service
+
+
+def test_get_audience_service_reads_main_service(monkeypatch):
+    service = object()
+    monkeypatch.setitem(
+        sys.modules, "app.main", SimpleNamespace(audience_event_service=service),
+    )
+
+    assert game_routes.get_audience_service() is service
+
+
+@pytest.mark.asyncio
+async def test_game_control_returns_execution_metadata(monkeypatch):
+    service = MagicMock()
+    service.pause_game = AsyncMock(return_value={
+        "execution_status": "paused",
+        "recoverable": True,
+        "recovery_block_code": None,
+        "interruption_count": 2,
+        "benchmark_run_id": None,
+    })
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.pause_game("game-1")
+
+    service.pause_game.assert_awaited_once_with("game-1")
+    assert response.model_dump() == {
+        "game_id": "game-1",
+        "execution_status": "paused",
+        "recoverable": True,
+        "recovery_block_code": None,
+        "interruption_count": 2,
+        "benchmark_run_id": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_game_control_maps_transition_and_not_found_errors(monkeypatch):
+    from app.persistence.repository import InvalidExecutionTransition
+
+    service = MagicMock()
+    service.resume_game = AsyncMock(side_effect=InvalidExecutionTransition("completed"))
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.resume_game("game-1")
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "invalid_execution_transition"
+
+    service.resume_game = AsyncMock(side_effect=KeyError("missing"))
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.resume_game("missing")
+    assert caught.value.status_code == 404
+    assert caught.value.detail["code"] == "game_not_found"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_and_event_page_use_audience_service(monkeypatch):
+    audience = MagicMock()
+    audience.get_snapshot.return_value = {
+        "game_id": "game-1", "schema_version": 1,
+        "projection_version": 1, "last_seq": 1,
+        "state": {"phase": "night"},
+    }
+    audience.get_events.return_value = {
+        "game_id": "game-1",
+        "events": [{
+            "game_id": "game-1", "seq": 1, "event_id": "event-1",
+            "schema_version": 1, "event_type": "phase",
+            "timestamp": "2026-09-06T00:00:00+00:00",
+            "payload": {"phase": "night", "round_number": 1},
+        }],
+        "next_seq": 1, "high_watermark": 1, "has_more": False,
+    }
+    monkeypatch.setattr(game_routes, "get_audience_service", lambda: audience)
+
+    snapshot = await game_routes.get_game_snapshot("game-1")
+    page = await game_routes.get_game_events(
+        "game-1", after_seq=0, limit=200, through_seq=1,
+    )
+
+    assert snapshot.last_seq == 1
+    assert page.events[0].event_id == "event-1"
+    audience.get_events.assert_called_once_with(
+        "game-1", after_seq=0, limit=200, through_seq=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_page_maps_cursor_ahead_to_stable_conflict(monkeypatch):
+    from app.services.audience_event_service import AudienceCursorAheadError
+
+    audience = MagicMock()
+    audience.get_events.side_effect = AudienceCursorAheadError("game-1", 5, 3)
+    monkeypatch.setattr(game_routes, "get_audience_service", lambda: audience)
+
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.get_game_events("game-1", after_seq=5, limit=200)
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == {
+        "code": "cursor_ahead",
+        "message": "after_seq 5 is ahead of high watermark 3 for game game-1",
+        "after_seq": 5,
+        "high_watermark": 3,
+    }
 
 
 @pytest.mark.asyncio
@@ -189,6 +295,24 @@ async def test_delete_game_returns_404_when_missing(monkeypatch):
     with pytest.raises(HTTPException) as caught:
         await game_routes.delete_game("g1")
     assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_game_rejects_benchmark_owned_game_with_stable_code(monkeypatch):
+    service = MagicMock()
+    service.delete_game = AsyncMock(
+        side_effect=GameReferencedByBenchmark("benchmark-1"),
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.delete_game("g1")
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == {
+        "code": "game_referenced_by_benchmark",
+        "benchmark_run_id": "benchmark-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -1242,3 +1366,109 @@ def _all_keys(value):
     if isinstance(value, list):
         return set().union(*(_all_keys(item) for item in value)) if value else set()
     return set()
+
+
+@pytest.mark.parametrize("getter,expected", [
+    (None, "completed"),
+    (MagicMock(side_effect=KeyError("gone")), "completed"),
+    (lambda _game: {"execution_status": "paused", "recoverable": True}, "paused"),
+])
+def test_execution_metadata_prefers_durable_state_and_falls_back_for_legacy_archives(getter, expected):
+    service = SimpleNamespace(get_execution_info=getter)
+    state = SimpleNamespace(phase=SimpleNamespace(value="game_over"))
+    info = game_routes._execution_info(service, "g", state)
+    assert info["execution_status"] == expected
+    assert info["recoverable"] is (expected == "paused")
+
+
+@pytest.mark.asyncio
+async def test_missing_recovery_capability_returns_a_stable_conflict(monkeypatch):
+    monkeypatch.setattr(game_routes, "get_service", lambda: SimpleNamespace())
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.recover_game("g")
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "recovery_unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message,getter,expected_code,expected_run", [
+    ("", None, "recovery_blocked", None),
+    ("model configuration is missing", None, "recovery_blocked", None),
+    ("game_managed_by_benchmark", None, "game_managed_by_benchmark", None),
+    ("game_managed_by_benchmark", lambda _g: None, "game_managed_by_benchmark", None),
+    ("game_managed_by_benchmark", lambda _g: {}, "game_managed_by_benchmark", None),
+    ("game_managed_by_benchmark", lambda _g: {"benchmark_run_id": "run-1"}, "game_managed_by_benchmark", "run-1"),
+])
+async def test_recovery_blocks_preserve_stable_codes_and_benchmark_ownership(monkeypatch, message, getter, expected_code, expected_run):
+    service = SimpleNamespace(recover_game=AsyncMock(side_effect=ValueError(message)), get_execution_info=getter)
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.recover_game("g")
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == expected_code
+    assert caught.value.detail.get("benchmark_run_id") == expected_run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state,status", [(None, 404), (SimpleNamespace(phase=SimpleNamespace(value="game_over")), 200)])
+async def test_control_without_response_uses_game_state_or_reports_disappearance(monkeypatch, state, status):
+    service = SimpleNamespace(recover_game=AsyncMock(return_value=None), get_game_state=lambda _g: state)
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    if status == 404:
+        with pytest.raises(HTTPException) as caught:
+            await game_routes.recover_game("g")
+        assert caught.value.status_code == 404
+    else:
+        response = await game_routes.recover_game("g")
+        assert response.execution_status == "completed"
+        assert response.recovery_block_code == "legacy_archive"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint,failure,status,code", [
+    ("snapshot", "missing", 404, "game_not_found"),
+    ("snapshot", "unavailable", 409, "snapshot_unavailable"),
+    ("events", "missing", 404, "game_not_found"),
+    ("events", "invalid", 422, "invalid_cursor"),
+])
+async def test_audience_endpoints_map_unavailable_archives_and_invalid_cursors(monkeypatch, endpoint, failure, status, code):
+    from app.services.audience_event_service import AudienceGameNotFoundError
+    audience = MagicMock()
+    method = audience.get_snapshot if endpoint == "snapshot" else audience.get_events
+    if failure == "missing":
+        method.side_effect = AudienceGameNotFoundError("g")
+    elif failure == "invalid":
+        method.side_effect = ValueError("cursor is outside pinned range")
+    else:
+        method.return_value = None
+    monkeypatch.setattr(game_routes, "get_audience_service", lambda: audience)
+    with pytest.raises(HTTPException) as caught:
+        if endpoint == "snapshot":
+            await game_routes.get_game_snapshot("g")
+        else:
+            await game_routes.get_game_events("g")
+    assert caught.value.status_code == status
+    assert caught.value.detail["code"] == code
+
+
+@pytest.mark.asyncio
+async def test_replay_reads_the_configured_string_data_directory(monkeypatch, tmp_path):
+    directory = tmp_path / "games" / "g"
+    directory.mkdir(parents=True)
+    (directory / "conversation.log").write_text("", encoding="utf-8")
+    (directory / "game.log").write_text("", encoding="utf-8")
+    service = SimpleNamespace(data_dir=str(tmp_path), get_game_state=lambda _g: object())
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    response = await game_routes.get_game_logs("g")
+    assert response.game_id == "g"
+    assert response.events == []
+
+
+@pytest.mark.asyncio
+async def test_create_game_maps_runtime_configuration_validation_to_bad_request(monkeypatch):
+    service = SimpleNamespace(create_game=AsyncMock(side_effect=ValueError("unknown model configuration")))
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.create_game(CreateGameRequest())
+    assert caught.value.status_code == 400
+    assert caught.value.detail == "unknown model configuration"

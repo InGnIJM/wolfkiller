@@ -3,7 +3,7 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.api.model_schemas import ModelAssignment
+from app.api.model_schemas import ModelAssignment, ModelSnapshotEntry
 
 
 class CreateGameRequest(BaseModel):
@@ -34,7 +34,7 @@ class CreateGameResponse(BaseModel):
     game_id: str
     player_count: int
     config: dict
-    model_snapshot: list[dict] = []
+    model_snapshot: list[ModelSnapshotEntry] = Field(default_factory=list)
 
 
 class GameListItem(BaseModel):
@@ -45,6 +45,11 @@ class GameListItem(BaseModel):
     player_count: int
     alive_count: int
     winner: Optional[str] = None
+    execution_status: str = "running"
+    recoverable: bool = False
+    recovery_block_code: Optional[str] = None
+    interruption_count: int = 0
+    benchmark_run_id: Optional[str] = None
 
 
 class RenameGameRequest(BaseModel):
@@ -298,6 +303,11 @@ class GameDetailResponse(_PublicResponse):
     speeches: list[PublicSpeechResponse]
     death_history: list[PublicDeathResponse]
     win_result: Optional[PublicWinnerResponse]
+    execution_status: str = "running"
+    recoverable: bool = False
+    recovery_block_code: Optional[str] = None
+    interruption_count: NonNegativePublicInt = 0
+    benchmark_run_id: Optional[str] = None
 
     @model_validator(mode="after")
     def require_player_map_keys_to_match_public_seats(self):
@@ -330,6 +340,41 @@ class PlayerMemoryResponse(_PublicResponse):
 class GameMemoriesResponse(_PublicResponse):
     game_id: str
     memories: list[PlayerMemoryResponse]
+
+
+class GameExecutionResponse(_PublicResponse):
+    game_id: str
+    execution_status: str
+    recoverable: bool
+    recovery_block_code: Optional[str]
+    interruption_count: NonNegativePublicInt
+    benchmark_run_id: Optional[str]
+
+
+class AudienceSnapshotResponse(_PublicResponse):
+    game_id: str
+    schema_version: PositivePublicInt
+    projection_version: PositivePublicInt
+    last_seq: NonNegativePublicInt
+    state: dict[str, object]
+
+
+class AudienceEventResponse(_PublicResponse):
+    game_id: str
+    seq: PositivePublicInt
+    event_id: str
+    schema_version: PositivePublicInt
+    event_type: str
+    timestamp: str
+    payload: dict[str, object]
+
+
+class AudienceEventPageResponse(_PublicResponse):
+    game_id: str
+    events: list[AudienceEventResponse]
+    next_seq: NonNegativePublicInt
+    high_watermark: NonNegativePublicInt
+    has_more: bool
 
 
 class WSMessage(BaseModel):

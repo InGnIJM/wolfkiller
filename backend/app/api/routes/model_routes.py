@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import time
+import sys
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +18,12 @@ from app.stores.model_key_crypto import (
 )
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+
+
+def get_repository():
+    """Use the repository already owned by the running application."""
+    main = sys.modules.get("app.main")
+    return None if main is None else getattr(main, "repository", None)
 
 
 def _to_response(config: ModelConfig) -> ModelConfigResponse:
@@ -77,6 +85,13 @@ async def update_model(config_id: str, req: ModelConfigRequest):
         raise HTTPException(409, "model config name already exists")
     crypto = ModelKeyCrypto()
     encrypted = existing.api_key_encrypted
+    endpoints_changed = (
+        req.base_url.rstrip("/") != existing.base_url.rstrip("/")
+        or derive_strict_base_url(req.base_url, req.strict_base_url).rstrip("/")
+        != derive_strict_base_url(existing.base_url, existing.strict_base_url).rstrip("/")
+    )
+    if encrypted and not req.api_key and endpoints_changed:
+        raise HTTPException(400, "Changing model endpoints requires re-entering the API key")
     if req.api_key:
         encrypted = crypto.encrypt(req.api_key)
     updated = ModelConfig(
@@ -93,8 +108,25 @@ async def update_model(config_id: str, req: ModelConfigRequest):
 
 @router.delete("/{config_id}", status_code=204)
 async def delete_model(config_id: str):
+    repository = get_repository()
+    if repository is not None:
+        references = repository.model_config_references(config_id)
+        if references["game_ids"] or references["benchmark_run_ids"]:
+            raise HTTPException(409, {
+                "code": "model_config_referenced",
+                **references,
+            })
     if not get_model_config_store().delete(config_id):
         raise HTTPException(404, "model config not found")
+
+
+def _probe_model(config: LLMClientConfig) -> dict[str, bool]:
+    """Own the client's complete lifetime in the worker, even on cancellation."""
+    client = LLMClient(config=config)
+    try:
+        return client.probe()
+    finally:
+        asyncio.run(client.aclose())
 
 
 @router.post("/test", response_model=ModelTestResponse)
@@ -132,7 +164,7 @@ async def test_model(req: ModelTestRequest):
     capabilities: dict[str, bool] | None = None
     for endpoint, prefix in targets:
         try:
-            result = LLMClient(config=LLMClientConfig(
+            result = await asyncio.to_thread(_probe_model, LLMClientConfig(
                 base_url=endpoint,
                 api_key=api_key,
                 model_id=model_id,
@@ -142,7 +174,7 @@ async def test_model(req: ModelTestRequest):
                 action_timeout_seconds=10,
                 action_retry_timeout_seconds=10,
                 provider_profile=resolved_profile.profile_id,
-            )).probe()
+            ))
             if not prefix:
                 capabilities = result
         except Exception as error:

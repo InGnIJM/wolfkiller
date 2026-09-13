@@ -1,14 +1,21 @@
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any
-from fastapi import APIRouter, HTTPException
+from collections.abc import Mapping
+from typing import Annotated, Any
+from fastapi import APIRouter, HTTPException, Query
 from app.api.schemas import (
     CreateGameRequest, CreateGameResponse,
     GameListResponse, GameListItem, GameDetailResponse, GameLogsResponse,
     GameMemoriesResponse, PlayerMemoryResponse, RenameGameRequest,
+    AudienceEventPageResponse, AudienceSnapshotResponse, GameExecutionResponse,
 )
 from app.models.game import Camp
+from app.persistence.repository import GameReferencedByBenchmark, InvalidExecutionTransition
+from app.services.audience_event_service import (
+    AudienceCursorAheadError,
+    AudienceGameNotFoundError,
+)
 from app.services.game_service import GameService
 
 router = APIRouter(prefix="/api/games", tags=["games"])
@@ -61,6 +68,36 @@ def get_service() -> GameService:
     return game_service
 
 
+def get_audience_service():
+    from app.main import audience_event_service
+    return audience_event_service
+
+
+def _execution_info(service: GameService, game_id: str, state) -> dict[str, object]:
+    getter = getattr(service, "get_execution_info", None)
+    if callable(getter):
+        try:
+            value = getter(game_id)
+        except KeyError:
+            value = None
+        if isinstance(value, Mapping):
+            return {
+                "execution_status": str(value.get("execution_status", "running")),
+                "recoverable": bool(value.get("recoverable", False)),
+                "recovery_block_code": value.get("recovery_block_code"),
+                "interruption_count": int(value.get("interruption_count", 0)),
+                "benchmark_run_id": value.get("benchmark_run_id"),
+            }
+    completed = getattr(getattr(state, "phase", None), "value", None) == "game_over"
+    return {
+        "execution_status": "completed" if completed else "running",
+        "recoverable": False,
+        "recovery_block_code": "legacy_archive",
+        "interruption_count": 0,
+        "benchmark_run_id": None,
+    }
+
+
 @router.post("", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest = CreateGameRequest()):
     service = get_service()
@@ -107,6 +144,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
 
 def _list_item(service: GameService, game_id: str, state) -> GameListItem:
     win = state.win_result.get("winning_camp") if state.win_result else None
+    execution = _execution_info(service, game_id, state)
     return GameListItem(
         game_id=game_id,
         name=service.get_display_name(game_id),
@@ -115,6 +153,7 @@ def _list_item(service: GameService, game_id: str, state) -> GameListItem:
         player_count=len(state.players),
         alive_count=len(state.alive_players()),
         winner=win,
+        **execution,
     )
 
 
@@ -151,6 +190,11 @@ async def delete_game(game_id: str):
         await service.delete_game(game_id)
     except KeyError:
         raise HTTPException(404, "Game not found") from None
+    except GameReferencedByBenchmark as error:
+        raise HTTPException(409, {
+            "code": "game_referenced_by_benchmark",
+            "benchmark_run_id": str(error),
+        }) from None
     except OSError as error:
         raise HTTPException(500, "Failed to delete game archive") from error
 
@@ -173,7 +217,106 @@ async def get_game(game_id: str):
         speeches=public_state["speeches"],
         death_history=public_state["death_history"],
         win_result=public_state["win_result"],
+        **_execution_info(service, game_id, state),
     )
+
+
+def _error(status_code: int, code: str, message: str, **details: object) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message, **details},
+    )
+
+
+async def _control_game(game_id: str, action: str) -> GameExecutionResponse:
+    service = get_service()
+    method = getattr(service, f"{action}_game", None)
+    if not callable(method):
+        raise _error(409, "recovery_unavailable", "Game recovery is unavailable")
+    try:
+        result = await method(game_id)
+    except KeyError:
+        raise _error(404, "game_not_found", "Game not found") from None
+    except InvalidExecutionTransition as error:
+        raise _error(409, "invalid_execution_transition", str(error)) from None
+    except ValueError as error:
+        code = getattr(error, "code", None) or (str(error) if str(error) else "recovery_blocked")
+        if " " in code:
+            code = "recovery_blocked"
+        details: dict[str, object] = {}
+        if code == "game_managed_by_benchmark":
+            getter = getattr(service, "get_execution_info", None)
+            info = getter(game_id) if callable(getter) else None
+            if isinstance(info, Mapping) and info.get("benchmark_run_id") is not None:
+                details["benchmark_run_id"] = info["benchmark_run_id"]
+        raise _error(409, code, str(error), **details) from None
+
+    if not isinstance(result, Mapping):
+        state = service.get_game_state(game_id)
+        if state is None:
+            raise _error(404, "game_not_found", "Game not found")
+        result = _execution_info(service, game_id, state)
+    return GameExecutionResponse(
+        game_id=game_id,
+        execution_status=str(result.get("execution_status", "running")),
+        recoverable=bool(result.get("recoverable", False)),
+        recovery_block_code=result.get("recovery_block_code"),
+        interruption_count=int(result.get("interruption_count", 0)),
+        benchmark_run_id=result.get("benchmark_run_id"),
+    )
+
+
+@router.post("/{game_id}/pause", response_model=GameExecutionResponse)
+async def pause_game(game_id: str):
+    return await _control_game(game_id, "pause")
+
+
+@router.post("/{game_id}/resume", response_model=GameExecutionResponse)
+async def resume_game(game_id: str):
+    return await _control_game(game_id, "resume")
+
+
+@router.post("/{game_id}/recover", response_model=GameExecutionResponse)
+async def recover_game(game_id: str):
+    return await _control_game(game_id, "recover")
+
+
+@router.get("/{game_id}/snapshot", response_model=AudienceSnapshotResponse)
+async def get_game_snapshot(game_id: str):
+    try:
+        snapshot = get_audience_service().get_snapshot(game_id)
+    except AudienceGameNotFoundError:
+        raise _error(404, "game_not_found", "Game not found") from None
+    if snapshot is None:
+        raise _error(
+            409, "snapshot_unavailable",
+            "This game does not have an incremental audience snapshot",
+        )
+    return AudienceSnapshotResponse.model_validate(snapshot)
+
+
+@router.get("/{game_id}/events", response_model=AudienceEventPageResponse)
+async def get_game_events(
+    game_id: str,
+    after_seq: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    through_seq: Annotated[int | None, Query(ge=0)] = None,
+):
+    try:
+        page = get_audience_service().get_events(
+            game_id, after_seq=after_seq, limit=limit,
+            through_seq=through_seq,
+        )
+    except AudienceGameNotFoundError:
+        raise _error(404, "game_not_found", "Game not found") from None
+    except AudienceCursorAheadError as error:
+        raise _error(
+            409, "cursor_ahead", str(error),
+            after_seq=error.after_seq, high_watermark=error.high_watermark,
+        ) from None
+    except ValueError as error:
+        raise _error(422, "invalid_cursor", str(error)) from None
+    return AudienceEventPageResponse.model_validate(page)
 
 
 def _read_jsonl(path: str) -> list[dict]:
@@ -493,7 +636,10 @@ async def get_game_logs(game_id: str):
     service = get_service()
     if service.get_game_state(game_id) is None:
         raise HTTPException(404, "Game not found")
-    log_dir = os.path.join("data", "games", game_id)
+    service_data_dir = getattr(service, "data_dir", "data")
+    if not isinstance(service_data_dir, str):
+        service_data_dir = "data"
+    log_dir = os.path.join(service_data_dir, "games", game_id)
     conversations = _read_jsonl(os.path.join(log_dir, "conversation.log"))
     operations = _read_jsonl(os.path.join(log_dir, "game.log"))
     return GameLogsResponse(

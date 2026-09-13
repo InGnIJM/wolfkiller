@@ -1,8 +1,11 @@
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.agents.llm_client import LLMClient
 from app.api.model_schemas import ModelConfigRequest, ModelTestRequest
 from app.api.routes import model_routes
 from app.stores.model_config_store import JsonModelConfigStore, ModelConfig
@@ -26,7 +29,7 @@ def test_request_rejects_unknown_explicit_profile():
 
 @pytest.mark.asyncio
 async def test_model_test_uses_llm_client_and_reports_capabilities(monkeypatch):
-    client = MagicMock()
+    client = MagicMock(spec=LLMClient)
     client.probe.return_value = {
         "tools": True,
         "strict_tools": False,
@@ -49,7 +52,7 @@ async def test_model_test_uses_llm_client_and_reports_capabilities(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_explicit_custom_profile_does_not_probe_deepseek_strict_endpoint(monkeypatch):
-    client = MagicMock()
+    client = MagicMock(spec=LLMClient)
     client.probe.return_value = {
         "tools": True,
         "strict_tools": False,
@@ -75,7 +78,7 @@ async def test_explicit_custom_profile_does_not_probe_deepseek_strict_endpoint(m
 
 @pytest.mark.asyncio
 async def test_explicit_deepseek_profile_probes_strict_on_custom_hostname(monkeypatch):
-    client = MagicMock()
+    client = MagicMock(spec=LLMClient)
     client.probe.return_value = {
         "tools": True,
         "strict_tools": True,
@@ -114,7 +117,7 @@ async def test_stored_deepseek_profile_uses_explicit_strict_endpoint(monkeypatch
     )
     store.upsert(stored)
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    client = MagicMock()
+    client = MagicMock(spec=LLMClient)
     client.probe.return_value = {
         "tools": True,
         "strict_tools": True,
@@ -152,7 +155,7 @@ async def test_config_probe_uses_stored_profile(monkeypatch, tmp_path):
     )
     store.upsert(stored)
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    client = MagicMock()
+    client = MagicMock(spec=LLMClient)
     client.probe.return_value = {
         "tools": True,
         "strict_tools": False,
@@ -171,18 +174,23 @@ async def test_config_probe_uses_stored_profile(monkeypatch, tmp_path):
     assert llm_client.call_args.kwargs["config"].provider_profile == "openrouter"
 
 
-@pytest.mark.asyncio
-async def test_model_test_does_not_expose_provider_error_details(monkeypatch):
-    client = MagicMock()
+def test_model_test_does_not_expose_provider_error_details(monkeypatch):
+    client = MagicMock(spec=LLMClient)
     client.probe.side_effect = RuntimeError("key=secret body=private")
     monkeypatch.setattr(model_routes, "LLMClient", MagicMock(return_value=client))
 
-    response = await model_routes.test_model(ModelTestRequest(
-        base_url="https://example.test/v1", model_id="model",
-    ))
+    app = FastAPI()
+    app.include_router(model_routes.router)
+    with TestClient(app) as api:
+        response = api.post("/api/models/test", json={
+            "base_url": "https://example.test/v1", "model_id": "model",
+        })
 
-    assert response.ok is False
-    assert response.error == "RuntimeError"
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["error"] == "RuntimeError"
+    assert "secret" not in response.text
+    assert "private" not in response.text
 
 
 @pytest.mark.asyncio
