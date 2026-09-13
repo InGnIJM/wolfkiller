@@ -13,5 +13,8 @@ node_modules/
 .superpowers/
 .worktrees/
 backend/scripts/
+!backend/scripts/
+backend/scripts/*
+!backend/scripts/run_benchmark.py
 
 .zcode/

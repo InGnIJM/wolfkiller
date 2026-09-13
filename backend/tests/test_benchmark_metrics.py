@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from app.benchmark.metrics import (
     aggregate,
     compute_compliance_metrics,
@@ -303,3 +305,487 @@ def test_write_report_persists_json_and_markdown(tmp_path: Path) -> None:
     assert Path(paths["markdown"]).read_text(encoding="utf-8").startswith(
         "# 狼人杀 Benchmark 报告",
     )
+
+
+def _native_metric_facts() -> dict:
+    players = [
+        {"seat": 1, "role_id": "wolf-killer-seer", "camp_id": "good"},
+        {"seat": 2, "role_id": "wolf-killer-werewolf", "camp_id": "werewolf"},
+    ]
+    return {
+        "games": [
+            {"game_id": "g-b1", "winner": "good", "rounds": 3,
+             "duration_ms": 100, "players": players},
+            {"game_id": "g-c1", "winner": "werewolf", "rounds": 5,
+             "duration_ms": 300, "players": players},
+            {"game_id": "g-b2", "winner": "werewolf", "rounds": 4,
+             "duration_ms": 200, "players": players},
+            {"game_id": "g-c2", "winner": "werewolf", "rounds": 4,
+             "duration_ms": 400, "players": players},
+        ],
+        "items": [
+            {"game_id": "g-b1", "pair_id": "p1", "variant": "baseline",
+             "evaluation_camp": "good", "assignment": {
+                 "model": {"model_config_id": "base"}, "seats": [1, 2],
+             }},
+            {"game_id": "g-c1", "pair_id": "p1", "variant": "candidate",
+             "evaluation_camp": "good", "assignment": {
+                 "model": {"model_config_id": "candidate"}, "seats": [1, 2],
+             }},
+            {"game_id": "g-b2", "pair_id": "p2", "variant": "baseline",
+             "evaluation_camp": "werewolf", "assignment": {
+                 "model": {"model_config_id": "base"}, "seats": [1, 2],
+             }},
+            {"game_id": "g-c2", "pair_id": "p2", "variant": "candidate",
+             "evaluation_camp": "werewolf", "assignment": {
+                 "model": {"model_config_id": "candidate"}, "seats": [1, 2],
+             }},
+        ],
+        "model_requests": [
+            {"game_id": "g-b1", "request_id": "r1", "status": "resolved",
+             "recovery_retry_count": 1,
+             "normalized_result": {"action_type": "vote", "target_seat": 2}},
+            {"game_id": "g-c1", "request_id": "r2", "status": "resolved",
+             "normalized_result": {"action_type": "abstain"}},
+            {"game_id": "g-b2", "request_id": "r3", "status": "failed"},
+            {"game_id": "g-c2", "request_id": "r4", "status": "succeeded"},
+        ],
+        "model_attempts": [
+            {"attempt_id": "a1", "game_id": "g-b1", "request_id": "r1",
+             "status": "succeeded", "elapsed_ms": 100,
+             "usage_known": True, "prompt_tokens": 10,
+             "completion_tokens": 5, "total_tokens": 15},
+            {"attempt_id": "a2", "game_id": "g-b1", "request_id": "r1",
+             "status": "failed", "elapsed_ms": 200,
+             "usage_known": False},
+            {"attempt_id": "a3", "game_id": "g-c1", "request_id": "r2",
+             "status": "succeeded", "elapsed_ms": 300,
+             "usage_known": True, "prompt_tokens": 20,
+             "completion_tokens": 10, "total_tokens": 30},
+            {"attempt_id": "a4", "game_id": "g-c2", "request_id": "r4",
+             "execution_generation": 2,
+             "status": "succeeded", "elapsed_ms": 400,
+             "usage_known": False},
+        ],
+    }
+
+
+def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    facts = _native_metric_facts()
+    report = BenchmarkMetrics.compute(**facts)
+
+    assert report["metric_version"] == "v2"
+    assert len(report["input_digest"]) == 64
+    summary = report["summary"]
+    assert summary["games"] == {
+        "total": 4,
+        "completed": 4,
+        "interrupted_games": 0,
+        "interruption_rate": 0.0,
+        "win_rate_by_camp": {"good": 0.25, "werewolf": 0.75},
+        "win_rate_by_seat": {
+            "1": {"games": 4, "wins": 1, "win_rate": 0.25},
+            "2": {"games": 4, "wins": 3, "win_rate": 0.75},
+        },
+        "win_rate_by_role": {
+            "wolf-killer-seer": {"games": 4, "wins": 1, "win_rate": 0.25},
+            "wolf-killer-werewolf": {"games": 4, "wins": 3, "win_rate": 0.75},
+        },
+        "average_rounds": 4.0,
+        "average_duration_ms": 250.0,
+    }
+    assert summary["requests"] == {
+        "total": 4, "successful": 2, "abstained": 1, "failed": 1,
+        "pending": 0, "cancelled": 0, "eligible_terminal": 4,
+        "unknown": 0, "valid": 3, "technical_abstained": 0,
+        "terminal_votes": 0, "fallback": 1,
+        "valid_rate": 0.75,
+        "success_rate": 0.5, "abstain_rate": 0.25, "failure_rate": 0.25,
+        "fallback_rate": 0.25, "technical_abstain_rate": None,
+        "logical_latency_ms": {
+            "count": 0, "p50": None, "p95": None, "p99": None,
+        },
+    }
+    assert summary["attempts"]["latency_ms"] == {
+        "count": 4, "p50": 250.0, "p95": 385.0, "p99": 397.0,
+    }
+    assert summary["attempts"]["known_tokens"] == {
+        "usage_count": 2, "prompt_tokens": 30,
+        "completion_tokens": 15, "total_tokens": 45,
+    }
+    assert summary["attempts"]["unknown_usage_count"] == 2
+    assert summary["attempts"]["usage_completeness_rate"] == 0.5
+    assert summary["attempts"]["token_usage"] == {
+        "known_attempts": 2,
+        "unknown_attempts": 2,
+        "known_prompt_tokens": 30,
+        "known_completion_tokens": 15,
+        "known_total_tokens": 45,
+        "completeness_rate": 0.5,
+    }
+    assert summary["requests"]["unknown"] == 0
+    assert summary["attempts"]["executed_requests"] == 3
+    assert summary["attempts"]["retried_requests"] == 1
+
+    performance = {
+        (row["model"], row.get("role"), row.get("camp")):
+        (row["samples"], row["wins"], row["win_rate"])
+        for row in summary["model_performance"]
+    }
+    assert performance[("base", "wolf-killer-seer", None)] == (2, 1, 0.5)
+    assert performance[("base", None, "good")] == (2, 1, 0.5)
+    assert performance[("candidate", "wolf-killer-werewolf", None)] == (2, 2, 1.0)
+    assert performance[("candidate", None, "werewolf")] == (2, 2, 1.0)
+
+
+def test_native_benchmark_digest_and_bootstrap_are_order_independent() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    facts = _native_metric_facts()
+    first = BenchmarkMetrics.compute(**facts)
+    reordered = {
+        name: [dict(reversed(tuple(row.items()))) for row in reversed(rows)]
+        for name, rows in facts.items()
+    }
+    second = BenchmarkMetrics.compute(**reordered)
+
+    assert second == first
+    paired = first["summary"]["paired_regression"]
+    assert paired["pair_count"] == 2
+    assert paired["mean_difference"] == -0.5
+    assert paired["differences"] == [
+        {"pair_id": "p1", "baseline": 1.0, "candidate": 0.0,
+         "difference": -1.0},
+        {"pair_id": "p2", "baseline": 1.0, "candidate": 1.0,
+         "difference": 0.0},
+    ]
+    assert paired["bootstrap"] == {
+        "seed": 1729, "samples": 2000, "confidence": 0.95,
+        "low": -1.0, "high": 0.0,
+    }
+
+
+def test_native_benchmark_metrics_empty_facts_are_explicit() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    report = BenchmarkMetrics.compute(
+        games=(), items=(), model_requests=(), model_attempts=(),
+    )
+
+    assert report["summary"]["games"]["average_rounds"] is None
+    assert report["summary"]["games"]["win_rate_by_camp"] == {}
+    assert report["summary"]["requests"]["success_rate"] is None
+    assert report["summary"]["attempts"]["latency_ms"] == {
+        "count": 0, "p50": None, "p95": None, "p99": None,
+    }
+    assert report["summary"]["paired_regression"]["bootstrap"]["low"] is None
+
+
+def test_native_metrics_never_infer_camp_from_role_name() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    report = BenchmarkMetrics.compute(
+        games=[{
+            "game_id": "g", "winner": "good",
+            "players": [{"seat": 1, "role_id": "wolf-killer-seer"}],
+        }],
+        items=[], model_requests=[], model_attempts=[],
+    )
+
+    games = report["summary"]["games"]
+    assert games["win_rate_by_seat"] == {}
+    assert games["win_rate_by_role"] == {}
+
+
+def test_native_metrics_reject_noncanonical_or_non_tabular_facts() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    valid = {
+        "games": [], "items": [], "model_requests": [], "model_attempts": [],
+    }
+    with pytest.raises(TypeError, match="games must be a sequence"):
+        BenchmarkMetrics.compute(**{**valid, "games": "not rows"})
+    with pytest.raises(TypeError, match="games must be a sequence"):
+        BenchmarkMetrics.compute(**{**valid, "games": {"row"}})
+    with pytest.raises(TypeError, match="only dictionaries"):
+        BenchmarkMetrics.compute(**{**valid, "games": ["row"]})
+    with pytest.raises(ValueError, match="canonical JSON"):
+        BenchmarkMetrics.compute(**{**valid, "games": [{"rounds": float("nan")}]})
+
+
+def test_native_metrics_accept_legacy_player_and_request_shapes_without_inference() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    report = BenchmarkMetrics.compute(
+        games=[
+            {
+                "game_id": "mapped", "winner_camp": "good",
+                "rounds_played": -1, "active_elapsed_ms": "unknown",
+                "roles": {
+                    "": {"role": "seer", "camp": "good"},
+                    "1": {"role": "villager", "camp": "good"},
+                    "2": "legacy-role-without-camp",
+                    "3": 3,
+                },
+            },
+            {"game_id": "invalid-players", "winner": "good", "players": 42},
+            {"game_id": "invalid-seat", "winner": "good", "players": [
+                {"seat": True, "role": "villager", "camp": "good"},
+            ]},
+        ],
+        items=[],
+        model_requests=[
+            {"status": "resolved", "normalized_result": "not-json"},
+            {"status": "resolved", "normalized_result": "[]"},
+            {"status": 7, "normalized_result": None},
+            {"status": "resolved", "normalized_result": {
+                "action_type": "technical_abstain",
+            }},
+        ],
+        model_attempts=[{
+            "game_id": "mapped", "request_id": "request", "usage_known": True,
+            "elapsed_ms": -1, "prompt_tokens": True,
+            "completion_tokens": "2", "total_tokens": -3,
+        }],
+    )
+
+    assert report["summary"]["games"]["completed"] == 3
+    assert report["summary"]["games"]["average_rounds"] is None
+    assert report["summary"]["games"]["win_rate_by_seat"] == {
+        "1": {"games": 1, "wins": 1, "win_rate": 1.0},
+    }
+    assert report["summary"]["requests"]["technical_abstained"] == 1
+    assert report["summary"]["requests"]["successful"] == 3
+    assert report["summary"]["requests"]["failed"] == 1
+    assert report["summary"]["attempts"]["known_tokens"]["total_tokens"] == 0
+
+
+def test_assignment_and_model_helpers_cover_legacy_and_malformed_shapes() -> None:
+    from app.services import benchmark_metrics as metrics
+
+    assert metrics._assignment({"assignment_json": {"variant": "baseline"}}) == {
+        "variant": "baseline",
+    }
+    assert metrics._assignment({"assignment_json": '{"variant":"candidate"}'}) == {
+        "variant": "candidate",
+    }
+    assert metrics._assignment({"assignment_json": "not-json"}) == {}
+    assert metrics._assignment({"assignment_json": "[]"}) == {}
+    assert metrics._assignment({}) == {}
+
+    assert metrics._model_name(None) == "default"
+    assert metrics._model_name({"model_config_id": ""}) == "default"
+    assert metrics._model_name({"model_config_id": 3, "config_id": "config"}) == "config"
+    assert metrics._model_name({"model_id": "provider"}) == "provider"
+    assert metrics._model_name({"name": "friendly"}) == "friendly"
+
+    assert metrics._seat_number(1) == 1
+    assert metrics._seat_number(0) is None
+    assert metrics._seat_number("2") == 2
+    assert metrics._seat_number("seat") is None
+    assert metrics._seat_number(True) is None
+
+    assert metrics._assigned_models({
+        "seat_models": {
+            "1": {"model_config_id": "a"},
+            "bad": {"model_config_id": "b"},
+            "2": None,
+        },
+    }) == [(1, "a"), (2, "default")]
+    assert metrics._assigned_models({"seats": 1}) == []
+    assert metrics._assigned_models({"seats": "1"}) == []
+    assert metrics._assigned_models({
+        "model": {"model_config_id": "a"}, "seats": [1, "bad", -1],
+    }) == [(1, "a")]
+
+
+def test_model_performance_excludes_unusable_seats_and_keeps_camp_only_rows() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    report = BenchmarkMetrics.compute(
+        games=[
+            {"game_id": "game", "winner": "good", "players": {
+                "1": {"camp": "good"},
+                "2": {"role": "seer"},
+            }},
+            {"game_id": "unfinished", "winner": None, "players": {}},
+        ],
+        items=[
+            {"game_id": "game", "assignment": {"seat_models": {
+                "1": {"model_config_id": "a"},
+                "2": {"model_config_id": "a"},
+                "3": {"model_config_id": "a"},
+            }}},
+            {"game_id": "missing", "assignment": {"seat_models": {}}},
+            {"game_id": 3, "assignment": {"seat_models": {}}},
+        ],
+        model_requests=[], model_attempts=[],
+    )
+
+    assert report["summary"]["model_performance"] == [{
+        "id": "a:camp:good", "model": "a", "samples": 1,
+        "wins": 1, "win_rate": 1.0, "camp": "good",
+    }]
+
+
+def test_paired_regression_supports_explicit_scores_wins_and_legacy_aliases() -> None:
+    from app.services import benchmark_metrics as metrics
+
+    games = [
+        {"game_id": "g1", "winner": "good"},
+        {"game_id": "g2", "winner": None},
+    ]
+    items = [
+        {"pair_id": "score", "arm": "control", "score": 0.25},
+        {"pair_id": "score", "arm": "treatment", "won": True},
+        {"pair_id": "camp", "variant": "baseline", "game_id": "g1",
+         "target_camp": "good"},
+        {"pair_id": "camp", "variant": "candidate", "game_id": "g1",
+         "evaluation_camp": "werewolf"},
+        {"pair_id": "incomplete", "variant": "baseline", "score": 1},
+        {"pair_id": "", "variant": "candidate", "score": 1},
+        {"pair_id": 7, "variant": "candidate", "score": 1},
+        {"pair_id": "bad-variant", "variant": "other", "score": 1},
+        {"pair_id": "bad-score", "variant": "baseline"},
+        {"pair_id": "no-game", "variant": "baseline", "target_camp": "good"},
+        {"pair_id": "no-winner", "variant": "baseline", "game_id": "g2",
+         "target_camp": "good"},
+    ]
+
+    result = metrics._paired_regression(games, items)
+
+    assert result["pair_count"] == 2
+    assert result["differences"] == [
+        {"pair_id": "camp", "baseline": 1.0, "candidate": 0.0,
+         "difference": -1.0},
+        {"pair_id": "score", "baseline": 0.25, "candidate": 1.0,
+         "difference": 0.75},
+    ]
+
+
+def test_native_request_metrics_separate_terminal_quality_fallback_and_vote_abstention() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    report = BenchmarkMetrics.compute(
+        games=[], items=[], model_attempts=[],
+        model_requests=[
+            {
+                "request_id": "pass", "status": "consumed",
+                "action_position": "round:1:day:speech:seat:1",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00.250000+00:00",
+                "normalized_result": {"action_type": "pass"},
+            },
+            {
+                "request_id": "technical-vote", "status": "failed",
+                "action_position": "round:1:day:vote:seat:2",
+                "created_at": "2026-01-01T00:00:01Z",
+                "updated_at": "2026-01-01T00:00:01.750000Z",
+            },
+            {
+                "request_id": "cancelled", "status": "cancelled",
+                "action_position": "round:1:day:vote:seat:3",
+            },
+            {
+                "request_id": "unknown", "status": "unknown",
+                "action_position": "round:1:day:vote:seat:4",
+            },
+        ],
+    )
+
+    requests = report["summary"]["requests"]
+    assert requests["eligible_terminal"] == 2
+    assert requests["valid"] == 1
+    assert requests["valid_rate"] == 0.5
+    assert requests["fallback"] == 1
+    assert requests["fallback_rate"] == 0.5
+    assert requests["terminal_votes"] == 1
+    assert requests["technical_abstained"] == 1
+    assert requests["technical_abstain_rate"] == 1.0
+    assert requests["logical_latency_ms"] == {
+        "count": 2, "p50": 500.0, "p95": 725.0, "p99": 745.0,
+    }
+
+
+def test_mixed_uncertainty_resamples_complete_rotation_blocks() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    players = [
+        {"seat": 1, "role_id": "seer", "camp_id": "good"},
+        {"seat": 2, "role_id": "werewolf", "camp_id": "werewolf"},
+    ]
+    games = [
+        {"game_id": "g1", "winner": "good", "players": players},
+        {"game_id": "g2", "winner": "werewolf", "players": players},
+        {"game_id": "g3", "winner": "good", "players": players},
+        {"game_id": "g4", "winner": "good", "players": players},
+    ]
+    items = [
+        {
+            "game_id": game["game_id"], "block_index": index // 2,
+            "assignment": {"variant": "mixed", "seat_models": {
+                "1": {"model_config_id": "model-a"},
+                "2": {"model_config_id": "model-b"},
+            }},
+        }
+        for index, game in enumerate(games)
+    ]
+
+    mixed = BenchmarkMetrics.compute(
+        games=games, items=items, model_requests=[], model_attempts=[],
+    )["summary"]["mixed_uncertainty"]
+
+    good = next(
+        row for row in mixed
+        if row["model"] == "model-a" and row.get("camp") == "good"
+    )
+    assert good["games"] == 4
+    assert good["valid_seats"] == 4
+    assert good["block_count"] == 2
+    assert good["confidence"] == 0.95
+    assert good["samples"] == 2000
+    assert good["low"] == 0.5
+    assert good["high"] == 1.0
+
+
+def test_paired_latency_excludes_interrupted_and_incomplete_pairs() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    games = [
+        {"game_id": "b1", "winner": "good", "interruption_count": 0},
+        {"game_id": "c1", "winner": "good", "interruption_count": 0},
+        {"game_id": "b2", "winner": "good", "interruption_count": 1},
+        {"game_id": "c2", "winner": "good", "interruption_count": 0},
+        {"game_id": "b3", "winner": "good", "interruption_count": 0},
+        {"game_id": "c3", "winner": "good", "interruption_count": 0},
+    ]
+    items = [
+        {"game_id": f"{arm}{pair}", "pair_id": f"p{pair}",
+         "variant": "baseline" if arm == "b" else "candidate",
+         "score": 1}
+        for pair in range(1, 4) for arm in ("b", "c")
+    ]
+    attempts = [
+        {"game_id": "b1", "request_id": "r", "elapsed_ms": 100},
+        {"game_id": "c1", "request_id": "r", "elapsed_ms": 120},
+        {"game_id": "b2", "request_id": "r", "elapsed_ms": 200},
+        {"game_id": "c2", "request_id": "r", "elapsed_ms": 260},
+        {"game_id": "b3", "request_id": "r", "elapsed_ms": 300},
+    ]
+
+    paired = BenchmarkMetrics.compute(
+        games=games, items=items, model_requests=[], model_attempts=attempts,
+    )["summary"]["paired_latency_ms"]
+
+    assert paired["pair_count"] == 1
+    assert paired["excluded_interrupted_pairs"] == 1
+    assert paired["excluded_incomplete_pairs"] == 1
+    assert paired["mean_difference"] == 20.0
+    assert paired["differences"] == [{
+        "pair_id": "p1", "baseline": 100.0,
+        "candidate": 120.0, "difference": 20.0,
+    }]
+    assert paired["bootstrap"]["low"] == 20.0
+    assert paired["bootstrap"]["high"] == 20.0
