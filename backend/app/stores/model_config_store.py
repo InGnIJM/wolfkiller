@@ -133,7 +133,8 @@ def get_model_config_store() -> ModelConfigStore:
     """Lazy singleton; path overridable via MODEL_CONFIG_PATH env var."""
     global _store
     if _store is None:
+        default_path = Path(os.getenv("WOLFKILLER_DATA_DIR", "data")).expanduser() / "models.json"
         _store = JsonModelConfigStore(
-            os.getenv("MODEL_CONFIG_PATH", "data/models.json"),
+            os.getenv("MODEL_CONFIG_PATH", str(default_path)),
         )
     return _store

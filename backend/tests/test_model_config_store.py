@@ -126,3 +126,12 @@ def test_factory_returns_singleton_for_env_path(tmp_path, monkeypatch):
     assert isinstance(first, JsonModelConfigStore)
     assert first is second
     assert first._path.name == "custom.json"
+
+
+def test_default_model_store_follows_isolated_data_directory(tmp_path, monkeypatch):
+    import app.stores.model_config_store as mod
+
+    monkeypatch.setattr(mod, "_store", None)
+    monkeypatch.delenv("MODEL_CONFIG_PATH", raising=False)
+    monkeypatch.setenv("WOLFKILLER_DATA_DIR", str(tmp_path))
+    assert get_model_config_store()._path == tmp_path / "models.json"
