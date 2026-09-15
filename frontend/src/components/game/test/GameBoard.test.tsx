@@ -74,6 +74,15 @@ const detail: PublicGameState = {
   speeches: [],
   death_history: [],
   win_result: { winning_camp: 'good', reason: 'all_wolves_dead' },
+  model_snapshot: [{
+    config_id: 'model-a',
+    name: 'Model A',
+    model_id: 'provider/model-a',
+    base_url: 'https://models.example/v1',
+    provider_profile: 'openrouter',
+    count: 2,
+    seats: [1, 2],
+  }],
 };
 
 const completedLogs: GameLogs = {
@@ -126,6 +135,17 @@ describe('GameBoard public replay', () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(connect).toHaveBeenCalledTimes(2);
     expect(useGameStore.getState().audienceCursor).toBe(0);
+    expect(useGameStore.getState().modelSnapshot).toEqual(detail.model_snapshot);
+  });
+
+  it('treats a public detail without model_snapshot as unknown seat models', async () => {
+    const { model_snapshot: _omitted, ...withoutSnapshot } = detail;
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce(withoutSnapshot);
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
+    expect(useGameStore.getState().modelSnapshot).toEqual([]);
   });
 
   it('resets the previous game cursor before connecting', () => {
@@ -138,7 +158,21 @@ describe('GameBoard public replay', () => {
   it('loads a new game from snapshot and incremental events without reading full logs', async () => {
     vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
       game_id: 'game-1', seq: 1, projection_version: 1,
-      state: { ...detail, phase: 'speech', win_result: null, execution_status: 'running' },
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'running',
+        model_snapshot: [{
+          config_id: 'model-a',
+          name: 'Model A',
+          model_id: 'provider/model-a',
+          base_url: 'https://models.example/v1',
+          provider_profile: 'openrouter',
+          count: 1,
+          seats: [1],
+        }],
+      },
     });
     vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
       game_id: 'game-1', after_seq: 0, last_seq: 1, caught_up: true,
@@ -155,6 +189,15 @@ describe('GameBoard public replay', () => {
     expect(fetchGameDetail).not.toHaveBeenCalled();
     expect(fetchGameLogs).not.toHaveBeenCalled();
     expect(useGameStore.getState().syncMode).toBe('incremental');
+    expect(useGameStore.getState().modelSnapshot).toEqual([{
+      config_id: 'model-a',
+      name: 'Model A',
+      model_id: 'provider/model-a',
+      base_url: 'https://models.example/v1',
+      provider_profile: 'openrouter',
+      count: 1,
+      seats: [1],
+    }]);
   });
 
   it('loads a zero-sequence snapshot without requesting an empty history page', async () => {
@@ -513,6 +556,7 @@ describe('GameBoard public replay', () => {
     };
     const refreshedDetail: PublicGameState = {
       ...activeDetail,
+      model_snapshot: undefined,
       players: {
         ...activeDetail.players,
         1: { ...activeDetail.players[1], is_sheriff: true },
@@ -555,6 +599,7 @@ describe('GameBoard public replay', () => {
       .toBeLessThan(mergeLogs.mock.invocationCallOrder[0]);
     expect(useGameStore.getState().players[1].is_sheriff).toBe(true);
     expect(useGameStore.getState().revealOnDeath).toBe(true);
+    expect(useGameStore.getState().modelSnapshot).toEqual([]);
     expect(useGameStore.getState().timeline).toEqual(refreshedLogs.events);
   });
 

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PublicPlayerState } from '../../../store/types';
+import type { ModelSnapshotEntry, PublicPlayerState } from '../../../store/types';
 import SeatMap from '../SeatMap';
 
 class MockResizeObserver {
@@ -113,3 +114,60 @@ describe('SeatMap role badges', () => {
     expect(screen.getByLabelText('1号 存活')).toBeInTheDocument();
   });
 });
+
+describe('SeatMap hover card', () => {
+  const snapshot: ModelSnapshotEntry[] = [{
+    config_id: 'model-a',
+    name: 'Model A',
+    model_id: 'provider/model-a',
+    base_url: 'https://models.example/v1',
+    provider_profile: 'openrouter',
+    count: 1,
+    seats: [1],
+  }];
+
+  it('shows the assigned model after hovering a seat', async () => {
+    const user = userEvent.setup();
+    render(
+      <SeatMap
+        players={{
+          1: {
+            seat_number: 1, is_alive: true, is_sheriff: true,
+            role: 'wolf-killer-werewolf', camp: 'werewolf',
+          },
+        }}
+        currentSpeaker={1}
+        modelSnapshot={snapshot}
+      />,
+    );
+    fireResize(800, 600);
+
+    await user.hover(screen.getByLabelText('1号 狼人 存活 警长'));
+    const card = await screen.findByRole('tooltip');
+    expect(card).toHaveTextContent('Model A');
+    expect(card).toHaveTextContent('provider/model-a');
+    expect(card).toHaveTextContent('OpenRouter');
+    expect(card).toHaveTextContent('存活 · 警长 · 发言中');
+  });
+
+  it('shows unknown when the seat has no model mapping and hides raw role ids', async () => {
+    const user = userEvent.setup();
+    render(
+      <SeatMap
+        players={{
+          1: {
+            seat_number: 1, is_alive: true, is_sheriff: false,
+            role: 'wolf-killer-unknown', camp: 'werewolf',
+          },
+        }}
+      />,
+    );
+    fireResize(800, 600);
+
+    await user.hover(screen.getByLabelText('1号 存活'));
+    const card = await screen.findByRole('tooltip');
+    expect(card).toHaveTextContent('未知');
+    expect(card).not.toHaveTextContent('wolf-killer-unknown');
+  });
+});
+

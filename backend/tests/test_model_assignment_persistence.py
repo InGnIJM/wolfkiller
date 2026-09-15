@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app import config as config_module
-from app.api.model_schemas import ModelAssignment, ModelSnapshotEntry
+from app.api.model_schemas import ModelAssignment, ModelSnapshotEntry, public_model_snapshot
 from app.config import LLMConfig
 from app.services.game_manifest import (
     GameManifest,
@@ -54,6 +54,20 @@ def test_model_snapshot_entry_exposes_v2_public_fields() -> None:
     assert entry.count == 2
     assert entry.seats == [1, 3]
     assert "api_key" not in entry.model_dump()
+
+
+def test_public_model_snapshot_keeps_valid_v2_entries_and_strips_secrets() -> None:
+    leaked = {**_MODEL_SNAPSHOT[1], "api_key": "sk-secret"}
+    published = public_model_snapshot([leaked, {"name": "legacy-without-seats"}])
+
+    assert published == [ModelSnapshotEntry.model_validate(_MODEL_SNAPSHOT[1]).model_dump()]
+    assert "api_key" not in published[0]
+
+
+def test_public_model_snapshot_treats_non_lists_and_legacy_rows_as_unknown() -> None:
+    assert public_model_snapshot(None) == []
+    assert public_model_snapshot({"name": "not-a-list"}) == []
+    assert public_model_snapshot([{"name": "env", "model_id": "x"}]) == []
 
 
 def test_manifest_persists_snapshot_version_on_add_and_update(tmp_path) -> None:

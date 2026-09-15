@@ -740,3 +740,60 @@ describe('public replay state', () => {
     expect(useGameStore.getState().timelineIndex).toBe(0);
   });
 });
+
+describe('per-seat model snapshot', () => {
+  const snapshot = [{
+    config_id: 'model-a',
+    name: 'Model A',
+    model_id: 'provider/model-a',
+    base_url: 'https://models.example/v1',
+    provider_profile: 'openrouter',
+    count: 1,
+    seats: [1],
+  }];
+
+  it('stores the snapshot from a public detail payload and keeps it across seek', () => {
+    useGameStore.getState().initPlayersFromDetail(currentPlayers, false, snapshot);
+    expect(useGameStore.getState().modelSnapshot).toEqual(snapshot);
+
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        {
+          ...replayEventMeta,
+          event_type: 'speech',
+          payload: { player_seat: 1, text: 'tail', round_number: 1 },
+        },
+      ],
+    };
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(0);
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().modelSnapshot).toEqual(snapshot);
+  });
+
+  it('stores the snapshot from an audience snapshot and clears it on reset', () => {
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1',
+      seq: 1,
+      projection_version: 1,
+      state: {
+        game_id: 'game-1',
+        phase: 'waiting',
+        round_number: 0,
+        players: currentPlayers,
+        sheriff: null,
+        speeches: [],
+        death_history: [],
+        win_result: null,
+        model_snapshot: snapshot,
+      },
+    });
+    expect(useGameStore.getState().modelSnapshot).toEqual(snapshot);
+
+    useGameStore.getState().reset();
+    expect(useGameStore.getState().modelSnapshot).toEqual([]);
+  });
+});
+

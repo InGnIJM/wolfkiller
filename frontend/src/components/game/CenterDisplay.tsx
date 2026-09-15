@@ -47,10 +47,12 @@ const NIGHT_ACTION_LABELS: Record<string, string> = {
   guard_protect: '守卫守护',
 };
 
+// 中央面板内容全部使用容器查询单位（cqh 相对舞台高度 / cqi 相对面板宽度），
+// 舞台变小时间距与字号同步收缩，避免固有高度挤占座位通道
 const panelSx = {
   textAlign: 'center',
-  py: 2,
-  px: 3,
+  py: 'clamp(6px, 2.2cqh, 16px)',
+  px: 'clamp(10px, 3cqi, 24px)',
   animation: `${fadeIn} 0.25s ease-out`,
 };
 
@@ -151,12 +153,12 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   }
 
   return (
-    <Box sx={{ ...panelSx, py: 1.5 }}>
+    <Box sx={{ ...panelSx, py: 'clamp(5px, 1.8cqh, 12px)' }}>
       <Typography
         sx={{
-          fontSize: '0.62rem',
+          fontSize: 'clamp(8px, 1.15cqh, 10px)',
           fontWeight: 700,
-          letterSpacing: 6,
+          letterSpacing: 'clamp(2.5px, 1.1cqi, 6px)',
           color: 'secondary.dark',
           fontFamily: '"Cinzel","Noto Serif SC",serif',
         }}
@@ -166,10 +168,10 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
       <Typography
         sx={{
           mt: 0.5,
-          fontSize: 46,
+          fontSize: 'clamp(20px, min(7.4cqh, 13cqi), 46px)',
           fontWeight: 900,
           lineHeight: 1.2,
-          letterSpacing: 8,
+          letterSpacing: 'clamp(2px, 2.4cqi, 8px)',
           fontFamily: '"Cinzel","Noto Serif SC",serif',
           background: 'linear-gradient(180deg, #F7EFE2, #CAA96A)',
           WebkitBackgroundClip: 'text',
@@ -184,9 +186,9 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
         sx={{
           display: 'inline-block',
           mt: 0.4,
-          fontSize: '0.95rem',
+          fontSize: 'clamp(11px, 1.9cqh, 15.2px)',
           fontWeight: 700,
-          letterSpacing: 5,
+          letterSpacing: 'clamp(2px, 1.7cqi, 5px)',
           color: 'text.primary',
           pb: 1,
           borderBottom: '1px solid',
@@ -200,7 +202,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
         sx={{
           mt: 1.5,
           mx: 'auto',
-          width: 176,
+          width: 'min(176px, 92cqi)',
           px: 1.4,
           py: 0.7,
           border: '1px dashed',
@@ -217,13 +219,13 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
             color: '#F4B3B6',
             fontWeight: 800,
             letterSpacing: 3,
-            fontSize: '0.56rem',
+            fontSize: 'clamp(8px, 1.05cqh, 9px)',
             mb: 0.1,
           }}
         >
           战报
         </Typography>
-        <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.8, fontSize: '0.7rem' }}>
+        <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.8, fontSize: 'clamp(9px, 1.3cqh, 11.2px)' }}>
           {report}
         </Typography>
       </Box>
@@ -231,8 +233,8 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
       <Typography
         sx={{
           mt: 1,
-          fontSize: '0.68rem',
-          letterSpacing: 3,
+          fontSize: 'clamp(9px, 1.25cqh, 10.9px)',
+          letterSpacing: 'clamp(1px, 0.9cqi, 3px)',
           color: 'text.disabled',
         }}
       >
@@ -325,7 +327,7 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
       />
       <Typography
         variant="caption"
-        sx={{ color: tone, fontWeight: 700, letterSpacing: 1.5, fontSize: '0.72rem' }}
+        sx={{ color: tone, fontWeight: 700, letterSpacing: 1.5, fontSize: 'clamp(9px, 1.3cqh, 11.5px)' }}
       >
         {text}
       </Typography>

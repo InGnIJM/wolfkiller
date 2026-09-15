@@ -14,6 +14,7 @@ import type {
   SpeechRecord,
   VoteRecord,
   WinResult,
+  ModelSnapshotEntry,
 } from './types';
 
 interface DerivedState {
@@ -51,6 +52,7 @@ interface GameStore extends DerivedState {
   executionStatus: ExecutionStatus | null;
   recoverable: boolean;
   recoveryBlockCode: string | null;
+  modelSnapshot: ModelSnapshotEntry[];
 
   setGameState: (state: PublicGameState) => void;
   setPhase: (phase: GamePhase, roundNumber: number) => void;
@@ -63,7 +65,11 @@ interface GameStore extends DerivedState {
   setPaused: (paused: boolean) => void;
   setCurrentSpeaker: (seat: number | null) => void;
 
-  initPlayersFromDetail: (players: Record<number, PublicPlayerState>, revealOnDeath?: boolean) => void;
+  initPlayersFromDetail: (
+    players: Record<number, PublicPlayerState>,
+    revealOnDeath?: boolean,
+    modelSnapshot?: ModelSnapshotEntry[],
+  ) => void;
   loadLogs: (logs: GameLogs) => void;
   mergeLogs: (logs: GameLogs) => void;
   loadAudienceSnapshot: (snapshot: AudienceSnapshot) => void;
@@ -117,6 +123,7 @@ const initialState = {
   executionStatus: null as ExecutionStatus | null,
   recoverable: false,
   recoveryBlockCode: null as string | null,
+  modelSnapshot: [] as ModelSnapshotEntry[],
 };
 
 let playTimer: ReturnType<typeof setInterval> | null = null;
@@ -413,14 +420,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setPaused: (paused) => set({ isPaused: paused }),
   setCurrentSpeaker: (seat) => set({ currentSpeaker: seat }),
 
-  initPlayersFromDetail: (players, revealOnDeath = false) => {
+  initPlayersFromDetail: (players, revealOnDeath = false, modelSnapshot) => {
     const currentPublicPlayers = copyPlayers(players);
     const initialPlayers = buildInitialPlayers(currentPublicPlayers);
     const { timeline, timelineIndex } = get();
+    const snapshotUpdate = modelSnapshot !== undefined ? { modelSnapshot } : {};
     if (timeline.length === 0) {
       const publicPlayers = copyPlayers(initialPlayers);
       applyCurrentSheriffSnapshot(publicPlayers, currentPublicPlayers);
-      set({ players: publicPlayers, initialPlayers, currentPublicPlayers, revealOnDeath });
+      set({ players: publicPlayers, initialPlayers, currentPublicPlayers, revealOnDeath, ...snapshotUpdate });
       return;
     }
     set({
@@ -428,6 +436,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       initialPlayers,
       currentPublicPlayers,
       revealOnDeath,
+      ...snapshotUpdate,
     });
   },
 
@@ -499,6 +508,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       executionStatus: state.execution_status ?? null,
       recoverable: state.recoverable ?? false,
       recoveryBlockCode: state.recovery_block_code ?? null,
+      modelSnapshot: state.model_snapshot ?? [],
       timeline: [],
       timelineIndex: -1,
       isPlaying: false,

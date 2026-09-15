@@ -37,7 +37,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
   const { connect, disconnect } = useWebSocket();
   const {
     players, phase, roundNumber, winResult, showWinOverlay, revealOnDeath,
-    showHistory, currentSpeaker,
+    showHistory, currentSpeaker, modelSnapshot,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
     loadAudienceSnapshot, loadAudienceHistory, mergeAudienceEvents, reset,
     syncMode, streamError, executionStatus,
@@ -86,7 +86,11 @@ export default function GameBoard({ onBack, gameId }: Props) {
         // detail + log replay path without advertising recovery.
         const detail = await fetchGameDetail(gameId);
         if (cancelled) return;
-        initPlayersFromDetail(detail.players, detail.reveal_on_death ?? false);
+        initPlayersFromDetail(
+          detail.players,
+          detail.reveal_on_death ?? false,
+          detail.model_snapshot ?? [],
+        );
         const logs = await fetchGameLogs(gameId);
         if (cancelled) return;
         loadLogs(logs);
@@ -148,6 +152,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
           initPlayersFromDetail(
             detailResult.value.players,
             detailResult.value.reveal_on_death ?? false,
+            detailResult.value.model_snapshot ?? [],
           );
           mergeLogs(logsResult.value);
         }
@@ -257,11 +262,12 @@ export default function GameBoard({ onBack, gameId }: Props) {
 
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
-          <Box sx={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0, minHeight: 0 }}>
+          <Box sx={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0, minHeight: 160 }}>
             <SeatMap
               players={players}
               currentSpeaker={currentSpeaker}
               voteTargets={voteTargets}
+              modelSnapshot={modelSnapshot}
             >
               <CenterDisplay />
             </SeatMap>
