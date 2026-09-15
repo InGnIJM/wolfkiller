@@ -7,6 +7,7 @@ import json
 import pytest
 
 from app.config import PipelineMode
+from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.game_engine import (
     GameEngine, _PendingDeath, _PendingNightBatch, _PendingNightCompletion,
     _PendingWin,
@@ -14,6 +15,7 @@ from app.core.game_engine import (
 from app.core.night_flow import WolfVote
 from app.core.role_pipeline import PipelineDiff, PipelineResult
 from app.core.scheduler import PointResult
+from app.models.actions import SpeechRecord
 from app.models.conversation import Conversation, ConversationScope
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
 from app.persistence.checkpoint_codec import CheckpointCodec, CheckpointError
@@ -69,6 +71,62 @@ def test_engine_orchestration_round_trip_restores_future_behavior_state(tmp_path
     assert restored.conversation_log.records[0].content == "hello"
     assert role._last_words_used is True
     assert restored._rng.random() == expected_random
+
+
+@pytest.mark.asyncio
+async def test_restored_speech_round_does_not_repeat_checkpointed_seat(tmp_path):
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    source = GameEngine("recover", roles={1: _Role(), 2: _Role()}, data_dir=str(tmp_path))
+    source.state = GameState(
+        game_id="recover", phase=GamePhase.SPEECH, round_number=1,
+        config=GameConfig(role_counts={"wolf-killer-villager": 2}),
+        players={
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        },
+        speeches=[SpeechRecord(player_seat=1, text="already said", round_number=1)],
+        registry_digest=registry.digest, pipeline_version="v2", effect_schema_version=1,
+    )
+    source.conversation_log.records = [
+        Conversation(ConversationScope.PUBLIC, "already said", 1, speaker_seat=1, phase="speech"),
+    ]
+    source.sm.set_state(GamePhase.SPEECH)
+    state, orchestration = codec.decode(
+        codec.encode(source.state, orchestration=source.export_orchestration(codec)),
+    )
+
+    bus = EventBus()
+    speeches = []
+
+    async def record_speech(**kwargs):
+        speeches.append(kwargs)
+
+    bus.subscribe(BusEvent.SPEECH_MADE, record_speech)
+    restored = GameEngine(
+        "recover", roles={1: _Role(), 2: _Role()}, data_dir=str(tmp_path), event_bus=bus,
+    )
+    restored.load_restored_state(state, orchestration, codec)
+    spoken = []
+
+    async def capture_speak(seat, kind):
+        spoken.append(seat)
+        return f"speech from {seat}"
+
+    restored.speak = capture_speak
+    await restored._execute_speech_round()
+
+    assert spoken == [2]
+    assert [(record.player_seat, record.text) for record in restored.state.speeches] == [
+        (1, "already said"),
+        (2, "speech from 2"),
+    ]
+    assert [event["speech"].player_seat for event in speeches] == [2]
+    public = [
+        record for record in restored.conversation_log.records
+        if record.speaker_seat == 1 and record.phase == "speech"
+    ]
+    assert len(public) == 1
 
 
 def test_restore_enters_game_loop_without_calling_new_game_reset(tmp_path) -> None:

@@ -8,7 +8,7 @@ import pytest
 import app.core.game_engine as game_engine_module
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
-from app.models.actions import VoteAction, DeathReport, WinResult, is_last_words_eligible
+from app.models.actions import SpeechRecord, VoteAction, DeathReport, WinResult, is_last_words_eligible
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.night_flow import DiscussionTurn, NightBriefing, WolfVote
@@ -1871,6 +1871,89 @@ class TestGameEngine:
 
         assert len(engine.state.speeches) == len(engine.state.alive_players())
         assert engine.sm.get_state() == GamePhase.VOTE_CASTING
+
+    @pytest.mark.asyncio
+    async def test_speech_round_skips_seats_already_recorded_this_round(self):
+        bus = EventBus()
+        speeches = []
+
+        async def record_speech(**kwargs):
+            speeches.append(kwargs)
+
+        bus.subscribe(BusEvent.SPEECH_MADE, record_speech)
+        roles = {
+            1: make_mock_role(1, "wolf-killer-villager"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="speech-resume", roles=roles, event_bus=bus)
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.round_number = 1
+        engine.state.speeches = [
+            SpeechRecord(player_seat=1, text="already said", round_number=1),
+        ]
+        engine.conversation_log.add_public_speech(
+            1, "wolf-killer-villager", "already said", 1, "speech",
+        )
+        engine.sm.set_state(GamePhase.SPEECH)
+        engine.state.phase = GamePhase.SPEECH
+        spoken = []
+
+        async def capture_speak(seat, kind):
+            spoken.append(seat)
+            return f"speech from {seat}"
+
+        engine.speak = capture_speak
+        await engine._execute_speech_round()
+
+        assert spoken == [2]
+        assert [(record.player_seat, record.text) for record in engine.state.speeches] == [
+            (1, "already said"),
+            (2, "speech from 2"),
+        ]
+        assert [event["speech"].player_seat for event in speeches] == [2]
+        public = [
+            record for record in engine.conversation_log.records
+            if record.speaker_seat == 1 and record.phase == "speech"
+        ]
+        assert len(public) == 1
+        assert engine.sm.get_state() is GamePhase.VOTE_CASTING
+
+    @pytest.mark.asyncio
+    async def test_tiebreak_speech_round_still_asks_first_round_speakers(self):
+        roles = {
+            1: make_mock_role(1, "wolf-killer-villager"),
+            2: make_mock_role(2, "wolf-killer-villager"),
+        }
+        engine = GameEngine(game_id="speech-tiebreak", roles=roles, event_bus=EventBus())
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+            2: PlayerState(2, "wolf-killer-villager", "good"),
+        }
+        engine.state.round_number = 1
+        engine.state.is_tiebreak = True
+        engine.state.vote_round = 2
+        engine.state.speeches = [
+            SpeechRecord(player_seat=1, text="round1 from 1", round_number=1),
+            SpeechRecord(player_seat=2, text="round1 from 2", round_number=1),
+        ]
+        engine.state.supplemental_speakers = {1}
+        engine.sm.set_state(GamePhase.SPEECH)
+        engine.state.phase = GamePhase.SPEECH
+        spoken = []
+
+        async def capture_speak(seat, kind):
+            spoken.append(seat)
+            return f"supplemental from {seat}"
+
+        engine.speak = capture_speak
+        await engine._execute_speech_round()
+
+        assert spoken == [2]
+        assert [record.player_seat for record in engine.state.speeches] == [1, 2, 2]
+        assert engine.state.supplemental_speakers == {1, 2}
 
     @pytest.mark.asyncio
     async def test_speech_round_starts_after_most_recent_death(self):

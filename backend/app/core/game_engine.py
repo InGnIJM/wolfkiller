@@ -884,6 +884,17 @@ class GameEngine:
                 for seat, player in alive
                 if seat not in self.state.supplemental_speakers
             ]
+        else:
+            spoken_this_round = {
+                record.player_seat
+                for record in self.state.speeches
+                if record.round_number == self.state.round_number
+            }
+            alive = [
+                (seat, player)
+                for seat, player in alive
+                if seat not in spoken_this_round
+            ]
         alive = self._rotate_speech_order(alive)
         self.state.speaking_order = [s for s, _ in alive]
         for seat, player in alive:
