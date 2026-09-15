@@ -6,11 +6,15 @@ from dataclasses import fields
 
 import pytest
 
-from app.core.effect_applier import CommitResult, _Runtime
+from app.core.action_resolver import ActionResolver
+from app.core.action_validator import ActionValidator
+from app.core.context_projector import ContextProjector
+from app.core.effect_applier import CommitResult, EffectApplier, _Runtime
 from app.core.point_journal import PointCheckpoint, PointKey, WorkCursor, point_journal
+from app.core.scheduler import Scheduler
 from app.models.actions import DeathReport, NightAction, SpeechRecord, VoteAction
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
-from app.models.pipeline import IssuedActionRequest, SchedulePoint
+from app.models.pipeline import ActionCommand, IssuedActionRequest, SchedulePoint
 from app.persistence.checkpoint_codec import CHECKPOINT_VERSION, CheckpointCodec, CheckpointError
 import app.persistence.checkpoint_codec as checkpoint_codec_module
 from app.roles.registry import builtin_registry
@@ -87,6 +91,55 @@ def _rich_state() -> GameState:
         ),
     )
     return state
+
+
+def test_encode_round_trips_frozen_events_after_guard_pass() -> None:
+    registry = builtin_registry.freeze()
+    state = GameState(
+        game_id="guard-pass",
+        phase=GamePhase.NIGHT,
+        round_number=1,
+        config=GameConfig(role_counts={"wolf-killer-guard": 1}, reveal_on_death=True),
+        players={1: PlayerState(1, "wolf-killer-guard", "good")},
+        pipeline_version="v2",
+        registry_digest=registry.digest,
+        spec_versions={"wolf-killer-guard": 1},
+        effect_schema_version=1,
+    )
+    command = ActionCommand(
+        action_type="pass",
+        target_seat=None,
+        reasoning="首夜无明确信息，且女巫首夜很可能使用解药救人；我若盲守同一目标反而可能触发双救穿透，因此选择空守过夜。",
+    )
+    scheduler = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(),
+        EffectApplier(), lambda *_args: command,
+    )
+    result = scheduler.run_point(state, SchedulePoint.NIGHT_ACTION)
+    assert [event["event_type"] for event in result.events] == ["GUARD_REASONING"]
+
+    codec = CheckpointCodec(registry)
+    document = codec.encode(state, orchestration={"source": "guard-pass"})
+    encoded_events = [
+        event["event_type"]
+        for event in document["pipeline_runtime"]["events"]
+    ]
+    journal_events = [
+        event["event_type"]
+        for entry in document["point_journal"]
+        for event in entry["checkpoint"]["events"]
+    ]
+    assert encoded_events == ["GUARD_REASONING"]
+    assert journal_events == ["GUARD_REASONING"]
+
+    restored, orchestration = codec.decode(document)
+    assert orchestration == {"source": "guard-pass"}
+    restored_types = [
+        event["event_type"] for event in restored._pipeline_runtime.events
+    ]
+    journal = point_journal(restored).entries()
+    assert restored_types == ["GUARD_REASONING"]
+    assert [event["event_type"] for event in journal[0][1].events] == ["GUARD_REASONING"]
 
 
 def test_checkpoint_round_trip_preserves_all_game_state_fields_and_runtime() -> None:

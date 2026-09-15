@@ -11,15 +11,7 @@ from app.core.night_flow import WolfVote
 from app.core.role_pipeline import PipelineDiff, PipelineResult
 from app.core.scheduler import PointResult
 from app.models.conversation import Conversation, ConversationScope
-from app.persistence.checkpoint_codec import CheckpointCodec, CheckpointError
-
-
-def _json_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    return value
+from app.persistence.checkpoint_codec import CheckpointCodec, CheckpointError, _json_value
 
 
 def _plain(value: object) -> object:

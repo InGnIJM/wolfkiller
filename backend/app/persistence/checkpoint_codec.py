@@ -30,11 +30,20 @@ _RUNTIME_FIELDS = {field.name for field in fields(_Runtime)}
 _COMMIT_FIELDS = {field.name for field in fields(CommitResult)}
 
 
+def _json_value(value: object) -> object:
+    """Turn frozen mappings and sequences into JSON-native containers."""
+    if isinstance(value, Mapping):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
 def _plain(value: object) -> object:
     """Clone a JSON value and reject executable or ambiguous Python values."""
     try:
         return json.loads(json.dumps(
-            value, ensure_ascii=False, allow_nan=False,
+            _json_value(value), ensure_ascii=False, allow_nan=False,
             sort_keys=True, separators=(",", ":"),
         ))
     except (TypeError, ValueError, json.JSONDecodeError) as error:
