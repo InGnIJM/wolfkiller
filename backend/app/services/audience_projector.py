@@ -29,6 +29,12 @@ _PUBLIC_ROLE_ACTIONS = {
     "HUNTER_SHOT": "hunter_shot",
     "GUARD_PROTECT": "guard_protect",
 }
+_PUBLIC_REASONING_EVENTS = {
+    "HUNTER_REASONING": "hunter_reasoning",
+    "WITCH_REASONING": "witch_reasoning",
+    "SEER_REASONING": "seer_reasoning",
+    "GUARD_REASONING": "guard_reasoning",
+}
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",
 })
@@ -37,6 +43,17 @@ for _domain_type in _PUBLIC_ROLE_ACTIONS:
     _EVENTS[_domain_type] = (
         "night_action",
         frozenset({"target_seat", "round_number", "vote_counts", "result"}),
+    )
+_EVENTS["WOLF_CHAT_MESSAGE"] = (
+    "wolf_chat_message", frozenset({"seat", "text", "round_number"}),
+)
+_EVENTS["WOLF_VOTE"] = (
+    "wolf_vote", frozenset({"seat", "target_seat", "reasoning", "round_number"}),
+)
+for _domain_type in _PUBLIC_REASONING_EVENTS:
+    _EVENTS[_domain_type] = (
+        "night_thought",
+        frozenset({"seat", "action_type", "target_seat", "reasoning", "round_number"}),
     )
 
 
@@ -86,6 +103,9 @@ class AudienceProjector:
             action_type = _PUBLIC_ROLE_ACTIONS.get(event_type)
             if action_type is not None:
                 public_payload = {"action_type": action_type, **public_payload}
+            reasoning_type = _PUBLIC_REASONING_EVENTS.get(event_type)
+            if reasoning_type is not None:
+                public_payload["action_type"] = reasoning_type
             row: dict[str, object] = {
                 "event_id": f"{event_id}:audience",
                 "event_type": public_type,

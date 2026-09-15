@@ -75,6 +75,78 @@ def test_projector_normalizes_public_role_actions_without_private_reasoning() ->
     }]
 
 
+@pytest.mark.parametrize(
+    ("event_type", "action", "public_type"),
+    [
+        ("GUARD_REASONING", "guard", "guard_reasoning"),
+        ("WITCH_REASONING", "save", "witch_reasoning"),
+        ("SEER_REASONING", "check", "seer_reasoning"),
+        ("HUNTER_REASONING", "shoot", "hunter_reasoning"),
+        ("WITCH_REASONING", "pass", "witch_reasoning"),
+    ],
+)
+def test_projector_projects_role_reasoning_as_closed_night_thought(
+    event_type, action, public_type,
+) -> None:
+    events = AudienceProjector().project_events("game", [{
+        "event_id": "reason-1",
+        "event_type": event_type,
+        "visibility": ["PUBLIC"],
+        "payload": {
+            "seat": 8,
+            "action_type": action,
+            "target_seat": None if action == "pass" else 4,
+            "reasoning": "公开理由",
+            "thought": "决定行动：公开理由",
+            "round_number": 2,
+        },
+    }])
+
+    assert events == [{
+        "event_id": "reason-1:audience",
+        "event_type": "night_thought",
+        "schema_version": 1,
+        "payload": {
+            "seat": 8,
+            "action_type": public_type,
+            "target_seat": None if action == "pass" else 4,
+            "reasoning": "公开理由",
+            "round_number": 2,
+        },
+    }]
+    assert "thought" not in events[0]["payload"]
+
+
+def test_projector_projects_wolf_chat_and_vote_without_private_sidecars() -> None:
+    events = AudienceProjector().project_events("game", [{
+        "event_id": "chat-1",
+        "event_type": "WOLF_CHAT_MESSAGE",
+        "visibility": ["PUBLIC"],
+        "payload": {
+            "seat": 3, "text": "我怀疑2号", "round_number": 1,
+            "channel": "private sidecar",
+        },
+    }, {
+        "event_id": "vote-1",
+        "event_type": "WOLF_VOTE",
+        "visibility": ["PUBLIC"],
+        "payload": {
+            "seat": 3, "target_seat": 2, "reasoning": "像神", "round_number": 1,
+            "thought": "private vote thought",
+        },
+    }])
+
+    assert [event["event_type"] for event in events] == [
+        "wolf_chat_message", "wolf_vote",
+    ]
+    assert events[0]["payload"] == {
+        "seat": 3, "text": "我怀疑2号", "round_number": 1,
+    }
+    assert events[1]["payload"] == {
+        "seat": 3, "target_seat": 2, "reasoning": "像神", "round_number": 1,
+    }
+
+
 def test_projector_applies_nested_whitelists_to_game_initialization() -> None:
     events = AudienceProjector().project_events("game", [{
         "event_id": "init",
