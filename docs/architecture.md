@@ -47,7 +47,8 @@ WolfKiller/
 │       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store
 │       ├── theme/               # 设计令牌（tokens.ts 为色值唯一来源）
 │       └── components/
-│           ├── lobby/           # 大厅（游戏列表）
+│           ├── lobby/           # 大厅（普通对局列表、扁平文件夹）
+│           ├── benchmarks/      # 评测任务列表、新建与详情（含评测对局表）
 │           ├── create/          # 创建游戏向导（人数身份 → 模型配置）
 │           ├── game/            # 游戏（座位图、时间轴、历史面板、胜利画面）
 │           ├── models/          # 模型配置页与编辑对话框
@@ -104,8 +105,13 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 ## LLM 交互层
 
-- `agents/llm_client.py` + `agents/providers/` — 提供方抽象（`base.py` / `openai_compatible.py` / `registry.py`），按 provider profile 决定 strict tool 端点、超时与重试策略
-- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）
+- `agents/llm_client.py` + `agents/providers/` — 提供方抽象，按 provider profile 决定传输协议、strict tool 端点、超时与重试策略：
+  - `registry.py`：显式 `provider_profile` 或按 Base URL 域名（`api.openai.com / api.deepseek.com / openrouter.ai / api.anthropic.com`）解析 `ProviderProfile`；未识别域名回退 `custom-openai`，Anthropic 兼容中转站需显式选 `custom-anthropic`
+  - `transports.py`：按 `api_mode` 选择传输——`openai_compatible.py`（`ChatOpenAI`，Chat Completions）或 `anthropic_messages.py`（`ChatAnthropic`，Messages API；去掉 Base URL 尾部 `/v1`、temperature 截断到 0~1、无 strict endpoint）
+  - `base.py`：`CallPurpose`、`ProviderProfile`、`call_budget()`（两种传输共用的 token/超时预算）
+  - `errors.py`：跨 openai/anthropic SDK 的错误分类元组；`llm_client.py` 再导出，`roles/base.py` 只从 `llm_client` 导入（core/roles 不得 import providers，见 `test_architecture_boundary.py`）
+  - `LLMClient` 对上层 API 不变：`_structured_response()` / `_content_text()` 同时兼容 OpenAI 字符串内容 / `finish_reason` 与 Anthropic 内容块列表（text、thinking、reasoning）/ `stop_reason`；Anthropic 强制工具绑定 `tool_choice="any"`（thinking 模式下点名工具会被 400）；`map_strict_capability_error()` 沿异常 cause 链识别 SDK 400/422；`aclose()` 同时关闭 `ChatOpenAI` 与 `ChatAnthropic` 的 SDK 客户端
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。公开规则与系统提示写明本局无警长/警徽/竞选；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
 ## 模型配置与角色目录
@@ -113,12 +119,13 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束
 - `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
 - `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 NightDirector 都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
+- `GET /api/games/{id}` 与 `GET /api/games/{id}/snapshot` 向观众暴露无密钥的 v2 `model_snapshot`（`name / model_id / provider_profile / seats`）；旧档缺少 `seats` 的条目会被滤掉而不是 500。前端座位图悬停卡按 `seats` 反查模型，不把 `model_id` 写入玩家 DTO 或隐私白名单
 - 分配只引用创建时物化的配置快照；之后编辑或删除 `models.json` 中的配置不会改变进行中的对局
 - 前端：`components/create/CreateGameWizard.tsx` 两步向导；`ModelStep.tsx` 以数量分配环境默认与已存配置；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
 
 ## 持久化与存档
 
-- **事实源**：`backend/data/wolfkiller.sqlite3` 保存对局、版本化检查点、领域事件、公开事件/快照、模型请求/尝试、运行时计时、benchmark 计划/条目/报告与派生任务。外键开启，写入由单写线程串行化；每次规则步骤以 `BEGIN IMMEDIATE` 事务同时提交检查点、事件、消费的模型请求和派生任务，`step_key` 与 digest 提供幂等冲突检测。
+- **事实源**：`backend/data/wolfkiller.sqlite3` 保存对局、版本化检查点、领域事件、公开事件/快照、模型请求/尝试、运行时计时、benchmark 计划/条目/报告、大厅扁平文件夹（`game_folders` / `game_folder_items`）与派生任务。schema 版本 2 起支持增量迁移；`game_folder_items.game_id` 不外键到 `games`，以便 JSONL 旧档也能归档。外键开启，写入由单写线程串行化；每次规则步骤以 `BEGIN IMMEDIATE` 事务同时提交检查点、事件、消费的模型请求和派生任务，`step_key` 与 digest 提供幂等冲突检测。
 - **WAL**：连接使用 SQLite WAL，`synchronous=FULL`，并设置 5 秒 busy timeout。WAL 提升并发读取能力，但 `-wal` 不是独立备份；运行时只复制主 `.sqlite3` 文件可能漏掉尚未 checkpoint 的已提交事务。
 - **兼容数据**：`GameLogger` 的 JSONL 日志、`GameManifest` 的 `games/index.json`、对话日志和逐座位记忆仍服务于旧格式/审计链。新运行时的恢复判断以 SQLite 检查点及其 SHA-256 digest 为准，不能用旧 JSON 文件覆盖数据库事实。
 - **启动恢复**：进程启动会把原先 `running` 的执行标为 `interrupted`，把 `in_flight` 模型尝试标为 `unknown`；不会假定外部模型请求未执行。只有可恢复且版本兼容的对局/benchmark 才能通过显式 resume 继续，恢复重试也受持久化次数约束。
@@ -126,16 +133,18 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 ### 公开事件同步
 
-公开视图由领域事件白名单投影，私有推理与身份信息不会进入 audience 表。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
+公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人的 `reasoning`）、狼人队内发言（`wolf_chat_message`）与狼票（`wolf_vote`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
 
 ## 前端架构
 
-- **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）
+- **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
+- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/警长/发言、所用模型名与提供方）
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
 - **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`
+- **大厅与评测隔离**：`GET /api/games` 只返回 `benchmark_run_id` 为空且 `source != benchmark` 的普通对局；评测局仍可通过 `GET /api/games/{id}` 回放。大厅用扁平文件夹（`GET/POST /api/folders`、`PUT /api/games/{id}/folder`、`POST /api/games/batch-move|batch-delete`）收纳与批量删除。评测对局只从评测页进出：`GET /api/benchmarks/{id}/games` 并上名称/阶段/胜负等投影；`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST .../games/batch-delete` 先解绑再删档；`DELETE /api/benchmarks/{id}` 取消进行中的 run 并级联删除绑定对局与报告。大厅独立 `DELETE /api/games/{id}` 对评测局仍返回 409。
 
 ## 关键设计约束
 
-- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等），有隐私扫描测试保障；角色 Hook 函数体零状态访问
+- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **测试门禁**：后端 pytest 全量 + `--cov-fail-under=100`（statement/branch）；守卫样例证明五个核心模块 blob 不变即可扩展新角色
 - **核心源码门禁**：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新 `tests/test_guard_extension.py` 中的 `CORE_BLOBS_BEFORE_GUARD`

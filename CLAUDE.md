@@ -84,15 +84,24 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 ### 角色 LLM 交互（白天路径）
 
 - `roles/base.py` 的 `BaseRole` 处理发言（tool calling 两层防线 + ≥15 字校验 + 兜底）与投票（strict tool → JSON 降级 → 安全 fallback）
-- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。公开规则与系统提示写明本局无警长/警徽/竞选；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
 ### 模型配置与角色目录
 
 - `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录（roles）、标准预设（presets）与角色人数约束（constraints）
-- `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
+- **提供方接口层 `agents/providers/`**：`registry.py` 按显式 `provider_profile` 或 Base URL 域名解析 `ProviderProfile`（`openai / deepseek / openrouter / custom-openai` 走 `api_mode=chat_completions`，`anthropic / custom-anthropic` 走 `api_mode=anthropic_messages`）；`transports.py` 按 `api_mode` 选择 `OpenAICompatibleTransport`（`ChatOpenAI`）或 `AnthropicMessagesTransport`（`ChatAnthropic`，自动去掉 Base URL 尾部 `/v1`、temperature 截断到 0~1、不使用 strict endpoint）；`base.py` 的 `call_budget()` 统一两种传输的 token/超时预算；`errors.py` 提供跨 SDK 的错误分类元组（`CAPABILITY_REJECTION_ERRORS / RATE_LIMIT_ERRORS / SERVER_ERRORS / TIMEOUT_ERRORS / TRANSIENT_PROVIDER_ERRORS`），由 `llm_client.py` 再导出供 `roles/base.py` 使用（core/roles 禁止直接 import providers，有架构边界测试）。工具定义统一用 OpenAI function 格式，`ChatAnthropic.bind_tools` 自行转换。Anthropic 强制工具用 `tool_choice="any"`（thinking 兼容；点名工具会 400），`_content_text()` 展平 text/thinking/reasoning 块供 JSON 降级与投票解析；`map_strict_capability_error()` 沿 `__cause__` 识别被 LangChain 包装的 400
+- `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点；`POST /api/models/test` 的 `provider_profile` 为可选项，显式传入时覆盖已存配置的 profile（便于保存前测试协议切换）
 - `GameService` 将环境默认与已存配置按数量独立随机落座，并为每个座位创建一个稳定客户端；角色工厂、Scheduler、NightDirector 及其重试都按行为发起座位路由
-- 前端：`components/create/CreateGameWizard.tsx` 两步向导（人数身份配置 → 多模型数量分配）；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
+- `GET /api/games/{id}` 与观众 `GET /api/games/{id}/snapshot` 返回无密钥 v2 `model_snapshot`；前端 `SeatMap` 悬停卡按座位展示所用模型（旧档无 `seats` 时显示「未知」），不把模型字段打进 `PublicPlayerState`
+- 前端：`components/create/CreateGameWizard.tsx` 两步向导（人数身份配置 → 多模型数量分配）；`components/models/ModelConfigPage.tsx` 管理页（`ModelConfigDialog.tsx` 含「接口协议」选择器，选项清单在 `providerProfiles.ts`，需与后端 `model_schemas.ProviderProfileId` 同步）；`store/modelConfigStore.ts`
+
+### 大厅与评测隔离
+
+- `GET /api/games` 只列出普通对局（`benchmark_run_id is None` 且 `source != "benchmark"`）；`GET /api/games/{id}` 仍可打开评测回放
+- 大厅扁平文件夹：`GET/POST /api/folders`、`PATCH/DELETE /api/folders/{id}`（删夹只解散成员）、`PUT /api/games/{id}/folder`、`POST /api/games/batch-move` / `batch-delete`（上限 100，逐条部分失败）
+- 评测页：`GET /api/benchmarks/{id}/games` 并上名称/阶段/胜负等投影；`DELETE /api/benchmarks/{id}/games/{game_id}` 与 `POST .../games/batch-delete` 先解绑 `benchmark_items` 再 soft-delete；`DELETE /api/benchmarks/{id}` 先 cancel 再级联删报告、条目与绑定对局
+- 大厅 `DELETE /api/games/{id}` 对评测局继续 409 `game_referenced_by_benchmark`
 
 ### 持久化与存档
 
@@ -106,6 +115,9 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 **状态管理 (`frontend/src/store/gameStore.ts`)** 是前端的核心，使用 Zustand 5。它同时处理：
 - 直播模式：通过 WebSocket 实时接收游戏事件并更新状态
 - 回放模式：从 HTTP 加载完整游戏日志，支持播放/暂停、逐帧步进、0.5x~8x 速度调节、按事件类型筛选
+- 对局级 `modelSnapshot`：从详情或观众快照加载，供座位悬停卡按座位反查模型；回放 seek 不改写
+
+**座位图 (`frontend/src/components/game/SeatMap.tsx`)** 渲染椭圆/双列座位；悬停弹出详情卡（身份、存活状态、所用模型名 / model_id / 提供方）。
 
 **WebSocket (`frontend/src/api/websocket.ts`)** 自定义 hook，建立 WebSocket 连接后将 JSON 消息路由到 Zustand store 对应的处理函数。
 
@@ -113,7 +125,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 ### 关键设计细节
 
-- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等），有隐私扫描测试保障；角色 Hook 函数体零状态访问
+- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
 - **发言顺序**：存活玩家从"最近死亡玩家的下一位存活玩家"开始按座位号依次发言（`game_engine.py` 的 `_execute_speech_round`；无死亡记录时回退为最小存活座位开局）；平票复投时排除断点续跑中已完成补充发言的座位，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
 - **测试门禁**：后端 pytest 全量 + statement/branch 100% 覆盖（`--cov-fail-under=100`），数量以实际运行为准；守卫样例证明五个核心模块 blob 不变即可扩展新角色
