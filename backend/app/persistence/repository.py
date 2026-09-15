@@ -513,15 +513,23 @@ class GameRepository:
                 "UPDATE games SET deleted_at=?,updated_at=? WHERE game_id=?",
                 (now, now, game_id),
             )
-            connection.execute(
-                "DELETE FROM game_folder_items WHERE game_id=?", (game_id,),
-            )
+            self._purge_game_payload(connection, game_id)
             connection.commit()
         except BaseException:
             connection.rollback()
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _purge_game_payload(connection: sqlite3.Connection, game_id: str) -> None:
+        connection.execute("DELETE FROM model_requests WHERE game_id=?", (game_id,))
+        for table in (
+            "audience_snapshots", "audience_events", "domain_events",
+            "game_commits", "game_checkpoints", "game_runtime_clocks",
+            "derived_jobs", "game_folder_items",
+        ):
+            connection.execute(f"DELETE FROM {table} WHERE game_id=?", (game_id,))
 
     def create_folder(self, name: str) -> dict[str, object]:
         return self._write(self._create_folder, _normalize_folder_name(name))
@@ -912,6 +920,10 @@ class GameRepository:
                 "INSERT OR REPLACE INTO audience_snapshots VALUES (?,?,?,?,?,?)",
                 (game_id, last_seq, projection_version, state_json,
                  hashlib.sha256(state_json.encode("utf-8")).hexdigest(), now),
+            )
+            connection.execute(
+                "DELETE FROM audience_snapshots WHERE game_id=? AND seq < ?",
+                (game_id, last_seq),
             )
             connection.execute(
                 "UPDATE games SET storage_revision=?,updated_at=? WHERE game_id=?",
@@ -1593,9 +1605,7 @@ class GameRepository:
                 "WHERE game_id=?",
                 (now, now, game_id),
             )
-            connection.execute(
-                "DELETE FROM game_folder_items WHERE game_id=?", (game_id,),
-            )
+            self._purge_game_payload(connection, game_id)
             connection.commit()
         except BaseException:
             connection.rollback()

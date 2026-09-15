@@ -289,3 +289,94 @@ def test_commit_atomically_consumes_model_requests_and_enqueues_derived_jobs(tmp
         }]
     finally:
         repository.close()
+
+
+def _table_count(repository: GameRepository, table: str, game_id: str) -> int:
+    with sqlite3.connect(repository.database_path) as connection:
+        return int(connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE game_id=?", (game_id,),
+        ).fetchone()[0])
+
+
+def test_commit_step_keeps_only_the_latest_audience_snapshot(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        for index in range(1, 3):
+            repository.commit_step(
+                game_id="game-1", expected_storage_revision=index - 1,
+                execution_generation=1, step_key=f"step-{index}",
+                input_digest=f"i-{index}", result_digest=f"r-{index}",
+                checkpoint={"checkpoint_version": 1, "state": {"index": index}},
+                domain_events=[{
+                    "event_id": f"domain-{index}", "event_type": "PHASE_CHANGED",
+                    "payload": {"index": index}, "schema_version": 1,
+                }],
+                audience_events=[{
+                    "event_id": f"event-{index}", "event_type": "phase",
+                    "payload": {"index": index}, "schema_version": 1,
+                }],
+                audience_state={"index": index},
+            )
+        assert _table_count(repository, "audience_snapshots", "game-1") == 1
+        assert _table_count(repository, "audience_events", "game-1") == 2
+        snapshot = repository.get_audience_snapshot("game-1")
+        assert snapshot is not None
+        assert snapshot["last_seq"] == 2
+        assert snapshot["state"] == {"index": 2}
+    finally:
+        repository.close()
+
+
+def test_mark_game_deleted_purges_durable_payload_tables(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        repository.save_runtime_clock(
+            "game-1", active_elapsed_ms=10, remaining_window_ms=None,
+            execution_generation=1,
+        )
+        repository.prepare_model_request(
+            game_id="game-1", request_id="request-1", actor_seat=2,
+            action_position="round:1:speech:seat:2", request_digest="digest",
+            provider_profile="test", model_id="model",
+        )
+        attempt = repository.start_model_attempt(
+            game_id="game-1", request_id="request-1", execution_generation=1,
+        )
+        repository.finish_model_attempt(
+            attempt["attempt_id"], status="succeeded", failure_code=None,
+            elapsed_ms=1, usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        )
+        repository.resolve_model_request(
+            "game-1", "request-1", status="resolved",
+            normalized_result={"text": "hello"},
+        )
+        repository.commit_step(
+            game_id="game-1", expected_storage_revision=0,
+            execution_generation=1, step_key="step-1",
+            input_digest="input", result_digest="result",
+            checkpoint={"checkpoint_version": 1},
+            domain_events=[{
+                "event_id": "domain-1", "event_type": "SPEECH_MADE",
+                "payload": {}, "schema_version": 1,
+            }],
+            audience_events=[{
+                "event_id": "event-1", "event_type": "speech",
+                "payload": {}, "schema_version": 1,
+            }],
+            audience_state={"phase": "speech"},
+            consumed_model_request_ids=("request-1",),
+            derived_jobs=({"job_key": "summary:game-1", "job_type": "summary"},),
+        )
+        repository.mark_game_deleted("game-1")
+        for table in (
+            "audience_snapshots", "audience_events", "domain_events",
+            "model_attempts", "model_requests", "game_commits",
+            "game_checkpoints", "game_runtime_clocks", "derived_jobs",
+        ):
+            assert _table_count(repository, table, "game-1") == 0, table
+        assert repository.get_game("game-1") is None
+        assert repository.get_game("game-1", include_deleted=True) is not None
+    finally:
+        repository.close()
