@@ -1,12 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Alert, Box, Button, Chip, CircularProgress, Container, LinearProgress,
-  Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Typography,
+  Alert, Box, Button, Chip, CircularProgress, Container, Dialog, DialogActions,
+  DialogContent, DialogTitle, LinearProgress, Paper, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
 
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import type { BenchmarkRun, BenchmarkStatus } from '../../store/types';
@@ -26,7 +27,8 @@ function progressOf(run: BenchmarkRun): number {
 
 export default function BenchmarkListPage() {
   const navigate = useNavigate();
-  const { runs, loading, error, loadRuns } = useBenchmarkStore();
+  const { runs, loading, error, actionPending, loadRuns, deleteRun } = useBenchmarkStore();
+  const [deleteTarget, setDeleteTarget] = useState<BenchmarkRun | null>(null);
 
   useEffect(() => {
     void loadRuns();
@@ -93,6 +95,14 @@ export default function BenchmarkListPage() {
                       <Button endIcon={<ChevronRightIcon />} onClick={() => navigate(`/benchmarks/${run.run_id}`)}>
                         查看
                       </Button>
+                      <Button
+                        color="error"
+                        startIcon={<DeleteOutlinedIcon />}
+                        disabled={actionPending}
+                        onClick={() => setDeleteTarget(run)}
+                      >
+                        删除
+                      </Button>
                     </TableCell>
                   </TableRow>
                 );
@@ -101,6 +111,28 @@ export default function BenchmarkListPage() {
           </Table>
         </TableContainer>
       )}
+
+      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
+        <DialogTitle>删除评测任务</DialogTitle>
+        <DialogContent>
+          <Typography>
+            确定删除「{deleteTarget?.name}」？将级联删除其全部对局与报告。
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>取消</Button>
+          <Button
+            color="error"
+            disabled={actionPending}
+            onClick={() => {
+              if (!deleteTarget) return;
+              void deleteRun(deleteTarget.run_id).then((ok) => { if (ok) setDeleteTarget(null); });
+            }}
+          >
+            删除
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }

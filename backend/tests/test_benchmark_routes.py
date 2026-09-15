@@ -13,7 +13,9 @@ from pydantic import ValidationError
 
 from app.api.benchmark_schemas import BenchmarkCreateRequest
 from app.api.routes import benchmark_routes
-from app.persistence.repository import CommitConflict, InvalidExecutionTransition
+from app.persistence.repository import (
+    CommitConflict, GameReferencedByBenchmark, InvalidExecutionTransition,
+)
 from app.services.benchmark_service import BenchmarkService
 
 
@@ -114,6 +116,22 @@ class FakeService:
     async def request_report(self, run_id):
         return self.generate_report(run_id)
 
+    async def delete_owned_game(self, run_id, game_id):
+        self.repository.items = [
+            item for item in self.repository.items if item.get("game_id") != game_id
+        ]
+
+    async def delete_owned_games(self, run_id, game_ids):
+        deleted = []
+        for game_id in game_ids:
+            await self.delete_owned_game(run_id, game_id)
+            deleted.append(game_id)
+        return {"deleted": deleted, "failed": []}
+
+    async def delete_run(self, run_id):
+        self.repository.runs.pop(run_id, None)
+        self.repository.items = []
+
 
 @pytest.fixture
 def api(monkeypatch):
@@ -121,6 +139,7 @@ def api(monkeypatch):
     service = FakeService(repository)
     monkeypatch.setattr(benchmark_routes, "get_repository", lambda: repository)
     monkeypatch.setattr(benchmark_routes, "get_benchmark_service", lambda: service)
+    monkeypatch.setattr(benchmark_routes, "get_game_service", lambda: None)
     app = FastAPI()
     app.include_router(benchmark_routes.router)
     return TestClient(app), repository, service
@@ -524,3 +543,111 @@ def test_rebuild_report_maps_generation_errors(api, failure, status, code):
     response = client.post("/api/benchmarks/run-1/report/rebuild")
     assert response.status_code == status
     assert response.json()["detail"]["code"] == code
+
+
+def test_get_game_service_reads_main(monkeypatch):
+    service = object()
+    monkeypatch.setitem(sys.modules, "app.main", SimpleNamespace(game_service=service))
+    assert benchmark_routes.get_game_service() is service
+
+
+def test_enrich_benchmark_game_projects_state_and_handles_missing(monkeypatch):
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=2,
+        players={1: object(), 2: object()},
+        alive_players=lambda: [1],
+        win_result={"winning_camp": "good"},
+    )
+    service = SimpleNamespace(
+        get_game_state=lambda gid: state if gid == "game-0" else None,
+        get_display_name=lambda gid: "评测局",
+        get_execution_info=lambda gid: (_ for _ in ()).throw(KeyError(gid))
+        if gid == "game-0" else {"execution_status": "failed"},
+    )
+    monkeypatch.setattr(benchmark_routes, "get_game_service", lambda: service)
+    filled = benchmark_routes._enrich_benchmark_game(_item(0, "completed"))
+    assert filled["name"] == "评测局"
+    assert filled["phase"] == "night"
+    assert filled["player_count"] == 2
+    assert filled["alive_count"] == 1
+    assert filled["winner"] == "good"
+    assert filled["execution_status"] is None
+    pending = benchmark_routes._enrich_benchmark_game(_item(1))
+    assert pending["phase"] is None
+    missing_state = benchmark_routes._enrich_benchmark_game(_item(2, "failed"))
+    assert missing_state["name"] == "评测局"
+    assert missing_state["execution_status"] == "failed"
+    monkeypatch.setattr(benchmark_routes, "get_game_service", lambda: None)
+    assert benchmark_routes._enrich_benchmark_game(_item(0, "completed"))["name"] is None
+    opaque = SimpleNamespace(
+        phase=SimpleNamespace(value="dawn"),
+        round_number=1,
+        players={},
+        alive_players=None,
+        win_result=None,
+    )
+    partial = SimpleNamespace(
+        get_game_state=lambda _gid: opaque,
+        get_execution_info=lambda _gid: "running",
+    )
+    monkeypatch.setattr(benchmark_routes, "get_game_service", lambda: partial)
+    empty = benchmark_routes._enrich_benchmark_game(_item(0, "completed"))
+    assert empty["winner"] is None
+    assert empty["alive_count"] is None
+    assert empty["execution_status"] is None
+    assert empty["name"] is None
+
+
+def test_delete_benchmark_game_and_run_routes(api, monkeypatch):
+    client, repository, service = api
+    assert client.delete("/api/benchmarks/run-1/games/game-0").status_code == 204
+    batch = client.post(
+        "/api/benchmarks/run-1/games/batch-delete",
+        json={"game_ids": ["game-1"]},
+    )
+    assert batch.status_code == 200
+    assert batch.json()["deleted"] == ["game-1"]
+
+    async def missing(*_args, **_kwargs):
+        raise KeyError("gone")
+
+    service.delete_owned_game = missing
+    gone = client.delete("/api/benchmarks/run-1/games/game-0")
+    assert gone.status_code == 404
+
+    async def owned(*_args, **_kwargs):
+        raise GameReferencedByBenchmark("run-2")
+
+    service.delete_owned_game = owned
+    conflict = client.delete("/api/benchmarks/run-1/games/game-0")
+    assert conflict.status_code == 409
+
+    async def unavailable(*_args, **_kwargs):
+        raise RuntimeError("offline")
+
+    service.delete_owned_game = unavailable
+    assert client.delete("/api/benchmarks/run-1/games/game-0").status_code == 503
+
+    async def busy(*_args, **_kwargs):
+        raise OSError("busy")
+
+    service.delete_owned_game = busy
+    assert client.delete("/api/benchmarks/run-1/games/game-0").status_code == 500
+
+    service.delete_run = missing
+    assert client.delete("/api/benchmarks/run-1").status_code == 404
+    service.delete_run = unavailable
+    assert client.delete("/api/benchmarks/run-1").status_code == 503
+
+    async def invalid(*_args, **_kwargs):
+        raise InvalidExecutionTransition("busy")
+
+    service.delete_run = invalid
+    assert client.delete("/api/benchmarks/run-1").status_code == 409
+
+    async def succeed(*_args, **_kwargs):
+        repository.runs.pop("run-1", None)
+
+    service.delete_run = succeed
+    assert client.delete("/api/benchmarks/run-1").status_code == 204

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Container,
-  FormControl, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack,
+  Alert, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress, Container,
+  Dialog, DialogActions, DialogContent, DialogTitle, FormControl, InputLabel,
+  LinearProgress, MenuItem, Paper, Select, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
+import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 
@@ -16,6 +18,13 @@ import { benchmarkExportUrl } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import type { BenchmarkReport, BenchmarkStatus } from '../../store/types';
 
+const PHASE_LABELS: Record<string, string> = {
+  waiting: '等待中', role_deal: '分配角色', night: '黑夜', dawn: '天亮',
+  last_words: '遗言', speech: '发言', vote_casting: '投票',
+  vote_resolution: '公布结果', game_over: '已结束', error: '异常终止',
+};
+
+const WINNER_LABELS: Record<string, string> = { good: '好人胜', werewolf: '狼人胜' };
 const TERMINAL = new Set<BenchmarkStatus>(['completed', 'failed', 'cancelled']);
 
 function record(value: unknown): Record<string, unknown> {
@@ -82,11 +91,15 @@ export default function BenchmarkDetailPage() {
   const navigate = useNavigate();
   const {
     current, items, report, loading, actionPending, error,
-    loadDetail, control, rebuildReport, clear,
+    loadDetail, control, rebuildReport, deleteRun, deleteGame, batchDeleteGames, clear,
   } = useBenchmarkStore();
   const [dimension, setDimension] = useState<'all' | 'role' | 'camp'>('all');
   const [sort, setSort] = useState<'samples' | 'value'>('value');
   const [descending, setDescending] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteGameId, setDeleteGameId] = useState<string | null>(null);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [deleteRunOpen, setDeleteRunOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return undefined;
@@ -110,7 +123,9 @@ export default function BenchmarkDetailPage() {
       const rightValue = sort === 'samples' ? right.samples : right.value ?? -1;
       return (leftValue - rightValue) * (descending ? -1 : 1);
     }), [descending, dimension, report, sort]);
-  const failedItems = items.filter((item) => item.status === 'failed' || item.terminal_reason);
+  const deletableIds = items
+    .map((item) => item.game_id)
+    .filter((gameId): gameId is string => Boolean(gameId));
 
   const changeSort = (next: 'samples' | 'value') => {
     if (sort === next) setDescending((value) => !value);
@@ -150,6 +165,7 @@ export default function BenchmarkDetailPage() {
           {status === 'paused' && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'resume')}>继续</Button>}
           {status === 'interrupted' && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'start')}>恢复执行</Button>}
           {!TERMINAL.has(status) && <Button color="error" startIcon={<CancelOutlinedIcon />} disabled={actionPending} onClick={() => void control(id, 'cancel')}>取消</Button>}
+          <Button color="error" variant="outlined" startIcon={<DeleteOutlinedIcon />} disabled={actionPending} onClick={() => setDeleteRunOpen(true)}>删除本次评测</Button>
         </Stack>
       </Box>
       {error && <Alert severity="warning" sx={{ mt: 2 }}>{error}</Alert>}
@@ -191,15 +207,106 @@ export default function BenchmarkDetailPage() {
         )}
       </Paper>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3 }}>
-        <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Typography component="h2" variant="h6">失败对局</Typography>
-          {failedItems.length === 0 ? <Typography color="text.secondary" sx={{ mt: 2 }}>暂无失败对局。</Typography> : (
-            <Stack spacing={1} sx={{ mt: 2 }}>{failedItems.map((item) => <Box key={item.item_index} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}><Typography sx={{ fontWeight: 700 }}>排程 #{item.item_index + 1}</Typography><Typography variant="body2" color="text.secondary">{item.terminal_reason ?? item.status}</Typography>{item.game_id && <Button component={Link} to={`/game/${item.game_id}${item.event_seq ? `?seq=${item.event_seq}` : ''}`} size="small" sx={{ mt: 1 }}>查看回放 · {item.event_seq ? `事件 ${item.event_seq}` : '阶段定位'}</Button>}</Box>)}</Stack>
+      <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Box>
+            <Typography component="h2" variant="h6">本次对局</Typography>
+            <Typography variant="body2" color="text.secondary">评测对局只在此页管理，可回放或删除。</Typography>
+          </Box>
+          {selectedIds.length > 0 && (
+            <Stack direction="row" spacing={1}>
+              <Typography variant="body2" sx={{ alignSelf: 'center' }}>已选 {selectedIds.length} 局</Typography>
+              <Button color="error" disabled={actionPending} onClick={() => setBatchDeleteOpen(true)}>批量删除</Button>
+              <Button onClick={() => setSelectedIds([])}>取消选择</Button>
+            </Stack>
           )}
-        </Paper>
+        </Box>
+        {items.length === 0 ? <Typography color="text.secondary">暂无排程对局。</Typography> : (
+          <TableContainer sx={{ overflowX: 'auto' }}>
+            <Table sx={{ minWidth: 760 }} aria-label="评测对局表">
+              <TableHead>
+                <TableRow>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      slotProps={{ input: { 'aria-label': '全选对局' } }}
+                      checked={deletableIds.length > 0 && deletableIds.every((gameId) => selectedIds.includes(gameId))}
+                      indeterminate={selectedIds.length > 0 && selectedIds.length < deletableIds.length}
+                      onChange={() => setSelectedIds((current) => (
+                        current.length === deletableIds.length ? [] : [...deletableIds]
+                      ))}
+                    />
+                  </TableCell>
+                  <TableCell>对局</TableCell>
+                  <TableCell>阶段</TableCell>
+                  <TableCell>状态</TableCell>
+                  <TableCell>胜负</TableCell>
+                  <TableCell align="right">操作</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {items.map((item) => {
+                  const gameId = item.game_id;
+                  const selected = Boolean(gameId && selectedIds.includes(gameId));
+                  const replayLabel = item.event_seq
+                    ? `查看回放 · 事件 ${item.event_seq}`
+                    : '查看回放';
+                  return (
+                    <TableRow key={item.item_index} selected={selected}>
+                      <TableCell padding="checkbox">
+                        {gameId && (
+                          <Checkbox
+                            slotProps={{ input: { 'aria-label': `选择 ${item.name ?? gameId}` } }}
+                            checked={selected}
+                            onChange={() => setSelectedIds((current) => (
+                              current.includes(gameId)
+                                ? current.filter((id) => id !== gameId)
+                                : [...current, gameId]
+                            ))}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Typography sx={{ fontWeight: 700 }}>{item.name ?? `排程 #${item.item_index + 1}`}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {gameId ?? '尚未开局'}
+                          {item.round_number != null ? ` · 第 ${item.round_number} 轮` : ''}
+                          {item.alive_count != null && item.player_count != null ? ` · ${item.alive_count}/${item.player_count}` : ''}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{item.phase ? (PHASE_LABELS[item.phase] ?? item.phase) : '—'}</TableCell>
+                      <TableCell>{item.terminal_reason ?? item.status}{item.execution_status ? ` · ${item.execution_status}` : ''}</TableCell>
+                      <TableCell>{item.winner ? (WINNER_LABELS[item.winner] ?? item.winner) : '—'}</TableCell>
+                      <TableCell align="right">
+                        {gameId && (
+                          <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
+                            <Button
+                              component={Link}
+                              to={`/game/${gameId}${item.event_seq ? `?seq=${item.event_seq}` : ''}`}
+                              size="small"
+                            >
+                              {replayLabel}
+                            </Button>
+                            <Button
+                              color="error"
+                              size="small"
+                              disabled={actionPending}
+                              onClick={() => setDeleteGameId(gameId)}
+                            >
+                              删除
+                            </Button>
+                          </Stack>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
 
-        <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+      <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
           <Typography component="h2" variant="h6">诊断与报告</Typography>
           <Stack spacing={1} sx={{ mt: 2 }}>
             <Typography>指标版本：{report?.metric_version ?? '等待生成'}</Typography>
@@ -214,7 +321,70 @@ export default function BenchmarkDetailPage() {
             {(['json', 'csv', 'markdown'] as const).map((format) => <Button key={format} component="a" href={benchmarkExportUrl(id, format)} startIcon={<DownloadIcon />} variant="outlined">{format.toUpperCase()}</Button>)}
           </Stack>
         </Paper>
-      </Box>
+
+      <Dialog open={deleteGameId !== null} onClose={() => setDeleteGameId(null)}>
+        <DialogTitle>删除评测对局</DialogTitle>
+        <DialogContent>
+          <Typography>确定删除该评测对局？此操作不可恢复。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteGameId(null)}>取消</Button>
+          <Button
+            color="error"
+            disabled={actionPending}
+            onClick={() => {
+              if (!deleteGameId) return;
+              const gameId = deleteGameId;
+              void deleteGame(id, gameId).then((ok) => { if (ok) setDeleteGameId(null); });
+            }}
+          >
+            删除
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={batchDeleteOpen} onClose={() => setBatchDeleteOpen(false)}>
+        <DialogTitle>批量删除评测对局</DialogTitle>
+        <DialogContent>
+          <Typography>确定删除已选的 {selectedIds.length} 局？此操作不可恢复。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBatchDeleteOpen(false)}>取消</Button>
+          <Button
+            color="error"
+            disabled={actionPending}
+            onClick={() => {
+              void batchDeleteGames(id, selectedIds).then((result) => {
+                if (result && result.failed.length === 0) {
+                  setBatchDeleteOpen(false);
+                  setSelectedIds([]);
+                }
+              });
+            }}
+          >
+            删除
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deleteRunOpen} onClose={() => setDeleteRunOpen(false)}>
+        <DialogTitle>删除本次评测</DialogTitle>
+        <DialogContent>
+          <Typography>将级联删除本次评测的全部对局与报告，且不可恢复。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteRunOpen(false)}>取消</Button>
+          <Button
+            color="error"
+            disabled={actionPending}
+            onClick={() => {
+              void deleteRun(id).then((ok) => { if (ok) navigate('/benchmarks'); });
+            }}
+          >
+            删除本次评测
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }

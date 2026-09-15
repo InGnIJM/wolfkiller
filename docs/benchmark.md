@@ -64,7 +64,7 @@ python scripts/run_benchmark.py export <run-id> --format markdown -o report.md
 - 状态与结果保存在服务数据库中；文件输出必须通过 export 接口显式生成，不再由 CLI 直接遍历 `data/games` 拼报告。
 - 胜率类指标建议每配置至少 30–100 局；10–20 局只能看趋势。
 
-REST 资源为：`POST/GET /api/benchmarks`、`GET /api/benchmarks/{id}`、`POST /api/benchmarks/{id}/start|pause|resume|cancel`、`GET /api/benchmarks/{id}/games`、`GET /api/benchmarks/{id}/report`、`POST /api/benchmarks/{id}/report/rebuild`、`GET /api/benchmarks/{id}/export?format=json|csv|markdown`。只有服务端执行器能改变运行状态；CLI 不直接打开 SQLite。
+REST 资源为：`POST/GET /api/benchmarks`、`GET /api/benchmarks/{id}`、`DELETE /api/benchmarks/{id}`（级联删除该次评测及其绑定对局）、`POST /api/benchmarks/{id}/start|pause|resume|cancel`、`GET /api/benchmarks/{id}/games`（排程项并上对局名称/阶段/人数/胜负/执行状态）、`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST /api/benchmarks/{id}/games/batch-delete`、`GET /api/benchmarks/{id}/report`、`POST /api/benchmarks/{id}/report/rebuild`、`GET /api/benchmarks/{id}/export?format=json|csv|markdown`。只有服务端执行器能改变运行状态；CLI 不直接打开 SQLite。评测对局不出现在大厅 `GET /api/games` 列表中，只能从评测详情页回放或删除；大厅独立删除评测局仍返回 409。删局后服务会作废并重建报告，避免指标仍含已删对局。
 
 ## 回归层：引擎性能基准
 

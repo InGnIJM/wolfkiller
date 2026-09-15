@@ -17,7 +17,10 @@ from app.api.benchmark_schemas import (
     BenchmarkListResponse,
     BenchmarkRunResponse,
 )
-from app.persistence.repository import CommitConflict, InvalidExecutionTransition
+from app.api.schemas import BatchDeleteResponse, BatchGameIdsRequest
+from app.persistence.repository import (
+    CommitConflict, GameReferencedByBenchmark, InvalidExecutionTransition,
+)
 
 
 router = APIRouter(prefix="/api/benchmarks", tags=["benchmarks"])
@@ -32,6 +35,50 @@ def get_benchmark_service():
 def get_repository():
     from app.main import repository
     return repository
+
+
+def get_game_service():
+    from app.main import game_service
+    return game_service
+
+
+def _enrich_benchmark_game(item: Mapping[str, object]) -> dict[str, object]:
+    payload = dict(item)
+    game_id = payload.get("game_id")
+    projection = {
+        "name": None, "phase": None, "round_number": None,
+        "player_count": None, "alive_count": None, "winner": None,
+        "execution_status": None,
+    }
+    if isinstance(game_id, str) and game_id:
+        service = get_game_service()
+        getter = getattr(service, "get_game_state", None)
+        state = getter(game_id) if callable(getter) else None
+        if state is not None:
+            win = state.win_result.get("winning_camp") if state.win_result else None
+            name_getter = getattr(service, "get_display_name", None)
+            projection.update({
+                "name": name_getter(game_id) if callable(name_getter) else None,
+                "phase": getattr(getattr(state, "phase", None), "value", None),
+                "round_number": getattr(state, "round_number", None),
+                "player_count": len(getattr(state, "players", {}) or {}),
+                "alive_count": len(state.alive_players()) if callable(getattr(state, "alive_players", None)) else None,
+                "winner": win,
+            })
+        info_getter = getattr(service, "get_execution_info", None)
+        if callable(info_getter):
+            try:
+                info = info_getter(game_id)
+            except KeyError:
+                info = None
+            if isinstance(info, Mapping):
+                projection["execution_status"] = info.get("execution_status")
+        if projection["name"] is None:
+            name_getter = getattr(service, "get_display_name", None)
+            if callable(name_getter):
+                projection["name"] = name_getter(game_id)
+    payload.update(projection)
+    return payload
 
 
 def _error(status_code: int, code: str, message: str, **details: object) -> HTTPException:
@@ -152,9 +199,47 @@ async def list_benchmark_games(
     if status is not None:
         items = [item for item in items if item.get("status") == status]
     return BenchmarkGamesResponse(
-        games=items[offset:offset + limit],
+        games=[_enrich_benchmark_game(item) for item in items[offset:offset + limit]],
         offset=offset, limit=limit, total=len(items),
     )
+
+
+@router.delete("/{run_id}/games/{game_id}", status_code=204)
+async def delete_benchmark_game(run_id: str, game_id: str):
+    _require_run(run_id)
+    try:
+        await get_benchmark_service().delete_owned_game(run_id, game_id)
+    except KeyError:
+        raise _error(404, "benchmark_game_not_found", "Benchmark game not found") from None
+    except GameReferencedByBenchmark as error:
+        raise _error(
+            409, "game_referenced_by_benchmark", str(error),
+            benchmark_run_id=str(error),
+        ) from None
+    except RuntimeError as error:
+        raise _error(503, "benchmark_delete_unavailable", str(error)) from None
+    except OSError as error:
+        raise _error(500, "archive_busy", str(error)) from None
+
+
+@router.post("/{run_id}/games/batch-delete", response_model=BatchDeleteResponse)
+async def batch_delete_benchmark_games(run_id: str, req: BatchGameIdsRequest):
+    _require_run(run_id)
+    result = await get_benchmark_service().delete_owned_games(run_id, req.game_ids)
+    return BatchDeleteResponse.model_validate(result)
+
+
+@router.delete("/{run_id}", status_code=204)
+async def delete_benchmark(run_id: str):
+    _require_run(run_id)
+    try:
+        await get_benchmark_service().delete_run(run_id)
+    except KeyError:
+        raise _error(404, "benchmark_not_found", "Benchmark run not found") from None
+    except InvalidExecutionTransition as error:
+        raise _error(409, "invalid_benchmark_transition", str(error)) from None
+    except RuntimeError as error:
+        raise _error(503, "benchmark_delete_unavailable", str(error)) from None
 
 
 async def _generate_report(run_id: str) -> dict[str, object]:

@@ -648,3 +648,63 @@ async def test_aclose_interrupts_running_runs_and_cancels_all_workers() -> None:
 
     empty = BenchmarkService(repository, item_executor=AsyncMock())
     await empty.aclose()
+
+
+@pytest.mark.asyncio
+async def test_delete_owned_games_collects_partial_failures_and_deletes_run() -> None:
+    from app.persistence.repository import GameReferencedByBenchmark
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"status": "completed", "run_id": "run"}
+    repository.list_benchmark_items.return_value = [
+        {"game_id": "ok"}, {"game_id": None}, {"game_id": "gone"},
+    ]
+
+    async def deleter(run_id, game_id):
+        if game_id == "gone":
+            raise KeyError(game_id)
+        if game_id == "owned":
+            raise GameReferencedByBenchmark("other")
+        if game_id == "busy":
+            raise OSError("busy")
+        if game_id == "offline":
+            raise RuntimeError("offline")
+
+    missing = BenchmarkService(repository)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await missing.delete_owned_game("run", "ok")
+    repository.get_benchmark_run.return_value = None
+    service = BenchmarkService(repository, owned_game_deleter=deleter)
+    with pytest.raises(KeyError):
+        await service.delete_owned_game("missing", "ok")
+    repository.get_benchmark_run.return_value = {"status": "completed", "run_id": "run"}
+    result = await service.delete_owned_games(
+        "run", ["ok", "ok", "gone", "owned", "busy", "offline"],
+    )
+    assert result["deleted"] == ["ok"]
+    assert {item["code"] for item in result["failed"]} == {
+        "not_found", "game_referenced_by_benchmark", "archive_busy", "unavailable",
+    }
+    await service.delete_run("run")
+    repository.delete_benchmark_run.assert_called_once_with("run")
+    repository.get_benchmark_run.return_value = None
+    with pytest.raises(KeyError):
+        await service.delete_run("missing")
+
+
+@pytest.mark.asyncio
+async def test_delete_run_cancels_active_benchmark_before_removing_games() -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"status": "running", "run_id": "run"}
+    repository.list_benchmark_items.return_value = [{"game_id": "g1", "status": "running"}]
+    repository.transition_benchmark.return_value = {"status": "cancelled", "run_id": "run"}
+    deleted: list[str] = []
+
+    async def deleter(run_id, game_id):
+        deleted.append(game_id)
+
+    service = BenchmarkService(repository, owned_game_deleter=deleter)
+    await service.delete_run("run")
+    repository.transition_benchmark.assert_called_once()
+    assert deleted == ["g1"]
+    repository.delete_benchmark_run.assert_called_once_with("run")

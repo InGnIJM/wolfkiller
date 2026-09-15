@@ -151,6 +151,13 @@ class BenchmarkGameResponse(BaseModel):
     terminal_reason: str | None
     created_at: str
     updated_at: str
+    name: str | None = None
+    phase: str | None = None
+    round_number: int | None = None
+    player_count: int | None = None
+    alive_count: int | None = None
+    winner: str | None = None
+    execution_status: str | None = None
 
 
 class BenchmarkGamesResponse(BaseModel):

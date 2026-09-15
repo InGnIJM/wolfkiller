@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 import * as api from '../api/client';
 import type {
-  BenchmarkCreateInput, BenchmarkItem, BenchmarkReport, BenchmarkRun,
+  BatchDeleteResult, BenchmarkCreateInput, BenchmarkItem, BenchmarkReport, BenchmarkRun,
 } from './types';
 
 interface BenchmarkStore {
@@ -21,6 +21,9 @@ interface BenchmarkStore {
     action: 'start' | 'pause' | 'resume' | 'cancel',
   ) => Promise<BenchmarkRun | null>;
   rebuildReport: (runId: string) => Promise<void>;
+  deleteRun: (runId: string) => Promise<boolean>;
+  deleteGame: (runId: string, gameId: string) => Promise<boolean>;
+  batchDeleteGames: (runId: string, gameIds: string[]) => Promise<BatchDeleteResult | null>;
   clear: () => void;
 }
 
@@ -152,6 +155,72 @@ export const useBenchmarkStore = create<BenchmarkStore>((set, get) => ({
     } catch (error) {
       if (!isCurrentAction(view, version)) return;
       set({ error: messageOf(error), actionPending: false, loading: false });
+    }
+  },
+
+  deleteRun: async (runId) => {
+    const view = viewVersion;
+    const version = ++actionVersion;
+    detailVersion += 1;
+    set({ actionPending: true, error: null });
+    try {
+      await api.deleteBenchmark(runId);
+      if (!isCurrentAction(view, version)) return true;
+      const current = get().current;
+      set({
+        runs: get().runs.filter((item) => item.run_id !== runId),
+        current: current?.run_id === runId ? null : current,
+        items: current?.run_id === runId ? [] : get().items,
+        report: current?.run_id === runId ? null : get().report,
+        actionPending: false,
+        loading: false,
+      });
+      return true;
+    } catch (error) {
+      if (!isCurrentAction(view, version)) return false;
+      set({ error: messageOf(error), actionPending: false, loading: false });
+      return false;
+    }
+  },
+
+  deleteGame: async (runId, gameId) => {
+    const view = viewVersion;
+    const version = ++actionVersion;
+    detailVersion += 1;
+    set({ actionPending: true, error: null });
+    try {
+      await api.deleteBenchmarkGame(runId, gameId);
+      if (!isCurrentAction(view, version)) return true;
+      set({ actionPending: false });
+      await get().loadDetail(runId);
+      return true;
+    } catch (error) {
+      if (!isCurrentAction(view, version)) return false;
+      set({ error: messageOf(error), actionPending: false, loading: false });
+      return false;
+    }
+  },
+
+  batchDeleteGames: async (runId, gameIds) => {
+    const view = viewVersion;
+    const version = ++actionVersion;
+    detailVersion += 1;
+    set({ actionPending: true, error: null });
+    try {
+      const result = await api.batchDeleteBenchmarkGames(runId, gameIds);
+      if (!isCurrentAction(view, version)) return result;
+      set({ actionPending: false });
+      await get().loadDetail(runId);
+      set({
+        error: result.failed.length > 0
+          ? result.failed.map((item) => item.message).join('；')
+          : get().error,
+      });
+      return result;
+    } catch (error) {
+      if (!isCurrentAction(view, version)) return null;
+      set({ error: messageOf(error), actionPending: false, loading: false });
+      return null;
     }
   },
 

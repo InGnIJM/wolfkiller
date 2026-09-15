@@ -198,6 +198,33 @@ test('opens the failed game at its linked audience event', async ({ page }) => {
   await expect(page.getByText('回到直播')).toBeVisible();
 });
 
+test('keeps benchmark games off the lobby and opens replay from the run page', async ({ page }) => {
+  const state = createMockState();
+  const lobby = createLiveGame('lobby-game');
+  lobby.name = '大厅对局';
+  const hidden = createLiveGame('bench-hidden');
+  hidden.name = '评测隐藏局';
+  hidden.source = 'benchmark';
+  state.games = [lobby, hidden];
+  state.benchmark = completedBenchmark();
+  state.benchmarkItems = [{
+    run_id: state.benchmark.run_id, item_index: 0, scenario_id: 'four-player-e2e',
+    pair_id: null, block_index: 0, assignment: {}, game_id: 'bench-hidden',
+    status: 'completed', terminal_reason: null, name: '评测隐藏局',
+    phase: 'speech', round_number: 1, player_count: 4, alive_count: 4,
+  }];
+  await installMockApi(page, state);
+
+  await page.goto('/');
+  await expect(page.getByText('大厅对局')).toBeVisible();
+  await expect(page.getByText('评测隐藏局')).toHaveCount(0);
+
+  await page.goto(`/benchmarks/${state.benchmark.run_id}`);
+  await page.getByRole('link', { name: '查看回放' }).click();
+  await expect(page).toHaveURL(/\/game\/bench-hidden/);
+  await expect(page.getByText('第一条公开发言')).toBeVisible();
+});
+
 test('opens a completed legacy archive through detail and full-log compatibility APIs', async ({ page }) => {
   const state = createMockState();
   const game = createLiveGame('legacy-completed');

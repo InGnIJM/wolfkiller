@@ -19,6 +19,9 @@ vi.mock('../../api/client', () => ({
   createBenchmark: vi.fn(),
   controlBenchmark: vi.fn(),
   rebuildBenchmarkReport: vi.fn(),
+  deleteBenchmark: vi.fn(),
+  deleteBenchmarkGame: vi.fn(),
+  batchDeleteBenchmarkGames: vi.fn(),
 }));
 
 const run: BenchmarkRun = {
@@ -260,4 +263,96 @@ describe('benchmark store', () => {
       actionPending: false, error: null,
     });
   });
+
+  it('deletes runs and games then reloads remaining detail', async () => {
+    const other = { ...run, run_id: 'run-2' };
+    useBenchmarkStore.setState({
+      current: other, runs: [run, other], items: [{
+        run_id: 'run-2', item_index: 0, scenario_id: 's', pair_id: null,
+        block_index: 0, assignment: {}, game_id: null, status: 'pending', terminal_reason: null,
+      }], report: { status: 'ready' },
+    });
+    vi.mocked(api.deleteBenchmark).mockResolvedValue(undefined);
+    expect(await useBenchmarkStore.getState().deleteRun(run.run_id)).toBe(true);
+    expect(useBenchmarkStore.getState().current).toEqual(other);
+    expect(useBenchmarkStore.getState().report).toEqual({ status: 'ready' });
+    expect(useBenchmarkStore.getState().runs).toEqual([other]);
+
+    expect(await useBenchmarkStore.getState().deleteRun(other.run_id)).toBe(true);
+    expect(useBenchmarkStore.getState().current).toBeNull();
+    expect(useBenchmarkStore.getState().runs).toEqual([]);
+
+    vi.mocked(api.deleteBenchmark).mockRejectedValueOnce(new Error('run busy'));
+    expect(await useBenchmarkStore.getState().deleteRun(run.run_id)).toBe(false);
+    expect(useBenchmarkStore.getState().error).toBe('run busy');
+
+    vi.mocked(api.fetchBenchmark).mockResolvedValue(run);
+    vi.mocked(api.fetchBenchmarkGames).mockResolvedValue({ games: [] });
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({ status: 'ready' });
+    vi.mocked(api.deleteBenchmarkGame).mockResolvedValue(undefined);
+    expect(await useBenchmarkStore.getState().deleteGame(run.run_id, 'g1')).toBe(true);
+    expect(api.fetchBenchmark).toHaveBeenCalled();
+
+    vi.mocked(api.deleteBenchmarkGame).mockRejectedValueOnce(new Error('game busy'));
+    expect(await useBenchmarkStore.getState().deleteGame(run.run_id, 'g1')).toBe(false);
+    expect(useBenchmarkStore.getState().error).toBe('game busy');
+
+    vi.mocked(api.batchDeleteBenchmarkGames).mockResolvedValueOnce({
+      deleted: ['g1'], failed: [{ game_id: 'g2', code: 'not_found', message: 'missing' }],
+    });
+    const partial = await useBenchmarkStore.getState().batchDeleteGames(run.run_id, ['g1', 'g2']);
+    expect(partial?.failed).toHaveLength(1);
+    expect(useBenchmarkStore.getState().error).toBe('missing');
+
+    vi.mocked(api.batchDeleteBenchmarkGames).mockResolvedValueOnce({ deleted: ['g1'], failed: [] });
+    const cleared = await useBenchmarkStore.getState().batchDeleteGames(run.run_id, ['g1']);
+    expect(cleared?.failed).toEqual([]);
+    expect(useBenchmarkStore.getState().error).toBeNull();
+
+    vi.mocked(api.batchDeleteBenchmarkGames).mockRejectedValueOnce('offline');
+    expect(await useBenchmarkStore.getState().batchDeleteGames(run.run_id, ['g1'])).toBeNull();
+    expect(useBenchmarkStore.getState().error).toBe('offline');
+  });
+
+  it.each(['deleteRun', 'deleteGame', 'batchDelete'] as const)(
+    'ignores a stale %s success after clearing the view',
+    async (operation) => {
+      const pending = deferred<void>();
+      const batch = deferred<{ deleted: string[]; failed: [] }>();
+      vi.mocked(api.deleteBenchmark).mockReturnValueOnce(pending.promise);
+      vi.mocked(api.deleteBenchmarkGame).mockReturnValueOnce(pending.promise);
+      vi.mocked(api.batchDeleteBenchmarkGames).mockReturnValueOnce(batch.promise);
+      const request = operation === 'deleteRun'
+        ? useBenchmarkStore.getState().deleteRun('run-1')
+        : operation === 'deleteGame'
+          ? useBenchmarkStore.getState().deleteGame('run-1', 'g1')
+          : useBenchmarkStore.getState().batchDeleteGames('run-1', ['g1']);
+      useBenchmarkStore.getState().clear();
+      if (operation === 'batchDelete') batch.resolve({ deleted: ['g1'], failed: [] });
+      else pending.resolve(undefined);
+      await request;
+      expect(useBenchmarkStore.getState()).toMatchObject({ current: null, actionPending: false, error: null });
+    },
+  );
+
+  it.each(['deleteRun', 'deleteGame', 'batchDelete'] as const)(
+    'ignores a stale %s failure after clearing the view',
+    async (operation) => {
+      const pending = deferred<void>();
+      const batch = deferred<{ deleted: string[]; failed: [] }>();
+      vi.mocked(api.deleteBenchmark).mockReturnValueOnce(pending.promise);
+      vi.mocked(api.deleteBenchmarkGame).mockReturnValueOnce(pending.promise);
+      vi.mocked(api.batchDeleteBenchmarkGames).mockReturnValueOnce(batch.promise);
+      const request = operation === 'deleteRun'
+        ? useBenchmarkStore.getState().deleteRun('run-1')
+        : operation === 'deleteGame'
+          ? useBenchmarkStore.getState().deleteGame('run-1', 'g1')
+          : useBenchmarkStore.getState().batchDeleteGames('run-1', ['g1']);
+      useBenchmarkStore.getState().clear();
+      if (operation === 'batchDelete') batch.reject(new Error('old'));
+      else pending.reject(new Error('old'));
+      await request;
+      expect(useBenchmarkStore.getState()).toMatchObject({ error: null, actionPending: false });
+    },
+  );
 });

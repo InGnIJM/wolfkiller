@@ -79,6 +79,41 @@ def test_benchmark_game_cannot_be_deleted_independently(repository):
     assert repository.get_game("game")["deleted_at"] is None
 
 
+def test_release_benchmark_game_unbinds_item_and_soft_deletes(repository):
+    _create_run(repository)
+    repository.transition_benchmark("run", expected=("draft",), target="running")
+    repository.claim_next_benchmark_item("run")
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="failed",
+        source="benchmark", model_snapshot=[], benchmark_run_id="run",
+        benchmark_item_index=0,
+    )
+    repository.create_folder("箱")
+    folder = repository.list_folders()[0]
+    repository.set_game_folder("game", folder["folder_id"])
+    repository.release_benchmark_game("run", "game")
+    assert repository.get_game("game") is None
+    deleted = repository.get_game("game", include_deleted=True)
+    assert deleted["deleted_at"] is not None
+    assert deleted["benchmark_run_id"] is None
+    assert repository.get_benchmark_item("run", 0)["game_id"] is None
+    assert repository.get_benchmark_item("run", 0)["terminal_reason"] == "game_deleted"
+    assert repository.get_game_folder("game") is None
+    with pytest.raises(KeyError):
+        repository.release_benchmark_game("run", "game")
+    repository.create_game(
+        game_id="other", name="other", config={}, execution_status="failed",
+        source="native", model_snapshot=[],
+    )
+    with pytest.raises(GameReferencedByBenchmark):
+        repository.release_benchmark_game("run", "other")
+    with pytest.raises(KeyError):
+        repository.delete_benchmark_run("missing")
+    repository.delete_benchmark_reports("run")
+    repository.delete_benchmark_run("run")
+    assert repository.get_benchmark_run("run") is None
+
+
 def test_failed_item_binding_rolls_back_the_new_game(repository):
     _create_run(repository)
     repository.transition_benchmark("run", expected=("draft",), target="running")

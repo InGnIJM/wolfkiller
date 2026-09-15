@@ -11,12 +11,15 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from app.persistence.repository import GameRepository, InvalidExecutionTransition
+from app.persistence.repository import (
+    GameReferencedByBenchmark, GameRepository, InvalidExecutionTransition,
+)
 from app.services.benchmark_metrics import BenchmarkMetrics
 
 
 ItemExecutor = Callable[[Mapping[str, object]], Awaitable[tuple[str, str, str | None]]]
 GameControl = Callable[[str], Awaitable[None]]
+OwnedGameDeleter = Callable[[str, str], Awaitable[None]]
 
 
 def _canonical(value: object) -> str:
@@ -52,11 +55,13 @@ class BenchmarkService:
         *,
         game_pauser: GameControl | None = None,
         game_canceller: GameControl | None = None,
+        owned_game_deleter: OwnedGameDeleter | None = None,
     ) -> None:
         self._repository = repository
         self._item_executor = item_executor
         self._game_pauser = game_pauser
         self._game_canceller = game_canceller
+        self._owned_game_deleter = owned_game_deleter
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._control_locks: dict[str, asyncio.Lock] = {}
         self._report_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
@@ -282,6 +287,64 @@ class BenchmarkService:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         return run
+
+    async def delete_owned_game(self, run_id: str, game_id: str) -> None:
+        if self._repository.get_benchmark_run(run_id) is None:
+            raise KeyError(run_id)
+        if self._owned_game_deleter is None:
+            raise RuntimeError("benchmark game deletion is unavailable")
+        await self._owned_game_deleter(run_id, game_id)
+        self._repository.delete_benchmark_reports(run_id)
+
+    async def delete_owned_games(
+        self, run_id: str, game_ids: list[str],
+    ) -> dict[str, list]:
+        deleted: list[str] = []
+        failed: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for game_id in game_ids:
+            if game_id in seen:
+                continue
+            seen.add(game_id)
+            try:
+                await self.delete_owned_game(run_id, game_id)
+                deleted.append(game_id)
+            except GameReferencedByBenchmark as error:
+                failed.append({
+                    "game_id": game_id, "code": "game_referenced_by_benchmark",
+                    "message": str(error),
+                })
+            except KeyError:
+                failed.append({
+                    "game_id": game_id, "code": "not_found",
+                    "message": "Game or benchmark not found",
+                })
+            except OSError as error:
+                failed.append({
+                    "game_id": game_id, "code": "archive_busy",
+                    "message": str(error),
+                })
+            except RuntimeError as error:
+                failed.append({
+                    "game_id": game_id, "code": "unavailable",
+                    "message": str(error),
+                })
+        return {"deleted": deleted, "failed": failed}
+
+    async def delete_run(self, run_id: str) -> None:
+        run = self._repository.get_benchmark_run(run_id)
+        if run is None:
+            raise KeyError(run_id)
+        if run["status"] in {"draft", "running", "paused", "interrupted"}:
+            await self._cancel(run_id)
+        for item in self._repository.list_benchmark_items(run_id):
+            game_id = item.get("game_id")
+            if isinstance(game_id, str) and game_id:
+                try:
+                    await self.delete_owned_game(run_id, game_id)
+                except KeyError:
+                    continue
+        self._repository.delete_benchmark_run(run_id)
 
     async def wait(self, run_id: str) -> None:
         task = self._tasks.get(run_id)
