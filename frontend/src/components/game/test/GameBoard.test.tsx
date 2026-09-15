@@ -139,8 +139,10 @@ describe('GameBoard public replay', () => {
   });
 
   it('treats a public detail without model_snapshot as unknown seat models', async () => {
-    const { model_snapshot: _omitted, ...withoutSnapshot } = detail;
-    vi.mocked(fetchGameDetail).mockResolvedValueOnce(withoutSnapshot);
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({
+      ...detail,
+      model_snapshot: undefined,
+    });
 
     render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
 

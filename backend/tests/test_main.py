@@ -2,6 +2,33 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+def _exposed_paths(routes) -> set[str]:
+    """Collect route paths across FastAPI <0.137 flat lists and 0.137+ router trees."""
+    paths: set[str] = set()
+    for route in routes:
+        path = getattr(route, "path", None)
+        if isinstance(path, str):
+            paths.add(path)
+        candidates = getattr(route, "effective_candidates", None)
+        if callable(candidates):
+            paths.update(_exposed_paths(candidates()))
+    return paths
+
+
+def test_exposed_paths_walks_included_router_trees():
+    class Nested:
+        path = "/api/folders"
+
+    class Included:
+        def effective_candidates(self):
+            return [Nested()]
+
+    class Leaf:
+        path = "/api/health"
+
+    assert _exposed_paths([Leaf(), Included()]) == {"/api/health", "/api/folders"}
+
+
 def test_main_exposes_app_routes_and_services():
     import app.main as main
 
@@ -15,7 +42,7 @@ def test_main_exposes_app_routes_and_services():
     assert main.audience_event_service is not None
     assert main.benchmark_service is not None
     assert main.ws_handler is not None
-    paths = {route.path for route in main.app.routes}
+    paths = _exposed_paths(main.app.routes)
     assert "/api/health" in paths
     assert "/api/config" in paths
     assert "/ws/game/{game_id}" in paths
@@ -27,6 +54,7 @@ def test_main_exposes_app_routes_and_services():
     assert "/api/catalog/presets" in paths
     assert "/api/catalog/constraints" in paths
     assert "/api/benchmarks" in paths
+    assert "/api/folders" in paths
     assert "/api/games/{game_id}/snapshot" in paths
 
 
