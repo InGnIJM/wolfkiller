@@ -1,14 +1,15 @@
 # 系统架构
 
-本文面向想理解或修改代码的开发者，描述 Wolf Killer 的模块划分与核心设计。AI 编码助手使用的同类说明见根目录 `CLAUDE.md`，两者描述同一套架构；修改架构后请同步更新这两处。
+本文面向想理解或修改代码的开发者，描述 Wolf Killer 的模块划分与核心设计。AI 编码助手使用的同类说明见根目录 `AGENTS.md` 与 `CLAUDE.md`，三处描述同一套架构；修改架构后请同步更新。
 
 ## 总览
 
 ```
 ┌─────────────┐   REST/WS    ┌──────────────────────────────────────────┐
 │   前端       │ ◄──────────► │  FastAPI (backend/app/main.py)           │
-│  React+MUI  │              │  EventBus · WSManager · MemoryService    │
-└─────────────┘              │  GameService                             │
+│  React+MUI  │              │  ProcessLock · GameRepository            │
+└─────────────┘              │  EventBus · WSManager · MemoryService    │
+                             │  GameService · BenchmarkService          │
                              └──────────────┬───────────────────────────┘
                                             │
                              ┌──────────────▼───────────────────────────┐
@@ -47,12 +48,13 @@ WolfKiller/
 │       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store
 │       ├── theme/               # 设计令牌（tokens.ts 为色值唯一来源）
 │       └── components/
-│           ├── lobby/           # 大厅（普通对局列表、扁平文件夹）
+│           ├── lobby/           # 大厅（普通对局列表、扁平文件夹、批量操作）
 │           ├── benchmarks/      # 评测任务列表、新建与详情（含评测对局表）
 │           ├── create/          # 创建游戏向导（人数身份 → 模型配置）
 │           ├── game/            # 游戏（座位图、时间轴、历史面板、胜利画面）
 │           ├── models/          # 模型配置页与编辑对话框
 │           └── shared/          # 共享组件（头像、角色图标、发言气泡）
+│       └── e2e/                 # Playwright 浏览器验收
 └── docs/                        # 本文档库
 ```
 
@@ -68,7 +70,7 @@ WolfKiller/
 | `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
 | `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
-| `core/scheduler.py` | 调度点（NIGHT_ACTION/NIGHT_COMMIT/DAWN_REACTION 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`point_journal.py` 提供断点续跑检查点 |
+| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`point_journal.py` 提供断点续跑检查点 |
 | `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
 | `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
@@ -76,14 +78,18 @@ WolfKiller/
 辅助模块：
 
 - `core/role_pipeline.py` — 流水线运行器（`RolePipeline.run_point`），引擎按调度点调用
-- `core/night_flow.py` — 狼队夜间讨论/投票的 Prompt 与 schema 构造（`build_briefing` 等）
+- `core/night_flow.py` — `NightDirector`：狼队夜间讨论/投票与旁白；`build_briefing` 等 Prompt/schema 构造。女巫/预言家思考已交给角色流水线，Director 不再提供 `witch_think` / `seer_think`
 - `core/vote_service.py` — 可信投票域服务：原子、幂等的终局选票收据（accepted / voluntary-abstain / technical-abstain）
 - `core/conversation_log.py` — 全部对话记录及按角色过滤的视图
 - `core/state_transaction.py` — 状态事务与 revision 管理
 
 ### 夜晚流程
 
-`GameEngine._execute_night()`（分阶段执行 `_execute_staged_night()`）依次运行 `NIGHT_ACTION` 调度点（各角色发出命令）与 `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。所有阶段点均持久化检查点，失败后精确续跑不重放。
+`GameEngine._execute_night()` 走分阶段 `_execute_staged_night()`，调度点顺序固定为：
+
+`NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
+
+随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook。
 
 ### 放逐反应
 
@@ -101,7 +107,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
                                                               NIGHT ←──────────────┘
 ```
 
-- 胜负判定（`core/rule_engine.py`）实现屠边规则与「狼刀在先」语义
+- 胜负判定（`core/rule_engine.py`）实现屠边规则与「狼刀在先」语义：神职含守卫；狼人数大于好人数也算狼人胜
 
 ## LLM 交互层
 
@@ -118,7 +124,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 - `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束
 - `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
-- `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 NightDirector 都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
+- `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 `NightDirector`（`core/night_flow.py`）都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
 - `GET /api/games/{id}` 与 `GET /api/games/{id}/snapshot` 向观众暴露无密钥的 v2 `model_snapshot`（`name / model_id / provider_profile / seats`）；旧档缺少 `seats` 的条目会被滤掉而不是 500。前端座位图悬停卡按 `seats` 反查模型，不把 `model_id` 写入玩家 DTO 或隐私白名单
 - 分配只引用创建时物化的配置快照；之后编辑或删除 `models.json` 中的配置不会改变进行中的对局
 - 前端：`components/create/CreateGameWizard.tsx` 两步向导；`ModelStep.tsx` 以数量分配环境默认与已存配置；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
@@ -138,7 +144,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 ## 前端架构
 
 - **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
-- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/警长/发言、所用模型名与提供方）
+- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 仍带 `is_sheriff` 以兼容旧档，当前规则不竞选警长，新对局该字段为 false。
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
 - **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`
 - **大厅与评测隔离**：`GET /api/games` 只返回 `benchmark_run_id` 为空且 `source != benchmark` 的普通对局；评测局仍可通过 `GET /api/games/{id}` 回放。大厅用扁平文件夹（`GET/POST /api/folders`、`PUT /api/games/{id}/folder`、`POST /api/games/batch-move|batch-delete`）收纳与批量删除。评测对局只从评测页进出：`GET /api/benchmarks/{id}/games` 并上名称/阶段/胜负等投影；`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST .../games/batch-delete` 先解绑再删档；`DELETE /api/benchmarks/{id}` 取消进行中的 run 并级联删除绑定对局与报告。大厅独立 `DELETE /api/games/{id}` 对评测局仍返回 409。
@@ -146,5 +152,5 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 ## 关键设计约束
 
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
-- **测试门禁**：后端 pytest 全量 + `--cov-fail-under=100`（statement/branch）；守卫样例证明五个核心模块 blob 不变即可扩展新角色
-- **核心源码门禁**：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新 `tests/test_guard_extension.py` 中的 `CORE_BLOBS_BEFORE_GUARD`
+- **测试门禁**：后端 pytest 全量（`tests` + `app/` 内嵌测试）+ `--cov-fail-under=100`（statement/branch）。守卫样例证明新增角色不必改核心模块；`test_guard_extension.py` **不再**校验五个核心文件的 blob 哈希。
+- **核心源码门禁**：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新禁词/角色名测试：`tests/test_game_engine.py`、`tests/test_action_resolver.py`、`tests/test_prompt_builder.py`、`tests/test_prompt_renderer.py`。

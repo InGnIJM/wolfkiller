@@ -1,31 +1,23 @@
 # Benchmark 基准评测指南
 
-本文说明 WolfKiller 的 benchmark 工具链：如何采集数据、如何跑批量对局评测、如何做引擎性能回归，以及各指标的定义。
+本文说明 WolfKiller 的 benchmark 工具链：如何采集数据、如何跑批量对局评测，以及各指标的定义。
 
 ## 两层基准
 
 | 层 | LLM | 测什么 | 成本 | 频率 |
 | --- | --- | --- | --- | --- |
-| 回归层（`perf_benchmark.py`） | 脚本 mock，零成本 | 引擎侧性能：调度、Hook、验证、落盘 | 无 | 可反复跑，适合改动后回归 |
-| 评测层（`run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
+| 评测层（仓库内 `scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
+| 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源；回归层仍读取脚本产生的本地性能结果。JSONL/`summary.json` 保留兼容与人工审计用途，不参与耐久 benchmark 报告的主口径。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。JSONL/`summary.json` 保留兼容与人工审计用途，不参与耐久 benchmark 报告的主口径。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
 新运行时在一个事务中把检查点、领域/公开事件、模型请求消费状态和派生任务写入 `data/wolfkiller.sqlite3`。以下兼容文件仍会写入 `data/games/<game_id>/`：
 
-- `game.log`（既有）：阶段切换、发言、投票、死亡、胜负；本次新增两类记录：
-  - `stage_telemetry`（`scope=phase`）：引擎每个相位段的耗时（毫秒）；
-  - `stage_telemetry`（`scope=hook`）：调度器 slow_rule 事件（超过 Hook 软预算的规则调用，含精确 `elapsed_ms`）。
-- `llm_calls.log`（新增）：每次 LLM 调用一条记录，字段包括 `call_kind`（action / speech / speech_plain / night）、`contract_id`、`transport`、`attempt`、`model_id`、`prompt_chars`、`elapsed_ms`、`prompt_tokens` / `completion_tokens` / `total_tokens`、`retried`、`parse_result`、`failure_code`。只记录元数据，不含 prompt 内容与模型输出。
-- `summary.json`（新增）：对局结束（`game_over` 事件）时自动生成的结构化终局档案，含角色真值表、逐轮行动/发言/投票/死亡、LLM 聚合（调用量、token、延迟分位数）、引擎相位耗时汇总，以及对局级模型座位快照。历史存档可用脚本补生成：
-
-```bash
-cd backend
-python scripts/export_game_summary.py --all                # 为所有存档补 summary
-python scripts/export_game_summary.py --game-id <game_id>  # 单局补生成
-```
+- `game.log`：阶段切换、发言、投票、死亡、胜负，以及 `stage_telemetry`（`scope=phase` 相位耗时；`scope=hook` 调度器 slow_rule）
+- `llm_calls.log`：每次 LLM 调用一条记录，字段包括 `call_kind`（action / speech / speech_plain / night）、`contract_id`、`transport`、`attempt`、`model_id`、`prompt_chars`、`elapsed_ms`、`prompt_tokens` / `completion_tokens` / `total_tokens`、`retried`、`parse_result`、`failure_code`。只记录元数据，不含 prompt 内容与模型输出。
+- `summary.json`：对局结束（`game_over`）时由 `GameService` 调用 `build_and_write_summary()` 自动生成，含角色真值表、逐轮行动/发言/投票/死亡、LLM 聚合、引擎相位耗时汇总，以及对局级模型座位快照。仓库内没有补生成 CLI。
 
 token 统计的兼容性：优先读取 LangChain 的 `usage_metadata`，回退 OpenAI 风格的 `response_metadata["token_usage"]`；提供商不返回用量时对应字段缺省。JSON fallback 重试烧掉的 token 会计入该次调用的总量（`llm_attempts` 记录实际调用次数）。
 
@@ -65,18 +57,6 @@ python scripts/run_benchmark.py export <run-id> --format markdown -o report.md
 - 胜率类指标建议每配置至少 30–100 局；10–20 局只能看趋势。
 
 REST 资源为：`POST/GET /api/benchmarks`、`GET /api/benchmarks/{id}`、`DELETE /api/benchmarks/{id}`（级联删除该次评测及其绑定对局）、`POST /api/benchmarks/{id}/start|pause|resume|cancel`、`GET /api/benchmarks/{id}/games`（排程项并上对局名称/阶段/人数/胜负/执行状态）、`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST /api/benchmarks/{id}/games/batch-delete`、`GET /api/benchmarks/{id}/report`、`POST /api/benchmarks/{id}/report/rebuild`、`GET /api/benchmarks/{id}/export?format=json|csv|markdown`。只有服务端执行器能改变运行状态；CLI 不直接打开 SQLite。评测对局不出现在大厅 `GET /api/games` 列表中，只能从评测详情页回放或删除；大厅独立删除评测局仍返回 409。删局后服务会作废并重建报告，避免指标仍含已删对局。
-
-## 回归层：引擎性能基准
-
-```bash
-cd backend
-python scripts/perf_benchmark.py --games 5
-python scripts/perf_benchmark.py --games 5 --label nightly --compare-to nightly
-```
-
-- 所有 LLM 调用由脚本内的确定性 stub 应答（不联网、零 token 成本），因此测得的是纯引擎耗时。
-- 输出 `data/perf/<label>/<时间戳>/perf_report.json`：每个相位每局的平均/ p95 耗时、slow_rule 计数；`--compare-to <label>` 会与该 label 的 `latest.json` 对比并打印各相位变化。
-- 计时受机器负载影响，不建议作为 CI 硬门禁；用于改动前后的相对对比。
 
 ## 指标定义
 

@@ -12,16 +12,21 @@
 | `LLM_PROVIDER` | `deepseek` | 提供方标识（决定 provider profile） |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` | 常规请求端点 |
 | `DEEPSEEK_STRICT_BASE_URL` | `https://api.deepseek.com/beta` | strict tool 请求端点（仅当 provider 声明 `strict_tools` 时使用） |
-| `LLM_MODEL` | 无 | 环境默认模型；未配置且 `LLM_MODELS` 无有效值时回退到代码内置兜底值 |
+| `LLM_MODEL` | 无 | 环境默认模型；未配置且 `LLM_MODELS` 无有效值时回退 `deepseek-v4-pro` |
 | `LLM_MODELS` | 空 | **已弃用的兼容变量**；只使用首个非空值（优先于 `LLM_MODEL`），配置多个值时每个进程仅警告一次 |
 | `LLM_TEMPERATURE` | `1.2` | 常规请求温度（行动请求固定为 0.1） |
 | `LLM_MAX_TOKENS` | `768` | 常规请求 token 上限 |
 | `LLM_ACTION_MAX_TOKENS` | `2048` | 行动请求 token 上限 |
 | `LLM_ACTION_TIMEOUT_SECONDS` | `90` | 行动请求主超时 |
 | `LLM_ACTION_RETRY_TIMEOUT_SECONDS` | `120` | 行动请求重试超时 |
+| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `30` | 投票 JSON 强格式短重试超时 |
+| `LLM_PROVIDER_MAX_RETRIES` | `4` | SDK 对瞬时 429/5xx 的重试次数 |
 | `VOTE_CONCURRENCY` | `5` | 投票并发上限 |
 | `VOTE_PHASE_TIMEOUT_SECONDS` | `500` | 投票阶段总超时 |
-| `ROLE_PIPELINE_V2` | `v1` | 角色流水线模式：`v1 \| shadow \| v2` |
+| `ROLE_PIPELINE_V2` | `v1` | **不改变对局运行时**。仅 `pipeline_mode_from_env()` / `RolePipeline` 适配器测试读取；`GameEngine` 固定走 `PipelineMode.V2` |
+| `WOLFKILLER_DATA_DIR` | `data` | SQLite、游戏日志、模型配置的数据根目录 |
+| `MODEL_CONFIG_PATH` | `{WOLFKILLER_DATA_DIR}/models.json` | 显式覆盖模型配置文件路径 |
+| `WOLFKILLER_API_URL` | `http://127.0.0.1:8000` | benchmark CLI 连接的后端地址 |
 | `DEBUG` | `false` | 调试模式 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 
@@ -46,8 +51,8 @@ LOG_LEVEL=INFO
 cd backend
 pip install -r requirements.txt                              # 安装依赖
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动（开发模式）
-python -m pytest tests/ -q                                   # 全部测试
-python -m pytest tests --cov=app --cov-branch --cov-fail-under=100 -q   # 覆盖率门禁
+python -m pytest tests app -q                                # 全部测试（含 app/ 内嵌测试）
+python -m pytest tests app --cov=app --cov-branch --cov-fail-under=100 -q   # 覆盖率门禁
 python scripts/run_benchmark.py list                         # 查询已启动服务中的 benchmark
 ```
 
@@ -65,32 +70,33 @@ npm install        # 安装依赖
 npm run dev        # 启动（localhost:5173）
 npm test           # Vitest
 npm run test:coverage   # 覆盖率（见下文门禁说明）
+npm run test:e2e   # Playwright 浏览器验收
 npm run build      # 类型检查 + 生产构建
 npm run lint       # ESLint
 ```
 
 ## 测试与门禁
 
-测试数量随代码演进变化（以实际运行为准），截至 2026-08-29：后端 1919 个用例 / 44 个测试文件，前端 184 个用例 / 19 个测试文件。
+测试数量随代码演进变化，以 `pytest` / `npm test` 实际收集数和 CI 为准，不要把某个日期的用例个数写进门禁说明。
 
 门禁一览：
 
 | 门禁 | 内容 | 状态 |
 | --- | --- | --- |
-| 后端覆盖率 | statement/branch 100%（`--cov-fail-under=100`） | 生效 |
-| 前端覆盖率 | `vite.config.ts` 对 9 个核心文件（gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效 |
+| 后端覆盖率 | `tests` + `app` 全量，statement/branch 100%（`--cov-fail-under=100`） | 生效（CI） |
+| 前端覆盖率 | `vite.config.ts` 对 9 个核心文件（gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效（CI `npm run test:coverage`） |
 | 隐私扫描 | 公开 DTO 与前端消费链不得含私有字段（`role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等） | 生效（测试门禁） |
-| 核心源码门禁 | 五个核心模块 blob 不变测试（守卫样例证明扩展性） | 生效（测试门禁） |
-| Benchmark 工具链 | 对局质量评测与引擎性能基准（见 `docs/benchmark.md`） | 工具链，非门禁 |
+| 核心源码门禁 | 引擎/校验器/解析器/提示外壳的禁词与角色名测试，证明核心不写死内置角色分支 | 生效（测试门禁） |
+| Benchmark 工具链 | 对局质量评测（见 `docs/benchmark.md`） | 工具链，非门禁 |
 | CI 浏览器 E2E | Playwright 使用临时目录和无真实 Key 的 FastAPI，验证生命周期、进程恢复、断网重连、时间线、benchmark UI 和旧存档 | 生效 |
 
 ### 新增角色
 
-参照守卫样例 `backend/app/roles/guard.py`：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`），不需要改动任何核心模块。在 `roles/registry.py` 注册后补充对应 `tests/test_*_pipeline.py`。注意：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新 `tests/test_guard_extension.py` 中的 `CORE_BLOBS_BEFORE_GUARD`。
+参照守卫样例 `backend/app/roles/guard.py`：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`），不需要改动任何核心模块。在 `roles/registry.py` 注册后补充对应 `tests/test_*_pipeline.py`。注意：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新禁词测试（`tests/test_game_engine.py`、`tests/test_action_resolver.py`、`tests/test_prompt_builder.py`、`tests/test_prompt_renderer.py`）。**不要**再去改 `test_guard_extension.py` 里已经不存在的 `CORE_BLOBS_BEFORE_GUARD`。
 
 ### Benchmark 基准评测
 
-采集层随对局事务性落入 SQLite；批量真实对局评测用 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。引擎性能回归用 `backend/scripts/perf_benchmark.py`（mock LLM、零成本）。指标定义与用法见 `docs/benchmark.md`。
+采集层随对局事务性落入 SQLite；批量真实对局评测用仓库内的 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。对局结束时服务会自动写 `summary.json`。指标定义与用法见 `docs/benchmark.md`。`.gitignore` 目前只放行 `run_benchmark.py`，其它 `backend/scripts/*` 不在版本控制中。
 
 ## 数据存储
 
@@ -145,4 +151,3 @@ sqlite3 data/backups/wolfkiller-2026-09-06.sqlite3 "PRAGMA integrity_check;"
 ### 杂项
 
 - 后端要求 Python >= 3.11；前端要求 Node.js >= 20.19（Vite 8 要求 `^20.19.0 || >=22.12.0`）。
-- `frontend/src/components/layout/` 目前是空目录。

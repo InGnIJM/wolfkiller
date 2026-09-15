@@ -1,6 +1,8 @@
 # 项目分析报告
 
-> 分析日期：2026-08-31 · 分析基准：HEAD `63fd4b5` · 工作区干净（无未提交改动）
+> **历史快照，不是现行状态。** 分析日期：2026-08-31 · 分析基准：HEAD `63fd4b5`。
+>
+> 文中多处结论已被后续提交否定，例如：仓库现有 `.github/workflows/ci.yml`；`backend/scripts/run_benchmark.py` 已纳入版本控制；`CORE_BLOBS_BEFORE_GUARD` 门禁已移除。当前架构、命令与门禁以 [README](../README.md)、[architecture.md](architecture.md)、[development.md](development.md) 和根目录 `AGENTS.md` / `CLAUDE.md` 为准。
 
 ## 一、项目是什么
 

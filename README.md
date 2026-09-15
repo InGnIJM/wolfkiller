@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Node](https://img.shields.io/badge/Node-20.19%2B-blueviolet)
 
-完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人）均由大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整对局；创建游戏时可为环境默认或多个自定义模型分配人数，系统会随机落座并在整局中固定每个座位所用模型。
+完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人，以及十人局可选的守卫）均由大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整对局；创建游戏时可为环境默认或多个自定义模型分配人数，系统会随机落座并在整局中固定每个座位所用模型。
 
 <p align="center">
   <img src="docs/assets/lobby.png" width="49%" alt="游戏大厅" />
@@ -19,7 +19,7 @@
 
 ## 快速开始
 
-环境要求：Python >= 3.11、Node.js >= 20.19（Vite 8 要求 `^20.19.0 || >=22.12.0`）、一个 OpenAI 兼容的 LLM API Key（如 [DeepSeek](https://platform.deepseek.com/)）。
+环境要求：Python >= 3.11、Node.js >= 20.19（Vite 8 要求 `^20.19.0 || >=22.12.0`）、至少一个 LLM API Key。默认走 OpenAI 兼容协议（如 [DeepSeek](https://platform.deepseek.com/)）；Anthropic Messages API 与兼容中转需在模型管理里显式选择对应协议。
 
 **1. 配置后端环境变量**：在 `backend/` 下创建 `.env`（完整变量见 [docs/development.md](docs/development.md)）：
 
@@ -48,7 +48,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5173`，点击「创建游戏」，配置人数身份（默认 9 人局：3 狼人、3 平民、1 预言家、1 女巫、1 猎人）与各模型人数，创建后自动开始。
+打开 `http://localhost:5173`，点击「创建游戏」，配置人数身份（默认九人标准场：3 狼 3 民 1 预言家 1 女巫 1 猎人；另有带守卫的十人预设）与各模型人数，创建后自动开始。大厅可把对局放进扁平文件夹；评测任务在「模型评测」页，不出现在大厅列表里。
 
 ## 使用指南
 
@@ -74,14 +74,16 @@ python scripts/run_benchmark.py export <run-id> --format markdown -o report.md
 | [docs/development.md](docs/development.md) | 开发指南：环境变量全表、测试与门禁、数据存储、踩坑记录 |
 | [docs/benchmark.md](docs/benchmark.md) | 耐久 benchmark API/CLI、指标口径与导出 |
 | [docs/README.md](docs/README.md) | 文档索引（含历史设计稿归档） |
+| [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 编码助手入口：命令、架构速览、测试门禁 |
 
 REST API 由 FastAPI 自动生成文档：启动后端后访问 `http://localhost:8000/docs`。
 
 ## 运行测试
 
 ```bash
-cd backend && python -m pytest tests/ -q        # 后端 pytest（覆盖率门禁见 docs/development.md）
+cd backend && python -m pytest tests app -q     # 后端 pytest（含 app/ 内嵌测试；覆盖率门禁见 docs/development.md）
 cd frontend && npm test                         # 前端 Vitest
+cd frontend && npm run test:e2e                 # Playwright 浏览器验收（需先安装 Chromium）
 ```
 
 ## License
