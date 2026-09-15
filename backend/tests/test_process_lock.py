@@ -182,6 +182,25 @@ def test_acquire_cleans_owned_path_when_open_itself_fails(
     assert lock._path_key not in process_lock_module._owned_paths
 
 
+def test_windows_lock_helpers_use_msvcrt(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[int, int, int]] = []
+    fake = SimpleNamespace(
+        LK_NBLCK=2, LK_UNLCK=3,
+        locking=lambda descriptor, mode, nbytes: calls.append((descriptor, mode, nbytes)),
+    )
+    monkeypatch.setattr(process_lock_module.os, "name", "nt")
+    monkeypatch.setattr(process_lock_module, "msvcrt", fake, raising=False)
+    lock_path = tmp_path / "lock"
+    with lock_path.open("w+b") as stream:
+        ProcessLock._ensure_lock_byte(stream)
+        ProcessLock._acquire_os_lock(stream)
+        ProcessLock._release_os_lock(stream)
+        assert calls == [
+            (stream.fileno(), fake.LK_NBLCK, 1),
+            (stream.fileno(), fake.LK_UNLCK, 1),
+        ]
+
+
 def test_module_imports_posix_lock_backend(monkeypatch) -> None:
     source_path = Path(process_lock_module.__file__)
     source = source_path.read_text(encoding="utf-8")
@@ -191,3 +210,14 @@ def test_module_imports_posix_lock_backend(monkeypatch) -> None:
     namespace = {"__name__": "process_lock_posix_import"}
     exec(compile(source, str(source_path), "exec"), namespace)
     assert namespace["fcntl"] is fake_fcntl
+
+
+def test_module_imports_windows_lock_backend(monkeypatch) -> None:
+    source_path = Path(process_lock_module.__file__)
+    source = source_path.read_text(encoding="utf-8")
+    fake_msvcrt = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(process_lock_module.os, "name", "nt")
+    namespace = {"__name__": "process_lock_windows_import"}
+    exec(compile(source, str(source_path), "exec"), namespace)
+    assert namespace["msvcrt"] is fake_msvcrt
