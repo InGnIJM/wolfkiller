@@ -83,7 +83,10 @@ class PromptRenderer:
             "phase": context.phase,
             "actor_seat": context.actor_seat,
             "actor_alive": context.actor_alive,
-            "facts": context.facts,
+            "facts": {
+                key: value for key, value in context.facts.items()
+                if key != "sheriff"
+            },
             "resources": context.resources,
             "counters": context.counters,
             "source_event_id": context.source_event_id,

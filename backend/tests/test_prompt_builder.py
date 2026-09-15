@@ -61,6 +61,13 @@ def test_system_prompts_define_shared_rules_without_builtin_roles() -> None:
     assert "PROJECTED_CONTEXT" in NIGHT_SYSTEM_PROMPT
 
 
+def test_system_prompts_state_this_game_has_no_sheriff() -> None:
+    for prompt in (DAY_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT):
+        assert "本局没有警长" in prompt
+        assert "警徽流" in prompt
+        assert "警长竞选" in prompt
+
+
 def test_system_prompts_define_xml_history_trust_boundaries() -> None:
     for prompt in (DAY_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT):
         assert "<authoritative_state>" in prompt
@@ -466,6 +473,20 @@ class TestPromptBuilderHelpers:
         assert "可用资源：gun=1" in block
         assert "alive_seats" in block
         assert "dead_seats" not in block  # empty sequences are skipped
+
+    def test_private_facts_block_omits_unimplemented_sheriff(self):
+        block = PromptBuilder._private_facts_block({
+            "facts": {"actor_identity": {}, "sheriff": None, "alive_seats": [1, 2]},
+        })
+        assert "sheriff" not in block
+        assert "alive_seats" in block
+
+    def test_day_speech_prompt_states_this_game_has_no_sheriff(self):
+        prompt = PromptBuilder().build_speech_prompt(
+            make_state(), 4, "wolf-killer-villager", make_log(), "day_speech",
+        )
+        assert "no sheriff" in prompt
+        assert "sheriff-badge" in prompt
 
     def test_camp_cooperation_block_ignores_malformed_facts(self):
         builder = PromptBuilder()

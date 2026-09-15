@@ -265,7 +265,7 @@ class PromptBuilder:
         lines = [f"- 可用资源：{resource_text}"]
         facts = view.get("facts") or {}
         for key, value in facts.items():
-            if key in {"actor_identity"}:
+            if key in {"actor_identity", "sheriff"}:
                 continue
             if isinstance(value, (list, tuple)) and not value:
                 continue

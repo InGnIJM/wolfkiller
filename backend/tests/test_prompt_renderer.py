@@ -120,3 +120,12 @@ def test_json_and_final_prompt_are_bounded() -> None:
     huge = replace(context, facts={"blob": "x" * 65_000})
     with pytest.raises(ValueError, match="prompt is too large"):
         PromptRenderer().render(spec, contract, huge, "")
+
+
+def test_renderer_omits_unimplemented_sheriff_and_states_game_has_none() -> None:
+    spec, contract, context = values()
+    context = replace(context, facts={**dict(context.facts), "sheriff": None})
+    rendered = PromptRenderer().render(spec, contract, context, "")
+    assert '"sheriff"' not in rendered
+    assert "no sheriff" in rendered
+    assert "sheriff-badge" in rendered
