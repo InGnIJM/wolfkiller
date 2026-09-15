@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
@@ -54,6 +55,49 @@ class DurableStepCoordinator:
         consumed_model_request_ids: Iterable[str] = (),
         derived_jobs: Iterable[Mapping[str, object]] = (),
     ) -> DurableCommit:
+        payload = self._prepare_commit(
+            state=state, orchestration=orchestration,
+            expected_storage_revision=expected_storage_revision,
+            execution_generation=execution_generation, step_key=step_key,
+            input_facts=input_facts, result_facts=result_facts,
+            domain_events=domain_events,
+            consumed_model_request_ids=consumed_model_request_ids,
+            derived_jobs=derived_jobs,
+        )
+        receipt = self._repository.commit_step(**payload)
+        return self._finish_commit(receipt)
+
+    async def acommit(
+        self, *, state: GameState, orchestration: Mapping[str, object],
+        expected_storage_revision: int, execution_generation: int,
+        step_key: str, input_facts: Mapping[str, object],
+        result_facts: Mapping[str, object],
+        domain_events: Iterable[Mapping[str, object]],
+        consumed_model_request_ids: Iterable[str] = (),
+        derived_jobs: Iterable[Mapping[str, object]] = (),
+    ) -> DurableCommit:
+        payload = await asyncio.to_thread(
+            self._prepare_commit,
+            state=state, orchestration=orchestration,
+            expected_storage_revision=expected_storage_revision,
+            execution_generation=execution_generation, step_key=step_key,
+            input_facts=input_facts, result_facts=result_facts,
+            domain_events=domain_events,
+            consumed_model_request_ids=consumed_model_request_ids,
+            derived_jobs=derived_jobs,
+        )
+        receipt = await self._repository.commit_step_async(**payload)
+        return self._finish_commit(receipt)
+
+    def _prepare_commit(
+        self, *, state: GameState, orchestration: Mapping[str, object],
+        expected_storage_revision: int, execution_generation: int,
+        step_key: str, input_facts: Mapping[str, object],
+        result_facts: Mapping[str, object],
+        domain_events: Iterable[Mapping[str, object]],
+        consumed_model_request_ids: Iterable[str] = (),
+        derived_jobs: Iterable[Mapping[str, object]] = (),
+    ) -> dict[str, object]:
         game = self._repository.get_game(state.game_id)
         if game is None:
             raise KeyError(state.game_id)
@@ -66,18 +110,20 @@ class DurableStepCoordinator:
         )
         if self._fault_injector is not None:
             self._fault_injector("before_step_commit")
-        receipt = self._repository.commit_step(
-            game_id=state.game_id,
-            expected_storage_revision=expected_storage_revision,
-            execution_generation=execution_generation,
-            step_key=step_key, input_digest=_digest(dict(input_facts)),
-            result_digest=_digest(dict(result_facts)), checkpoint=checkpoint,
-            domain_events=domains, audience_events=audience,
-            audience_state=audience_state,
-            projection_version=self._projector.projection_version,
-            consumed_model_request_ids=consumed_model_request_ids,
-            derived_jobs=derived_jobs,
-        )
+        return {
+            "game_id": state.game_id,
+            "expected_storage_revision": expected_storage_revision,
+            "execution_generation": execution_generation,
+            "step_key": step_key, "input_digest": _digest(dict(input_facts)),
+            "result_digest": _digest(dict(result_facts)), "checkpoint": checkpoint,
+            "domain_events": domains, "audience_events": audience,
+            "audience_state": audience_state,
+            "projection_version": self._projector.projection_version,
+            "consumed_model_request_ids": consumed_model_request_ids,
+            "derived_jobs": derived_jobs,
+        }
+
+    def _finish_commit(self, receipt: Mapping[str, object]) -> DurableCommit:
         if self._fault_injector is not None:
             self._fault_injector("after_step_commit")
             self._fault_injector("before_audience_send")

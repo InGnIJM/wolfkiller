@@ -148,6 +148,12 @@ class WSHandler:
         from app.main import audience_event_service
         return audience_event_service
 
+    async def _v2_get_events(self, game_id: str, *, after_seq: int) -> Mapping[str, object]:
+        return await asyncio.to_thread(
+            self._audience_service().get_events,
+            game_id, after_seq=after_seq, limit=_V2_PAGE_SIZE,
+        )
+
     async def _send_v2(self, ws: WebSocket, msg_type: str, **payload) -> None:
         message = json.dumps({"type": msg_type, **payload}, ensure_ascii=False)
         try:
@@ -169,9 +175,7 @@ class WSHandler:
         try:
             try:
                 cursor = self._v2_after_seq(ws)
-                page = self._audience_service().get_events(
-                    game_id, after_seq=cursor, limit=_V2_PAGE_SIZE,
-                )
+                page = await self._v2_get_events(game_id, after_seq=cursor)
             except AudienceGameNotFoundError:
                 await self._send_v2(
                     ws, "error", code="game_not_found", message="Game not found",
@@ -256,9 +260,7 @@ class WSHandler:
                     pass
                 finally:
                     wakeup.clear()
-            page = self._audience_service().get_events(
-                game_id, after_seq=cursor, limit=_V2_PAGE_SIZE,
-            )
+            page = await self._v2_get_events(game_id, after_seq=cursor)
 
     async def _v2_receiver(
         self, ws: WebSocket, game_id: str, activity: dict[str, float],

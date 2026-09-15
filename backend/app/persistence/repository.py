@@ -7,6 +7,7 @@ short-lived connection so no transaction is kept open across application
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -310,6 +311,7 @@ class GameRepository:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA synchronous=FULL")
         return connection
 
     def _initialize(self) -> None:
@@ -346,6 +348,11 @@ class GameRepository:
         if self._closed:
             raise RuntimeError("repository is closed")
         return self._writer.submit(function, *args).result()
+
+    async def awrite(self, function: Callable[..., T], *args: object) -> T:
+        if self._closed:
+            raise RuntimeError("repository is closed")
+        return await asyncio.wrap_future(self._writer.submit(function, *args))
 
     def close(self) -> None:
         if self._closed:
@@ -791,6 +798,58 @@ class GameRepository:
         consumed_model_request_ids: Iterable[str] = (),
         derived_jobs: Iterable[Mapping[str, object]] = (),
     ) -> dict[str, object]:
+        return self._write(
+            self._commit_step,
+            *self._prepare_commit_step(
+                game_id=game_id,
+                expected_storage_revision=expected_storage_revision,
+                execution_generation=execution_generation,
+                step_key=step_key, input_digest=input_digest,
+                result_digest=result_digest, checkpoint=checkpoint,
+                domain_events=domain_events, audience_events=audience_events,
+                audience_state=audience_state,
+                projection_version=projection_version,
+                consumed_model_request_ids=consumed_model_request_ids,
+                derived_jobs=derived_jobs,
+            ),
+        )
+
+    async def commit_step_async(
+        self, *, game_id: str, expected_storage_revision: int,
+        execution_generation: int, step_key: str, input_digest: str,
+        result_digest: str, checkpoint: Mapping[str, object],
+        domain_events: Iterable[Mapping[str, object]],
+        audience_events: Iterable[Mapping[str, object]],
+        audience_state: Mapping[str, object], projection_version: int = 1,
+        consumed_model_request_ids: Iterable[str] = (),
+        derived_jobs: Iterable[Mapping[str, object]] = (),
+    ) -> dict[str, object]:
+        return await self.awrite(
+            self._commit_step,
+            *self._prepare_commit_step(
+                game_id=game_id,
+                expected_storage_revision=expected_storage_revision,
+                execution_generation=execution_generation,
+                step_key=step_key, input_digest=input_digest,
+                result_digest=result_digest, checkpoint=checkpoint,
+                domain_events=domain_events, audience_events=audience_events,
+                audience_state=audience_state,
+                projection_version=projection_version,
+                consumed_model_request_ids=consumed_model_request_ids,
+                derived_jobs=derived_jobs,
+            ),
+        )
+
+    def _prepare_commit_step(
+        self, *, game_id: str, expected_storage_revision: int,
+        execution_generation: int, step_key: str, input_digest: str,
+        result_digest: str, checkpoint: Mapping[str, object],
+        domain_events: Iterable[Mapping[str, object]],
+        audience_events: Iterable[Mapping[str, object]],
+        audience_state: Mapping[str, object], projection_version: int,
+        consumed_model_request_ids: Iterable[str],
+        derived_jobs: Iterable[Mapping[str, object]],
+    ) -> tuple[object, ...]:
         checkpoint_value = dict(checkpoint)
         checkpoint_json = _json(checkpoint_value)
         checkpoint_version = checkpoint_value.get("checkpoint_version")
@@ -815,11 +874,10 @@ class GameRepository:
             if run_id is not None and (type(run_id) is not str or not run_id):
                 raise ValueError("derived job run_id must be a string or null")
             jobs.append((job_key, job_type, run_id))
-        return self._write(
-            self._commit_step, game_id, expected_storage_revision,
-            execution_generation, step_key, input_digest, result_digest,
-            checkpoint_version, checkpoint_json, domains, audience,
-            state_json, projection_version, request_ids, jobs,
+        return (
+            game_id, expected_storage_revision, execution_generation, step_key,
+            input_digest, result_digest, checkpoint_version, checkpoint_json,
+            domains, audience, state_json, projection_version, request_ids, jobs,
         )
 
     @staticmethod

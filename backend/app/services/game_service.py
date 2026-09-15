@@ -731,7 +731,7 @@ class GameService:
             raise InvalidExecutionTransition(
                 f"cannot transition game from {status} to running"
             )
-        checkpoint = self.repository.load_checkpoint(game_id)
+        checkpoint = await asyncio.to_thread(self.repository.load_checkpoint, game_id)
         if checkpoint is None:
             self._mark_recovery_blocked(game_id, "checkpoint_missing")
             raise ValueError("checkpoint_missing")
@@ -1316,7 +1316,7 @@ class GameService:
                 for item in self.repository.list_model_requests(engine.game_id)
                 if item.get("status") == "resolved"
             ]
-            receipt = coordinator.commit(
+            receipt = await coordinator.acommit(
                 state=engine.state,
                 orchestration=engine.export_orchestration(
                     self._checkpoint_codec,

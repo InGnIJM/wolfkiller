@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
+import threading
 
 import pytest
 
@@ -378,5 +380,66 @@ def test_mark_game_deleted_purges_durable_payload_tables(tmp_path) -> None:
             assert _table_count(repository, table, "game-1") == 0, table
         assert repository.get_game("game-1") is None
         assert repository.get_game("game-1", include_deleted=True) is not None
+    finally:
+        repository.close()
+
+
+def _commit_kwargs(**updates) -> dict[str, object]:
+    values: dict[str, object] = {
+        "game_id": "game-1",
+        "expected_storage_revision": 0,
+        "execution_generation": 1,
+        "step_key": "step-async",
+        "input_digest": "input-async",
+        "result_digest": "result-async",
+        "checkpoint": {"checkpoint_version": 1, "state": {"phase": "speech"}},
+        "domain_events": [],
+        "audience_events": [],
+        "audience_state": {"game_id": "game-1"},
+    }
+    values.update(updates)
+    return values
+
+
+@pytest.mark.asyncio
+async def test_awrite_rejects_closed_repository(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    repository.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        await repository.awrite(lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_commit_step_async_matches_sync_and_yields_to_event_loop(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        gate = threading.Event()
+        original = repository._commit_step
+
+        def blocked(*args):
+            assert gate.wait(timeout=2)
+            return original(*args)
+
+        repository._commit_step = blocked
+        progressed = False
+
+        async def marker() -> None:
+            nonlocal progressed
+            await asyncio.sleep(0)
+            progressed = True
+            gate.set()
+
+        result, _ = await asyncio.wait_for(
+            asyncio.gather(
+                repository.commit_step_async(**_commit_kwargs()),
+                marker(),
+            ),
+            timeout=2,
+        )
+        assert progressed is True
+        assert result["storage_revision"] == 1
+        assert result["replayed"] is False
+        assert repository.load_checkpoint("game-1")["storage_revision"] == 1
     finally:
         repository.close()

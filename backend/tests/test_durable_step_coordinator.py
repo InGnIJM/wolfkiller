@@ -322,3 +322,28 @@ def test_coordinator_reports_fault_boundaries_and_blocked_snapshot(tmp_path) -> 
         assert snapshot["state"]["recoverable"] is False
     finally:
         repository.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_acommit_writes_the_same_receipt_as_commit(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    registry = builtin_registry.freeze()
+    try:
+        repository.create_game(
+            game_id="game", name="game", config={}, execution_status="running",
+            source="native", model_snapshot=[], execution_generation=1,
+        )
+        coordinator = DurableStepCoordinator(
+            repository, CheckpointCodec(registry), AudienceProjector(),
+        )
+        result = await coordinator.acommit(
+            state=_state(registry.digest), orchestration={},
+            expected_storage_revision=0, execution_generation=1,
+            step_key="async-step", input_facts={"a": 1}, result_facts={"b": 2},
+            domain_events=[],
+        )
+        assert result.storage_revision == 1
+        assert result.replayed is False
+        assert repository.load_checkpoint("game")["storage_revision"] == 1
+    finally:
+        repository.close()
