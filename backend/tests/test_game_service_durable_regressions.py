@@ -32,6 +32,63 @@ async def durable(tmp_path):
     repository.close()
 
 
+@pytest.mark.asyncio
+async def test_is_lobby_game_hides_benchmark_owned_records(durable):
+    service, repository = durable
+    add_game(service, repository, "native", benchmark=False)
+    add_game(service, repository, "bench", benchmark=True)
+    repository.create_game(
+        game_id="orphan-bench", name="orphan", config={}, execution_status="failed",
+        source="benchmark", model_snapshot=[],
+    )
+    service._games["orphan-bench"] = GameState(game_id="orphan-bench")
+    service._games["legacy"] = GameState(game_id="legacy")
+    assert service.is_lobby_game("native") is True
+    assert service.is_lobby_game("bench") is False
+    assert service.is_lobby_game("orphan-bench") is False
+    assert service.is_lobby_game("legacy") is True
+    service.repository = None
+    assert service.is_lobby_game("bench") is True
+
+
+@pytest.mark.asyncio
+async def test_delete_benchmark_owned_game_releases_and_purges(durable):
+    service, repository = durable
+    add_game(service, repository, "bench", benchmark=True)
+    from pathlib import Path
+    archive = Path(service.data_dir) / "games" / "bench"
+    archive.mkdir(parents=True)
+    (archive / "game.log").write_text("{}\n", encoding="utf-8")
+    engine = MagicMock()
+    engine.stop = AsyncMock()
+    service._engines["bench"] = engine
+    await service.delete_benchmark_owned_game("run", "bench")
+    engine.stop.assert_awaited()
+    assert service.get_game_state("bench") is None
+    assert repository.get_game("bench") is None
+    assert not archive.exists()
+    with pytest.raises(KeyError):
+        await service.delete_benchmark_owned_game("run", "missing")
+    add_game(service, repository, "native", benchmark=False)
+    from app.persistence.repository import GameReferencedByBenchmark
+    with pytest.raises(GameReferencedByBenchmark):
+        await service.delete_benchmark_owned_game("run", "native")
+    service.repository = None
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await service.delete_benchmark_owned_game("run", "native")
+    add_game(service, repository, "busy-bench", benchmark=True)
+    service.repository = repository
+    engine = MagicMock()
+    engine.stop = AsyncMock()
+    service._engines["busy-bench"] = engine
+    service.cancel_benchmark_game = AsyncMock(side_effect=InvalidExecutionTransition("busy"))
+    await service.delete_benchmark_owned_game("run", "busy-bench")
+    assert service.get_game_state("busy-bench") is None
+    add_game(service, repository, "idle-bench", benchmark=True)
+    await service.delete_benchmark_owned_game("run", "idle-bench")
+    assert service.get_game_state("idle-bench") is None
+
+
 def add_game(service, repository, game_id="game", *, status="running", benchmark=True):
     repository.create_game(
         game_id=game_id, name="Original", config={}, execution_status=status,
