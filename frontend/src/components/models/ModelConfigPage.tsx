@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Container, Stack, Typography } from '@mui/material';
 
 import ModelConfigDialog from './ModelConfigDialog';
+import { providerProfileLabel } from './providerProfiles';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import { testModelConnection } from '../../api/client';
 import type { ModelConfig, ModelConfigInput, ModelTestResult } from '../../store/types';
@@ -102,6 +103,9 @@ export default function ModelConfigPage() {
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     {config.model_id} · {config.base_url}
+                    {config.provider_profile && config.provider_profile !== 'auto'
+                      ? ` · ${providerProfileLabel(config.provider_profile)}`
+                      : ''}
                     {config.temperature != null ? ` · temp ${config.temperature}` : ''}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">

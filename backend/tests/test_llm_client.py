@@ -378,3 +378,38 @@ async def test_close_continues_after_a_client_cleanup_error():
     synchronous.assert_called_once()
     asynchronous.assert_awaited_once()
     assert client._built_models == {}
+
+
+@pytest.mark.asyncio
+async def test_aclose_does_not_poison_the_next_openai_http_client():
+    from langchain_openai.chat_models._client_utils import (
+        _cached_async_httpx_client, _cached_sync_httpx_client,
+    )
+    from app.agents.llm_client import LLMClientConfig
+
+    _cached_sync_httpx_client.cache_clear()
+    _cached_async_httpx_client.cache_clear()
+    config = LLMClientConfig(
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        model_id="deepseek-v4-flash",
+        temperature=1.2,
+        max_tokens=512,
+        strict_base_url="https://api.deepseek.com/beta",
+        provider_profile="deepseek",
+    )
+    first = LLMClient(config=config)
+    first.get_model()
+    first.get_action_model()
+    await first.aclose()
+
+    second = LLMClient(config=config)
+    text_http = second.get_model().root_client._client
+    action_http = second.get_action_model().root_client._client
+    try:
+        assert text_http.is_closed is False
+        assert action_http.is_closed is False
+    finally:
+        await second.aclose()
+        _cached_sync_httpx_client.cache_clear()
+        _cached_async_httpx_client.cache_clear()

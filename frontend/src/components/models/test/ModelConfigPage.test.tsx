@@ -27,6 +27,7 @@ const sample = {
   key_invalid: false,
   temperature: 1.2,
   strict_base_url: null,
+  provider_profile: 'auto' as const,
   created_at: '2026-08-16T00:00:00',
   updated_at: '2026-08-16T00:00:00',
 };
@@ -164,7 +165,9 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
 
     await waitFor(() =>
-      expect(testModelConnection).toHaveBeenCalledWith({ config_id: 'a1', api_key: 'sk-typed' }),
+      expect(testModelConnection).toHaveBeenCalledWith({
+        config_id: 'a1', api_key: 'sk-typed', provider_profile: 'auto',
+      }),
     );
   });
 
@@ -182,7 +185,79 @@ describe('ModelConfigPage', () => {
 
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
-        base_url: 'https://x/v1', api_key: 'sk-f', model_id: 'm',
+        base_url: 'https://x/v1', api_key: 'sk-f', model_id: 'm', provider_profile: 'auto',
+      }),
+    );
+  });
+
+  it('dialog tests and saves an explicitly selected Anthropic protocol', async () => {
+    vi.mocked(createModel).mockResolvedValue({
+      ...sample, id: 'c1', name: 'Claude', provider_profile: 'anthropic',
+    });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 9, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('接口协议'), { target: { value: 'anthropic' } });
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Claude' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.anthropic.com' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'claude-sonnet-4-5' } });
+    fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-ant' } });
+
+    expect(screen.getByText(/Anthropic Messages API：Base URL 不含/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
+
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith({
+        base_url: 'https://api.anthropic.com', api_key: 'sk-ant',
+        model_id: 'claude-sonnet-4-5', provider_profile: 'anthropic',
+      }),
+    );
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(createModel).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'Claude', provider_profile: 'anthropic',
+      })),
+    );
+  });
+
+  it('dialog re-disables save when the protocol changes after a successful test', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+
+    fireEvent.change(screen.getByLabelText('接口协议'), { target: { value: 'custom-anthropic' } });
+
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  });
+
+  it('edit dialog prefills the stored protocol and sends it with the config test', async () => {
+    vi.mocked(listModels).mockResolvedValue([
+      { ...sample, provider_profile: 'custom-anthropic', name: 'Relay Claude' },
+    ]);
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 7, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('Relay Claude')).toBeInTheDocument());
+    expect(screen.getByText(/自定义 · Anthropic 兼容/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    expect((screen.getByLabelText('接口协议') as HTMLSelectElement).value).toBe('custom-anthropic');
+
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith({
+        config_id: 'a1', api_key: '', provider_profile: 'custom-anthropic',
       }),
     );
   });

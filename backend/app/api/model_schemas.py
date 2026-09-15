@@ -1,6 +1,19 @@
 from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+
+# Explicitly selectable profiles; ``auto`` infers one from the endpoint host.
+ProviderProfileId = Literal[
+    "auto", "openai", "deepseek", "openrouter", "custom-openai",
+    "anthropic", "custom-anthropic",
+]
+
+# Profiles as materialized in a game snapshot (``auto`` already resolved).
+ResolvedProviderProfileId = Literal[
+    "openai", "deepseek", "openrouter", "custom-openai",
+    "anthropic", "custom-anthropic",
+]
 
 
 class ModelConfigRequest(BaseModel):
@@ -10,9 +23,7 @@ class ModelConfigRequest(BaseModel):
     api_key: str = ""
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
     strict_base_url: Optional[str] = None
-    provider_profile: Literal[
-        "auto", "openai", "deepseek", "openrouter", "custom-openai",
-    ] = "auto"
+    provider_profile: ProviderProfileId = "auto"
 
     @field_validator("name")
     @classmethod
@@ -40,9 +51,7 @@ class ModelConfigResponse(BaseModel):
     key_invalid: bool
     temperature: Optional[float]
     strict_base_url: Optional[str]
-    provider_profile: Literal[
-        "auto", "openai", "deepseek", "openrouter", "custom-openai",
-    ]
+    provider_profile: ProviderProfileId
     created_at: str
     updated_at: str
 
@@ -56,9 +65,10 @@ class ModelTestRequest(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_id: Optional[str] = None
-    provider_profile: Literal[
-        "auto", "openai", "deepseek", "openrouter", "custom-openai",
-    ] = "auto"
+    # ``None`` means "use the stored config's profile" when ``config_id`` is
+    # given, or ``auto`` for an ad-hoc test; an explicit value always wins so
+    # the dialog can test a profile change before saving it.
+    provider_profile: Optional[ProviderProfileId] = None
 
 
 class ModelCapabilitiesResponse(BaseModel):
@@ -88,8 +98,19 @@ class ModelSnapshotEntry(BaseModel):
     name: str
     model_id: str
     base_url: str
-    provider_profile: Literal[
-        "openai", "deepseek", "openrouter", "custom-openai",
-    ]
+    provider_profile: ResolvedProviderProfileId
     count: Annotated[int, Field(strict=True, ge=1)]
     seats: list[Annotated[int, Field(strict=True, ge=1)]]
+
+
+def public_model_snapshot(raw: object) -> list[dict]:
+    """Return credential-free v2 snapshot rows; skip unknown/legacy shapes."""
+    if not isinstance(raw, list):
+        return []
+    published: list[dict] = []
+    for item in raw:
+        try:
+            published.append(ModelSnapshotEntry.model_validate(item).model_dump())
+        except ValidationError:
+            continue
+    return published

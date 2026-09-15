@@ -1,5 +1,6 @@
 import asyncio
 
+import anthropic
 import httpx
 import pytest
 from langchain_core.messages import AIMessage
@@ -93,6 +94,23 @@ def make_log(logger=None) -> ConversationLog:
 
 
 @pytest.mark.asyncio
+async def test_json_vote_accepts_anthropic_thinking_and_text_blocks():
+    client = JsonClient([
+        AIMessage(content=[
+            {"type": "thinking", "thinking": "Seat 2 is the safest exile."},
+            {"type": "text", "text": '{"action_type":"vote","target_seat":2,"reasoning":"x"}'},
+        ]),
+    ])
+    state = make_state()
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+
+    accepted = await role.request_action(state, make_log(), make_request(state))
+
+    assert accepted.command.action_type == "vote"
+    assert accepted.command.target_seat == 2
+
+
+@pytest.mark.asyncio
 async def test_invalid_vote_retry_uses_existing_compact_prompt():
     client = JsonClient([
         AIMessage(content="not json"),
@@ -183,9 +201,18 @@ async def test_local_deadline_is_distinguished_in_vote_telemetry():
 
 
 @pytest.mark.asyncio
-async def test_provider_timeout_is_distinguished_in_vote_telemetry():
-    timeout = APITimeoutError(request=httpx.Request("POST", "https://model.test"))
-    client = JsonClient([timeout, timeout, timeout])
+@pytest.mark.parametrize(
+    "make_timeout",
+    [
+        lambda: APITimeoutError(request=httpx.Request("POST", "https://model.test")),
+        lambda: anthropic.APITimeoutError(
+            request=httpx.Request("POST", "https://model.test/v1/messages"),
+        ),
+    ],
+    ids=["openai", "anthropic"],
+)
+async def test_provider_timeout_is_distinguished_in_vote_telemetry(make_timeout):
+    client = JsonClient([make_timeout(), make_timeout(), make_timeout()])
     logger = TelemetryLogger()
     state = make_state()
     role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
@@ -231,6 +258,32 @@ async def test_provider_timeout_is_distinguished_in_vote_telemetry():
                     500, request=httpx.Request("POST", "https://model.test")
                 ),
                 body={},
+            ),
+            "provider_server_error",
+        ),
+        (
+            lambda: anthropic.APIConnectionError(
+                request=httpx.Request("POST", "https://model.test/v1/messages")
+            ),
+            "provider_connection_error",
+        ),
+        (
+            lambda: anthropic.RateLimitError(
+                "limited",
+                response=httpx.Response(
+                    429, request=httpx.Request("POST", "https://model.test/v1/messages")
+                ),
+                body=None,
+            ),
+            "provider_rate_limit",
+        ),
+        (
+            lambda: anthropic.OverloadedError(
+                "overloaded",
+                response=httpx.Response(
+                    529, request=httpx.Request("POST", "https://model.test/v1/messages")
+                ),
+                body=None,
             ),
             "provider_server_error",
         ),

@@ -144,14 +144,14 @@ async def test_model(req: ModelTestRequest):
             except KeyDecryptionError:
                 raise HTTPException(400, "stored api key cannot be decrypted") from None
         explicit_strict_base_url = config.strict_base_url
-        provider_profile = config.provider_profile
+        provider_profile = req.provider_profile or config.provider_profile
     else:
         if not req.base_url or not req.model_id:
             raise HTTPException(422, "base_url and model_id are required")
         base_url, model_id = req.base_url, req.model_id
         api_key = req.api_key or ""
         explicit_strict_base_url = None
-        provider_profile = req.provider_profile
+        provider_profile = req.provider_profile or "auto"
     resolved_profile = ProviderRegistry().resolve(
         provider_profile, base_url, model_id,
     )

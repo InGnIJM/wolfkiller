@@ -90,3 +90,16 @@ def test_strict_action_keeps_base_url_without_strict_endpoint_capability():
     with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
         OpenAICompatibleTransport().build(cfg, profile, CallPurpose.ACTION_STRICT)
     assert chat.call_args.kwargs["base_url"] == cfg.base_url
+
+
+def test_discard_shared_http_clients_drops_langchain_httpx_cache():
+    from langchain_openai.chat_models._client_utils import (
+        _cached_async_httpx_client, _cached_sync_httpx_client,
+    )
+
+    sync = _cached_sync_httpx_client("https://api.deepseek.com", 90.0)
+    async_client = _cached_async_httpx_client("https://api.deepseek.com", 90.0)
+    OpenAICompatibleTransport.discard_shared_http_clients()
+    assert _cached_sync_httpx_client("https://api.deepseek.com", 90.0) is not sync
+    assert _cached_async_httpx_client("https://api.deepseek.com", 90.0) is not async_client
+    OpenAICompatibleTransport.discard_shared_http_clients()

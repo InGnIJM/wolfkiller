@@ -128,10 +128,7 @@ async def test_stored_deepseek_profile_uses_explicit_strict_endpoint(monkeypatch
     llm_client = MagicMock(return_value=client)
     monkeypatch.setattr(model_routes, "LLMClient", llm_client)
 
-    response = await model_routes.test_model(ModelTestRequest(
-        config_id=stored.id,
-        provider_profile="custom-openai",
-    ))
+    response = await model_routes.test_model(ModelTestRequest(config_id=stored.id))
 
     assert response.ok is True
     assert [
@@ -147,7 +144,9 @@ async def test_stored_deepseek_profile_uses_explicit_strict_endpoint(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_config_probe_uses_stored_profile(monkeypatch, tmp_path):
+async def test_config_probe_uses_stored_profile_when_request_omits_it(
+    monkeypatch, tmp_path,
+):
     store = JsonModelConfigStore(str(tmp_path / "models.json"))
     stored = ModelConfig.new(
         name="router", base_url="https://openrouter.ai/api/v1", model_id="m",
@@ -166,12 +165,74 @@ async def test_config_probe_uses_stored_profile(monkeypatch, tmp_path):
     llm_client = MagicMock(return_value=client)
     monkeypatch.setattr(model_routes, "LLMClient", llm_client)
 
-    response = await model_routes.test_model(ModelTestRequest(
-        config_id=stored.id, provider_profile="deepseek",
-    ))
+    response = await model_routes.test_model(ModelTestRequest(config_id=stored.id))
 
     assert response.ok is True
     assert llm_client.call_args.kwargs["config"].provider_profile == "openrouter"
+
+
+@pytest.mark.asyncio
+async def test_config_probe_prefers_explicit_profile_over_stored_one(
+    monkeypatch, tmp_path,
+):
+    """The dialog may test a profile change before the config is saved."""
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    stored = ModelConfig.new(
+        name="relay", base_url="https://relay.example/v1", model_id="claude",
+        provider_profile="custom-openai",
+    )
+    store.upsert(stored)
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    client = MagicMock(spec=LLMClient)
+    client.probe.return_value = {
+        "tools": True,
+        "strict_tools": False,
+        "json_output": True,
+        "reasoning_effort": False,
+        "temperature": True,
+    }
+    llm_client = MagicMock(return_value=client)
+    monkeypatch.setattr(model_routes, "LLMClient", llm_client)
+
+    response = await model_routes.test_model(ModelTestRequest(
+        config_id=stored.id, provider_profile="custom-anthropic",
+    ))
+
+    assert response.ok is True
+    assert llm_client.call_count == 1
+    assert llm_client.call_args.kwargs["config"].provider_profile == "custom-anthropic"
+    assert store.get(stored.id).provider_profile == "custom-openai"
+
+
+@pytest.mark.asyncio
+async def test_ad_hoc_probe_defaults_omitted_profile_to_auto(monkeypatch):
+    client = MagicMock(spec=LLMClient)
+    client.probe.return_value = {
+        "tools": True,
+        "strict_tools": False,
+        "json_output": True,
+        "reasoning_effort": False,
+        "temperature": True,
+    }
+    llm_client = MagicMock(return_value=client)
+    monkeypatch.setattr(model_routes, "LLMClient", llm_client)
+
+    response = await model_routes.test_model(ModelTestRequest(
+        base_url="https://api.anthropic.com", model_id="claude-sonnet-4-5",
+    ))
+
+    assert response.ok is True
+    assert llm_client.call_count == 1
+    assert llm_client.call_args.kwargs["config"].provider_profile == "anthropic"
+
+
+def test_request_accepts_anthropic_profiles():
+    for profile in ("anthropic", "custom-anthropic"):
+        request = ModelConfigRequest(
+            name="x", base_url="https://example.test", model_id="m",
+            provider_profile=profile,
+        )
+        assert request.provider_profile == profile
 
 
 def test_model_test_does_not_expose_provider_error_details(monkeypatch):

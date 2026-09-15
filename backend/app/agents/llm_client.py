@@ -12,16 +12,27 @@ from urllib.parse import urlparse
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
-from openai import BadRequestError, UnprocessableEntityError
 
 from app.config import config as app_config
 from app.agents.output_parser import (
     StrictCapabilityError, coerce_payload_to_schema, extract_json_object,
     extract_tool_call_xml,
 )
-from app.agents.providers.base import CallPurpose
-from app.agents.providers.openai_compatible import OpenAICompatibleTransport
+from app.agents.providers.base import (
+    API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS, CallPurpose,
+)
+# Re-exported so game code can classify provider failures without importing
+# the provider layer (architecture boundary: core/roles never import providers).
+from app.agents.providers.errors import (  # noqa: F401
+    CAPABILITY_REJECTION_ERRORS,
+    CONNECTION_ERRORS,
+    RATE_LIMIT_ERRORS,
+    SERVER_ERRORS,
+    TIMEOUT_ERRORS,
+    TRANSIENT_PROVIDER_ERRORS,
+)
 from app.agents.providers.registry import ProviderRegistry
+from app.agents.providers.transports import transport_for
 from app.models.contracts import ActionContract
 
 
@@ -153,13 +164,46 @@ def env_default_client_config() -> LLMClientConfig:
     )
 
 
-class LLMClient:
-    """Thin wrapper around LangChain ChatModel (OpenAI-compatible).
+def _content_text(content: Any) -> str:
+    """Flatten a chat message's content to plain text.
 
-    Configuration comes from an explicit LLMClientConfig; when omitted the
-    .env defaults are used so existing callers keep working. The ``model``
-    and ``temperature`` arguments, when provided, override the corresponding
-    config values.
+    OpenAI-style models return a string; Anthropic returns a list of content
+    blocks whenever tools or thinking are involved. Text, thinking, and
+    reasoning blocks can all carry parseable JSON or XML tool calls.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, Mapping):
+            continue
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text")
+        elif block_type == "thinking":
+            text = block.get("thinking")
+        elif block_type == "reasoning":
+            text = block.get("reasoning", block.get("text"))
+        else:
+            continue
+        if isinstance(text, str):
+            parts.append(text)
+    return "".join(parts)
+
+
+class LLMClient:
+    """Thin wrapper around LangChain ChatModels behind a provider transport.
+
+    The resolved provider profile selects the transport (OpenAI-compatible
+    chat completions or Anthropic Messages). Configuration comes from an
+    explicit LLMClientConfig; when omitted the .env defaults are used so
+    existing callers keep working. The ``model`` and ``temperature``
+    arguments, when provided, override the corresponding config values.
     """
 
     def __init__(
@@ -188,9 +232,9 @@ class LLMClient:
             self._config.base_url,
             self.model_name,
         )
-        self._transport = OpenAICompatibleTransport()
+        self._transport = transport_for(self.provider_profile)
         # One ChatModel per (purpose, config) instead of one per call: every
-        # build creates a fresh httpx/openai client, and unclosed clients
+        # build creates a fresh httpx SDK client, and unclosed clients
         # segfault the interpreter at shutdown on Windows.
         self._built_models: dict[tuple[CallPurpose, LLMClientConfig], BaseChatModel] = {}
 
@@ -211,7 +255,14 @@ class LLMClient:
         key = (purpose, effective)
         model = self._built_models.get(key)
         if model is None:
-            factory = ChatOpenAI if ChatOpenAI is not _DEFAULT_CHAT_OPENAI else None
+            # Tests patch ``app.agents.llm_client.ChatOpenAI``; honour that
+            # only for the chat-completions transport it stands in for.
+            factory = (
+                ChatOpenAI
+                if ChatOpenAI is not _DEFAULT_CHAT_OPENAI
+                and self.provider_profile.api_mode == API_MODE_CHAT_COMPLETIONS
+                else None
+            )
             model = self._transport.build(
                 effective,
                 self.provider_profile,
@@ -222,9 +273,16 @@ class LLMClient:
         return model
 
     async def aclose(self) -> None:
-        """Close every httpx/openai client behind the cached chat models."""
+        """Close every httpx SDK client behind the cached chat models.
+
+        ChatOpenAI exposes ``root_async_client`` / ``async_client`` /
+        ``root_client``; ChatAnthropic exposes ``_async_client`` / ``_client``.
+        """
         for model in self._built_models.values():
-            for attr in ("root_async_client", "async_client", "root_client"):
+            for attr in (
+                "root_async_client", "async_client", "root_client",
+                "_async_client", "_client",
+            ):
                 client = getattr(model, attr, None)
                 closer = getattr(client, "aclose", None) or getattr(
                     client, "close", None,
@@ -238,6 +296,10 @@ class LLMClient:
                 except Exception:
                     logger.debug("Failed to close %s client", attr, exc_info=True)
         self._built_models.clear()
+        # LangChain caches httpx clients process-wide. Closing the SDK wrapper
+        # above shuts that shared pool; drop the cache so the next client does
+        # not inherit a closed connection (AnthropicConnectionError / APIConnectionError).
+        self._transport.discard_shared_http_clients()
 
     def get_model(self) -> BaseChatModel:
         return self._build(CallPurpose.TEXT)
@@ -280,9 +342,10 @@ class LLMClient:
             CallPurpose.TOOLS,
             replace(self._config, temperature=_ACTION_TEMPERATURE),
         )
-        if self._forced_tool_choice():
-            return model.bind_tools([tool], tool_choice=tool_name)
-        return model.bind_tools([tool])
+        choice = self._action_tool_choice(tool_name)
+        if choice is None:
+            return model.bind_tools([tool])
+        return model.bind_tools([tool], tool_choice=choice)
 
     def probe(self) -> dict[str, bool]:
         """Invoke a minimal text request and return this profile's capabilities."""
@@ -291,15 +354,21 @@ class LLMClient:
 
     @staticmethod
     def map_strict_capability_error(error: Exception) -> Exception:
-        """Treat strict-endpoint client rejections as a JSON fallback signal."""
+        """Treat client rejections (including wrapped SDK errors) as fallback."""
         if isinstance(error, StrictCapabilityError):
             return error
-        if not isinstance(error, (BadRequestError, UnprocessableEntityError)):
-            return error
-
-        response = error.response
-        if response.status_code in (400, 422):
-            return StrictCapabilityError(str(error))
+        seen: set[int] = set()
+        current: BaseException | None = error
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, CAPABILITY_REJECTION_ERRORS):
+                response = getattr(current, "response", None)
+                status = getattr(current, "status_code", None)
+                if not isinstance(status, int):
+                    status = getattr(response, "status_code", None)
+                if status in (400, 422):
+                    return StrictCapabilityError(str(error))
+            current = current.__cause__ or current.__context__
         return error
 
     def get_model_with_action_tool(self, contract: ActionContract) -> BaseChatModel:
@@ -327,15 +396,28 @@ class LLMClient:
             return model.bind_tools(
                 [tool], tool_choice=contract.resolved_tool_name, strict=True
             )
-        if not self._forced_tool_choice():
+        choice = self._action_tool_choice(contract.resolved_tool_name)
+        if choice is None:
             return model.bind_tools([tool])
-        return model.bind_tools([tool], tool_choice=contract.resolved_tool_name)
+        return model.bind_tools([tool], tool_choice=choice)
 
     def _forced_tool_choice(self) -> bool:
         """Duck-type friendly read; scripted/partial profiles default to True."""
         return bool(getattr(
             self.provider_profile.capabilities, "forced_tool_choice", True,
         ))
+
+    def _action_tool_choice(self, tool_name: str) -> str | None:
+        """How this profile forces a tool, if it forces one at all.
+
+        Anthropic thinking rejects a named ``tool_choice``; ``any`` still
+        requires a tool call and is the documented thinking-compatible mode.
+        """
+        if not self._forced_tool_choice():
+            return None
+        if getattr(self.provider_profile, "api_mode", None) == API_MODE_ANTHROPIC_MESSAGES:
+            return "any"
+        return tool_name
 
     @staticmethod
     def _coerce_payload_types(
@@ -350,9 +432,11 @@ class LLMClient:
     @staticmethod
     def _structured_response(response, expected_tool_name: str) -> StructuredResponse:
         tool_calls = getattr(response, "tool_calls", None) or []
-        content = getattr(response, "content", "")
-        content_length = len(content) if isinstance(content, str) else 0
-        finish_reason = getattr(response, "response_metadata", {}).get("finish_reason")
+        content = _content_text(getattr(response, "content", ""))
+        content_length = len(content)
+        # OpenAI reports ``finish_reason``; Anthropic reports ``stop_reason``.
+        metadata = getattr(response, "response_metadata", {})
+        finish_reason = metadata.get("finish_reason", metadata.get("stop_reason"))
 
         if tool_calls:
             if len(tool_calls) != 1:
@@ -424,7 +508,7 @@ class LLMClient:
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
                 )
-            except (BadRequestError, UnprocessableEntityError, ValueError) as error:
+            except (*CAPABILITY_REJECTION_ERRORS, ValueError) as error:
                 logger.warning(
                     "Native action tool failed for provider=%s model=%s; "
                     "retrying as JSON (%s)",
@@ -475,7 +559,7 @@ class LLMClient:
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     llm_attempts=attempts,
                 )
-            except (BadRequestError, UnprocessableEntityError, ValueError) as error:
+            except (*CAPABILITY_REJECTION_ERRORS, ValueError) as error:
                 logger.warning(
                     "Native JSON tool failed for provider=%s model=%s; "
                     "retrying as JSON (%s)",
@@ -522,7 +606,7 @@ class LLMClient:
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     llm_attempts=attempts,
                 )
-            except (BadRequestError, UnprocessableEntityError, ValueError) as error:
+            except (*CAPABILITY_REJECTION_ERRORS, ValueError) as error:
                 logger.warning(
                     "Native async JSON tool failed for provider=%s model=%s; "
                     "retrying as JSON (%s)",

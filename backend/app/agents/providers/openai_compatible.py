@@ -1,14 +1,10 @@
-import os
-
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from langchain_openai.chat_models._client_utils import (
+    _cached_async_httpx_client, _cached_sync_httpx_client,
+)
 
-from .base import CallPurpose, ProviderProfile
-
-
-def _provider_max_retries() -> int:
-    """SDK-level retries for transient 429/5xx; honors Retry-After headers."""
-    return int(os.getenv("LLM_PROVIDER_MAX_RETRIES", "4"))
+from .base import CallPurpose, ProviderProfile, call_budget, provider_max_retries
 
 
 class OpenAICompatibleTransport:
@@ -21,22 +17,14 @@ class OpenAICompatibleTransport:
         purpose: CallPurpose,
         chat_model_factory=None,
     ) -> BaseChatModel:
-        is_action = purpose in {
-            CallPurpose.ACTION_JSON,
-            CallPurpose.ACTION_STRICT,
-            CallPurpose.TOOLS,
-        }
+        budget = call_budget(config, purpose)
         kwargs = {
             "model": config.model_id,
             "api_key": config.api_key,
             "base_url": config.base_url,
-            "max_tokens": config.action_max_tokens if is_action else config.max_tokens,
-            "timeout": (
-                max(config.action_timeout_seconds, config.action_retry_timeout_seconds) + 5.0
-                if is_action
-                else config.action_timeout_seconds
-            ),
-            "max_retries": _provider_max_retries(),
+            "max_tokens": budget.max_tokens,
+            "timeout": budget.timeout,
+            "max_retries": provider_max_retries(),
         }
         if purpose is CallPurpose.ACTION_STRICT and profile.strict_endpoint:
             kwargs["base_url"] = config.strict_base_url
@@ -44,3 +32,13 @@ class OpenAICompatibleTransport:
             kwargs["temperature"] = config.temperature
         factory = chat_model_factory or ChatOpenAI
         return factory(**kwargs)
+
+    @staticmethod
+    def discard_shared_http_clients() -> None:
+        """Drop LangChain's process-wide httpx cache after an SDK close.
+
+        ChatOpenAI reuses one httpx client per (base_url, timeout). Closing
+        that wrapper would otherwise poison the next LLMClient with a dead pool.
+        """
+        _cached_sync_httpx_client.cache_clear()
+        _cached_async_httpx_client.cache_clear()

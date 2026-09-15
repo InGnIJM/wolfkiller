@@ -20,6 +20,7 @@ const sample = {
   key_invalid: false,
   temperature: null,
   strict_base_url: null,
+  provider_profile: 'auto' as const,
   created_at: '',
   updated_at: '',
 };

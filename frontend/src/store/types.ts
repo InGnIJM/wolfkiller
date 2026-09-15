@@ -150,6 +150,7 @@ export interface PublicGameState {
   execution_status?: ExecutionStatus;
   recoverable?: boolean;
   recovery_block_code?: string | null;
+  model_snapshot?: ModelSnapshotEntry[];
 }
 
 type PublicReplayEnvelope<TType extends string, TPayload> = {
@@ -235,10 +236,35 @@ export interface GameListItem {
   recoverable?: boolean;
   recovery_block_code?: string | null;
   source?: 'native' | 'legacy' | 'benchmark' | string;
+  folder_id?: string | null;
 }
 
 export interface GameListResponse {
   games: GameListItem[];
+}
+
+export interface GameFolder {
+  folder_id: string;
+  name: string;
+  game_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BatchFailure {
+  game_id: string;
+  code: string;
+  message: string;
+}
+
+export interface BatchDeleteResult {
+  deleted: string[];
+  failed: BatchFailure[];
+}
+
+export interface BatchMoveResult {
+  moved: string[];
+  failed: BatchFailure[];
 }
 
 export type WSMessage =
@@ -263,6 +289,16 @@ export type WSMessage =
 
 // ── Model config & game creation catalog ──────────────────────
 
+/** Backend provider profile ids; `auto` infers one from the Base URL host. */
+export type ProviderProfileId =
+  | 'auto'
+  | 'openai'
+  | 'deepseek'
+  | 'openrouter'
+  | 'custom-openai'
+  | 'anthropic'
+  | 'custom-anthropic';
+
 export interface ModelConfig {
   id: string;
   name: string;
@@ -273,6 +309,7 @@ export interface ModelConfig {
   key_invalid: boolean;
   temperature: number | null;
   strict_base_url: string | null;
+  provider_profile: ProviderProfileId;
   created_at: string;
   updated_at: string;
 }
@@ -284,6 +321,7 @@ export interface ModelConfigInput {
   api_key?: string;
   temperature?: number | null;
   strict_base_url?: string | null;
+  provider_profile?: ProviderProfileId;
 }
 
 export interface ModelTestResult {
@@ -384,6 +422,13 @@ export interface BenchmarkItem {
   created_at?: string;
   updated_at?: string;
   event_seq?: number | null;
+  name?: string | null;
+  phase?: string | null;
+  round_number?: number | null;
+  player_count?: number | null;
+  alive_count?: number | null;
+  winner?: string | null;
+  execution_status?: string | null;
   [key: string]: unknown;
 }
 

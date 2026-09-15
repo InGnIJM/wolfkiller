@@ -159,6 +159,31 @@ async def test_request_action_accepts_complete_xml_tool_call_without_json_fallba
 
 
 @pytest.mark.asyncio
+async def test_request_action_accepts_xml_tool_call_inside_anthropic_blocks():
+    xml_complete = AIMessage(
+        content=[
+            {"type": "thinking", "thinking": "Need to vote now."},
+            {"type": "text", "text": (
+                "<tool_call><function=cast_vote>"
+                "<parameter=action_type>vote</parameter>"
+                "<parameter=target_seat>2</parameter>"
+                "<parameter=reasoning>x</parameter>"
+                "</function></tool_call>"
+            )},
+        ],
+        tool_calls=[],
+    )
+    client = ClientStub([xml_complete], [])
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
+
+    accepted = await role.request_action(make_state(), object(), request_for(make_state()))
+
+    assert accepted.command.action_type == "vote"
+    assert accepted.command.target_seat == 2
+    assert client.json_model.messages == []
+
+
+@pytest.mark.asyncio
 async def test_request_action_retries_invalid_strict_action_once_with_generic_correction():
     state = make_state()
     client = ClientStub([action_tool_response(target=None), action_tool_response(target=2)])

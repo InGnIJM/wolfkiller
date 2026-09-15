@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING
 from app.models.game import GameState
 from app.models.actions import VoteAction, is_last_words_eligible
 from app.core.conversation_log import ConversationLog
-from app.agents.llm_client import LLMClient
+from app.agents.llm_client import (
+    LLMClient,
+    RATE_LIMIT_ERRORS,
+    SERVER_ERRORS,
+    TIMEOUT_ERRORS,
+    TRANSIENT_PROVIDER_ERRORS,
+    _content_text,
+)
 from app.agents.output_parser import (
     OutputParser,
     StrictCapabilityError,
@@ -24,7 +31,6 @@ from app.models.pipeline import (
     SchedulePoint,
 )
 from langchain_core.messages import SystemMessage, HumanMessage
-from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 
 if TYPE_CHECKING:
     from app.agents.prompt_builder import PromptBuilder
@@ -37,9 +43,10 @@ def _validation_failure_code(error: ActionValidationError) -> str:
 
 
 def _provider_failure_code(error: Exception) -> str:
-    if isinstance(error, RateLimitError):
+    """Classify a transient provider error regardless of which SDK raised it."""
+    if isinstance(error, RATE_LIMIT_ERRORS):
         return "provider_rate_limit"
-    if isinstance(error, InternalServerError):
+    if isinstance(error, SERVER_ERRORS):
         return "provider_server_error"
     return "provider_connection_error"
 
@@ -590,7 +597,7 @@ class BaseRole:
                     technical_failure_code="request_timeout",
                     timeout_type="local_deadline",
                 )
-            except APITimeoutError:
+            except TIMEOUT_ERRORS:
                 should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
@@ -614,7 +621,7 @@ class BaseRole:
                     technical_failure_code="request_timeout",
                     timeout_type="provider_timeout",
                 )
-            except (RateLimitError, InternalServerError, APIConnectionError) as error:
+            except TRANSIENT_PROVIDER_ERRORS as error:
                 should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
@@ -766,7 +773,7 @@ class BaseRole:
             # Hermes-style <tool_call> block as plain content. Accept it when
             # it names the issued contract and validates; incomplete blocks
             # fall through to the JSON transport for repair.
-            content = response.content if isinstance(response.content, str) else ""
+            content = _content_text(getattr(response, "content", ""))
             xml_call = extract_tool_call_xml(content)
             if xml_call is not None and xml_call[0] == request.contract.resolved_tool_name:
                 try:
@@ -789,8 +796,8 @@ class BaseRole:
             if callable(action_model) else self.llm_client.get_model()
         )
         response = await model.ainvoke(messages)
-        content = response.content if hasattr(response, "content") else str(response)
-        if not isinstance(content, str):
+        content = _content_text(getattr(response, "content", ""))
+        if not content:
             raise ActionValidationError(
                 "JSON action response must be text", code="action_response_not_text",
             )

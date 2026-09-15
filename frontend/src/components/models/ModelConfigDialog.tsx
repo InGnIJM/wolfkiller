@@ -5,7 +5,10 @@ import {
 } from '@mui/material';
 
 import { testModelConnection } from '../../api/client';
-import type { ModelConfig, ModelConfigInput, ModelTestResult } from '../../store/types';
+import type {
+  ModelConfig, ModelConfigInput, ModelTestResult, ProviderProfileId,
+} from '../../store/types';
+import { PROVIDER_PROFILE_OPTIONS, isProviderProfileId } from './providerProfiles';
 
 interface Props {
   open: boolean;
@@ -19,6 +22,9 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? '');
   const [modelId, setModelId] = useState(initial?.model_id ?? '');
   const [apiKey, setApiKey] = useState('');
+  const [providerProfile, setProviderProfile] = useState<ProviderProfileId>(
+    initial?.provider_profile ?? 'auto',
+  );
   const [temperature, setTemperature] = useState(
     initial?.temperature != null ? String(initial.temperature) : '',
   );
@@ -37,6 +43,9 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   const hasErrors = Boolean(nameError || urlError || modelError);
   const tested = testResult?.ok === true;
   const canSave = !hasErrors && tested && !saving;
+  const baseUrlPlaceholder = PROVIDER_PROFILE_OPTIONS
+    .find((option) => option.id === providerProfile)?.baseUrlPlaceholder ?? '';
+  const isAnthropic = providerProfile === 'anthropic' || providerProfile === 'custom-anthropic';
 
   const invalidateTest = () => {
     setTestResult((prev) => (prev?.ok ? null : prev));
@@ -53,6 +62,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
       api_key: apiKey,
       temperature: temperature.trim() ? Number(temperature) : null,
       strict_base_url: strictUrl.trim() || null,
+      provider_profile: providerProfile,
     });
     setSaving(false);
   };
@@ -63,9 +73,12 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     setTesting(true);
     try {
       const result = initial
-        ? await testModelConnection({ config_id: initial.id, api_key: apiKey })
+        ? await testModelConnection({
+            config_id: initial.id, api_key: apiKey, provider_profile: providerProfile,
+          })
         : await testModelConnection({
             base_url: baseUrl.trim(), api_key: apiKey, model_id: modelId.trim(),
+            provider_profile: providerProfile,
           });
       setTestResult(result);
     } catch (error) {
@@ -93,8 +106,32 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             fullWidth
           />
           <TextField
+            select
+            label="接口协议"
+            value={providerProfile}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (isProviderProfileId(next)) {
+                setProviderProfile(next);
+                invalidateTest();
+              }
+            }}
+            slotProps={{ select: { native: true } }}
+            helperText={
+              isAnthropic
+                ? 'Anthropic Messages API：Base URL 不含 /v1；temperature 会被截断到 0~1'
+                : '自动识别仅支持官方域名；中转站请手动选择协议'
+            }
+            size="small"
+            fullWidth
+          >
+            {PROVIDER_PROFILE_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </TextField>
+          <TextField
             label="Base URL"
-            placeholder="https://api.deepseek.com/v1"
+            placeholder={baseUrlPlaceholder}
             value={baseUrl}
             onChange={(e) => {
               setBaseUrl(e.target.value);
@@ -108,7 +145,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
           />
           <TextField
             label="模型 ID"
-            placeholder="deepseek-v4-flash"
+            placeholder={isAnthropic ? 'claude-sonnet-4-5' : 'deepseek-v4-flash'}
             value={modelId}
             onChange={(e) => {
               setModelId(e.target.value);

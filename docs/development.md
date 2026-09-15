@@ -128,6 +128,15 @@ sqlite3 data/backups/wolfkiller-2026-09-06.sqlite3 "PRAGMA integrity_check;"
 - 在 WSL 中对 Windows 挂载路径直接跑 vitest/eslint/build，worker 会在 ~60s 超时（"Timeout waiting for worker to respond"）。做法：把 frontend（src + 配置 + lockfile）拷到 ext4 镜像目录（如 `/tmp/wk-verify`），在那里 `npm ci` 并执行命令。
 - 在挂载路径上执行过 `npm install` 后，用 `git checkout -- package.json package-lock.json` 还原——npm 会把 CRLF 改写成 LF 并丢弃 `libc` 字段，污染 diff。
 
+### 接入 Anthropic / Anthropic 兼容中转
+
+- 官方地址 `https://api.anthropic.com` 会被自动识别为 `anthropic` profile；第三方中转站域名无法识别，必须在「模型配置 → 接口协议」显式选择「自定义 · Anthropic 兼容」，否则会按 OpenAI Chat Completions 协议请求。
+- Base URL **不要**带 `/v1`（SDK 自行拼接 `/v1/messages`）；即便填了也会被 `normalize_base_url()` 去掉尾部 `/v1`。
+- Messages API 的 temperature 仅接受 0~1，`.env` 默认 `LLM_TEMPERATURE=1.2` 会被截断为 1.0；行动请求固定 0.1 不受影响。
+- Anthropic profile 的 `strict_tools=False`：夜间行动/投票走「强制工具 + JSON 降级」。强制方式是 `tool_choice="any"`，不能点名某个工具——thinking（含 DeepSeek V4 Flash 一类默认开 thinking 的中转）会以 400 `Thinking mode does not support this tool_choice` 拒绝 named `tool_choice`。`strict_base_url` 对该协议无意义。
+- 投票 JSON 降级与夜晚 `_structured_response` 都必须经 `_content_text()` 展平 Anthropic content 块（含 `thinking` / `reasoning`）；直接判断 `isinstance(content, str)` 会把合法块列表误判成 `action_response_not_text`。
+- 依赖：`langchain-anthropic>=1.0.0`（连带 `anthropic>=1.x`，其异常类与 openai SDK 不同，请统一通过 `app.agents.llm_client` 再导出的错误元组捕获，不要在游戏代码中直接 import 任一 SDK）。
+
 ### LLM 行动请求失败模式
 
 - 行动请求（夜间行动、投票）与常规请求走不同的 token/超时预算（见上表）；只有当 provider profile 声明 `strict_tools` 时才尝试强制工具调用，否则直接用 JSON。

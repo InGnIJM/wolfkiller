@@ -1,9 +1,9 @@
 from urllib.parse import urlparse
 
-from .base import ModelCapabilities, ProviderProfile
-
-
-_CHAT_COMPLETIONS = "chat_completions"
+from .base import (
+    API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS,
+    ModelCapabilities, ProviderProfile,
+)
 
 
 class ProviderRegistry:
@@ -12,29 +12,46 @@ class ProviderRegistry:
     _PROFILES = {
         "openai": ProviderProfile(
             profile_id="openai",
-            api_mode=_CHAT_COMPLETIONS,
+            api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, True, True, True, True),
             default_action_max_tokens=2048,
         ),
         "deepseek": ProviderProfile(
             profile_id="deepseek",
-            api_mode=_CHAT_COMPLETIONS,
+            api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, True, True, True, True),
             default_action_max_tokens=2048,
             strict_endpoint=True,
         ),
         "openrouter": ProviderProfile(
             profile_id="openrouter",
-            api_mode=_CHAT_COMPLETIONS,
+            api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, False, True, True, True),
             default_action_max_tokens=2048,
         ),
         "custom-openai": ProviderProfile(
             profile_id="custom-openai",
-            api_mode=_CHAT_COMPLETIONS,
+            api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(
                 True, False, True, False, True, forced_tool_choice=False,
             ),
+            default_action_max_tokens=2048,
+        ),
+        # Anthropic Messages API: native tool use with a forced tool_choice is
+        # reliable, but OpenAI-style strict JSON schema mode is not a Messages
+        # concept, so actions use the non-strict tool path.
+        "anthropic": ProviderProfile(
+            profile_id="anthropic",
+            api_mode=API_MODE_ANTHROPIC_MESSAGES,
+            capabilities=ModelCapabilities(True, False, True, False, True),
+            default_action_max_tokens=2048,
+        ),
+        # Third-party relays speaking the Messages protocol; chosen explicitly
+        # because their hostnames cannot be recognised.
+        "custom-anthropic": ProviderProfile(
+            profile_id="custom-anthropic",
+            api_mode=API_MODE_ANTHROPIC_MESSAGES,
+            capabilities=ModelCapabilities(True, False, True, False, True),
             default_action_max_tokens=2048,
         ),
     }
@@ -43,6 +60,7 @@ class ProviderRegistry:
         "api.openai.com": "openai",
         "api.deepseek.com": "deepseek",
         "openrouter.ai": "openrouter",
+        "api.anthropic.com": "anthropic",
     }
 
     def resolve(self, profile_id: str, base_url: str, model_id: str) -> ProviderProfile:
