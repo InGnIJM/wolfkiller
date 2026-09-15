@@ -18,3 +18,4 @@ backend/scripts/*
 !backend/scripts/run_benchmark.py
 
 .zcode/
+.playwright-manual-data/
