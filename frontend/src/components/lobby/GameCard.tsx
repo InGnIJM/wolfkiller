@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card, CardActionArea, Typography, Chip, Box, IconButton, Menu, MenuItem } from '@mui/material';
+import { Card, CardActionArea, Checkbox, Typography, Chip, Box, IconButton, Menu, MenuItem } from '@mui/material';
 import GroupsIcon from '@mui/icons-material/Groups';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
@@ -25,6 +25,9 @@ interface Props {
   onPause?: () => void;
   onResume?: () => void;
   onRecover?: () => void;
+  onMove?: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
 const WINNER_META: Record<string, { label: string; color: 'success' | 'error' }> = {
@@ -48,7 +51,7 @@ const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
 export default function GameCard({
   name, phase, roundNumber, playerCount, aliveCount, winner, onClick, onRename, onDelete,
   executionStatus, recoverable = false, recoveryBlockCode, controlBusy = false,
-  onPause, onResume, onRecover,
+  onPause, onResume, onRecover, onMove, selected = false, onToggleSelect,
 }: Props) {
   const win = winner ? WINNER_META[winner] : null;
   const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
@@ -58,13 +61,24 @@ export default function GameCard({
       variant="outlined"
       sx={{
         transition: 'background-color 0.2s, border-color 0.2s',
+        bgcolor: selected ? 'action.selected' : undefined,
         '&:hover': {
-          bgcolor: 'action.hover',
+          bgcolor: selected ? 'action.selected' : 'action.hover',
           borderColor: 'primary.main',
         },
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'stretch' }}>
+        {onToggleSelect && (
+          <Box sx={{ display: 'flex', alignItems: 'center', pl: 1 }}>
+            <Checkbox
+              checked={selected}
+              onChange={onToggleSelect}
+              onClick={(event) => event.stopPropagation()}
+              slotProps={{ input: { 'aria-label': `选择 ${name}` } }}
+            />
+          </Box>
+        )}
         <CardActionArea onClick={onClick} sx={{ p: 0, flex: 1 }}>
           <Box sx={{ px: 2.5, py: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -137,6 +151,9 @@ export default function GameCard({
               </MenuItem>
             )}
             <MenuItem onClick={() => { setMenuEl(null); onRename(); }}>重命名</MenuItem>
+            {onMove && (
+              <MenuItem onClick={() => { setMenuEl(null); onMove(); }}>移动到文件夹</MenuItem>
+            )}
             <MenuItem onClick={() => { setMenuEl(null); onDelete(); }}>删除</MenuItem>
           </Menu>
         </Box>

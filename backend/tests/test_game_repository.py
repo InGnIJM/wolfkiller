@@ -27,7 +27,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
         assert repository.database_path == tmp_path / "wolfkiller.sqlite3"
-        assert repository.schema_version() == 1
+        assert repository.schema_version() == 2
         pragmas = repository.pragmas()
         assert pragmas == {
             "journal_mode": "wal",
@@ -41,6 +41,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
             "domain_events", "audience_events", "audience_snapshots",
             "model_requests", "model_attempts", "benchmark_runs",
             "benchmark_items", "benchmark_reports", "derived_jobs",
+            "game_folders", "game_folder_items",
         } <= tables
     finally:
         repository.close()

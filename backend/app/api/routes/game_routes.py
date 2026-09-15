@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query
+from app.api.model_schemas import public_model_snapshot
 from app.api.schemas import (
-    CreateGameRequest, CreateGameResponse,
+    AssignFolderRequest, BatchDeleteResponse, BatchGameIdsRequest, BatchMoveRequest,
+    BatchMoveResponse, CreateGameRequest, CreateGameResponse,
     GameListResponse, GameListItem, GameDetailResponse, GameLogsResponse,
     GameMemoriesResponse, PlayerMemoryResponse, RenameGameRequest,
     AudienceEventPageResponse, AudienceSnapshotResponse, GameExecutionResponse,
@@ -145,6 +147,12 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
 def _list_item(service: GameService, game_id: str, state) -> GameListItem:
     win = state.win_result.get("winning_camp") if state.win_result else None
     execution = _execution_info(service, game_id, state)
+    folder_id = None
+    getter = getattr(service, "get_game_folder_id", None)
+    if callable(getter):
+        value = getter(game_id)
+        if isinstance(value, str) and value:
+            folder_id = value
     return GameListItem(
         game_id=game_id,
         name=service.get_display_name(game_id),
@@ -153,6 +161,7 @@ def _list_item(service: GameService, game_id: str, state) -> GameListItem:
         player_count=len(state.players),
         alive_count=len(state.alive_players()),
         winner=win,
+        folder_id=folder_id,
         **execution,
     )
 
@@ -163,11 +172,45 @@ async def list_games():
     games = service.list_games()
     items = []
     for g in games:
+        checker = getattr(service, "is_lobby_game", None)
+        if callable(checker) and not checker(g):
+            continue
         state = service.get_game_state(g)
         if state is None:
             continue
         items.append(_list_item(service, g, state))
     return GameListResponse(games=items)
+
+
+@router.post("/batch-delete", response_model=BatchDeleteResponse)
+async def batch_delete_games(req: BatchGameIdsRequest):
+    result = await get_service().batch_delete_games(req.game_ids)
+    return BatchDeleteResponse.model_validate(result)
+
+
+@router.post("/batch-move", response_model=BatchMoveResponse)
+async def batch_move_games(req: BatchMoveRequest):
+    result = get_service().batch_move_games(req.game_ids, req.folder_id)
+    return BatchMoveResponse.model_validate(result)
+
+
+@router.put("/{game_id}/folder", status_code=204)
+async def assign_game_folder(game_id: str, req: AssignFolderRequest):
+    service = get_service()
+    try:
+        service.assign_game_folder(game_id, req.folder_id)
+    except KeyError:
+        raise HTTPException(404, "Game or folder not found") from None
+    except GameReferencedByBenchmark as error:
+        raise HTTPException(409, {
+            "code": "game_referenced_by_benchmark",
+            "benchmark_run_id": str(error),
+        }) from None
+    except RuntimeError as error:
+        raise HTTPException(503, {
+            "code": "folder_persistence_unavailable",
+            "message": str(error),
+        }) from None
 
 
 @router.patch("/{game_id}", response_model=GameListItem)
@@ -217,6 +260,7 @@ async def get_game(game_id: str):
         speeches=public_state["speeches"],
         death_history=public_state["death_history"],
         win_result=public_state["win_result"],
+        model_snapshot=public_model_snapshot(service.get_game_model_snapshot(game_id)),
         **_execution_info(service, game_id, state),
     )
 
@@ -292,6 +336,16 @@ async def get_game_snapshot(game_id: str):
             409, "snapshot_unavailable",
             "This game does not have an incremental audience snapshot",
         )
+    state = snapshot["state"]
+    snapshot = {
+        **snapshot,
+        "state": {
+            **state,
+            "model_snapshot": public_model_snapshot(
+                get_service().get_game_model_snapshot(game_id),
+            ),
+        },
+    }
     return AudienceSnapshotResponse.model_validate(snapshot)
 
 

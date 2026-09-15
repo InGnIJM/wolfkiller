@@ -1642,6 +1642,89 @@ class TestDeleteGame:
         assert "game-1" not in service._games
 
 
+class TestLobbyFoldersAndBatch:
+    def _service(self, tmp_path, repository=None):
+        return GameService(
+            WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+        )
+
+    def test_folder_helpers_require_repository(self, tmp_path):
+        service = self._service(tmp_path)
+        with pytest.raises(RuntimeError, match="unavailable"):
+            service.list_folders()
+        assert service.get_game_folder_id("game-1") is None
+
+    def test_folder_crud_and_assign(self, tmp_path):
+        from app.persistence.repository import GameRepository
+        repository = GameRepository(tmp_path)
+        service = self._service(tmp_path, repository)
+        try:
+            service._games["game-1"] = MagicMock()
+            folder = service.create_folder("九月")
+            assert service.list_folders()[0]["name"] == "九月"
+            renamed = service.rename_folder(folder["folder_id"], "归档")
+            assert renamed["name"] == "归档"
+            service.assign_game_folder("game-1", folder["folder_id"])
+            assert service.get_game_folder_id("game-1") == folder["folder_id"]
+            service.assign_game_folder("game-1", None)
+            assert service.get_game_folder_id("game-1") is None
+            service.delete_folder(folder["folder_id"])
+            assert service.list_folders() == []
+            with pytest.raises(KeyError):
+                service.assign_game_folder("missing", None)
+        finally:
+            repository.close()
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_and_move_collect_partial_failures(self, tmp_path, monkeypatch):
+        from app.persistence.repository import GameRepository, GameReferencedByBenchmark
+        repository = GameRepository(tmp_path)
+        service = self._service(tmp_path, repository)
+        try:
+            for game_id in ("keep", "gone", "busy"):
+                service._games[game_id] = MagicMock()
+            repository.create_game(
+                game_id="bench", name="bench", config={}, execution_status="failed",
+                source="benchmark", benchmark_run_id="run", model_snapshot=[],
+            )
+            service._games["bench"] = MagicMock()
+            folder = service.create_folder("箱")
+            moved = service.batch_move_games(
+                ["keep", "keep", "missing", "bench"], folder["folder_id"],
+            )
+            assert moved["moved"] == ["keep"]
+            assert {item["code"] for item in moved["failed"]} == {
+                "not_found", "game_referenced_by_benchmark",
+            }
+
+            async def fake_delete(game_id):
+                if game_id == "busy":
+                    raise OSError("busy")
+                if game_id == "gone":
+                    raise KeyError(game_id)
+                service._games.pop(game_id, None)
+
+            monkeypatch.setattr(service, "delete_game", fake_delete)
+            deleted = await service.batch_delete_games(
+                ["keep", "gone", "busy", "bench"],
+            )
+            assert deleted["deleted"] == ["keep"]
+            codes = {item["game_id"]: item["code"] for item in deleted["failed"]}
+            assert codes["gone"] == "not_found"
+            assert codes["busy"] == "archive_busy"
+            assert codes["bench"] == "game_referenced_by_benchmark"
+            with pytest.raises(GameReferencedByBenchmark):
+                service.assign_game_folder("bench", folder["folder_id"])
+        finally:
+            repository.close()
+
+    def test_batch_move_reports_unavailable_without_repository(self, tmp_path):
+        service = self._service(tmp_path)
+        service._games["game-1"] = MagicMock()
+        result = service.batch_move_games(["game-1"], None)
+        assert result["failed"][0]["code"] == "unavailable"
+
+
 class TestPipelineSnapshotVersioning:
     def _registry(self):
         return builtin_registry.freeze()

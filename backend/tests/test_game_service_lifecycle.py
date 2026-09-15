@@ -372,6 +372,97 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     )[0]["event_type"] == "STEP_COMMITTED"
 
 
+def test_wolf_discussion_checkpoint_emits_chat_and_skips_silent_turns() -> None:
+    from app.core.night_flow import WolfVote
+
+    state = GameState(game_id="game", config=GameConfig(
+        role_counts={"wolf-killer-werewolf": 2},
+    ))
+    state.round_number = 1
+    engine = SimpleNamespace(
+        game_id="game", state=state,
+        _pending_night_batch=SimpleNamespace(
+            discussion_history=("3号：我怀疑2号",),
+            wolf_votes=(),
+        ),
+    )
+
+    spoke = GameService._checkpoint_domain_events(
+        engine, "00000002:wolf_discussion:1:3:1",
+    )
+    assert spoke == [{
+        "event_id": spoke[0]["event_id"],
+        "event_type": "WOLF_CHAT_MESSAGE",
+        "payload": {"seat": 3, "text": "我怀疑2号", "round_number": 1},
+        "visibility": ["PUBLIC"],
+        "schema_version": 1,
+    }]
+
+    engine._pending_night_batch = SimpleNamespace(
+        discussion_history=("3号：先刀预言家（次日计划：白天投4）",),
+        wolf_votes=(),
+    )
+    planned = GameService._checkpoint_domain_events(
+        engine, "00000003:wolf_discussion:1:3:1",
+    )
+    assert planned[0]["payload"]["text"] == "先刀预言家"
+
+    engine._pending_night_batch = SimpleNamespace(
+        discussion_history=("3号：（跳过）",),
+        wolf_votes=(),
+    )
+    skipped = GameService._checkpoint_domain_events(
+        engine, "00000004:wolf_discussion:1:3:1",
+    )
+    assert skipped[0]["event_type"] == "STEP_COMMITTED"
+    assert skipped[0]["visibility"] == []
+
+    engine._pending_night_batch = None
+    missing = GameService._checkpoint_domain_events(
+        engine, "00000005:wolf_discussion:1:3:1",
+    )
+    assert missing[0]["event_type"] == "STEP_COMMITTED"
+
+    engine._pending_night_batch = SimpleNamespace(discussion_history=())
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005:wolf_discussion:1:3:1",
+    )[0]["event_type"] == "STEP_COMMITTED"
+
+    engine._pending_night_batch = SimpleNamespace(
+        discussion_history=("6号：刀预言家",),
+    )
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005:wolf_discussion:1:3:1",
+    )[0]["event_type"] == "STEP_COMMITTED"
+
+    engine._pending_night_batch = SimpleNamespace(
+        wolf_votes=(WolfVote(3, "kill", 2, "像神"),),
+    )
+    vote = GameService._checkpoint_domain_events(
+        engine, "00000006:wolf_vote:1:3",
+    )
+    assert vote == [{
+        "event_id": vote[0]["event_id"],
+        "event_type": "WOLF_VOTE",
+        "payload": {
+            "seat": 3, "target_seat": 2, "reasoning": "像神", "round_number": 1,
+        },
+        "visibility": ["PUBLIC"],
+        "schema_version": 1,
+    }]
+
+    engine._pending_night_batch = SimpleNamespace(wolf_votes=())
+    empty_vote = GameService._checkpoint_domain_events(
+        engine, "00000007:wolf_vote:1:3",
+    )
+    assert empty_vote[0]["event_type"] == "STEP_COMMITTED"
+
+    engine._pending_night_batch = None
+    assert GameService._checkpoint_domain_events(
+        engine, "00000007:wolf_vote:1:3",
+    )[0]["event_type"] == "STEP_COMMITTED"
+
+
 @pytest.mark.asyncio
 async def test_execution_controls_reject_missing_managed_and_invalid_games(tmp_path) -> None:
     repository = GameRepository(tmp_path)

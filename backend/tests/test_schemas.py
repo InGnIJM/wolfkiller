@@ -10,7 +10,7 @@ from app.api.schemas import (
     PublicSeerThoughtResponse, PublicSpeechResponse, PublicVoteResponse,
     PublicVoteResultResponse, PublicWinnerResponse, PublicWitchThoughtResponse,
     PublicWolfChatMessageResponse, PublicWolfVoteResponse,
-    RenameGameRequest, SetSpeedRequest, WSMessage,
+    RenameGameRequest, SetSpeedRequest, WSMessage, FolderNameRequest,
 )
 
 
@@ -230,6 +230,13 @@ class TestSchemas:
         with pytest.raises(ValidationError):
             RenameGameRequest(name="x" * 51)
 
+    def test_folder_name_request_strips_and_rejects_blank(self):
+        assert FolderNameRequest(name="  九月  ").name == "九月"
+        with pytest.raises(ValidationError):
+            FolderNameRequest(name="   ")
+        with pytest.raises(ValidationError):
+            FolderNameRequest(name="x" * 51)
+
     def test_game_list_response(self):
         resp = GameListResponse(games=[])
         assert resp.games == []
@@ -242,6 +249,7 @@ class TestSchemas:
         )
         assert resp.game_id == "abc"
         assert resp.model_dump()["reveal_on_death"] is True
+        assert resp.model_snapshot == []
 
     def test_game_detail_response_requires_reveal_on_death(self):
         with pytest.raises(ValidationError):

@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { deleteGame, listGames, renameGame } from '../../../api/client';
+import { deleteGame, listFolders, listGames, renameGame } from '../../../api/client';
 import GameList from '../GameList';
 
 vi.mock('../../../api/client', () => ({
@@ -13,6 +13,11 @@ vi.mock('../../../api/client', () => ({
   renameGame: vi.fn(),
   deleteGame: vi.fn(),
   controlGame: vi.fn(),
+  listFolders: vi.fn(),
+  createFolder: vi.fn(),
+  assignGameFolder: vi.fn(),
+  batchDeleteGames: vi.fn(),
+  batchMoveGames: vi.fn(),
 }));
 
 vi.mock('@mui/material', async (importOriginal) => {
@@ -30,6 +35,7 @@ vi.mock('@mui/material', async (importOriginal) => {
 
 beforeEach(() => {
   vi.mocked(listGames).mockResolvedValue({ games: [] });
+  vi.mocked(listFolders).mockResolvedValue({ folders: [] });
 });
 
 afterEach(() => {
@@ -42,8 +48,8 @@ describe('GameList dormant dialog guards', () => {
     render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
     await act(async () => Promise.resolve());
 
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    screen.getAllByRole('button', { name: '确定' }).forEach((button) => fireEvent.click(button));
+    screen.getAllByRole('button', { name: '删除' }).forEach((button) => fireEvent.click(button));
     screen.getAllByRole('button', { name: 'force-dialog-close' }).forEach((button) => {
       fireEvent.click(button);
     });

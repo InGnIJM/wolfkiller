@@ -1,9 +1,9 @@
 import type {
-  AudienceEventPage, AudienceSnapshot, BenchmarkCreateInput, BenchmarkItem,
+  AudienceEventPage, AudienceSnapshot, BatchDeleteResult, BatchMoveResult, BenchmarkCreateInput, BenchmarkItem,
   BenchmarkItemsPage, BenchmarkReport, BenchmarkRun, BenchmarkRunList,
-  FieldConstraints, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
+  FieldConstraints, GameFolder, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
   ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
-  ModelTestResult, PublicGameState, RoleCatalogItem,
+  ModelTestResult, ProviderProfileId, PublicGameState, RoleCatalogItem,
 } from '../store/types';
 
 function getApiBase(): string {
@@ -46,7 +46,106 @@ export async function renameGame(gameId: string, name: string): Promise<GameList
 
 export async function deleteGame(gameId: string): Promise<void> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`Delete game failed: ${res.status}`);
+  if (!res.ok) await throwDeleteError(res, 'Delete game failed');
+}
+
+async function throwDeleteError(res: Response, fallback: string): Promise<never> {
+  try {
+    const body = await res.json() as { detail?: { code?: string } | string };
+    const detail = body.detail;
+    if (typeof detail === 'object' && detail?.code === 'game_referenced_by_benchmark') {
+      throw new Error('这是评测对局，请到评测页删除');
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('这是评测')) throw error;
+  }
+  throw new Error(`${fallback}: ${res.status}`);
+}
+
+export async function listFolders(): Promise<{ folders: GameFolder[] }> {
+  const res = await fetch(`${getApiBase()}/api/folders`);
+  if (!res.ok) throw new Error(`List folders failed: ${res.status}`);
+  return res.json();
+}
+
+export async function createFolder(name: string): Promise<GameFolder> {
+  const res = await fetch(`${getApiBase()}/api/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Create folder failed: ${res.status}`);
+  return res.json();
+}
+
+export async function renameFolder(folderId: string, name: string): Promise<GameFolder> {
+  const res = await fetch(`${getApiBase()}/api/folders/${folderId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Rename folder failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/folders/${folderId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Delete folder failed: ${res.status}`);
+}
+
+export async function assignGameFolder(gameId: string, folderId: string | null): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/folder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder_id: folderId }),
+  });
+  if (!res.ok) throw new Error(`Assign folder failed: ${res.status}`);
+}
+
+export async function batchDeleteGames(gameIds: string[]): Promise<BatchDeleteResult> {
+  const res = await fetch(`${getApiBase()}/api/games/batch-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game_ids: gameIds }),
+  });
+  if (!res.ok) throw new Error(`Batch delete failed: ${res.status}`);
+  return res.json();
+}
+
+export async function batchMoveGames(
+  gameIds: string[], folderId: string | null,
+): Promise<BatchMoveResult> {
+  const res = await fetch(`${getApiBase()}/api/games/batch-move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game_ids: gameIds, folder_id: folderId }),
+  });
+  if (!res.ok) throw new Error(`Batch move failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteBenchmark(runId: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Delete benchmark failed: ${res.status}`);
+}
+
+export async function deleteBenchmarkGame(runId: string, gameId: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}/games/${gameId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Delete benchmark game failed: ${res.status}`);
+}
+
+export async function batchDeleteBenchmarkGames(
+  runId: string, gameIds: string[],
+): Promise<BatchDeleteResult> {
+  const res = await fetch(`${getApiBase()}/api/benchmarks/${runId}/games/batch-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game_ids: gameIds }),
+  });
+  if (!res.ok) throw new Error(`Batch delete benchmark games failed: ${res.status}`);
+  return res.json();
 }
 
 export class GameNotFoundError extends Error {
@@ -175,6 +274,7 @@ export async function testModelConnection(input: {
   base_url?: string;
   api_key?: string;
   model_id?: string;
+  provider_profile?: ProviderProfileId;
 }): Promise<ModelTestResult> {
   const res = await fetch(`${getApiBase()}/api/models/test`, {
     method: 'POST',

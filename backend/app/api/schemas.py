@@ -50,6 +50,7 @@ class GameListItem(BaseModel):
     recovery_block_code: Optional[str] = None
     interruption_count: int = 0
     benchmark_run_id: Optional[str] = None
+    folder_id: Optional[str] = None
 
 
 class RenameGameRequest(BaseModel):
@@ -66,6 +67,65 @@ class RenameGameRequest(BaseModel):
 
 class GameListResponse(BaseModel):
     games: list[GameListItem]
+
+
+class FolderItem(BaseModel):
+    folder_id: str
+    name: str
+    game_count: int
+    created_at: str
+    updated_at: str
+
+
+class FolderListResponse(BaseModel):
+    folders: list[FolderItem]
+
+
+class FolderNameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be blank")
+        return stripped
+
+
+class AssignFolderRequest(BaseModel):
+    folder_id: Optional[str] = None
+
+
+class BatchGameIdsRequest(BaseModel):
+    game_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("game_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        if any(type(item) is not str or not item.strip() for item in value):
+            raise ValueError("game_ids must contain non-empty strings")
+        return value
+
+
+class BatchMoveRequest(BatchGameIdsRequest):
+    folder_id: Optional[str] = None
+
+
+class BatchFailure(BaseModel):
+    game_id: str
+    code: str
+    message: str
+
+
+class BatchDeleteResponse(BaseModel):
+    deleted: list[str]
+    failed: list[BatchFailure]
+
+
+class BatchMoveResponse(BaseModel):
+    moved: list[str]
+    failed: list[BatchFailure]
 
 
 class _PublicResponse(BaseModel):
@@ -308,6 +368,7 @@ class GameDetailResponse(_PublicResponse):
     recovery_block_code: Optional[str] = None
     interruption_count: NonNegativePublicInt = 0
     benchmark_run_id: Optional[str] = None
+    model_snapshot: list[ModelSnapshotEntry] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_player_map_keys_to_match_public_seats(self):

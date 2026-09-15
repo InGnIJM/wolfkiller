@@ -163,4 +163,18 @@ describe('GameCard', () => {
     renderCard({ executionStatus: 'failed' });
     expect(screen.getByText('执行失败')).toBeInTheDocument();
   });
+
+  it('toggles selection and moves without entering the game', () => {
+    const onToggleSelect = vi.fn();
+    const onMove = vi.fn();
+    const { onClick } = renderCard({ onToggleSelect, onMove, selected: true });
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 8人局 · 8月22日 21:50' }));
+    expect(onToggleSelect).toHaveBeenCalledOnce();
+    expect(onClick).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动到文件夹' }));
+    expect(onMove).toHaveBeenCalledOnce();
+    expect(onClick).not.toHaveBeenCalled();
+  });
 });

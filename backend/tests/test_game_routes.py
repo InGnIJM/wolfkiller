@@ -108,12 +108,17 @@ async def test_snapshot_and_event_page_use_audience_service(monkeypatch):
     }
     monkeypatch.setattr(game_routes, "get_audience_service", lambda: audience)
 
+    service = MagicMock()
+    service.get_game_model_snapshot.return_value = []
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
     snapshot = await game_routes.get_game_snapshot("game-1")
     page = await game_routes.get_game_events(
         "game-1", after_seq=0, limit=200, through_seq=1,
     )
 
     assert snapshot.last_seq == 1
+    assert snapshot.state.get("model_snapshot") == []
     assert page.events[0].event_id == "event-1"
     audience.get_events.assert_called_once_with(
         "game-1", after_seq=0, limit=200, through_seq=1,
@@ -234,6 +239,43 @@ async def test_list_games_omits_missing_states(monkeypatch):
     assert response.games[0].game_id == "present"
     assert response.games[0].name == "present-name"
     assert response.games[0].winner == "good"
+
+
+@pytest.mark.asyncio
+async def test_list_games_skips_benchmark_owned_games(monkeypatch):
+    service = MagicMock()
+    service.list_games.return_value = ["native", "bench"]
+    service.is_lobby_game.side_effect = lambda gid: gid == "native"
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        alive_players=lambda: [object()],
+        win_result=None,
+        players={1: object()},
+    )
+    service.get_game_state.return_value = state
+    service.get_display_name.return_value = "普通局"
+    service.get_game_folder_id.return_value = "folder-1"
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.list_games()
+
+    assert [item.game_id for item in response.games] == ["native"]
+    assert response.games[0].folder_id == "folder-1"
+
+
+def test_list_item_skips_missing_folder_lookup():
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        players={1: object()},
+        alive_players=lambda: [1],
+        win_result=None,
+    )
+    service = SimpleNamespace(get_display_name=lambda _gid: "普通局")
+    item = game_routes._list_item(service, "g1", state)
+    assert item.folder_id is None
+    assert item.name == "普通局"
 
 
 @pytest.mark.asyncio
@@ -359,6 +401,101 @@ async def test_get_game_returns_public_reveal_on_death(monkeypatch, reveal_on_de
     response = await game_routes.get_game("present")
 
     assert response.model_dump()["reveal_on_death"] is reveal_on_death
+    assert response.model_snapshot == []
+
+
+_V2_MODEL_SNAPSHOT = [{
+    "config_id": "model-a",
+    "name": "Model A",
+    "model_id": "provider/model-a",
+    "base_url": "https://models.example/v1",
+    "provider_profile": "openrouter",
+    "count": 2,
+    "seats": [1, 3],
+    "api_key": "sk-should-not-leak",
+}]
+
+
+def _public_game_state(game_id="present"):
+    return {
+        "game_id": game_id,
+        "phase": "waiting",
+        "round_number": 0,
+        "reveal_on_death": False,
+        "players": {},
+        "sheriff": None,
+        "speeches": [],
+        "death_history": [],
+        "win_result": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_game_returns_validated_v2_model_snapshot(monkeypatch):
+    class PublicState:
+        def get_public_state(self):
+            return _public_game_state()
+
+    service = MagicMock()
+    service.get_game_state.return_value = PublicState()
+    service.get_game_model_snapshot.return_value = _V2_MODEL_SNAPSHOT
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.get_game("present")
+
+    assert [entry.model_dump() for entry in response.model_snapshot] == [{
+        "config_id": "model-a",
+        "name": "Model A",
+        "model_id": "provider/model-a",
+        "base_url": "https://models.example/v1",
+        "provider_profile": "openrouter",
+        "count": 2,
+        "seats": [1, 3],
+    }]
+    assert "api_key" not in response.model_dump()["model_snapshot"][0]
+
+
+@pytest.mark.asyncio
+async def test_get_game_drops_legacy_model_snapshot_rows(monkeypatch):
+    class PublicState:
+        def get_public_state(self):
+            return _public_game_state()
+
+    service = MagicMock()
+    service.get_game_state.return_value = PublicState()
+    service.get_game_model_snapshot.return_value = [{"name": "legacy", "model_id": "x"}]
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    response = await game_routes.get_game("present")
+
+    assert response.model_snapshot == []
+
+
+@pytest.mark.asyncio
+async def test_get_game_snapshot_injects_public_model_snapshot(monkeypatch):
+    audience = MagicMock()
+    audience.get_snapshot.return_value = {
+        "game_id": "game-1", "schema_version": 1,
+        "projection_version": 1, "last_seq": 1,
+        "state": {"phase": "night"},
+    }
+    service = MagicMock()
+    service.get_game_model_snapshot.return_value = _V2_MODEL_SNAPSHOT
+    monkeypatch.setattr(game_routes, "get_audience_service", lambda: audience)
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    snapshot = await game_routes.get_game_snapshot("game-1")
+
+    assert snapshot.state["phase"] == "night"
+    assert snapshot.state["model_snapshot"] == [{
+        "config_id": "model-a",
+        "name": "Model A",
+        "model_id": "provider/model-a",
+        "base_url": "https://models.example/v1",
+        "provider_profile": "openrouter",
+        "count": 2,
+        "seats": [1, 3],
+    }]
 
 
 @pytest.mark.asyncio
@@ -407,6 +544,7 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
         "role": "wolf-killer-villager", "camp": "good",
     }
     assert detail["win_result"] == {"winning_camp": "good", "reason": "all_wolves_dead"}
+    assert detail["model_snapshot"] == []
 
 
 @pytest.mark.asyncio

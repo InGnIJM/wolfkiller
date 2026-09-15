@@ -1443,6 +1443,41 @@ class GameService:
         ):
             event_type = "GAME_OVER"
             payload = dict(engine.state.win_result)
+        elif label.startswith("wolf_discussion:"):
+            pending = getattr(engine, "_pending_night_batch", None)
+            history = getattr(pending, "discussion_history", ()) if pending is not None else ()
+            seat = int(label.split(":")[2])
+            prefix = f"{seat}号："
+            last = history[-1] if history else ""
+            if last.startswith(prefix) and not last.endswith("（跳过）"):
+                text = last[len(prefix):]
+                plan = text.rfind("（次日计划：")
+                if plan >= 0:
+                    text = text[:plan]
+                event_type = "WOLF_CHAT_MESSAGE"
+                payload = {
+                    "seat": seat, "text": text,
+                    "round_number": engine.state.round_number,
+                }
+            else:
+                event_type = "STEP_COMMITTED"
+                payload = {"position": label}
+        elif label.startswith("wolf_vote:"):
+            pending = getattr(engine, "_pending_night_batch", None)
+            votes = getattr(pending, "wolf_votes", ()) if pending is not None else ()
+            seat = int(label.split(":")[2])
+            match = [item for item in votes if item.seat == seat]
+            if match:
+                vote = match[-1]
+                event_type = "WOLF_VOTE"
+                payload = {
+                    "seat": vote.seat, "target_seat": vote.target_seat,
+                    "reasoning": vote.reasoning,
+                    "round_number": engine.state.round_number,
+                }
+            else:
+                event_type = "STEP_COMMITTED"
+                payload = {"position": label}
         else:
             event_type = "STEP_COMMITTED"
             payload = {"position": label}
@@ -2036,6 +2071,111 @@ class GameService:
     def list_games(self) -> list[str]:
         return list(self._games.keys())
 
+    def is_lobby_game(self, game_id: str) -> bool:
+        if self.repository is None:
+            return True
+        record = self.repository.get_game(game_id)
+        if record is None:
+            return True
+        return record.get("benchmark_run_id") is None and record.get("source") != "benchmark"
+
+    def get_game_folder_id(self, game_id: str) -> str | None:
+        if self.repository is None:
+            return None
+        return self.repository.get_game_folder(game_id)
+
+    def _require_repository(self) -> GameRepository:
+        if self.repository is None:
+            raise RuntimeError("folder persistence is unavailable")
+        return self.repository
+
+    def list_folders(self) -> list[dict[str, object]]:
+        return self._require_repository().list_folders()
+
+    def create_folder(self, name: str) -> dict[str, object]:
+        return self._require_repository().create_folder(name)
+
+    def rename_folder(self, folder_id: str, name: str) -> dict[str, object]:
+        return self._require_repository().rename_folder(folder_id, name)
+
+    def delete_folder(self, folder_id: str) -> None:
+        self._require_repository().delete_folder(folder_id)
+
+    def _reject_benchmark_lobby_mutation(self, game_id: str) -> None:
+        if self.is_lobby_game(game_id):
+            return
+        record = None if self.repository is None else self.repository.get_game(game_id)
+        run_id = record.get("benchmark_run_id") if record else None
+        raise GameReferencedByBenchmark(str(run_id or "benchmark"))
+
+    def assign_game_folder(self, game_id: str, folder_id: str | None) -> None:
+        if game_id not in self._games:
+            raise KeyError(game_id)
+        self._reject_benchmark_lobby_mutation(game_id)
+        self._require_repository().set_game_folder(game_id, folder_id)
+
+    @staticmethod
+    def _dedupe_game_ids(game_ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        unique: list[str] = []
+        for game_id in game_ids:
+            if game_id in seen:
+                continue
+            seen.add(game_id)
+            unique.append(game_id)
+        return unique
+
+    def batch_move_games(
+        self, game_ids: list[str], folder_id: str | None,
+    ) -> dict[str, list]:
+        moved: list[str] = []
+        failed: list[dict[str, str]] = []
+        for game_id in self._dedupe_game_ids(game_ids):
+            try:
+                self.assign_game_folder(game_id, folder_id)
+                moved.append(game_id)
+            except GameReferencedByBenchmark as error:
+                failed.append({
+                    "game_id": game_id, "code": "game_referenced_by_benchmark",
+                    "message": str(error),
+                })
+            except KeyError:
+                failed.append({
+                    "game_id": game_id, "code": "not_found",
+                    "message": "Game or folder not found",
+                })
+            except RuntimeError as error:
+                failed.append({
+                    "game_id": game_id, "code": "unavailable",
+                    "message": str(error),
+                })
+        return {"moved": moved, "failed": failed}
+
+    async def batch_delete_games(self, game_ids: list[str]) -> dict[str, list]:
+        deleted: list[str] = []
+        failed: list[dict[str, str]] = []
+        for game_id in self._dedupe_game_ids(game_ids):
+            try:
+                self._reject_benchmark_lobby_mutation(game_id)
+                await self.delete_game(game_id)
+                deleted.append(game_id)
+            except GameReferencedByBenchmark as error:
+                failed.append({
+                    "game_id": game_id, "code": "game_referenced_by_benchmark",
+                    "message": str(error),
+                })
+            except KeyError:
+                failed.append({
+                    "game_id": game_id, "code": "not_found",
+                    "message": "Game not found",
+                })
+            except OSError as error:
+                failed.append({
+                    "game_id": game_id, "code": "archive_busy",
+                    "message": str(error),
+                })
+        return {"deleted": deleted, "failed": failed}
+
     def get_display_name(self, game_id: str) -> str:
         if self.repository is not None:
             record = self.repository.get_game(game_id)
@@ -2077,13 +2217,7 @@ class GameService:
         clients = self._llm_clients.pop(game_id, {})
         await self._close_clients(clients)
 
-    async def delete_game(self, game_id: str) -> None:
-        if game_id not in self._games:
-            raise KeyError(game_id)
-        if self.repository is not None:
-            # Make the game disappear atomically before best-effort derived
-            # file cleanup. Benchmark ownership is checked in this transaction.
-            self.repository.mark_game_deleted(game_id)
+    async def _discard_game_runtime(self, game_id: str) -> None:
         engine = self._engines.get(game_id)
         if engine is not None:
             await engine.stop()
@@ -2109,6 +2243,33 @@ class GameService:
         self._durable_contexts.pop(game_id, None)
         await self._close_game_clients(game_id)
         self._manifest.remove_game(game_id)
+
+    async def delete_game(self, game_id: str) -> None:
+        if game_id not in self._games:
+            raise KeyError(game_id)
+        if self.repository is not None:
+            # Make the game disappear atomically before best-effort derived
+            # file cleanup. Benchmark ownership is checked in this transaction.
+            self.repository.mark_game_deleted(game_id)
+        await self._discard_game_runtime(game_id)
+
+    async def delete_benchmark_owned_game(self, run_id: str, game_id: str) -> None:
+        if self.repository is None:
+            raise RuntimeError("benchmark persistence is unavailable")
+        record = self.repository.get_game(game_id)
+        if record is None:
+            raise KeyError(game_id)
+        if record.get("benchmark_run_id") != run_id:
+            raise GameReferencedByBenchmark(str(record.get("benchmark_run_id") or "benchmark"))
+        if game_id in self._engines or (
+            game_id in self._tasks and not self._tasks[game_id].done()
+        ):
+            try:
+                await self.cancel_benchmark_game(game_id)
+            except (ValueError, InvalidExecutionTransition, KeyError):
+                pass
+        self.repository.release_benchmark_game(run_id, game_id)
+        await self._discard_game_runtime(game_id)
 
     async def aclose(self) -> None:
         """Close every LLM client this service created.

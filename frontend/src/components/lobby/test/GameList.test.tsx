@@ -4,7 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { controlGame, deleteGame, listGames, renameGame } from '../../../api/client';
+import {
+  assignGameFolder, batchDeleteGames, batchMoveGames, controlGame, createFolder,
+  deleteGame, listFolders, listGames, renameGame,
+} from '../../../api/client';
 import type { GameListItem } from '../../../store/types';
 import GameList from '../GameList';
 
@@ -13,6 +16,11 @@ vi.mock('../../../api/client', () => ({
   renameGame: vi.fn(),
   deleteGame: vi.fn(),
   controlGame: vi.fn(),
+  listFolders: vi.fn(),
+  createFolder: vi.fn(),
+  assignGameFolder: vi.fn(),
+  batchDeleteGames: vi.fn(),
+  batchMoveGames: vi.fn(),
 }));
 
 vi.mock('../GameCard', () => ({
@@ -26,6 +34,8 @@ vi.mock('../GameCard', () => ({
     onPause,
     onResume,
     onRecover,
+    onMove,
+    onToggleSelect,
   }: {
     gameId: string;
     name: string;
@@ -36,6 +46,8 @@ vi.mock('../GameCard', () => ({
     onPause: () => void;
     onResume: () => void;
     onRecover: () => void;
+    onMove?: () => void;
+    onToggleSelect?: () => void;
   }) => (
     <div>
       <button data-testid={`game-${gameId}`} data-phase={phase} onClick={onClick}>
@@ -46,6 +58,8 @@ vi.mock('../GameCard', () => ({
       <button data-testid={`pause-${gameId}`} onClick={onPause}>pause</button>
       <button data-testid={`resume-${gameId}`} onClick={onResume}>resume</button>
       <button data-testid={`recover-${gameId}`} onClick={onRecover}>recover</button>
+      {onMove && <button data-testid={`move-${gameId}`} onClick={onMove}>move</button>}
+      {onToggleSelect && <button data-testid={`select-${gameId}`} onClick={onToggleSelect}>select</button>}
     </div>
   ),
 }));
@@ -72,6 +86,7 @@ const game = (id: string, phase: GameListItem['phase'] = 'night'): GameListItem 
 
 beforeEach(() => {
   vi.mocked(listGames).mockResolvedValue({ games: [] });
+  vi.mocked(listFolders).mockResolvedValue({ folders: [] });
   vi.mocked(controlGame).mockResolvedValue({});
 });
 
@@ -308,5 +323,114 @@ describe('GameList management', () => {
     fireEvent.click(screen.getByTestId('delete-game-1'));
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     await waitFor(() => expect(screen.getByText('busy')).toBeInTheDocument());
+  });
+
+  it('creates folders, filters them, and supports batch move/delete', async () => {
+    vi.mocked(listGames).mockResolvedValue({
+      games: [game('game-1'), { ...game('game-2'), folder_id: 'f1' }],
+    });
+    vi.mocked(listFolders).mockResolvedValue({
+      folders: [{ folder_id: 'f1', name: '九月', game_count: 1, created_at: '', updated_at: '' }],
+    });
+    vi.mocked(createFolder).mockResolvedValue({
+      folder_id: 'f2', name: '归档', game_count: 0, created_at: '', updated_at: '',
+    });
+    vi.mocked(assignGameFolder).mockResolvedValue(undefined);
+    vi.mocked(batchMoveGames).mockResolvedValue({
+      moved: ['game-1', 'game-2'], failed: [],
+    });
+    vi.mocked(batchDeleteGames).mockResolvedValue({ deleted: ['game-1'], failed: [] });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByText('未分类'));
+    expect(screen.getByTestId('game-game-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('game-game-2')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('九月 (1)'));
+    expect(screen.getByTestId('game-game-2')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('全部'));
+
+    fireEvent.click(screen.getByRole('button', { name: '新建文件夹' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(screen.getByText('名称不能为空')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建文件夹' }));
+    fireEvent.change(screen.getByLabelText('文件夹名称'), { target: { value: '归档' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(createFolder).toHaveBeenCalledWith('归档'));
+
+    fireEvent.click(screen.getByTestId('move-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(assignGameFolder).toHaveBeenCalledWith('game-1', null));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('select-game-1'));
+    fireEvent.click(screen.getByTestId('select-game-2'));
+    fireEvent.click(screen.getByRole('button', { name: '批量移动' }));
+    fireEvent.mouseDown(screen.getByLabelText('文件夹'));
+    fireEvent.click(await screen.findByRole('option', { name: '九月' }));
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(batchMoveGames).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('select-game-1'));
+    fireEvent.click(screen.getByTestId('select-game-1'));
+    fireEvent.click(screen.getByTestId('select-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '取消选择' }));
+    expect(screen.queryByRole('button', { name: '批量删除' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('select-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '批量删除' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(batchDeleteGames).toHaveBeenCalled());
+  });
+
+  it('keeps batch dialogs open on partial or thrown failures', async () => {
+    vi.mocked(listGames).mockResolvedValue({ games: [game('game-1'), game('game-2')] });
+    vi.mocked(batchDeleteGames)
+      .mockResolvedValueOnce({
+        deleted: [], failed: [{ game_id: 'game-1', code: 'not_found', message: 'missing' }],
+      })
+      .mockRejectedValueOnce(new Error('delete boom'))
+      .mockRejectedValueOnce('delete string');
+    vi.mocked(batchMoveGames)
+      .mockRejectedValueOnce('move string')
+      .mockRejectedValueOnce(new Error('move boom'))
+      .mockResolvedValueOnce({
+        moved: [], failed: [{ game_id: 'game-1', code: 'busy', message: 'nope' }],
+      });
+    vi.mocked(createFolder)
+      .mockRejectedValueOnce('exists')
+      .mockRejectedValueOnce(new Error('folder boom'));
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByRole('button', { name: '新建文件夹' }));
+    fireEvent.change(screen.getByLabelText('文件夹名称'), { target: { value: '重复' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(screen.getByText('exists')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    await waitFor(() => expect(screen.getByText('folder boom')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('select-game-1'));
+    fireEvent.click(screen.getByRole('button', { name: '批量删除' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(screen.getByText('missing')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(screen.getByText('delete boom')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(screen.getByText('delete string')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('select-game-2'));
+    fireEvent.click(screen.getByRole('button', { name: '批量移动' }));
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(screen.getByText('move string')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(screen.getByText('move boom')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(screen.getByText('nope')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });

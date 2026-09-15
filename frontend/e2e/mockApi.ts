@@ -26,6 +26,7 @@ interface MockGame {
   execution_status: ExecutionStatus;
   recoverable: boolean;
   recovery_block_code: string | null;
+  source?: 'native' | 'legacy' | 'benchmark';
   oldArchive?: boolean;
   events: MockEvent[];
 }
@@ -229,7 +230,9 @@ export async function installMockApi(page: Page, state: MockApiState): Promise<v
       return;
     }
     if (path === '/api/games' && method === 'GET') {
-      await json(route, { games: state.games.map((game) => ({
+      await json(route, { games: state.games
+        .filter((game) => game.source !== 'benchmark')
+        .map((game) => ({
         game_id: game.game_id,
         name: game.name,
         phase: game.phase,
@@ -241,6 +244,10 @@ export async function installMockApi(page: Page, state: MockApiState): Promise<v
         recoverable: game.recoverable,
         recovery_block_code: game.recovery_block_code,
       })) });
+      return;
+    }
+    if (path === '/api/folders' && method === 'GET') {
+      await json(route, { folders: [] });
       return;
     }
 

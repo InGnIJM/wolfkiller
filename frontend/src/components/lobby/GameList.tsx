@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Box, Button, Container, Dialog, DialogActions, DialogContent,
-  DialogTitle, Stack, TextField, Typography,
+  DialogTitle, MenuItem, Stack, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import GameCard from './GameCard';
-import { controlGame, deleteGame, listGames, renameGame } from '../../api/client';
-import type { GameListItem } from '../../store/types';
+import FolderRail, { type FolderFilter } from './FolderRail';
+import BatchActionBar from './BatchActionBar';
+import {
+  assignGameFolder, batchDeleteGames, batchMoveGames, controlGame, createFolder,
+  deleteGame, listFolders, listGames, renameGame,
+} from '../../api/client';
+import type { GameFolder, GameListItem } from '../../store/types';
 
 interface Props {
   onJoinGame: (gameId: string) => void;
@@ -25,27 +30,48 @@ const PHASE_LABELS: Record<string, string> = {
   game_over: '已结束',
 };
 
+function matchesFolder(game: GameListItem, filter: FolderFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'unfiled') return !game.folder_id;
+  return game.folder_id === filter;
+}
+
 export default function GameList({ onJoinGame, onCreateClick }: Props) {
   const [games, setGames] = useState<GameListItem[]>([]);
+  const [folders, setFolders] = useState<GameFolder[]>([]);
+  const [folderFilter, setFolderFilter] = useState<FolderFilter>('all');
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [folderDraft, setFolderDraft] = useState('');
+  const [folderError, setFolderError] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [renameTarget, setRenameTarget] = useState<GameListItem | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<GameListItem | null>(null);
   const [deleteError, setDeleteError] = useState('');
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchDeleteError, setBatchDeleteError] = useState('');
+  const [moveIds, setMoveIds] = useState<string[]>([]);
+  const [moveFolderId, setMoveFolderId] = useState('');
+  const [moveError, setMoveError] = useState('');
   const [controlError, setControlError] = useState('');
   const [controlBusyId, setControlBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const res = await listGames();
-    setGames(res.games);
+    const [gamesRes, foldersRes] = await Promise.all([listGames(), listFolders()]);
+    setGames(gamesRes.games);
+    setFolders(foldersRes.folders);
   }, []);
 
   useEffect(() => {
     let active = true;
     const refreshWhileMounted = async () => {
       try {
-        const res = await listGames();
-        if (active) setGames(res.games);
+        const [gamesRes, foldersRes] = await Promise.all([listGames(), listFolders()]);
+        if (active) {
+          setGames(gamesRes.games);
+          setFolders(foldersRes.folders);
+        }
       } catch (e) {
         if (active) console.error('Failed to list games:', e);
       }
@@ -58,6 +84,11 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       clearInterval(t);
     };
   }, []);
+
+  const visibleGames = useMemo(
+    () => games.filter((game) => matchesFolder(game, folderFilter)),
+    [folderFilter, games],
+  );
 
   const runControl = async (
     gameId: string,
@@ -116,6 +147,76 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     }
   };
 
+  const submitCreateFolder = async () => {
+    const name = folderDraft.trim();
+    if (!name) {
+      setFolderError('名称不能为空');
+      return;
+    }
+    try {
+      const folder = await createFolder(name);
+      setFolders((current) => [...current, folder]);
+      setCreatingFolder(false);
+      setFolderDraft('');
+      setFolderError('');
+    } catch (error) {
+      setFolderError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const toggleSelected = (gameId: string) => {
+    setSelectedIds((current) => (
+      current.includes(gameId)
+        ? current.filter((id) => id !== gameId)
+        : [...current, gameId]
+    ));
+  };
+
+  const submitMove = async () => {
+    if (moveIds.length === 0) return;
+    const folderId = moveFolderId === '' ? null : moveFolderId;
+    try {
+      if (moveIds.length === 1) {
+        await assignGameFolder(moveIds[0], folderId);
+        setGames((current) => current.map((game) => (
+          game.game_id === moveIds[0] ? { ...game, folder_id: folderId } : game
+        )));
+      } else {
+        const result = await batchMoveGames(moveIds, folderId);
+        const moved = new Set(result.moved);
+        setGames((current) => current.map((game) => (
+          moved.has(game.game_id) ? { ...game, folder_id: folderId } : game
+        )));
+        if (result.failed.length > 0) {
+          setMoveError(result.failed.map((item) => item.message).join('；'));
+          return;
+        }
+      }
+      setMoveIds([]);
+      setSelectedIds([]);
+      await refresh();
+    } catch (error) {
+      setMoveError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const submitBatchDelete = async () => {
+    if (selectedIds.length === 0) return;
+    try {
+      const result = await batchDeleteGames(selectedIds);
+      const deleted = new Set(result.deleted);
+      setGames((current) => current.filter((game) => !deleted.has(game.game_id)));
+      setSelectedIds((current) => current.filter((id) => !deleted.has(id)));
+      if (result.failed.length > 0) {
+        setBatchDeleteError(result.failed.map((item) => item.message).join('；'));
+        return;
+      }
+      setBatchDeleteOpen(false);
+    } catch (error) {
+      setBatchDeleteError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const inProgress = deleteTarget !== null
     && deleteTarget.phase !== 'game_over'
     && deleteTarget.phase !== 'error';
@@ -147,13 +248,26 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         </Button>
       </Box>
 
+      <FolderRail
+        folders={folders}
+        filter={folderFilter}
+        creating={creatingFolder}
+        draftName={folderDraft}
+        onFilter={setFolderFilter}
+        onStartCreate={() => { setCreatingFolder(true); setFolderError(''); }}
+        onDraftName={setFolderDraft}
+        onCreate={() => void submitCreateFolder()}
+        onCancelCreate={() => { setCreatingFolder(false); setFolderDraft(''); setFolderError(''); }}
+      />
+      {folderError && <Alert severity="error" sx={{ mb: 2 }}>{folderError}</Alert>}
+
       {controlError && (
         <Alert severity="error" onClose={() => setControlError('')} sx={{ mb: 2 }}>
           {controlError}
         </Alert>
       )}
 
-      {games.length === 0 && (
+      {visibleGames.length === 0 && (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.disabled" sx={{ fontWeight: 400, mb: 1 }}>
             暂无对局
@@ -165,7 +279,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       )}
 
       <Stack spacing={1.5}>
-        {games.map((g) => (
+        {visibleGames.map((g) => (
           <GameCard
             key={g.game_id}
             gameId={g.game_id}
@@ -179,8 +293,11 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
             recoverable={g.recoverable}
             recoveryBlockCode={g.recovery_block_code}
             controlBusy={controlBusyId === g.game_id}
+            selected={selectedIds.includes(g.game_id)}
+            onToggleSelect={() => toggleSelected(g.game_id)}
             onClick={() => onJoinGame(g.game_id)}
             onRename={() => openRename(g)}
+            onMove={() => { setMoveIds([g.game_id]); setMoveFolderId(g.folder_id ?? ''); setMoveError(''); }}
             onDelete={() => { setDeleteTarget(g); setDeleteError(''); }}
             onPause={() => void runControl(g.game_id, 'pause')}
             onResume={() => void runControl(g.game_id, 'resume')}
@@ -188,6 +305,13 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           />
         ))}
       </Stack>
+
+      <BatchActionBar
+        selectedCount={selectedIds.length}
+        onMove={() => { setMoveIds(selectedIds); setMoveFolderId(''); setMoveError(''); }}
+        onDelete={() => { setBatchDeleteOpen(true); setBatchDeleteError(''); }}
+        onClear={() => setSelectedIds([])}
+      />
 
       <Dialog open={renameTarget !== null} onClose={() => setRenameTarget(null)}>
         <DialogTitle>重命名对局</DialogTitle>
@@ -224,6 +348,42 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         <DialogActions>
           <Button onClick={() => setDeleteTarget(null)}>取消</Button>
           <Button color="error" onClick={() => void submitDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={batchDeleteOpen} onClose={() => setBatchDeleteOpen(false)}>
+        <DialogTitle>批量删除对局</DialogTitle>
+        <DialogContent>
+          <Typography>确定删除已选的 {selectedIds.length} 局？此操作不可恢复。</Typography>
+          {batchDeleteError && <Alert severity="error" sx={{ mt: 1 }}>{batchDeleteError}</Alert>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBatchDeleteOpen(false)}>取消</Button>
+          <Button color="error" onClick={() => void submitBatchDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={moveIds.length > 0} onClose={() => setMoveIds([])}>
+        <DialogTitle>移动到文件夹</DialogTitle>
+        <DialogContent>
+          <TextField
+            select
+            fullWidth
+            margin="dense"
+            label="文件夹"
+            value={moveFolderId}
+            onChange={(event) => setMoveFolderId(event.target.value)}
+          >
+            <MenuItem value="">未分类</MenuItem>
+            {folders.map((folder) => (
+              <MenuItem key={folder.folder_id} value={folder.folder_id}>{folder.name}</MenuItem>
+            ))}
+          </TextField>
+          {moveError && <Alert severity="error" sx={{ mt: 1 }}>{moveError}</Alert>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMoveIds([])}>取消</Button>
+          <Button onClick={() => void submitMove()}>确定</Button>
         </DialogActions>
       </Dialog>
     </Container>

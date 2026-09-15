@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 T = TypeVar("T")
+_FOLDER_NAME_MAX = 50
 
 
 class CommitConflict(RuntimeError):
@@ -254,6 +255,35 @@ CREATE INDEX IF NOT EXISTS idx_model_attempts_request ON model_attempts(game_id,
 CREATE INDEX IF NOT EXISTS idx_benchmark_items_status ON benchmark_items(run_id, status, item_index);
 """
 
+_FOLDER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS game_folders (
+    folder_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS game_folder_items (
+    game_id TEXT PRIMARY KEY,
+    folder_id TEXT NOT NULL REFERENCES game_folders(folder_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_game_folder_items_folder ON game_folder_items(folder_id);
+"""
+
+_SCHEMA += _FOLDER_SCHEMA
+
+
+def _normalize_folder_name(name: object) -> str:
+    if type(name) is not str:
+        raise ValueError("folder name must not be blank")
+    stripped = name.strip()
+    if not stripped:
+        raise ValueError("folder name must not be blank")
+    if len(stripped) > _FOLDER_NAME_MAX:
+        raise ValueError("folder name is too long")
+    return stripped
+
 
 class GameRepository:
     """Durable repository with one serialized writer and transactional reads."""
@@ -303,6 +333,13 @@ class GameRepository:
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (1, _now()),
+                )
+                current = 1
+            if current < 2:
+                connection.executescript(_FOLDER_SCHEMA)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (2, _now()),
                 )
 
     def _write(self, function: Callable[..., T], *args: object) -> T:
@@ -476,12 +513,120 @@ class GameRepository:
                 "UPDATE games SET deleted_at=?,updated_at=? WHERE game_id=?",
                 (now, now, game_id),
             )
+            connection.execute(
+                "DELETE FROM game_folder_items WHERE game_id=?", (game_id,),
+            )
             connection.commit()
         except BaseException:
             connection.rollback()
             raise
         finally:
             connection.close()
+
+    def create_folder(self, name: str) -> dict[str, object]:
+        return self._write(self._create_folder, _normalize_folder_name(name))
+
+    def _create_folder(self, name: str) -> dict[str, object]:
+        folder_id = uuid.uuid4().hex
+        now = _now()
+        with self._connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO game_folders(folder_id,name,created_at,updated_at) "
+                    "VALUES (?,?,?,?)",
+                    (folder_id, name, now, now),
+                )
+            except sqlite3.IntegrityError as error:
+                raise CommitConflict("folder name already exists") from error
+        record = self.get_folder(folder_id)
+        assert record is not None
+        return record
+
+    def get_folder(self, folder_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT f.folder_id,f.name,f.created_at,f.updated_at,"
+                "COUNT(i.game_id) AS game_count "
+                "FROM game_folders AS f "
+                "LEFT JOIN game_folder_items AS i ON i.folder_id=f.folder_id "
+                "WHERE f.folder_id=? GROUP BY f.folder_id",
+                (folder_id,),
+            ).fetchone()
+            return None if row is None else dict(row)
+
+    def list_folders(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT f.folder_id,f.name,f.created_at,f.updated_at,"
+                "COUNT(i.game_id) AS game_count "
+                "FROM game_folders AS f "
+                "LEFT JOIN game_folder_items AS i ON i.folder_id=f.folder_id "
+                "GROUP BY f.folder_id "
+                "ORDER BY f.created_at, f.folder_id"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def rename_folder(self, folder_id: str, name: str) -> dict[str, object]:
+        return self._write(self._rename_folder, folder_id, _normalize_folder_name(name))
+
+    def _rename_folder(self, folder_id: str, name: str) -> dict[str, object]:
+        with self._connect() as connection:
+            try:
+                cursor = connection.execute(
+                    "UPDATE game_folders SET name=?,updated_at=? WHERE folder_id=?",
+                    (name, _now(), folder_id),
+                )
+            except sqlite3.IntegrityError as error:
+                raise CommitConflict("folder name already exists") from error
+            if cursor.rowcount != 1:
+                raise KeyError(folder_id)
+        record = self.get_folder(folder_id)
+        assert record is not None
+        return record
+
+    def delete_folder(self, folder_id: str) -> None:
+        self._write(self._delete_folder, folder_id)
+
+    def _delete_folder(self, folder_id: str) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM game_folders WHERE folder_id=?", (folder_id,),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(folder_id)
+
+    def get_game_folder(self, game_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT folder_id FROM game_folder_items WHERE game_id=?",
+                (game_id,),
+            ).fetchone()
+            return None if row is None else str(row["folder_id"])
+
+    def set_game_folder(self, game_id: str, folder_id: str | None) -> None:
+        if type(game_id) is not str or not game_id:
+            raise ValueError("game_id must be a non-empty string")
+        if folder_id is not None and (type(folder_id) is not str or not folder_id):
+            raise ValueError("folder_id must be a non-empty string")
+        self._write(self._set_game_folder, game_id, folder_id)
+
+    def _set_game_folder(self, game_id: str, folder_id: str | None) -> None:
+        with self._connect() as connection:
+            if folder_id is None:
+                connection.execute(
+                    "DELETE FROM game_folder_items WHERE game_id=?", (game_id,),
+                )
+                return
+            exists = connection.execute(
+                "SELECT 1 FROM game_folders WHERE folder_id=?", (folder_id,),
+            ).fetchone()
+            if exists is None:
+                raise KeyError(folder_id)
+            connection.execute(
+                "INSERT INTO game_folder_items(game_id,folder_id) VALUES (?,?) "
+                "ON CONFLICT(game_id) DO UPDATE SET folder_id=excluded.folder_id",
+                (game_id, folder_id),
+            )
 
     def transition_execution(
         self, game_id: str, *, expected: tuple[str, ...], target: str,
@@ -1420,3 +1565,74 @@ class GameRepository:
             result = dict(row)
             result["report"] = json.loads(result.pop("report_json"))
             return result
+
+    def release_benchmark_game(self, run_id: str, game_id: str) -> None:
+        self._write(self._release_benchmark_game, run_id, game_id)
+
+    def _release_benchmark_game(self, run_id: str, game_id: str) -> None:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT benchmark_run_id,deleted_at FROM games WHERE game_id=?",
+                (game_id,),
+            ).fetchone()
+            if row is None or row["deleted_at"] is not None:
+                raise KeyError(game_id)
+            if row["benchmark_run_id"] != run_id:
+                raise GameReferencedByBenchmark(str(row["benchmark_run_id"] or "benchmark"))
+            now = _now()
+            connection.execute(
+                "UPDATE benchmark_items SET game_id=NULL,status='cancelled',"
+                "terminal_reason='game_deleted',updated_at=? "
+                "WHERE run_id=? AND game_id=?",
+                (now, run_id, game_id),
+            )
+            connection.execute(
+                "UPDATE games SET deleted_at=?,updated_at=?,benchmark_run_id=NULL "
+                "WHERE game_id=?",
+                (now, now, game_id),
+            )
+            connection.execute(
+                "DELETE FROM game_folder_items WHERE game_id=?", (game_id,),
+            )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def delete_benchmark_reports(self, run_id: str) -> None:
+        self._write(self._delete_benchmark_reports, run_id)
+
+    def _delete_benchmark_reports(self, run_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM benchmark_reports WHERE run_id=?", (run_id,),
+            )
+
+    def delete_benchmark_run(self, run_id: str) -> None:
+        self._write(self._delete_benchmark_run, run_id)
+
+    def _delete_benchmark_run(self, run_id: str) -> None:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "DELETE FROM benchmark_reports WHERE run_id=?", (run_id,),
+            )
+            connection.execute(
+                "DELETE FROM benchmark_items WHERE run_id=?", (run_id,),
+            )
+            cursor = connection.execute(
+                "DELETE FROM benchmark_runs WHERE run_id=?", (run_id,),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
