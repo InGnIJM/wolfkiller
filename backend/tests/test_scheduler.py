@@ -1329,3 +1329,48 @@ def test_stale_execution_lock_finalizer_cannot_remove_a_replacement_lock():
     reference.__callback__(reference)
     assert first is not second
     assert scheduler_module._execution_lock(game) is second
+
+
+def test_slot_validation_and_point_phase_label():
+    game = state("r")
+    assert Scheduler._slot("") == "" and Scheduler._slot("r1-s3") == "r1-s3"
+    with pytest.raises(TypeError, match="slot must be a string"): Scheduler._slot(1)
+    with pytest.raises(ValueError, match="invalid slot"): Scheduler._slot("1 bad")
+    assert Scheduler.point_phase(game) == "night"
+    assert Scheduler.point_phase(game, "r1-s3") == "night#r1-s3"
+
+
+def test_slot_separates_journal_keys_and_request_tokens_within_one_phase():
+    calls = []
+    def provider(request, context, attempt):
+        calls.append(request.action_key)
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+    registry = snapshot(spec("r", contract("day", point=SchedulePoint.DAY_ACTION)))
+    game = state("r")
+    runner = scheduler(registry, provider)
+    bare = runner.issue(game, SchedulePoint.DAY_ACTION, registry)
+    first = runner.issue(game, SchedulePoint.DAY_ACTION, registry, slot="r1-s1")
+    second = runner.issue(game, SchedulePoint.DAY_ACTION, registry, slot="r1-s2")
+    assert len({bare[0].action_key, first[0].action_key, second[0].action_key}) == 3
+    assert first == runner.issue(game, SchedulePoint.DAY_ACTION, registry, slot="r1-s1")
+
+    one = runner.run_point(game, SchedulePoint.DAY_ACTION, slot="r1-s1")
+    again = runner.run_point(game, SchedulePoint.DAY_ACTION, slot="r1-s1")
+    two = runner.run_point(game, SchedulePoint.DAY_ACTION, slot="r1-s2")
+    assert len(calls) == 2  # the replayed slot hit the journal, the new slot asked again
+    assert one.commits == again.commits and two.commits != one.commits
+    assert len(one.commits) == len(two.commits) == 1
+    assert one.commits[0].effect_ids != two.commits[0].effect_ids
+    from app.core.point_journal import PointKey, point_journal
+    journal = point_journal(game)
+    assert journal.get(PointKey("g", 1, "night#r1-s1", SchedulePoint.DAY_ACTION, "a" * 64)) is not None
+    assert journal.get(PointKey("g", 1, "night#r1-s2", SchedulePoint.DAY_ACTION, "a" * 64)) is not None
+
+
+def test_shared_contract_aggregates_across_roles_by_contract_id():
+    shared = contract("group", aggregate=True)
+    registry = snapshot(spec("r", shared), spec("k", shared))
+    game = state("r", "r", "k")
+    result = scheduler(registry).run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert len(result.requests) == 3 and len(result.commits) == 1
+    assert result.events[0]["payload"]["count"] == 3

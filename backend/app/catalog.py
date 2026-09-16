@@ -31,6 +31,14 @@ ROLE_METADATA: dict[str, dict[str, str]] = {
         "name_zh": "守卫", "icon": "guard",
         "description": "每晚守护一名玩家免于狼刀",
     },
+    "wolf-killer-idiot": {
+        "name_zh": "白痴", "icon": "idiot",
+        "description": "被投票出局时翻牌免死，但失去投票权",
+    },
+    "wolf-killer-werewolf-king": {
+        "name_zh": "白狼王", "icon": "wolf_king",
+        "description": "狼人，白天发言阶段可自爆带走一名玩家",
+    },
 }
 
 STANDARD_PRESETS: list[dict] = [
@@ -53,6 +61,33 @@ STANDARD_PRESETS: list[dict] = [
         "role_counts": {
             "wolf-killer-werewolf": 3,
             "wolf-killer-villager": 3,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
+        },
+    },
+    {
+        "id": "twelve-player-idiot",
+        "name": "十二人预女猎白",
+        "description": "4狼 4民 1预言家 1女巫 1猎人 1白痴",
+        "role_counts": {
+            "wolf-killer-werewolf": 4,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-idiot": 1,
+        },
+    },
+    {
+        "id": "twelve-player-wolf-king",
+        "name": "十二人白狼王",
+        "description": "3狼 1白狼王 4民 1预言家 1女巫 1猎人 1守卫",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-werewolf-king": 1,
+            "wolf-killer-villager": 4,
             "wolf-killer-seer": 1,
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,

@@ -39,6 +39,24 @@ def test_legacy_initialization_player_list_is_sanitized_without_config():
     assert projected[0]["payload"] == {"players": [{"seat_number": 1, "role": "villager"}]}
 
 
+def test_day_verdict_events_are_projected_for_viewers():
+    projected = AudienceProjector().project_events("game", [
+        {"event_id": "flip", "event_type": "EXILE_CANCELLED", "visibility": ["PUBLIC"],
+         "payload": {"target_seat": 3, "round_number": 2, "secret": "x"}},
+        {"event_id": "boom", "event_type": "SELF_EXPLODE", "visibility": ["PUBLIC"],
+         "payload": {"seat": 1, "target_seat": 4, "round_number": 2}},
+        {"event_id": "why", "event_type": "WEREWOLF_KING_REASONING", "visibility": ["PUBLIC"],
+         "payload": {"seat": 1, "action_type": "explode", "target_seat": 4,
+                     "reasoning": "r", "thought": "private", "round_number": 2}},
+    ])
+    assert [(row["event_type"], row["payload"]) for row in projected] == [
+        ("exile_cancelled", {"target_seat": 3, "round_number": 2}),
+        ("self_explode", {"seat": 1, "target_seat": 4, "round_number": 2}),
+        ("night_thought", {"seat": 1, "action_type": "werewolf_king_reasoning",
+                           "target_seat": 4, "reasoning": "r", "round_number": 2}),
+    ]
+
+
 def test_initialization_without_optional_players_or_config_remains_valid():
     projected = AudienceProjector().project_events("game", [{
         "event_id": "init", "event_type": "GAME_INITIALIZED", "visibility": ["PUBLIC"],

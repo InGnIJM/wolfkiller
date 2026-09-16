@@ -55,7 +55,7 @@ def test_spec_declares_bounded_death_response_and_gun() -> None:
     assert contract.action_types == ("shoot", "pass")
     assert contract.actions_requiring_target == {"shoot"}
     assert contract.response_event_types == {"PLAYER_DIED"}
-    assert contract.response_reasons == {"wolf_kill", "exile", "hunter_shot"}
+    assert contract.response_reasons == {"wolf_kill", "exile", "hunter_shot", "self_explode"}
     assert contract.per_window_limit == contract.per_game_limit == 1
 
 

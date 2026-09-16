@@ -30,6 +30,17 @@ def _roles() -> dict:
     }
 
 
+def test_role_classifiers_cover_idiot_and_werewolf_king() -> None:
+    from app.benchmark.metrics import _is_god, _is_wolf_role
+
+    assert _is_god("wolf-killer-idiot") is True
+    assert _is_god("wolf-killer-werewolf-king") is False
+    assert _is_wolf_role("wolf-killer-werewolf-king") is True
+    assert _is_wolf_role("wolf-killer-werewolf") is True
+    assert _is_wolf_role("wolf-killer-idiot") is False
+    assert _is_wolf_role(None) is False
+
+
 def _llm_block() -> dict:
     return {
         "calls": 4, "errors": 1, "fallbacks": 1,

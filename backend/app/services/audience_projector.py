@@ -19,6 +19,8 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "GAME_OVER": ("winner", frozenset({"winning_camp", "reason"})),
     "NIGHT_ACTION": ("night_action", frozenset({"action_type", "target_seat", "round_number", "vote_counts", "result"})),
     "TECHNICAL_ABSTAIN": ("technical_abstain", frozenset({"player_seat", "round_number", "phase", "failure_code"})),
+    "EXILE_CANCELLED": ("exile_cancelled", frozenset({"target_seat", "round_number"})),
+    "SELF_EXPLODE": ("self_explode", frozenset({"seat", "target_seat", "round_number"})),
 }
 
 _PUBLIC_ROLE_ACTIONS = {
@@ -34,6 +36,7 @@ _PUBLIC_REASONING_EVENTS = {
     "WITCH_REASONING": "witch_reasoning",
     "SEER_REASONING": "seer_reasoning",
     "GUARD_REASONING": "guard_reasoning",
+    "WEREWOLF_KING_REASONING": "werewolf_king_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

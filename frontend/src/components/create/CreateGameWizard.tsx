@@ -8,13 +8,14 @@ import RoleStep from './RoleStep';
 import ModelStep from './ModelStep';
 import { createGame } from '../../api/client';
 import { useModelConfigStore } from '../../store/modelConfigStore';
-import type { FieldConstraints, ModelAssignment } from '../../store/types';
+import type { FieldConstraints, ModelAssignment, RoleCatalogItem } from '../../store/types';
 
 export default function CreateGameWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>({});
   const [constraints, setConstraints] = useState<FieldConstraints | null>(null);
+  const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
   const [modelAssignments, setModelAssignments] = useState<ModelAssignment[]>([]);
   const [modelAssignmentsInitialized, setModelAssignmentsInitialized] = useState(false);
   const [revealOnDeath, setRevealOnDeath] = useState(false);
@@ -29,7 +30,11 @@ export default function CreateGameWizard() {
   const roleValid = (() => {
     if (!constraints || total === 0) return false;
     if (total < constraints.min_players || total > constraints.max_players) return false;
-    const wolves = roleCounts['wolf-killer-werewolf'] ?? 0;
+    // 狼队按阵营汇总（含白狼王等狼阵营变体），目录未返回时回退为普通狼人
+    const wolfRoleIds = roles.length
+      ? roles.filter((role) => role.camp === 'werewolf').map((role) => role.role_id)
+      : ['wolf-killer-werewolf'];
+    const wolves = wolfRoleIds.reduce((sum, roleId) => sum + (roleCounts[roleId] ?? 0), 0);
     if (wolves < constraints.min_werewolves) return false;
     if (total - wolves < constraints.min_good) return false;
     return true;
@@ -88,6 +93,7 @@ export default function CreateGameWizard() {
           roleCounts={roleCounts}
           onRoleCountsChange={setRoleCounts}
           onConstraintsChange={setConstraints}
+          onRolesChange={setRoles}
           revealOnDeath={revealOnDeath}
           onRevealOnDeathChange={setRevealOnDeath}
         />

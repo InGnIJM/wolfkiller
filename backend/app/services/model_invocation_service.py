@@ -110,7 +110,6 @@ class ModelInvocationService:
                 produced = await produced
             normalized, usage = produced
             result = self._normalize_result(normalized)
-            usage_row = self._normalize_usage(usage)
         except BaseException as error:
             elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
             self._repository.finish_model_attempt(
@@ -122,6 +121,10 @@ class ModelInvocationService:
                 game_id, request_id, status="failed", normalized_result=None,
             )
             raise
+        try:
+            usage_row = self._normalize_usage(usage)
+        except (TypeError, ValueError):
+            usage_row = None
 
         elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
         current = self._repository.get_game(game_id)
@@ -197,7 +200,6 @@ class ModelInvocationService:
             produced = provider_call()
             normalized, usage = produced
             result = self._normalize_result(normalized)
-            usage_row = self._normalize_usage(usage)
         except BaseException as error:
             elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
             self._repository.finish_model_attempt(
@@ -209,6 +211,10 @@ class ModelInvocationService:
                 game_id, request_id, status="failed", normalized_result=None,
             )
             raise
+        try:
+            usage_row = self._normalize_usage(usage)
+        except (TypeError, ValueError):
+            usage_row = None
         elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
         current = self._repository.get_game(game_id)
         if current is None or current["execution_generation"] != execution_generation:
@@ -252,8 +258,6 @@ class ModelInvocationService:
         names = {"prompt_tokens", "completion_tokens", "total_tokens"}
         if set(value) != names or any(type(value[name]) is not int or value[name] < 0 for name in names):
             raise ValueError("usage must contain non-negative token counts")
-        if value["prompt_tokens"] + value["completion_tokens"] != value["total_tokens"]:
-            raise ValueError("usage token totals do not add up")
         return {name: int(value[name]) for name in names}
 
     @staticmethod

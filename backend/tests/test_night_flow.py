@@ -486,6 +486,20 @@ def test_discussion_prompt_asks_for_day_plan(state: GameState, director: NightDi
     assert "嫁祸" in human
 
 
+def test_wolf_prompts_omit_sheriff_and_forbid_invented_rules(
+    state: GameState, director: NightDirector,
+) -> None:
+    discussion = director.discussion_prompt(state, 1, [])
+    vote = director.vote_prompt(state, 1, [], [])
+    for messages in (discussion, vote):
+        text = "\n".join(message["content"] for message in messages)
+        lowered = text.lower()
+        assert "警长" not in text
+        assert "警徽" not in text
+        assert "sheriff" not in lowered
+        assert "不得根据其他狼人杀版本" in text
+
+
 def test_vote_prompt_renders_briefing_sections(state: GameState, director: NightDirector):
     briefing = NightBriefing(("第1轮公开 4号：我觉得3号可疑",), (), ("第1轮[night]：我怀疑女巫",))
     messages = director.vote_prompt(state, 1, [], [], briefing)

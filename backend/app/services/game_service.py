@@ -10,6 +10,7 @@ import traceback
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from enum import Enum
 from typing import Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -56,6 +57,11 @@ logger = logging.getLogger(__name__)
 def _shuffle_model_assignments(values: list[int]) -> None:
     """Shuffle model seats without consuming the role allocator's PRNG state."""
     random.SystemRandom().shuffle(values)
+
+
+def _camp_value(value: object) -> str:
+    """Normalize a stored camp (plain str or str-Enum) into its public label."""
+    return value.value if isinstance(value, Enum) else str(value)
 
 
 def _plain_json(value):
@@ -1480,6 +1486,50 @@ class GameService:
                 ]
             event_type = "STEP_COMMITTED"
             payload = {"position": label}
+        elif label.startswith("day_interrupted:") or label.startswith("day_reaction:"):
+            # ``<label>:<round>:<vote_round>:<actor>:<seat-seat...>`` names the
+            # seats settled by a daytime interruption (and its reaction window).
+            seats = [int(part) for part in label.split(":")[-1].split("-") if part]
+            deaths = [
+                item for item in engine.state.death_history
+                if item.round_number == engine.state.round_number
+                and item.player_seat in seats
+            ]
+            if deaths:
+                return [
+                    {
+                        "event_id": f"domain:{event_id}:{index}",
+                        "event_type": "PLAYER_DIED",
+                        "payload": death.to_dict(),
+                        "visibility": ["PUBLIC"],
+                        "schema_version": 1,
+                    }
+                    for index, death in enumerate(deaths)
+                ]
+            event_type = "STEP_COMMITTED"
+            payload = {"position": label}
+        elif label.startswith("exile_cancelled:"):
+            seat = int(label.split(":")[-1])
+            player = engine.state.players.get(seat)
+            events = [{
+                "event_id": f"domain:{event_id}:0",
+                "event_type": "EXILE_CANCELLED",
+                "payload": {"target_seat": seat, "round_number": engine.state.round_number},
+                "visibility": ["PUBLIC"],
+                "schema_version": 1,
+            }]
+            if player is not None and player.revealed_role is not None:
+                events.append({
+                    "event_id": f"domain:{event_id}:1",
+                    "event_type": "PLAYER_REVEALED",
+                    "payload": {
+                        "seat_number": seat, "role": player.revealed_role,
+                        "camp": _camp_value(player.camp),
+                    },
+                    "visibility": ["PUBLIC"],
+                    "schema_version": 1,
+                })
+            return events
         elif (
             label.startswith("night_complete:")
             and isinstance(engine.state.win_result, Mapping)

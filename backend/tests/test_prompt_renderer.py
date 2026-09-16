@@ -122,10 +122,12 @@ def test_json_and_final_prompt_are_bounded() -> None:
         PromptRenderer().render(spec, contract, huge, "")
 
 
-def test_renderer_omits_unimplemented_sheriff_and_states_game_has_none() -> None:
+def test_renderer_omits_sheriff_and_forbids_invented_rules() -> None:
     spec, contract, context = values()
     context = replace(context, facts={**dict(context.facts), "sheriff": None})
     rendered = PromptRenderer().render(spec, contract, context, "")
+    lowered = rendered.lower()
     assert '"sheriff"' not in rendered
-    assert "no sheriff" in rendered
-    assert "sheriff-badge" in rendered
+    assert "no sheriff" not in lowered
+    assert "sheriff-badge" not in lowered
+    assert "do not invent mechanics from other Werewolf variants" in rendered

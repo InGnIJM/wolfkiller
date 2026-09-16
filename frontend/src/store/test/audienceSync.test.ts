@@ -233,6 +233,31 @@ describe('incremental audience synchronization', () => {
     expect(result.timeline[8].timestamp).toBe('1970-01-01T00:00:00.000Z');
   });
 
+  it('keeps a flipped seat alive without a ballot and treats a self-destruct as a timeline break', () => {
+    const store = useGameStore.getState();
+    const initial = snapshot('game-1');
+    initial.state.players[2] = { seat_number: 2, is_alive: true, is_sheriff: false };
+    initial.state.players[3] = { seat_number: 3, is_alive: true, is_sheriff: false };
+    store.loadAudienceSnapshot(initial);
+    store.loadAudienceHistory('game-1', [
+      event(1, 'speech', { player_seat: 1, text: '我是好人', round_number: 2 }),
+      event(2, 'vote_result', { round_number: 2, exiled_seat: null, counts: { 2: 2 } }),
+      event(3, 'exile_cancelled', { round_number: 2, target_seat: 2 }),
+      event(4, 'player_revealed', { seat_number: 2, role: 'wolf-killer-idiot', camp: 'good' }),
+      event(5, 'exile_cancelled', { round_number: 2, target_seat: 99 }),
+      event(6, 'self_explode', { round_number: 3, seat: 3, target_seat: 1 }),
+    ]);
+
+    const result = useGameStore.getState();
+    expect(result.players[2]).toMatchObject({
+      is_alive: true, can_vote: false, revealed_role: 'wolf-killer-idiot',
+    });
+    expect(result.players[1].can_vote).toBeUndefined();
+    expect(result.deathHistory).toHaveLength(0);
+    expect(result.roundNumber).toBe(3);
+    expect(result.currentSpeaker).toBeNull();
+  });
+
   it('handles empty initialization payloads, recovery block codes and winner overlays', () => {
     const store = useGameStore.getState();
     store.loadAudienceSnapshot(snapshot('game-1'));

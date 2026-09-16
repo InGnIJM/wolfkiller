@@ -267,10 +267,69 @@ def test_request_digest_and_result_usage_validation_reject_noncanonical_values()
         ModelInvocationService._normalize_usage({
             "prompt_tokens": -1, "completion_tokens": 2, "total_tokens": 1,
         })
-    with pytest.raises(ValueError, match="add up"):
-        ModelInvocationService._normalize_usage({
-            "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 4,
-        })
+    assert ModelInvocationService._normalize_usage({
+        "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 4,
+    }) == {
+        "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 4,
+    }
+
+
+def test_sync_invocation_keeps_payload_when_usage_totals_include_thinking() -> None:
+    repository = FakeInvocationRepository(request=_request(), game=_game())
+    usage = {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 20}
+    result = _sync_invoke(
+        ModelInvocationService(repository),
+        lambda: ({"action_type": "kill", "target_seat": 7}, usage),
+    )
+    assert result.normalized_result == {"action_type": "kill", "target_seat": 7}
+    assert repository.resolved[0]["status"] == "resolved"
+    assert repository.finished[0]["status"] == "resolved"
+    assert repository.finished[0]["usage"] == usage
+
+
+@pytest.mark.asyncio
+async def test_async_invocation_keeps_payload_when_usage_totals_include_thinking() -> None:
+    repository = FakeInvocationRepository(request=_request(), game=_game())
+    usage = {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 20}
+    result = await ModelInvocationService(repository).invoke(
+        game_id="game", request_id="request", actor_seat=1,
+        action_position="night:1", frozen_request={"prompt": "x"},
+        provider_profile="test", model_id="fake", execution_generation=1,
+        provider_call=lambda: ({"speak": True, "text": "刀7"}, usage),
+    )
+    assert result.normalized_result == {"speak": True, "text": "刀7"}
+    assert repository.resolved[0]["status"] == "resolved"
+    assert repository.finished[0]["status"] == "resolved"
+    assert repository.finished[0]["usage"] == usage
+
+
+def test_sync_invocation_resolves_payload_when_usage_is_unusable() -> None:
+    repository = FakeInvocationRepository(request=_request(), game=_game())
+    result = _sync_invoke(
+        ModelInvocationService(repository),
+        lambda: ({"text": "ok"}, "tokens"),
+    )
+    assert result.normalized_result == {"text": "ok"}
+    assert repository.resolved[0] == {
+        "status": "resolved", "normalized_result": {"text": "ok"},
+    }
+    assert repository.finished[0]["status"] == "resolved"
+    assert repository.finished[0]["usage"] is None
+
+
+@pytest.mark.asyncio
+async def test_async_invocation_resolves_payload_when_usage_is_unusable() -> None:
+    repository = FakeInvocationRepository(request=_request(), game=_game())
+    result = await ModelInvocationService(repository).invoke(
+        game_id="game", request_id="request", actor_seat=1,
+        action_position="night:1", frozen_request={"prompt": "x"},
+        provider_profile="test", model_id="fake", execution_generation=1,
+        provider_call=lambda: ({"text": "ok"}, {"total_tokens": 1}),
+    )
+    assert result.normalized_result == {"text": "ok"}
+    assert repository.resolved[0]["status"] == "resolved"
+    assert repository.finished[0]["status"] == "resolved"
+    assert repository.finished[0]["usage"] is None
 
 
 @pytest.mark.asyncio

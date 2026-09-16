@@ -23,9 +23,11 @@ from app.models.pipeline import (
 )
 from app.roles.hunter import HUNTER_SPEC, Hunter
 from app.roles.guard import GUARD_SPEC, Guard
+from app.roles.idiot import IDIOT_SPEC, Idiot
 from app.roles.seer import SEER_SPEC, Seer
 from app.roles.villager import VILLAGER_SPEC, Villager
 from app.roles.werewolf import WEREWOLF_SPEC, Werewolf
+from app.roles.werewolf_king import WEREWOLF_KING_SPEC, WerewolfKing
 from app.roles.witch import WITCH_SPEC, Witch
 
 
@@ -122,7 +124,7 @@ class RoleRegistry:
     def freeze(self) -> RegistrySnapshot:
         with self._lock:
             local_specs = dict(self._pipeline_specs)
-        contract_ids: set[str] = set()
+        contract_ids: dict[str, str] = {}
         known_roles = set(local_specs)
         for spec in dict(sorted(local_specs.items())).values():
             self._validate_pipeline_spec(spec, contract_ids, known_roles)
@@ -136,7 +138,7 @@ class RoleRegistry:
     @staticmethod
     def _validate_pipeline_spec(
         spec: PipelineRoleSpec,
-        contract_ids: set[str],
+        contract_ids: dict[str, str],
         known_roles: set[str],
     ) -> None:
         if _STABLE_ID.fullmatch(spec.role_id) is None:
@@ -157,9 +159,14 @@ class RoleRegistry:
         if not spec.visibility_namespaces <= _VISIBLE_NAMESPACES:
             raise ValueError("unknown visibility namespace")
         for contract in spec.contracts:
-            if contract.contract_id in contract_ids:
+            # Several roles may share one contract (e.g. a whole camp voting
+            # through the same aggregate) only when the declarations are
+            # byte-identical; any divergence is still a duplicate id.
+            serialized = PipelineActionContract.to_json(contract)
+            existing = contract_ids.get(contract.contract_id)
+            if existing is not None and existing != serialized:
                 raise ValueError(f"duplicate contract id: {contract.contract_id}")
-            contract_ids.add(contract.contract_id)
+            contract_ids[contract.contract_id] = serialized
             RoleRegistry._validate_pipeline_contract(spec, contract)
 
     @staticmethod
@@ -206,8 +213,15 @@ class RoleRegistry:
             raise ValueError("response reasons require response event types")
         if contract.is_applicable is None:
             raise ValueError("is_applicable hook is required")
-        if (contract.resolve is None) == (contract.aggregate is None):
+        # A contract resolves commands with exactly one of resolve/aggregate;
+        # a pure react hook may stand alone because it needs no command.
+        command_hooks = sum(
+            hook is not None for hook in (contract.resolve, contract.aggregate)
+        )
+        if command_hooks > 1 or (command_hooks == 0 and contract.react is None):
             raise ValueError("exactly one resolution hook is required")
+        if contract.react is not None and not contract.response_event_types:
+            raise ValueError("react hook requires response event types")
         hooks = {
             "is_applicable": (
                 contract.is_applicable,
@@ -405,6 +419,8 @@ builtin_registry.register_pipeline(SEER_SPEC)
 builtin_registry.register_pipeline(HUNTER_SPEC)
 builtin_registry.register_pipeline(VILLAGER_SPEC)
 builtin_registry.register_pipeline(GUARD_SPEC)
+builtin_registry.register_pipeline(IDIOT_SPEC)
+builtin_registry.register_pipeline(WEREWOLF_KING_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -474,4 +490,23 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-guard", Camp.GOOD, Guard, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-idiot", Camp.GOOD, Idiot, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec(
+        "wolf-killer-werewolf-king",
+        Camp.WEREWOLF,
+        WerewolfKing,
+        (
+            _contract(
+                "werewolf_kill",
+                GamePhase.NIGHT,
+                ("kill", "pass"),
+                frozenset({"kill"}),
+                resolution_priority=10,
+            ),
+        ),
+    )
 )

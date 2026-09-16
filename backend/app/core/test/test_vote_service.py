@@ -305,3 +305,34 @@ def test_invalid_vote_checkpoint_never_replaces_existing_windows(corruption):
     with pytest.raises(ValueError):
         service.restore_checkpoint(value)
     assert service.checkpoint() == original
+
+
+def test_runtime_statuses_shape_exile_voters_and_targets():
+    from app.core.effect_applier import _Runtime
+    from app.core.vote_service import (
+        EXILE_IMMUNE_STATUS, NO_VOTE_STATUS, VoteService,
+        eligible_exile_targets, eligible_exile_voters, seats_with_status,
+    )
+
+    state = make_state()
+    assert eligible_exile_voters(state) == eligible_exile_targets(state) == frozenset({1, 2, 3})
+    state._pipeline_runtime = _Runtime(statuses={
+        1: {NO_VOTE_STATUS, EXILE_IMMUNE_STATUS}, 2: {"unrelated"}, 3: "not-a-set",
+    })
+    assert seats_with_status(state, NO_VOTE_STATUS) == frozenset({1})
+    assert eligible_exile_voters(state) == frozenset({2, 3})
+    assert eligible_exile_targets(state) == frozenset({2, 3})
+
+    window = VoteService(state, clock=lambda: 10.0).open_window(timeout_seconds=5.0)
+    assert window.eligible_voters == frozenset({2, 3})
+    assert window.eligible_targets == frozenset({2, 3})
+
+
+def test_seats_with_status_rejects_invalid_inputs():
+    from app.core.vote_service import seats_with_status
+
+    with pytest.raises(TypeError, match="GameState"):
+        seats_with_status(object(), "no_vote")
+    for status in ("", None):
+        with pytest.raises(ValueError, match="non-empty"):
+            seats_with_status(make_state(), status)

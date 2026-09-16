@@ -12,7 +12,7 @@ import app.services.game_service as service_module
 from app.api.websocket.ws_handler import WSManager
 from app.agents.llm_client import env_default_client_config
 from app.core.event_bus import EventBus
-from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+from app.models.game import Camp, GameConfig, GamePhase, GameState, PlayerState
 from app.models.actions import DeathReport, SpeechRecord, VoteAction
 from app.models.contracts import (
     AcceptedAction, ActionCommand, ActionContract, ActionRequest,
@@ -370,6 +370,48 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     assert GameService._checkpoint_domain_events(
         engine, "00000015:night_point:2:empty",
     )[0]["event_type"] == "STEP_COMMITTED"
+
+
+def test_checkpoint_domain_events_cover_day_interruption_and_cancelled_exile() -> None:
+    state = _state_with_players()
+    engine = SimpleNamespace(game_id="game", state=state, _pending_night_batch=None)
+
+    # No deaths recorded yet (or an empty seat list): opaque step.
+    assert GameService._checkpoint_domain_events(
+        engine, "00000001:day_interrupted:2:1:3:",
+    )[0]["event_type"] == "STEP_COMMITTED"
+    state.death_history = [
+        DeathReport(1, "self_explode", 2), DeathReport(2, "self_explode", 2),
+        DeathReport(2, "exile", 1),
+    ]
+    deaths = GameService._checkpoint_domain_events(
+        engine, "00000002:day_interrupted:2:1:3:1-2",
+    )
+    assert [(d["event_type"], d["payload"]["player_seat"]) for d in deaths] == [
+        ("PLAYER_DIED", 1), ("PLAYER_DIED", 2)]
+    assert deaths[0]["event_id"] != deaths[1]["event_id"]
+    reaction = GameService._checkpoint_domain_events(
+        engine, "00000003:day_reaction:2:1:3:2",
+    )
+    assert [d["payload"]["player_seat"] for d in reaction] == [2]
+
+    # A cancelled exile emits the cancellation plus the flipped identity.
+    cancelled = GameService._checkpoint_domain_events(
+        engine, "00000004:exile_cancelled:2:1:1",
+    )
+    assert [event["event_type"] for event in cancelled] == ["EXILE_CANCELLED"]
+    assert cancelled[0]["payload"] == {"target_seat": 1, "round_number": 2}
+    state.players[1].revealed_role = "wolf-killer-idiot"
+    state.players[1].camp = Camp.GOOD
+    cancelled = GameService._checkpoint_domain_events(
+        engine, "00000005:exile_cancelled:2:1:1",
+    )
+    assert [event["event_type"] for event in cancelled] == ["EXILE_CANCELLED", "PLAYER_REVEALED"]
+    assert cancelled[1]["payload"] == {"seat_number": 1, "role": "wolf-killer-idiot", "camp": "good"}
+    assert cancelled[1]["visibility"] == ["PUBLIC"]
+    assert GameService._checkpoint_domain_events(
+        engine, "00000006:exile_cancelled:2:1:9",
+    )[0]["event_type"] == "EXILE_CANCELLED"
 
 
 def test_wolf_discussion_checkpoint_emits_chat_and_skips_silent_turns() -> None:

@@ -1,5 +1,7 @@
 import GpsFixed from '@mui/icons-material/GpsFixed';
 import Help from '@mui/icons-material/Help';
+import Mood from '@mui/icons-material/Mood';
+import WorkspacePremium from '@mui/icons-material/WorkspacePremium';
 import Person from '@mui/icons-material/Person';
 import Pets from '@mui/icons-material/Pets';
 import Science from '@mui/icons-material/Science';
@@ -20,6 +22,8 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-witch': { Icon: Science, label: '女巫', color: ROLE_COLORS.witch.color },
   'wolf-killer-hunter': { Icon: GpsFixed, label: '猎人', color: ROLE_COLORS.hunter.color },
   'wolf-killer-guard': { Icon: Security, label: '守卫', color: ROLE_COLORS.guard.color },
+  'wolf-killer-idiot': { Icon: Mood, label: '白痴', color: ROLE_COLORS.idiot.color },
+  'wolf-killer-werewolf-king': { Icon: WorkspacePremium, label: '白狼王', color: ROLE_COLORS.werewolf_king.color },
 };
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标

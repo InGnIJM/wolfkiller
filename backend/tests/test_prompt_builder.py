@@ -61,11 +61,13 @@ def test_system_prompts_define_shared_rules_without_builtin_roles() -> None:
     assert "PROJECTED_CONTEXT" in NIGHT_SYSTEM_PROMPT
 
 
-def test_system_prompts_state_this_game_has_no_sheriff() -> None:
+def test_system_prompts_omit_sheriff_and_forbid_invented_rules() -> None:
     for prompt in (DAY_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT):
-        assert "本局没有警长" in prompt
-        assert "警徽流" in prompt
-        assert "警长竞选" in prompt
+        lowered = prompt.lower()
+        assert "警长" not in prompt
+        assert "警徽" not in prompt
+        assert "sheriff" not in lowered
+        assert "不得根据其他狼人杀版本" in prompt
 
 
 def test_system_prompts_define_xml_history_trust_boundaries() -> None:
@@ -422,6 +424,17 @@ class TestPromptBuilder:
         )
         assert "平票复投（第2轮）" in prompt
 
+    def test_vote_prompt_lists_exile_immune_seats(self):
+        from app.core.effect_applier import _Runtime
+
+        builder = PromptBuilder()
+        state = make_state()
+        state._pipeline_runtime = _Runtime(statuses={2: {"exile_immune", "no_vote"}})
+        prompt = builder.build_vote_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "exile_vote"
+        )
+        assert "已免于放逐" in prompt and "2号" in prompt
+
     @pytest.mark.parametrize("role_name", [
         "wolf-killer-werewolf", "wolf-killer-villager", "wolf-killer-seer",
         "wolf-killer-witch", "wolf-killer-hunter",
@@ -481,12 +494,15 @@ class TestPromptBuilderHelpers:
         assert "sheriff" not in block
         assert "alive_seats" in block
 
-    def test_day_speech_prompt_states_this_game_has_no_sheriff(self):
+    def test_day_speech_prompt_omits_sheriff_and_forbids_invented_rules(self):
         prompt = PromptBuilder().build_speech_prompt(
             make_state(), 4, "wolf-killer-villager", make_log(), "day_speech",
         )
-        assert "no sheriff" in prompt
-        assert "sheriff-badge" in prompt
+        lowered = prompt.lower()
+        assert "警长" not in prompt
+        assert "警徽" not in prompt
+        assert "sheriff" not in lowered
+        assert "do not invent mechanics from other Werewolf variants" in prompt
 
     def test_camp_cooperation_block_ignores_malformed_facts(self):
         builder = PromptBuilder()

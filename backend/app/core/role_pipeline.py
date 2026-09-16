@@ -149,11 +149,14 @@ class RolePipeline:
     def _v2(self, state: GameState, point: SchedulePoint) -> PipelineObservation:
         return self.observe_v2(self.execute_v2_point(state, point))
 
-    def execute_v2_point(self, state: GameState, point: SchedulePoint) -> PointResult:
+    def execute_v2_point(self, state: GameState, point: SchedulePoint, *, slot: str = "") -> PointResult:
         if self.mode is PipelineMode.V1: raise ValueError("V2 execution is unavailable in V1 mode")
         if type(state) is not GameState: raise TypeError("state must be GameState")
         if type(point) is not SchedulePoint: raise TypeError("point must be SchedulePoint")
-        result = self.scheduler.run_point(state, point)
+        if type(slot) is not str: raise TypeError("slot must be a string")
+        # The bare call keeps single-run points compatible with schedulers
+        # that predate slots; a slot is only forwarded when one is requested.
+        result = self.scheduler.run_point(state, point, slot=slot) if slot else self.scheduler.run_point(state, point)
         if type(result) is not PointResult: raise TypeError("scheduler must return exact PointResult")
         return result
 

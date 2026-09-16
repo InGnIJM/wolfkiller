@@ -12,11 +12,13 @@ function campLabel(camp?: string): string | undefined {
 
 function statusLine(options: {
   isAlive: boolean;
+  canVote?: boolean;
   isSheriff: boolean;
   isCurrentSpeaker: boolean;
   voteTarget?: number | null;
 }): string {
   const parts = [options.isAlive ? '存活' : '出局'];
+  if (options.isAlive && options.canVote === false) parts.push('无投票权');
   if (options.isSheriff) parts.push('警长');
   if (options.isCurrentSpeaker) parts.push('发言中');
   if (options.voteTarget !== undefined) {
@@ -31,6 +33,7 @@ export default function SeatHoverCard({
   roleLabel,
   camp,
   isAlive,
+  canVote,
   isSheriff,
   isCurrentSpeaker,
   voteTarget,
@@ -42,6 +45,7 @@ export default function SeatHoverCard({
   roleLabel?: string;
   camp?: string;
   isAlive: boolean;
+  canVote?: boolean;
   isSheriff: boolean;
   isCurrentSpeaker: boolean;
   voteTarget?: number | null;
@@ -89,7 +93,7 @@ export default function SeatHoverCard({
       ) : null}
       <Box sx={{ my: 1, height: 1, bgcolor: HAIRLINE.soft }} />
       <HoverRow label="状态" value={statusLine({
-        isAlive, isSheriff, isCurrentSpeaker, voteTarget,
+        isAlive, canVote, isSheriff, isCurrentSpeaker, voteTarget,
       })} />
       <HoverRow label="模型" value={model?.name ?? '未知'} emphasize />
       {model ? (

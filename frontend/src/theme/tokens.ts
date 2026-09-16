@@ -47,6 +47,8 @@ export const ROLE_COLORS = {
   hunter: { color: '#D9A441', bg: 'rgba(217, 164, 65, 0.14)' },
   villager: { color: '#93B58C', bg: 'rgba(147, 181, 140, 0.14)' },
   guard: { color: '#74ABA3', bg: 'rgba(116, 171, 163, 0.14)' },
+  idiot: { color: '#D9C27A', bg: 'rgba(217, 194, 122, 0.14)' },
+  werewolf_king: { color: '#F0F0F0', bg: 'rgba(240, 240, 240, 0.12)' },
 } as const;
 
 export type RoleColorKey = keyof typeof ROLE_COLORS;

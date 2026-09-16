@@ -7,6 +7,7 @@ import Gavel from '@mui/icons-material/Gavel';
 import GpsFixed from '@mui/icons-material/GpsFixed';
 import PersonOff from '@mui/icons-material/PersonOff';
 import Science from '@mui/icons-material/Science';
+import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
 import type { DeathRecord } from '../../store/types';
 
@@ -20,6 +21,7 @@ const CAUSE_LABELS: Record<string, string> = {
   poison: '毒杀',
   exile: '放逐',
   hunter_shot: '猎人带走',
+  self_explode: '白狼王自爆',
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -29,6 +31,8 @@ const ROLE_LABELS: Record<string, string> = {
   'wolf-killer-witch': '女巫',
   'wolf-killer-hunter': '猎人',
   'wolf-killer-guard': '守卫',
+  'wolf-killer-idiot': '白痴',
+  'wolf-killer-werewolf-king': '白狼王',
 };
 
 const CAUSE_ICONS: Record<string, SvgIconComponent> = {
@@ -36,6 +40,7 @@ const CAUSE_ICONS: Record<string, SvgIconComponent> = {
   poison: Science,
   hunter_shot: GpsFixed,
   exile: Gavel,
+  self_explode: Whatshot,
 };
 
 export default function DeathAnnouncement({ deaths, revealedRole }: Props) {

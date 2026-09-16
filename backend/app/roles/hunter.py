@@ -10,7 +10,7 @@ from app.models.pipeline import (
 )
 
 
-_SHOOT_REASONS = frozenset({"wolf_kill", "exile", "hunter_shot"})
+_SHOOT_REASONS = frozenset({"wolf_kill", "exile", "hunter_shot", "self_explode"})
 
 
 def hunter_applicable(context: ActionContext) -> bool:
@@ -109,7 +109,7 @@ HUNTER_SPEC = RoleSpec(
     allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
-        "你出局（被狼刀、被放逐或被猎人带走）时触发开枪权。开枪是可选的，"
+        "你出局（被狼刀、被放逐、被猎人或被白狼王自爆带走）时触发开枪权；被女巫毒死不能开枪。开枪是可选的，"
         "不是强制的：你可以 shoot 一名存活玩家将其带走，也可以 pass 不开枪。"
         "是否开枪完全由你根据当前局势自行判断——只有当你对某名存活玩家的"
         "狼人身份有较高把握时才开枪；没有把握或担心误伤好人时，应选择 pass。"

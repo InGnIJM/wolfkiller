@@ -11,8 +11,9 @@ from __future__ import annotations
 from typing import Optional
 
 _WEREWOLF_ROLE = "wolf-killer-werewolf"
+_WEREWOLF_ROLES = frozenset({_WEREWOLF_ROLE, "wolf-killer-werewolf-king"})
 _WEREWOLF_CAMP = "werewolf"
-_GOD_ROLE_TOKENS = ("seer", "witch", "hunter", "guard")
+_GOD_ROLE_TOKENS = ("seer", "witch", "hunter", "guard", "idiot")
 _ROUNDS_KEY = "rounds"
 
 
@@ -23,7 +24,7 @@ def _is_god(role: Optional[str]) -> bool:
 
 
 def _is_wolf_role(role: Optional[str]) -> bool:
-    return role == _WEREWOLF_ROLE
+    return role in _WEREWOLF_ROLES
 
 
 def _roles_by_seat(summary: dict) -> dict[str, str]:

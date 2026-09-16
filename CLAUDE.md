@@ -2,11 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Cursor / Codex / Gemini 请同时遵循根目录 [`AGENTS.md`](AGENTS.md)；两处描述同一套命令、架构与门禁。
 
-面向人类的详细文档在 `docs/`（[索引](docs/README.md)）：游戏规则 `docs/gameplay.md`、系统架构 `docs/architecture.md`、开发指南与踩坑 `docs/development.md`。本文与 `docs/architecture.md` 描述同一套架构，改动后需同步 `AGENTS.md` / `CLAUDE.md` / `docs/architecture.md`。
+面向人类的详细文档在 `docs/`（[索引](docs/README.md)）：游戏规则 `docs/gameplay.md`、系统架构 `docs/architecture.md`、开发指南与踩坑 `docs/development.md`。现行评测结论见 `docs/notes/2026-09-16-mimo-mixed-arena.md`。本文与 `docs/architecture.md` 描述同一套架构，改动后需同步 `AGENTS.md` / `CLAUDE.md` / `docs/architecture.md`。
 
 ## 项目概述
 
-Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人，以及十人局可选的守卫）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
+Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴或白狼王）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
 
 ## 常用命令
 
@@ -58,14 +58,15 @@ npm run test:e2e                      # Playwright 浏览器验收
 | `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
 | `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
-| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`point_journal.py` 提供断点续跑检查点 |
+| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 允许同一阶段多次运行同一调度点（`PointKey.phase` 为 `phase#slot`）；聚合按 `contract_id` 分组，跨角色完全一致的共享契约合并计票；`point_journal.py` 提供断点续跑检查点 |
 | `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
-| `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
+| `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴是仅 `react` 的无 LLM 契约 |
 
 - **夜晚流程**：`GameEngine._execute_night()` 分阶段执行（`_execute_staged_night()`），调度点顺序为 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动。
-- **放逐反应**：引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应
-- **白天发言/投票**：引擎内角色无关路径，经 `BaseRole`（`roles/base.py`）调用 LLM；投票通过纯校验器验证并以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）
+- **白天流水线窗口**：每位发言者开口前跑 `DAY_ACTION`（`slot=f"{vote_round}:{seat}"`），提交事件含 `DAY_INTERRUPTED` 时 `_resolve_day_interruption()` 结算双死、按 `death_history` 去重发布、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点并以 `WEREWOLF_EXPLODED` 转 NIGHT（续跑由 `_journaled_day_interruption()` 幂等重放）；放逐前 `_apply_exile()` 以 `EXILE_PENDING` 跑 `EXILE_VERDICT`，提交事件含 `EXILE_CANCELLED` 时写 `revealed_role`、记 `vote_result exiled=None` 并跳过遗言。引擎只认这些通用事件名，不出现角色名
+- **放逐反应**：引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应；猎人 `_SHOOT_REASONS` 含 `self_explode`
+- **白天发言/投票**：引擎内角色无关路径，经 `BaseRole`（`roles/base.py`）调用 LLM；投票通过纯校验器验证并以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）；投票资格读 `runtime.statuses`（`core/vote_service.py`：`no_vote` 不进选民、`exile_immune` 不进候选），狼队按 `camp == Camp.WEREWOLF` 识别
 - **断点续跑**：调度点、夜晚批次、死亡发布、阶段推进均有持久检查点，失败后精确续跑不重放
 
 ### 白天阶段与规则
@@ -80,12 +81,12 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 平票时进入补充发言 + 复投（`vote_round=2`），再次平票则无人被放逐。
 
-**规则引擎 (`core/rule_engine.py`)** 实现屠边规则，关键语义：「狼刀在先」——神职含守卫；狼人数大于好人数也算狼人胜；双方同时满足时狼人优先。
+**规则引擎 (`core/rule_engine.py`)** 实现屠边规则，关键语义：「狼刀在先」——神职含守卫与白痴；狼人数（含白狼王）大于好人数也算狼人胜；双方同时满足时狼人优先。
 
 ### 角色 LLM 交互（白天路径）
 
 - `roles/base.py` 的 `BaseRole` 处理发言（tool calling 两层防线 + ≥15 字校验 + 兜底）与投票（strict tool → JSON 降级 → 安全 fallback）
-- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。公开规则与系统提示写明本局无警长/警徽/竞选；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。提示词不出现警长概念；只允许提示里写明的规则，禁止模型用其他版本补流程；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
 ### 模型配置与角色目录
@@ -130,7 +131,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
 - **发言顺序**：存活玩家从"最近死亡玩家的下一位存活玩家"开始按座位号依次发言（`game_engine.py` 的 `_execute_speech_round`；无死亡记录时回退为最小存活座位开局）；平票复投时排除断点续跑中已完成补充发言的座位，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
-- **测试门禁**：后端 pytest 全量（`tests` + `app/`）+ statement/branch 100%（`--cov-fail-under=100`），数量以实际运行为准；守卫样例证明不必改核心模块即可扩展新角色。`test_guard_extension.py` **不再**维护 `CORE_BLOBS_BEFORE_GUARD`。
+- **测试门禁**：后端 pytest 全量（`tests` + `app/`）+ statement/branch 100%（`--cov-fail-under=100`），数量以实际运行为准；守卫 / 白痴 / 白狼王三个扩展样例（`test_guard_extension.py` / `test_idiot_extension.py` / `test_werewolf_king_extension.py`）证明不必改核心模块即可扩展新角色。`test_guard_extension.py` **不再**维护 `CORE_BLOBS_BEFORE_GUARD`。
 
 ## 注意事项
 
@@ -140,5 +141,8 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断。运行时备份请用 SQLite `.backup`，不要只拷主 `.sqlite3` 文件
 - 环境默认 LLM 配置在 `backend/.env`（含 API key、model、temperature 等），已存模型由模型管理页维护；`LLM_MODELS` 仅兼容首个非空值且已弃用
 - 守卫：不能连续两晚守同一人；守护只抵消狼刀，毒药与猎枪无视守卫；守卫守护与女巫解药同时作用于同一狼刀目标时目标仍死亡（对穿）
+- 白痴：被放逐时翻牌，公开身份、不死、失去投票权、不再能被放逐，仍可发言；夜刀/毒/枪/自爆带走时正常死亡；计入神职
+- 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，两人均无遗言，当日发言与投票取消直接入夜；被毒/放逐/枪杀时不能带人
+- 注册表新增角色会改变 `registry.digest`，处于 `interrupted` 的旧局无法续跑；上线前先结束进行中的对局
 - `ROLE_PIPELINE_V2` 环境变量不改变对局：`GameEngine` 固定 `PipelineMode.V2`
 - 修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新源码门禁测试（注意：不是 `test_guard_extension.py` 的 blob 清单）：`tests/test_game_engine.py` 的引擎禁词测试、`tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 的角色名禁词测试、`tests/test_prompt_renderer.py` 的渲染器禁词测试

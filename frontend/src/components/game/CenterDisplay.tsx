@@ -27,6 +27,7 @@ const CAUSE_LABELS: Record<string, string> = {
   poison: '毒杀',
   exile: '被放逐',
   hunter_shot: '猎人带走',
+  self_explode: '白狼王自爆',
 };
 
 const THOUGHT_LABELS: Record<string, string> = {
@@ -34,6 +35,7 @@ const THOUGHT_LABELS: Record<string, string> = {
   seer_reasoning: '预言家',
   hunter_reasoning: '猎人',
   guard_reasoning: '守卫',
+  werewolf_king_reasoning: '白狼王',
   witch_thought: '女巫',
   seer_thought: '预言家',
 };
@@ -287,6 +289,13 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
       break;
     case 'technical_abstain':
       text = `${entry.payload.voter_seat}号 系统代投弃权`;
+      tone = '#F4B3B6';
+      break;
+    case 'exile_cancelled':
+      text = `${entry.payload.target_seat}号翻牌免于出局`;
+      break;
+    case 'self_explode':
+      text = `${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
     case 'narration':

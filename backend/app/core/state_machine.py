@@ -35,6 +35,9 @@ class GameStateMachine:
         # Day cycle
         (GamePhase.LAST_WORDS, GameEvent.LAST_WORDS_COMPLETE, GamePhase.SPEECH),
         (GamePhase.SPEECH, GameEvent.SPEECHES_COMPLETE, GamePhase.VOTE_CASTING),
+        # A daytime interruption (e.g. a self-destruct) cancels the rest of
+        # the day: no vote is held and the game goes straight to night.
+        (GamePhase.SPEECH, GameEvent.WEREWOLF_EXPLODED, GamePhase.NIGHT),
         (GamePhase.VOTE_CASTING, GameEvent.VOTES_COMPLETE, GamePhase.VOTE_RESOLUTION),
         (GamePhase.VOTE_RESOLUTION, GameEvent.VOTE_RESOLVED, GamePhase.NIGHT),
         (GamePhase.VOTE_RESOLUTION, GameEvent.GAME_OVER, GamePhase.GAME_OVER),

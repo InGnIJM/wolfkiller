@@ -530,7 +530,7 @@ class TestPipelineRoleRegistry:
             (
                 (
                     _pipeline_spec("one"),
-                    _pipeline_spec("two"),
+                    _pipeline_spec("two", contracts=(_pipeline_contract(order=11),)),
                 ),
                 "duplicate contract",
             ),
@@ -778,6 +778,47 @@ class TestPipelineRoleRegistry:
         registry.register_pipeline(_pipeline_spec(contracts=(contract,)))
 
         assert registry.freeze().require("pipeline-role").contracts == (contract,)
+
+    def test_freeze_accepts_identical_shared_contract_across_roles(self):
+        shared = _pipeline_contract()
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec("one", contracts=(shared,)))
+        registry.register_pipeline(_pipeline_spec("two", contracts=(shared,)))
+
+        snapshot = registry.freeze()
+
+        assert snapshot.require("one").contracts == snapshot.require("two").contracts
+
+    def test_freeze_accepts_react_only_contract(self):
+        contract = _pipeline_contract(
+            resolve=None,
+            react=react_hook,
+            response_event_types=frozenset({"EXILE_PENDING"}),
+            response_reasons=frozenset({"exile"}),
+        )
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec(contracts=(contract,)))
+
+        assert registry.freeze().require("pipeline-role").contracts == (contract,)
+
+    def test_freeze_rejects_react_without_response_event_types(self):
+        contract = _pipeline_contract(resolve=None, react=react_hook)
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec(contracts=(contract,)))
+
+        with pytest.raises(ValueError, match="react hook requires response event types"):
+            registry.freeze()
+
+    def test_freeze_rejects_resolve_and_aggregate_together(self):
+        contract = _pipeline_contract(
+            resolve=resolve_hook,
+            aggregate=aggregate_hook,
+        )
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec(contracts=(contract,)))
+
+        with pytest.raises(ValueError, match="exactly one resolution hook"):
+            registry.freeze()
 
     @pytest.mark.parametrize(
         "hook",

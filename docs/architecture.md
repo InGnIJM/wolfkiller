@@ -36,7 +36,7 @@ WolfKiller/
 │   │   ├── models/              # 游戏数据模型 + 冻结流水线核心类型（pipeline.py）
 │   │   ├── core/                # 引擎、调度器、效果应用、投影、校验、解析、事件总线、日志
 │   │   ├── agents/              # LLM 客户端、providers、提示渲染、输出解析、状态过滤
-│   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫）
+│   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫/白痴/白狼王）
 │   │   ├── api/                 # REST 路由（routes/）+ WebSocket 处理（websocket/）
 │   │   ├── persistence/         # SQLite repository、检查点编解码、引擎恢复
 │   │   ├── services/            # 游戏/benchmark 服务、公开投影、派生任务
@@ -70,7 +70,7 @@ WolfKiller/
 | `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
 | `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
-| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`point_journal.py` 提供断点续跑检查点 |
+| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点 |
 | `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
 | `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
@@ -89,25 +89,33 @@ WolfKiller/
 
 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
 
-随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook。
+随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。
+
+### 白天流水线窗口
+
+白天生命周期为角色开放两个与角色无关的窗口，引擎只认 `DAY_INTERRUPTED / EXILE_PENDING / EXILE_CANCELLED / PLAYER_REVEALED` 这些通用事件，不出现任何角色名：
+
+- **`DAY_ACTION`**（每位发言者开口前，`slot=f"{vote_round}:{seat}"`）：角色可提交行动；若提交事件含 `DAY_INTERRUPTED`，引擎 `_resolve_day_interruption()` 结算 pending damage、按 `death_history` 去重发布死亡、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点，随后判胜负或以 `WEREWOLF_EXPLODED` 转入 NIGHT。续跑时 `_journaled_day_interruption()` 从 journal 识别已发生的中断并幂等重放。白狼王自爆是当前唯一实现。
+- **`EXILE_VERDICT`**（放逐前）：`_apply_exile(seat)` 先以 `EXILE_PENDING{target_seat, cause="exile"}` 跑该点；若提交事件含 `EXILE_CANCELLED`，则对随行 `PLAYER_REVEALED` 写 `revealed_role`、系统消息播报翻牌、`add_vote_result(..., cancelled_seat)` 记为无人出局并跳过遗言；否则走原 `mark_dead("exile")` 路径。白痴翻牌是当前唯一实现。
 
 ### 放逐反应
 
-引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应。
+引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应。猎人的 `_SHOOT_REASONS` 含 `self_explode`，被白狼王带走时同样可开枪。
 
 ## 白天生命周期
 
 - 白天发言、投票、平票复投、遗言是引擎内与角色无关的行为，经 `BaseRole`（`roles/base.py`）调用 LLM：发言走 tool calling 两层防线 + 字数校验 + 兜底；投票走三级重试梯子（strict tool 90s → JSON 压缩上下文 120s → JSON 强格式短重试 30s，`LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS`），全部失败才显式技术弃票，并按并发上限（`VOTE_CONCURRENCY`，默认 5）执行
 - 投票通过纯校验器验证，以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）；阶段超时的缺票席位统一转换为显式技术弃票后再结算
+- 投票资格读 `runtime.statuses`（`core/vote_service.py`）：`no_vote` 座位不进选民，`exile_immune` 座位不进候选；`BaseRole` 投票候选取窗口的 `eligible_targets`，提示词列出免于放逐的座位
 - 状态机（`core/state_machine.py`）以 `(current_phase, event, next_phase)` 三元组表驱动：
 
 ```
 WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CASTING → VOTE_RESOLUTION
-                                                                    ↑              ↓
-                                                              NIGHT ←──────────────┘
+                                                     │ WEREWOLF_EXPLODED  ↑              ↓
+                                                     └──────────→ NIGHT ←──────────────┘
 ```
 
-- 胜负判定（`core/rule_engine.py`）实现屠边规则与「狼刀在先」语义：神职含守卫；狼人数大于好人数也算狼人胜
+- 胜负判定（`core/rule_engine.py`）实现屠边规则与「狼刀在先」语义：神职含守卫与白痴；狼人数（含白狼王）大于好人数也算狼人胜
 
 ## LLM 交互层
 
@@ -117,7 +125,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
   - `base.py`：`CallPurpose`、`ProviderProfile`、`call_budget()`（两种传输共用的 token/超时预算）
   - `errors.py`：跨 openai/anthropic SDK 的错误分类元组；`llm_client.py` 再导出，`roles/base.py` 只从 `llm_client` 导入（core/roles 不得 import providers，见 `test_architecture_boundary.py`）
   - `LLMClient` 对上层 API 不变：`_structured_response()` / `_content_text()` 同时兼容 OpenAI 字符串内容 / `finish_reason` 与 Anthropic 内容块列表（text、thinking、reasoning）/ `stop_reason`；Anthropic 强制工具绑定 `tool_choice="any"`（thinking 模式下点名工具会被 400）；`map_strict_capability_error()` 沿异常 cause 链识别 SDK 400/422；`aclose()` 同时关闭 `ChatOpenAI` 与 `ChatAnthropic` 的 SDK 客户端
-- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。公开规则与系统提示写明本局无警长/警徽/竞选；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。提示词不出现警长概念；只允许提示里写明的规则，禁止模型用其他版本补流程；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
 ## 模型配置与角色目录
@@ -139,11 +147,11 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 ### 公开事件同步
 
-公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人的 `reasoning`）、狼人队内发言（`wolf_chat_message`）与狼票（`wolf_vote`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
+公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）与白狼王自爆（`self_explode`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
 
 ## 前端架构
 
-- **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
+- **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。倍速只作用于已落盘事件；直播下一格仍要等当前座位的模型调用结束。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
 - **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 仍带 `is_sheriff` 以兼容旧档，当前规则不竞选警长，新对局该字段为 false。
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
 - **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`

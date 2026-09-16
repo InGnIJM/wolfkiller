@@ -293,6 +293,20 @@ function deriveState(
       case 'technical_abstain':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
+      case 'exile_cancelled': {
+        // The seat survived the vote by flipping its card (identity arrives
+        // through the accompanying player_revealed event) and lost its ballot.
+        const player = players[event.payload.target_seat];
+        if (player) {
+          players[event.payload.target_seat] = { ...player, is_alive: true, can_vote: false };
+        }
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
+      }
+      case 'self_explode':
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        currentSpeaker = null;
+        break;
       case 'narration':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         currentSpeaker = null;

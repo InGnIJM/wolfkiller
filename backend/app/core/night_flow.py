@@ -7,10 +7,10 @@ from typing import Optional
 
 from app.core.conversation_log import ConversationLog
 from app.models.conversation import ConversationScope
-from app.models.game import GameState
+from app.models.game import Camp, GameState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
-from app.agents.game_rules import TARGET_SELECTION_RULE
+from app.agents.game_rules import BASE_RULES, TARGET_SELECTION_RULE
 from app.agents.output_parser import extract_json_object
 
 logger = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ class NightDirector:
     def _wolf_team(self, state: GameState) -> list[int]:
         return sorted(
             seat for seat, player in state.players.items()
-            if player.role == "wolf-killer-werewolf" and player.is_alive
+            if player.camp == Camp.WEREWOLF and player.is_alive
         )
 
     def _history_text(self, history: Sequence[str]) -> str:
@@ -293,7 +293,8 @@ class NightDirector:
         turn_number = len(history) + 1
         remaining = max(total_turns - len(history) - 1, 0)
         system = (
-            f"You are seat {seat}, a werewolf in an AI Werewolf game. "
+            BASE_RULES
+            + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Discuss tonight's kill target with your teammates in a natural "
             "private chat: reply to what your teammates just said (agree, "
             "add, or push back) and then state your own view. Never reveal "
@@ -339,7 +340,8 @@ class NightDirector:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
         system = (
-            f"You are seat {seat}, a werewolf in an AI Werewolf game. "
+            BASE_RULES
+            + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "
             "A deliberate target among your teammates, including yourself, is "

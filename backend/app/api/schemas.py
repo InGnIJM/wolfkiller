@@ -139,7 +139,7 @@ PublicGamePhase = Literal[
     "sheriff_election", "speech", "vote_casting", "vote_resolution",
     "game_over",
 ]
-PublicDeathCause = Literal["wolf_kill", "poison", "hunter_shot", "exile"]
+PublicDeathCause = Literal["wolf_kill", "poison", "hunter_shot", "exile", "self_explode"]
 PublicWinningCamp = Literal["good", "werewolf"]
 PublicWinReason = Literal[
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
@@ -222,6 +222,7 @@ PublicThoughtActionType = Literal[
     "witch_reasoning",
     "seer_reasoning",
     "guard_reasoning",
+    "werewolf_king_reasoning",
 ]
 
 
@@ -262,6 +263,26 @@ class PublicSeerThoughtResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
     text: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class PublicExileCancelledResponse(_PublicResponse):
+    """The vote selected a seat that flipped its card and survived."""
+    round_number: NonNegativePublicInt
+    target_seat: PositivePublicInt
+
+
+class PublicSelfExplodeResponse(_PublicResponse):
+    """A daytime self-destruct that took another seat along."""
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: PositivePublicInt
+
+
+class PublicPlayerRevealedResponse(_PublicResponse):
+    """A publicly flipped identity (the role is intentionally public)."""
+    seat_number: PositivePublicInt
+    role: str
+    camp: PublicWinningCamp
 
 
 class _PublicReplayEvent(_PublicResponse):
@@ -333,8 +354,26 @@ class PublicWinnerReplayEvent(_PublicReplayEvent):
     payload: PublicWinnerResponse
 
 
+class PublicExileCancelledReplayEvent(_PublicReplayEvent):
+    event_type: Literal["exile_cancelled"]
+    payload: PublicExileCancelledResponse
+
+
+class PublicSelfExplodeReplayEvent(_PublicReplayEvent):
+    event_type: Literal["self_explode"]
+    payload: PublicSelfExplodeResponse
+
+
+class PublicPlayerRevealedReplayEvent(_PublicReplayEvent):
+    event_type: Literal["player_revealed"]
+    payload: PublicPlayerRevealedResponse
+
+
 PublicReplayEvent = Annotated[
     Union[
+        PublicExileCancelledReplayEvent,
+        PublicSelfExplodeReplayEvent,
+        PublicPlayerRevealedReplayEvent,
         PublicSpeechReplayEvent,
         PublicDeathReplayEvent,
         PublicVoteReplayEvent,

@@ -54,18 +54,23 @@ def aggregate_werewolf_votes(
     ),)
 
 
+# Shared by every werewolf-camp role that joins the nightly kill vote; the
+# registry accepts one contract id across roles only when the declarations
+# are identical, and the scheduler aggregates all holders together.
+WEREWOLF_KILL_CONTRACT = ActionContract(
+    contract_id="werewolf_kill", schedule_point=SchedulePoint.NIGHT_WOLF_VOTE,
+    order=10, action_types=("kill", "pass"),
+    actions_requiring_target=frozenset({"kill"}), fallback_action_type="pass",
+    allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+    visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
+    is_applicable=werewolf_applicable, validate=validate_werewolf_action,
+    aggregate=aggregate_werewolf_votes,
+)
+
 WEREWOLF_SPEC = RoleSpec(
     role_id="wolf-killer-werewolf", display_name="Werewolf", camp_id="werewolf",
     schema_version=2,
-    contracts=(ActionContract(
-        contract_id="werewolf_kill", schedule_point=SchedulePoint.NIGHT_WOLF_VOTE,
-        order=10, action_types=("kill", "pass"),
-        actions_requiring_target=frozenset({"kill"}), fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
-        visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
-        is_applicable=werewolf_applicable, validate=validate_werewolf_action,
-        aggregate=aggregate_werewolf_votes,
-    ),),
+    contracts=(WEREWOLF_KILL_CONTRACT,),
     allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     instructions=(

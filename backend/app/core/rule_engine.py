@@ -11,8 +11,9 @@ class RuleEngine:
         alive_witches = len([p for p in state.alive_players().values() if "witch" in p.role])
         alive_hunters = len([p for p in state.alive_players().values() if "hunter" in p.role])
         alive_guards = len([p for p in state.alive_players().values() if "guard" in p.role])
+        alive_idiots = len([p for p in state.alive_players().values() if "idiot" in p.role])
         alive_villagers = len([p for p in state.alive_players().values() if "villager" in p.role])
-        alive_gods = alive_seers + alive_witches + alive_hunters + alive_guards
+        alive_gods = alive_seers + alive_witches + alive_hunters + alive_guards + alive_idiots
 
         # 狼刀在先: check wolf win conditions first
         if alive_gods == 0:

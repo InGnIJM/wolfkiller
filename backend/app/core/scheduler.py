@@ -277,14 +277,26 @@ class Scheduler:
         runtime = getattr(state, "_pipeline_runtime", None)
         return 0 if runtime is None else runtime.revision
 
-    def issue(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
-        if type(state) is not GameState or type(point) is not SchedulePoint or type(registry) is not RegistrySnapshot: raise TypeError("invalid issue input")
-        with state_transaction_lock(state): return self._issue_locked(state, point, registry)
+    @staticmethod
+    def _slot(slot: object) -> str:
+        """A slot lets one schedule point run several times within one phase
+        (e.g. once before every daytime speaker); it is folded into the point
+        journal key and every issued request token so repeated runs never
+        collide. The empty slot keeps the historical single-run keys."""
+        if type(slot) is not str: raise TypeError("slot must be a string")
+        if slot and _TOKEN.fullmatch(slot) is None: raise ValueError("invalid slot")
+        return slot
 
-    def _issue_locked(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot) -> tuple[IssuedActionRequest, ...]:
+    def issue(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot, *, slot: str = "") -> tuple[IssuedActionRequest, ...]:
+        if type(state) is not GameState or type(point) is not SchedulePoint or type(registry) is not RegistrySnapshot: raise TypeError("invalid issue input")
+        slot = self._slot(slot)
+        with state_transaction_lock(state): return self._issue_locked(state, point, registry, slot)
+
+    def _issue_locked(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot, slot: str = "") -> tuple[IssuedActionRequest, ...]:
         for player in state.players.values(): registry.require(player.role)
         initialize_role_resources(state, registry.specs, registry.digest)
         revision = self._revision(state); phase = state.phase.value if hasattr(state.phase, "value") else state.phase
+        slot_parts = (slot,) if slot else ()
         requests = []
         for role_id, role in registry.specs.items():
             for contract in role.contracts:
@@ -295,7 +307,7 @@ class Scheduler:
                 ))
                 prepared = []
                 for seat, player in candidates:
-                    token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, registry.digest)
+                    token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, registry.digest, *slot_parts)
                     request = IssuedActionRequest(seat, role_id, contract, revision, state.round_number, phase, token, token)
                     context = self.projector.project(state, request, registry)
                     prepared.append((request, context))
@@ -472,29 +484,38 @@ class Scheduler:
                 raise PipelinePaused("settlement batch cap exceeded")
             return self.applier.settle_pending(state, round_number=state.round_number, batch=batch)
 
-    def run_point(self, state: GameState, point: SchedulePoint) -> PointResult:
+    @staticmethod
+    def point_phase(state: GameState, slot: str = "") -> str:
+        """Journal phase label for a point run: the bare phase, or ``phase#slot``."""
+        phase = state.phase.value if hasattr(state.phase, "value") else state.phase
+        slot = Scheduler._slot(slot)
+        return f"{phase}#{slot}" if slot else phase
+
+    def run_point(self, state: GameState, point: SchedulePoint, *, slot: str = "") -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
+        slot = self._slot(slot)
         with _execution_lock(state):
             with state_transaction_lock(state):
-                phase = state.phase.value if hasattr(state.phase, "value") else state.phase
-                key = PointKey(state.game_id, state.round_number, phase, point, self.registry.digest)
+                key = PointKey(state.game_id, state.round_number, self.point_phase(state, slot), point, self.registry.digest)
                 journal = point_journal(state); saved = journal.get(key)
             faults = list(saved.faults) if saved is not None else []
             token = self._faults.set(faults)
             try:
                 result = self._point_result(saved) if saved is not None and saved.complete_result is not None else \
-                    self._run_point_locked(state, point, faults, key, saved, journal)
+                    self._run_point_locked(state, point, faults, key, saved, journal, slot)
                 return result
             finally: self._faults.reset(token)
 
     def _run_point_locked(self, state: GameState, point: SchedulePoint,
                           faults: list[Mapping[str, object]], key: PointKey,
-                          saved: PointCheckpoint | None, journal) -> PointResult:
+                          saved: PointCheckpoint | None, journal, slot: str = "") -> PointResult:
         if saved is None:
-            issued = () if point is SchedulePoint.NIGHT_COMMIT else self.issue(state, point, self.registry)
+            issued = () if point is SchedulePoint.NIGHT_COMMIT else self.issue(state, point, self.registry, slot=slot)
         else: issued = saved.issued
-        groups: dict[tuple[str, str], list[IssuedActionRequest]] = {}
-        for request in issued: groups.setdefault((request.role_id, request.contract.contract_id), []).append(request)
+        # Group by contract id only: a contract shared by several roles (see
+        # RoleRegistry.freeze) aggregates every holder's command together.
+        groups: dict[str, list[IssuedActionRequest]] = {}
+        for request in issued: groups.setdefault(request.contract.contract_id, []).append(request)
         work = [("settlement", ())] if point is SchedulePoint.NIGHT_COMMIT else []
         for members in groups.values():
             contract = members[0].contract; role = self.registry.require(members[0].role_id)

@@ -14,6 +14,7 @@ const CAUSE_LABELS: Record<string, string> = {
   poison: '毒杀',
   exile: '放逐',
   hunter_shot: '猎人带走',
+  self_explode: '白狼王自爆',
 };
 
 const NIGHT_ACTION_LABELS: Record<string, string> = {
@@ -30,6 +31,7 @@ const THOUGHT_LABELS: Record<string, string> = {
   seer_reasoning: '预言家思考',
   hunter_reasoning: '猎人思考',
   guard_reasoning: '守卫思考',
+  werewolf_king_reasoning: '白狼王思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -53,6 +55,8 @@ const ROLE_LABELS: Record<string, string> = {
   'wolf-killer-witch': '女巫',
   'wolf-killer-hunter': '猎人',
   'wolf-killer-guard': '守卫',
+  'wolf-killer-idiot': '白痴',
+  'wolf-killer-werewolf-king': '白狼王',
 };
 
 const KNOWLEDGE_LABELS: Record<string, string> = {
@@ -69,6 +73,8 @@ const EVENT_TAGS: Record<string, string> = {
   speech: '发言',
   vote: '投票',
   vote_result: '放逐',
+  exile_cancelled: '翻牌',
+  self_explode: '自爆',
   night_action: '夜间',
   narration: '旁白',
   wolf_chat_message: '狼聊',
@@ -82,7 +88,7 @@ const EVENT_TAGS: Record<string, string> = {
 };
 
 function eventTone(event: PublicReplayEvent): string {
-  if (event.event_type === 'death' || event.event_type === 'wolf_chat_message') return '#F4B3B6';
+  if (event.event_type === 'death' || event.event_type === 'wolf_chat_message' || event.event_type === 'self_explode') return '#F4B3B6';
   if (event.event_type === 'narration') return '#7D7468';
   if (event.event_type.includes('vote')) return '#E8C887';
   if (event.event_type.includes('thought')) return '#C4B5FD';
@@ -274,6 +280,20 @@ function EventCard({
         </Typography>
       );
       break;
+    case 'exile_cancelled':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {event.payload.target_seat}号翻牌免于出局，失去投票权 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'self_explode':
+      content = (
+        <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号自爆带走{event.payload.target_seat}号，本日发言与投票取消 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
     case 'night_action':
       content = (
         <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
@@ -439,8 +459,10 @@ export default function HistoryPanel({ onClose }: Props) {
   const { timeline, seekTo, pause, gameId } = useGameStore();
   const indexedEvents = timeline.map((event, index) => ({ event, index })).reverse();
   const speeches = indexedEvents.filter(({ event }) => event.event_type === 'speech');
-  const votes = indexedEvents.filter(({ event }) => event.event_type === 'vote' || event.event_type === 'vote_result');
-  const deaths = indexedEvents.filter(({ event }) => event.event_type === 'death');
+  const votes = indexedEvents.filter(({ event }) => (
+    event.event_type === 'vote' || event.event_type === 'vote_result' || event.event_type === 'exile_cancelled'
+  ));
+  const deaths = indexedEvents.filter(({ event }) => event.event_type === 'death' || event.event_type === 'self_explode');
   const nightActions = indexedEvents.filter(({ event }) => (
     event.event_type === 'night_action' || event.event_type === 'wolf_vote' || event.event_type === 'narration'
   ));

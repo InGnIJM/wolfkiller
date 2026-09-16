@@ -2,11 +2,11 @@
 
 Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.md) 描述同一套命令、架构与门禁；改一处必须改另一处，并同步 [docs/architecture.md](docs/architecture.md)。
 
-人类文档从 [README.md](README.md) 和 [docs/README.md](docs/README.md) 进入。已知失败模式见 [MEMORY.md](MEMORY.md)。`docs/superpowers/` 与 `docs/project-analysis.md` 是按日期归档的历史稿，不要当现行说明书。
+人类文档从 [README.md](README.md) 和 [docs/README.md](docs/README.md) 进入。已知失败模式见 [MEMORY.md](MEMORY.md)。`docs/superpowers/` 与 `docs/project-analysis.md` 是按日期归档的历史稿，不要当现行说明书。现行评测结论见 [docs/notes/2026-09-16-mimo-mixed-arena.md](docs/notes/2026-09-16-mimo-mixed-arena.md)。
 
 ## 项目
 
-完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
+完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴或白狼王）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
 
 ## 常用命令
 
@@ -45,7 +45,7 @@ npm run build
 | `core/action_validator.py` | 纯校验，零状态读写 |
 | `core/action_resolver.py` | 调纯 Hook，产出 Effect 批次 |
 | `core/effect_applier.py` | **唯一写入口**：整批校验、CAS、原子应用 |
-| `core/scheduler.py` | 调度点、响应窗口、阶段门禁 |
+| `core/scheduler.py` | 调度点、响应窗口、阶段门禁；`run_point(slot=)` 支持同阶段多次运行；聚合按 `contract_id` 分组（共享契约合并计票） |
 | `core/night_settlement.py` | pending damage/protection → 死亡 |
 | `agents/prompt_renderer.py` | 只从 Spec/Contract/Context 渲染 Prompt |
 
@@ -53,20 +53,25 @@ npm run build
 
 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票（`NightDirector`，`core/night_flow.py`）→ `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
 
-白天发言/投票/遗言是引擎内与角色无关的路径。投票经校验器后以 `EffectApplier` 的 `ACCEPT_ACTION` 落账。
+白天发言/投票/遗言是引擎内与角色无关的路径。投票经校验器后以 `EffectApplier` 的 `ACCEPT_ACTION` 落账。白天另有两个角色无关窗口：每位发言者前跑 `DAY_ACTION`（slot=`vote_round:seat`；事件含 `DAY_INTERRUPTED` 则结算双死、跑 `DAWN_REACTION`、以 `WEREWOLF_EXPLODED` 转 NIGHT），放逐前跑 `EXILE_VERDICT`（事件含 `EXILE_CANCELLED` 则翻牌免死、不走遗言）。引擎只认这些通用事件，不出现角色名。
+
+狼队按 `camp == Camp.WEREWOLF` 识别（含白狼王），不要用 `role == "wolf-killer-werewolf"`。投票资格读 `runtime.statuses`：`no_vote` 不投票，`exile_immune` 不进候选。
 
 `GameEngine` 运行时固定 `PipelineMode.V2`。环境变量 `ROLE_PIPELINE_V2` **不改变对局**。
 
 ## 规则（改代码时容易漏）
 
 - 守卫：不能连续两晚守同一人；守护只抵消狼刀，毒药与猎枪无视守卫；守卫守护与女巫解药同时作用于同一狼刀目标时目标仍死亡（对穿）。
-- 神职含守卫。狼人胜：神职全灭 / 平民全灭 / 狼人数大于好人数。先判狼（狼刀在先）。
-- 本局无警长。公开 DTO 的 `is_sheriff` 只为兼容旧档。
+- 白痴：被放逐时翻牌，公开身份、不死、失去投票权、不再能被放逐，仍可发言；夜刀/毒/枪/自爆带走时正常死亡。计入神职。
+- 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，双方无遗言，当日发言投票取消直接入夜；被毒/放逐/枪杀不能带人。被带走的猎人可开枪（`_SHOOT_REASONS` 含 `self_explode`）。
+- 神职含守卫、白痴。狼人胜：神职全灭 / 平民全灭 / 狼人数（含白狼王）大于好人数。先判狼（狼刀在先）。
+- 本局无警长。公开 DTO 的 `is_sheriff` 只为兼容旧档。LLM 提示词不出现警长概念；只允许提示里写明的规则，禁止模型用其他版本补流程。
 - 公开 DTO / 前端消费链不得出现 `role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等私有字段。
 - `prompt_builder.py` / `state_filter.py` 是委托外壳，源码不得出现内置角色名。
 - 提供方在 `agents/providers/`；`core/` 与 `roles/` 禁止直接 import providers。
 - 耐久事实源是 `backend/data/wolfkiller.sqlite3`，不是 JSONL。不要删除进行中的 `data/` 对局目录。
 - 大厅 `GET /api/games` 不含评测局；评测局从评测页进出。
+- 注册表新增角色会改变 `registry.digest`，处于 `interrupted` 的旧局无法续跑。
 
 ## 改这些文件后必须同步测试
 
@@ -75,6 +80,7 @@ npm run build
 - `tests/test_game_engine.py` 引擎禁词
 - `tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 角色名禁词
 - `tests/test_prompt_renderer.py` 渲染器禁词
+- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`；`tests/test_catalog_routes.py` 断言 8 角色 4 预设
 
 **不要**再改 `test_guard_extension.py` 里已经不存在的 `CORE_BLOBS_BEFORE_GUARD`。
 

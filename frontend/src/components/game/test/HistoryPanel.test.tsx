@@ -174,6 +174,31 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText(/1号 → 2号/)).toBeVisible();
   });
 
+  it('files a flipped exile under 投票 and a self-destruct under 死亡', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'exile_cancelled',
+        payload: { round_number: 1, target_seat: 7 },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'self_explode',
+        payload: { round_number: 2, seat: 3, target_seat: 8 },
+      },
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
+    expect(screen.getByText(/7号翻牌免于出局，失去投票权 · 第1轮/)).toBeVisible();
+    expect(screen.queryByText(/3号自爆带走8号/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /死亡/ }));
+    expect(screen.getByText(/3号自爆带走8号，本日发言与投票取消 · 第2轮/)).toBeVisible();
+    expect(screen.queryByText(/7号翻牌免于出局/)).not.toBeInTheDocument();
+  });
+
   it('renders every public event fallback without hiding unfamiliar public data', () => {
     const timeline = [
       { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: '同一天', round_number: 1 } },

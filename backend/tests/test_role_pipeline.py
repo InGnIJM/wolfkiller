@@ -120,6 +120,21 @@ def test_execute_v2_point_is_exact_and_does_not_observe() -> None:
     pipeline = RolePipeline(PipelineMode.V2, None, FakeScheduler(point()))
     with pytest.raises(TypeError): pipeline.execute_v2_point(object(), SchedulePoint.NIGHT_ACTION)
     with pytest.raises(TypeError): pipeline.execute_v2_point(GameState("g"), "night")
+    with pytest.raises(TypeError, match="slot"):
+        pipeline.execute_v2_point(GameState("g"), SchedulePoint.DAY_ACTION, slot=1)
+
+
+def test_execute_v2_point_forwards_a_slot_only_when_requested() -> None:
+    class SlotScheduler:
+        def __init__(self) -> None: self.calls = []
+        def run_point(self, state, schedule_point, *, slot=""):
+            self.calls.append(slot); return point()
+
+    scheduler = SlotScheduler()
+    pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+    pipeline.execute_v2_point(GameState("g"), SchedulePoint.DAY_ACTION)
+    pipeline.execute_v2_point(GameState("g"), SchedulePoint.DAY_ACTION, slot="r1-s2")
+    assert scheduler.calls == ["", "r1-s2"]
 
 
 def test_observe_v2_is_pure_repeatable_and_never_executes_scheduler() -> None:

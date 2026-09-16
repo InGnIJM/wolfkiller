@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Optional
 
-from app.models.game import GameState, GamePhase, GameConfig, PlayerState
+from app.models.game import Camp, GameState, GamePhase, GameConfig, PlayerState
 from app.models.actions import (
     VoteAction, SpeechRecord, DeathReport, WinResult, is_last_words_eligible,
 )
@@ -28,7 +28,7 @@ from app.core.effect_applier import CommitResult
 from app.core.vote_service import VoteService
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.core.role_pipeline import PipelineResult, RolePipeline
-from app.core.scheduler import PipelinePaused, PointResult
+from app.core.scheduler import PipelinePaused, PointResult, Scheduler
 from app.models.pipeline import SchedulePoint
 from app.models.vote import CastVoteArgs, VoteError, VoteStatus
 
@@ -459,9 +459,11 @@ class GameEngine:
         pending = self._pending_night_batch
         director = self._director
         state = self.state
+        # The wolf team is every living member of the werewolf camp, whatever
+        # its concrete role id, so camp-mates with extra powers join the chat.
         wolves = [
             seat for seat in sorted(state.players)
-            if state.players[seat].role == "wolf-killer-werewolf" and state.players[seat].is_alive
+            if state.players[seat].camp == Camp.WEREWOLF and state.players[seat].is_alive
         ]
 
         if pending.stage == 0:
@@ -517,7 +519,7 @@ class GameEngine:
                             leads[seat] = result.preferred_target
                         self.conversation_log.add_werewolf_channel(
                             channel, self.state.round_number,
-                            speaker_seat=seat, speaker_role="wolf-killer-werewolf",
+                            speaker_seat=seat, speaker_role=state.players[seat].role,
                         )
                         self.game_logger.log_audience_action(
                             self.game_id, state.round_number, "night",
@@ -876,7 +878,8 @@ class GameEngine:
     # Speech Phase
     # =================================================================
 
-    async def _execute_speech_round(self) -> None:
+    async def _execute_speech_round(self) -> bool:
+        """Run the speech round; True means a role interrupted the day."""
         alive = list(self.state.alive_players().items())
         if self.state.is_tiebreak:
             alive = [
@@ -897,7 +900,23 @@ class GameEngine:
             ]
         alive = self._rotate_speech_order(alive)
         self.state.speaking_order = [s for s, _ in alive]
+        resumed = self._journaled_day_interruption()
+        if resumed is not None:
+            # A DAY_ACTION window already interrupted this round before the
+            # phase advanced (crash in between): finish that interruption
+            # instead of letting the remaining seats speak.
+            self.state.current_speaker = None
+            self.state.speaking_order = []
+            await self._resolve_day_interruption(*resumed)
+            return True
         for seat, player in alive:
+            # Every speaker's turn opens a role-agnostic DAY_ACTION window
+            # first; a role may interrupt the day from it, which cancels the
+            # remaining speeches and this day's vote.
+            if await self._run_day_action(seat):
+                self.state.current_speaker = None
+                self.state.speaking_order = []
+                return True
             self.state.current_speaker = seat
             speech_text = await self.speak(seat, "day_speech")
             if speech_text:
@@ -936,6 +955,145 @@ class GameEngine:
         self.state.speaking_order = []
         self.sm.transition(SM_Event.SPEECHES_COMPLETE)
         await self._broadcast_phase_change()
+        return False
+
+    # =================================================================
+    # Daytime pipeline windows (role-agnostic)
+    # =================================================================
+
+    def _day_action_enabled(self) -> bool:
+        """True when this game seats a role that declares a DAY_ACTION contract.
+
+        Dead holders still count so a resumed speech round replays the
+        journaled window that interrupted the day instead of skipping it.
+        """
+        scheduler = self._pipeline_scheduler
+        if scheduler is None:
+            return False
+        specs = getattr(scheduler.registry, "specs", None)
+        if not isinstance(specs, Mapping):
+            return False
+        for player in self.state.players.values():
+            spec = specs.get(player.role)
+            for contract in () if spec is None else spec.contracts:
+                if contract.schedule_point is SchedulePoint.DAY_ACTION:
+                    return True
+        return False
+
+    @staticmethod
+    def _day_slot(vote_round: int, seat: int) -> str:
+        return f"r{vote_round}-s{seat}"
+
+    def _journaled_day_interruption(
+        self,
+    ) -> tuple[int, tuple[Mapping[str, object], ...]] | None:
+        """Find a DAY_ACTION window of this speech round that already
+        interrupted the day: ``(speaker_seat, interruption payloads)``."""
+        if not self._day_action_enabled():
+            return None
+        prefix = f"{Scheduler.point_phase(self.state)}#r{self.state.vote_round}-s"
+        for key, checkpoint in point_journal(self.state).entries():
+            if (
+                key.round_number != self.state.round_number
+                or key.point is not SchedulePoint.DAY_ACTION
+                or not key.phase.startswith(prefix)
+            ):
+                continue
+            interruptions = tuple(
+                event["payload"] for event in checkpoint.events
+                if isinstance(event, Mapping) and event.get("event_type") == "DAY_INTERRUPTED"
+                and isinstance(event.get("payload"), Mapping)
+            )
+            if interruptions:
+                return int(key.phase[len(prefix):]), interruptions
+        return None
+
+    async def _run_day_action(self, seat: int) -> bool:
+        """Open the DAY_ACTION window before ``seat`` speaks.
+
+        Returns True when a role interrupted the day; the phase has then
+        already advanced to NIGHT (or GAME_OVER).
+        """
+        if not self._day_action_enabled():
+            return False
+        slot = self._day_slot(self.state.vote_round, seat)
+        result = await self._run_pipeline_point(SchedulePoint.DAY_ACTION, slot=slot)
+        interruptions = tuple(
+            payload for event_type, payload in self._pipeline_audience_events(result)
+            if event_type == "DAY_INTERRUPTED"
+        )
+        if not interruptions:
+            return False
+        await self._resolve_day_interruption(seat, interruptions)
+        return True
+
+    async def _resolve_day_interruption(
+        self, seat: int, interruptions: tuple[Mapping[str, object], ...],
+    ) -> None:
+        scheduler = self._pipeline_scheduler
+        settlement = scheduler.settle_pending(self.state)
+        if settlement is not None:
+            deaths = self._settlement_deaths(settlement)
+            await self._publish_deaths(deaths)
+            dead = "、".join(f"{death.player_seat}号" for death in deaths) or "无人"
+            self.conversation_log.add_system_message(
+                f"白天进程被中断：{dead}出局，本日剩余发言与投票取消，直接进入夜晚。",
+                self.state.round_number, "public",
+            )
+        else:
+            # Resumed from a checkpoint taken after the settlement (and its
+            # announcements) already landed: recover the same deaths from the
+            # ledger by the causes the interruption declared, without
+            # publishing them a second time.
+            causes = {
+                payload.get("cause") for payload in interruptions
+                if type(payload.get("cause")) is str
+            }
+            deaths = tuple(
+                death for death in self.state.death_history
+                if death.round_number == self.state.round_number
+                and death.cause in causes
+            )
+        label = f"{self.state.round_number}:{self.state.vote_round}:{seat}"
+        await self._durable_checkpoint(
+            f"day_interrupted:{label}:{self._seat_list(deaths)}"
+        )
+        # Give reactive roles taken along a response window (a death
+        # trigger), exactly like an exile does.
+        if deaths:
+            commit = self._synthetic_commit(
+                f"day:{seat}", tuple(self._died_event(death) for death in deaths),
+            )
+            await self._run_response_point(
+                SchedulePoint.DAWN_REACTION, commit,
+                slot=self._day_slot(self.state.vote_round, seat),
+            )
+            reaction = await self._settle_and_publish()
+            await self._durable_checkpoint(
+                f"day_reaction:{label}:{self._seat_list(reaction)}"
+            )
+        if self.memory_service:
+            self.memory_service.save_memories(self.state)
+        if not await self._check_game_over():
+            self.sm.transition(SM_Event.WEREWOLF_EXPLODED)
+        await self._broadcast_phase_change()
+
+    async def _run_pipeline_point(
+        self, point: SchedulePoint, *, slot: str = "",
+    ) -> PipelineResult:
+        scheduler = self._pipeline_scheduler
+        if scheduler is None:
+            raise ValueError("pipeline scheduler is required")
+        pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+        raw = await asyncio.to_thread(pipeline.execute_v2_point, self.state, point, slot=slot)
+        self._log_hook_faults(point, raw.faults)
+        observation = RolePipeline.observe_v2(raw)
+        result = PipelineResult(
+            observation.accepted_actions, observation.effects,
+            observation.state_digest, observation.public_events, PipelineMode.V2,
+        )
+        self._log_audience_events(result, self.state.phase.value)
+        return result
 
     def _rotate_speech_order(
         self, alive: list[tuple[int, PlayerState]],
@@ -1167,7 +1325,11 @@ class GameEngine:
         if alive_seats - self.state.supplemental_speakers:
             self.sm.set_state(GamePhase.SPEECH)
             await self._broadcast_phase_change()
-            await self._execute_speech_round()
+            if await self._execute_speech_round():
+                # The supplemental round was interrupted: the re-vote is
+                # cancelled and the day is already over.
+                self._clear_tiebreak_state()
+                return
 
         if alive_seats - self.state.voted_seats:
             if self.sm.get_state() is not GamePhase.VOTE_CASTING:
@@ -1177,36 +1339,16 @@ class GameEngine:
         else:
             self.sm.set_state(GamePhase.VOTE_RESOLUTION)
 
-        exiled_seat = self.resolve_votes()
-        if exiled_seat is not None:
-            player = self.state.players.get(exiled_seat)
-            already_exiled = any(
-                death.player_seat == exiled_seat and death.cause == "exile"
-                and death.round_number == self.state.round_number
-                for death in self.state.death_history
-            )
-            if player and (player.is_alive or already_exiled):
-                if not already_exiled:
-                    player.mark_dead("exile")
-                    self.state.death_history.append(DeathReport(
-                        player_seat=exiled_seat, cause="exile",
-                        round_number=self.state.round_number,
-                    ))
-                self._reveal_on_death(exiled_seat)
-                await self._run_exile_reaction(exiled_seat)
-                await self._durable_checkpoint(
-                    f"exile_reaction:{self.state.round_number}:{exiled_seat}"
-                )
-                await self.give_last_words(
-                    exiled_seat, "exile", self.state.round_number,
-                )
-
+        exiled_seat = self.resolve_votes(log=False)
+        cancelled = exiled_seat is not None and await self._apply_exile(exiled_seat)
+        self._log_vote_result(None if cancelled else exiled_seat)
         self.conversation_log.add_vote_result(
-            self.state.votes, exiled_seat, self.state.round_number,
+            self.state.votes, None if cancelled else exiled_seat, self.state.round_number,
+            cancelled_seat=exiled_seat if cancelled else None,
         )
         await self._durable_checkpoint(
             f"vote_result:{self.state.round_number}:{self.state.vote_round}:"
-            f"{exiled_seat if exiled_seat is not None else 'none'}"
+            f"{'none' if cancelled or exiled_seat is None else exiled_seat}"
         )
         self._clear_tiebreak_state()
         if not await self._check_game_over():
@@ -1240,35 +1382,21 @@ class GameEngine:
             await self._broadcast_phase_change()
             return
 
-        exiled_seat = self.resolve_votes()
-
-        if exiled_seat is not None:
-            player = self.state.players.get(exiled_seat)
-            already_exiled = any(
-                death.player_seat == exiled_seat and death.cause == "exile"
-                and death.round_number == self.state.round_number
-                for death in self.state.death_history
-            )
-            if player and (player.is_alive or already_exiled):
-                if not already_exiled:
-                    player.mark_dead("exile")
-                    self.state.death_history.append(DeathReport(
-                        player_seat=exiled_seat, cause="exile",
-                        round_number=self.state.round_number,
-                    ))
-                self._reveal_on_death(exiled_seat)
-                await self._run_exile_reaction(exiled_seat)
-                await self._durable_checkpoint(
-                    f"exile_reaction:{self.state.round_number}:{exiled_seat}"
-                )
-                await self.give_last_words(exiled_seat, "exile", self.state.round_number)
+        exiled_seat = self.resolve_votes(log=False)
+        cancelled = exiled_seat is not None and await self._apply_exile(exiled_seat)
+        self._log_vote_result(None if cancelled else exiled_seat)
 
         # Reset this round's votes and casting bookkeeping so the next round
         # starts with an empty ballot instead of re-exiling the same seat.
         self._clear_tiebreak_state()
 
         # Announce vote result
-        if exiled_seat is not None:
+        if cancelled:
+            self.conversation_log.add_vote_result(
+                self.state.votes, None, self.state.round_number,
+                cancelled_seat=exiled_seat,
+            )
+        elif exiled_seat is not None:
             self.conversation_log.add_vote_result(
                 self.state.votes, exiled_seat, self.state.round_number,
             )
@@ -1281,7 +1409,7 @@ class GameEngine:
 
         await self._durable_checkpoint(
             f"vote_result:{self.state.round_number}:1:"
-            f"{exiled_seat if exiled_seat is not None else 'none'}"
+            f"{'none' if cancelled or exiled_seat is None else exiled_seat}"
         )
 
         if not await self._check_game_over():
@@ -1293,12 +1421,37 @@ class GameEngine:
     # Exile Reaction (pipeline response windows)
     # =================================================================
 
-    def _exile_commit(self, exiled_seat: int) -> CommitResult:
-        """Build a synthetic committed event announcing the exile so the
-        pipeline's response windows can react to it without engine-side
+    def _synthetic_commit(
+        self, action_key: str, events: tuple[Mapping[str, object], ...],
+    ) -> CommitResult:
+        """Build a synthetic committed event batch so the pipeline's response
+        windows can react to an engine-side lifecycle fact without engine-side
         knowledge of any specific role."""
-        event = {
+        return CommitResult(
+            action_key, (), 0, events, self._public_state_digest(self.state),
+        )
+
+    def _died_event(self, death: DeathReport) -> dict[str, object]:
+        return {
             "event_type": "PLAYER_DIED",
+            "payload": {
+                "target_seat": death.player_seat,
+                "cause": death.cause,
+                "round_number": death.round_number,
+            },
+            "visibility": ("PUBLIC",),
+        }
+
+    def _exile_commit(self, exiled_seat: int) -> CommitResult:
+        return self._synthetic_commit(f"vote:{exiled_seat}", (self._died_event(
+            DeathReport(exiled_seat, "exile", self.state.round_number),
+        ),))
+
+    def _exile_pending_commit(self, exiled_seat: int) -> CommitResult:
+        """Announce that the vote selected ``exiled_seat`` before anything dies,
+        so a role may still overturn the verdict."""
+        event = {
+            "event_type": "EXILE_PENDING",
             "payload": {
                 "target_seat": exiled_seat,
                 "cause": "exile",
@@ -1306,41 +1459,118 @@ class GameEngine:
             },
             "visibility": ("PUBLIC",),
         }
-        return CommitResult(
-            f"vote:{exiled_seat}", (), 0, (event,),
-            self._public_state_digest(self.state),
-        )
+        return self._synthetic_commit(f"verdict:{exiled_seat}", (event,))
 
-    async def _run_exile_reaction(self, exiled_seat: int) -> None:
+    async def _run_response_point(
+        self, point: SchedulePoint, commit: CommitResult, *, slot: str = "",
+    ) -> PipelineResult:
+        """Seed ``point`` with the synthetic commit (unless a checkpoint already
+        exists) and run its response windows through the pipeline."""
         scheduler = self._pipeline_scheduler
-        if scheduler is None: raise ValueError("pipeline scheduler is required")
-        commit = self._exile_commit(exiled_seat)
+        if scheduler is None:
+            raise ValueError("pipeline scheduler is required")
         key = PointKey(
-            self.state.game_id, self.state.round_number, self.state.phase.value,
-            SchedulePoint.DAWN_REACTION, scheduler.registry.digest,
+            self.state.game_id, self.state.round_number,
+            Scheduler.point_phase(self.state, slot), point, scheduler.registry.digest,
         )
         journal = point_journal(self.state)
         if journal.get(key) is None:
             journal.put(key, PointCheckpoint(
-                (), (), (commit,), commit.events, (), (PendingEvent(0, 0, 0),),
+                (), (), (commit,), commit.events, (),
+                tuple(PendingEvent(0, ordinal, 0) for ordinal in range(len(commit.events))),
                 WorkCursor("response", 0, 0), work_count=0,
             ))
-        pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
-        result = await asyncio.to_thread(pipeline.run_point, self.state, SchedulePoint.DAWN_REACTION)
-        self._log_audience_events(result, self.state.phase.value)
-        # 放逐反应产生的待结算伤害立即结算（如开枪带走），不得留到下一晚。
-        settlement = scheduler.settle_pending(self.state)
-        if settlement is not None:
-            deaths = tuple(
-                DeathReport(event["payload"]["seat"], event["payload"]["cause"],
-                            event["payload"]["round_number"])
-                for event in settlement.events
+        return await self._run_pipeline_point(point, slot=slot)
+
+    @staticmethod
+    def _settlement_deaths(settlement: CommitResult) -> tuple[DeathReport, ...]:
+        return tuple(
+            DeathReport(event["payload"]["seat"], event["payload"]["cause"],
+                        event["payload"]["round_number"])
+            for event in settlement.events
+        )
+
+    async def _publish_deaths(self, deaths: tuple[DeathReport, ...]) -> None:
+        for death in deaths:
+            await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
+            self._reveal_on_death(death.player_seat)
+        self.game_logger.log_deaths(self.game_id, self.state.round_number,
+                                    [death.to_dict() for death in deaths])
+
+    async def _settle_and_publish(self) -> tuple[DeathReport, ...]:
+        """Settle reaction damage immediately (it must never linger into the
+        next night) and announce the resulting deaths."""
+        settlement = self._pipeline_scheduler.settle_pending(self.state)
+        if settlement is None:
+            return ()
+        deaths = self._settlement_deaths(settlement)
+        await self._publish_deaths(deaths)
+        return deaths
+
+    @staticmethod
+    def _seat_list(deaths: tuple[DeathReport, ...]) -> str:
+        return "-".join(str(death.player_seat) for death in deaths)
+
+    async def _run_exile_reaction(self, exiled_seat: int) -> None:
+        await self._run_response_point(
+            SchedulePoint.DAWN_REACTION, self._exile_commit(exiled_seat),
+        )
+        await self._settle_and_publish()
+
+    def _reveal_from_verdict(self, seat: int) -> None:
+        """A role publicly flipped its card to survive the vote."""
+        player = self.state.players.get(seat)
+        if player is None:
+            return
+        player.revealed_role = player.role
+        try:
+            display_name = builtin_registry.freeze().specs[player.role].display_name
+        except KeyError:
+            display_name = player.role
+        self.conversation_log.add_system_message(
+            f"{seat}号玩家被投票出局后翻牌亮出身份：{display_name}，免于出局，"
+            "但失去投票权。",
+            self.state.round_number, "public",
+        )
+
+    async def _apply_exile(self, exiled_seat: int) -> bool:
+        """Carry out the vote verdict against ``exiled_seat``.
+
+        The EXILE_VERDICT response window runs first; a role that emits
+        EXILE_CANCELLED keeps the seat alive (returns True). Otherwise the
+        seat is exiled, reactive roles respond, and last words follow.
+        """
+        player = self.state.players.get(exiled_seat)
+        already_exiled = any(
+            death.player_seat == exiled_seat and death.cause == "exile"
+            and death.round_number == self.state.round_number
+            for death in self.state.death_history
+        )
+        if player is None or not (player.is_alive or already_exiled):
+            return False
+        if not already_exiled:
+            verdict = await self._run_response_point(
+                SchedulePoint.EXILE_VERDICT, self._exile_pending_commit(exiled_seat),
             )
-            for death in deaths:
-                await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
-                self._reveal_on_death(death.player_seat)
-            self.game_logger.log_deaths(self.game_id, self.state.round_number,
-                                        [death.to_dict() for death in deaths])
+            verdict_events = self._pipeline_audience_events(verdict)
+            if any(event_type == "EXILE_CANCELLED" for event_type, _ in verdict_events):
+                self._reveal_from_verdict(exiled_seat)
+                await self._durable_checkpoint(
+                    f"exile_cancelled:{self.state.round_number}:{self.state.vote_round}:{exiled_seat}"
+                )
+                return True
+            player.mark_dead("exile")
+            self.state.death_history.append(DeathReport(
+                player_seat=exiled_seat, cause="exile",
+                round_number=self.state.round_number,
+            ))
+        self._reveal_on_death(exiled_seat)
+        await self._run_exile_reaction(exiled_seat)
+        await self._durable_checkpoint(
+            f"exile_reaction:{self.state.round_number}:{exiled_seat}"
+        )
+        await self.give_last_words(exiled_seat, "exile", self.state.round_number)
+        return False
 
     # =================================================================
     # Day Operation Functions
@@ -1496,26 +1726,29 @@ class GameEngine:
             return True
         return False
 
-    def resolve_votes(self) -> Optional[int]:
-        """Tally votes. Returns exiled seat, or None on tie/abstain."""
+    def resolve_votes(self, *, log: bool = True) -> Optional[int]:
+        """Tally votes. Returns exiled seat, or None on tie/abstain.
+
+        ``log=False`` defers the ``vote_result`` log frame so a verdict window
+        may still overturn the exile before the outcome is recorded.
+        """
         tally = self._tally_votes()
+        exiled_seat: Optional[int] = None
+        if tally:
+            max_votes = max(tally.values())
+            top = [s for s, c in tally.items() if c == max_votes]
+            exiled_seat = top[0] if len(top) == 1 else None
+        if log:
+            self._log_vote_result(exiled_seat, tally)
+        return exiled_seat
 
-        if not tally:
-            self.game_logger.log_vote_result(
-                self.game_id, self.state.round_number, None, tally,
-            )
-            return None
-
-        max_votes = max(tally.values())
-        top = [s for s, c in tally.items() if c == max_votes]
-
+    def _log_vote_result(
+        self, exiled_seat: Optional[int], tally: Optional[dict[int, int]] = None,
+    ) -> None:
         self.game_logger.log_vote_result(
-            self.game_id, self.state.round_number,
-            top[0] if len(top) == 1 else None,
-            tally,
+            self.game_id, self.state.round_number, exiled_seat,
+            self._tally_votes() if tally is None else tally,
         )
-
-        return top[0] if len(top) == 1 else None
 
     def _tally_votes(self) -> dict[int, int]:
         if self._active_vote_window_id is not None:

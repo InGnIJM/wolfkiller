@@ -35,7 +35,7 @@ _PUBLIC_GAME_PHASES = frozenset({
     "sheriff_election", "speech", "vote_casting", "vote_resolution",
     "game_over", "error",
 })
-_PUBLIC_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot", "exile"})
+_PUBLIC_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot", "exile", "self_explode"})
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
@@ -52,6 +52,9 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WOLF_VOTE": frozenset({"seat", "target_seat", "reasoning"}),
     "WITCH_THOUGHT": frozenset({"seat", "text"}),
     "SEER_THOUGHT": frozenset({"seat", "text"}),
+    "EXILE_CANCELLED": frozenset({"target_seat", "round_number"}),
+    "SELF_EXPLODE": frozenset({"seat", "target_seat", "round_number"}),
+    "PLAYER_REVEALED": frozenset({"seat_number", "role", "camp"}),
 }
 
 _REASONING_EVENT_SCHEMA = frozenset(
@@ -62,6 +65,7 @@ _REASONING_EVENT_TYPES = {
     "WITCH_REASONING": ("witch_reasoning", frozenset({"save", "poison", "pass"})),
     "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
     "GUARD_REASONING": ("guard_reasoning", frozenset({"guard", "pass"})),
+    "WEREWOLF_KING_REASONING": ("werewolf_king_reasoning", frozenset({"explode", "pass"})),
 }
 
 
@@ -474,6 +478,31 @@ def _public_reasoning_event(
     }]
 
 
+def _public_day_verdict_event(
+    event_type: str, payload: dict[str, Any], round_number: int,
+) -> list[dict]:
+    """Project the daytime verdict events (a card flip that cancels an exile,
+    a self-destruct, a public identity reveal) into closed audience events."""
+    if event_type == "EXILE_CANCELLED":
+        target = payload.get("target_seat")
+        if not _is_positive_int(target):
+            return []
+        return [{"event_type": "exile_cancelled", "payload": {
+            "round_number": round_number, "target_seat": target}}]
+    if event_type == "SELF_EXPLODE":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        if not _is_positive_int(seat) or not _is_positive_int(target):
+            return []
+        return [{"event_type": "self_explode", "payload": {
+            "round_number": round_number, "seat": seat, "target_seat": target}}]
+    seat = payload.get("seat_number"); role = payload.get("role"); camp = payload.get("camp")
+    if (not _is_positive_int(seat) or not isinstance(role, str) or not role
+            or camp not in _PUBLIC_WINNING_CAMPS):
+        return []
+    return [{"event_type": "player_revealed", "payload": {
+        "seat_number": seat, "role": role, "camp": camp}}]
+
+
 def _public_audience_action_event(record: dict[str, Any], round_number: int) -> list[dict]:
     """Project one audience_action log record into a closed audience event."""
     data = record.get("data")
@@ -510,6 +539,10 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         if not isinstance(payload, dict) or set(payload) != _REASONING_EVENT_SCHEMA:
             return []
         return _public_reasoning_event(event_type, payload, round_number)
+    if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "PLAYER_REVEALED"):
+        if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+            return []
+        return _public_day_verdict_event(event_type, payload, round_number)
     if event_type not in _AUDIENCE_ACTION_SCHEMAS:
         return []
     if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:

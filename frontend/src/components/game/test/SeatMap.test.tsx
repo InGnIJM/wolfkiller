@@ -64,6 +64,8 @@ describe('SeatMap role badges', () => {
       4: { seat_number: 4, is_alive: true, is_sheriff: false, role: 'wolf-killer-hunter', camp: 'good' },
       5: { seat_number: 5, is_alive: true, is_sheriff: false, role: 'wolf-killer-villager', camp: 'good' },
       6: { seat_number: 6, is_alive: true, is_sheriff: false, role: 'wolf-killer-guard', camp: 'good' },
+      7: { seat_number: 7, is_alive: true, is_sheriff: false, role: 'wolf-killer-idiot', camp: 'good' },
+      8: { seat_number: 8, is_alive: true, is_sheriff: false, role: 'wolf-killer-werewolf-king', camp: 'werewolf' },
     };
 
     render(<SeatMap players={players} />);
@@ -75,6 +77,26 @@ describe('SeatMap role badges', () => {
     expect(screen.getByText('猎人')).toBeInTheDocument();
     expect(screen.getByText('村民')).toBeInTheDocument();
     expect(screen.getByText('守卫')).toBeInTheDocument();
+    expect(screen.getByText('白痴')).toBeInTheDocument();
+    expect(screen.getByText('白狼王')).toBeInTheDocument();
+  });
+
+  it('marks a flipped seat as alive without a ballot', async () => {
+    const user = userEvent.setup();
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'wolf-killer-idiot', camp: 'good', can_vote: false },
+      2: { seat_number: 2, is_alive: false, is_sheriff: false, role: 'wolf-killer-idiot', camp: 'good', can_vote: false },
+    };
+
+    render(<SeatMap players={players} />);
+    fireResize(800, 600);
+
+    expect(screen.getByLabelText('1号 白痴 存活·无投票权')).toBeInTheDocument();
+    expect(screen.getByLabelText('2号 白痴 出局')).toBeInTheDocument();
+
+    await user.hover(screen.getByLabelText('1号 白痴 存活·无投票权'));
+    const card = await screen.findByRole('tooltip');
+    expect(card).toHaveTextContent('存活 · 无投票权');
   });
 
   it('labels each seat card with the role for god view', () => {

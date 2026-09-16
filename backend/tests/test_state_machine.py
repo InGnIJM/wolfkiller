@@ -47,6 +47,15 @@ class TestGameStateMachine:
         assert sm.can_transition(GameEvent.START) is True
         assert sm.can_transition(GameEvent.NIGHT_ACTIONS_COMPLETE) is False
 
+    def test_werewolf_exploded_ends_the_speech_phase_into_night(self):
+        sm = GameStateMachine()
+        sm.set_state(GamePhase.SPEECH)
+        assert sm.can_transition(GameEvent.WEREWOLF_EXPLODED) is True
+        sm.transition(GameEvent.WEREWOLF_EXPLODED)
+        assert sm.get_state() == GamePhase.NIGHT
+        sm.set_state(GamePhase.VOTE_CASTING)
+        assert sm.can_transition(GameEvent.WEREWOLF_EXPLODED) is False
+
     def test_game_over_from_vote(self):
         sm = GameStateMachine()
         sm.transition(GameEvent.START)

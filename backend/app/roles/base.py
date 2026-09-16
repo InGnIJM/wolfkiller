@@ -23,6 +23,7 @@ from app.agents.output_parser import (
     extract_tool_call_xml,
 )
 from app.core.action_validator import ActionValidationError, ActionValidator
+from app.core.vote_service import eligible_exile_targets
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
 from app.models.pipeline import (
     ActionCommand as PipelineActionCommand,
@@ -723,11 +724,13 @@ class BaseRole:
         runtime = getattr(state, "_pipeline_runtime", None)
         revision = 0 if runtime is None else runtime.revision
         player = state.players.get(self.seat)
+        # Legal ballot targets are the alive seats that can still be exiled;
+        # the vote domain owns that rule so a role only needs runtime statuses.
         context = ActionContext(
             game_id=state.game_id,
             revision=revision,
             facts={
-                "alive_seats": tuple(sorted(state.alive_players())),
+                "alive_seats": tuple(sorted(eligible_exile_targets(state))),
                 "phase": state.phase.value,
                 "round_number": state.round_number,
             },

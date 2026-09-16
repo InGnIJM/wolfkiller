@@ -18,6 +18,8 @@ const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> 
   'wolf-killer-hunter': { label: '猎人', ...ROLE_COLORS.hunter },
   'wolf-killer-villager': { label: '村民', ...ROLE_COLORS.villager },
   'wolf-killer-guard': { label: '守卫', ...ROLE_COLORS.guard },
+  'wolf-killer-idiot': { label: '白痴', ...ROLE_COLORS.idiot },
+  'wolf-killer-werewolf-king': { label: '白狼王', ...ROLE_COLORS.werewolf_king },
 };
 
 // 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字
@@ -73,7 +75,7 @@ function PublicSeat({
   model?: SeatModelInfo;
 }) {
   const badge = player.role ? ROLE_BADGES[player.role] : undefined;
-  const status = player.is_alive ? '存活' : '出局';
+  const status = !player.is_alive ? '出局' : player.can_vote === false ? '存活·无投票权' : '存活';
   const accent = badge?.color ?? (
     player.camp === 'werewolf' ? '#E5484D'
       : player.camp === 'good' ? '#93B58C'
@@ -101,6 +103,7 @@ function PublicSeat({
           roleLabel={badge?.label}
           camp={player.camp}
           isAlive={player.is_alive}
+          canVote={player.can_vote}
           isSheriff={player.is_sheriff}
           isCurrentSpeaker={isCurrentSpeaker}
           voteTarget={voteTarget}

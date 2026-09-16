@@ -16,6 +16,7 @@ const THOUGHT_LABELS: Record<string, string> = {
   seer_reasoning: '预言家思考',
   hunter_reasoning: '猎人思考',
   guard_reasoning: '守卫思考',
+  werewolf_king_reasoning: '白狼王思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -25,6 +26,7 @@ const CAUSE_LABELS: Record<string, string> = {
   poison: '毒杀',
   exile: '被放逐',
   hunter_shot: '猎人带走',
+  self_explode: '白狼王自爆',
 };
 
 function formatDuration(sec: number): string {
@@ -380,6 +382,38 @@ function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['paylo
   );
 }
 
+// 白天裁决卡：白痴翻牌免于放逐 / 白狼王自爆带人
+function DayVerdictView({
+  title,
+  subtitle,
+  seat,
+  tone,
+  tag,
+}: {
+  title: string;
+  subtitle: string;
+  seat: number;
+  tone: string;
+  tag: string;
+}) {
+  return (
+    <ActivityFrame tone={tone}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <SeatAvatar seat={seat} />
+        <Box>
+          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: tone }}>
+            {title}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+            {subtitle}
+          </Typography>
+        </Box>
+        <LiveTag label={tag} />
+      </Box>
+    </ActivityFrame>
+  );
+}
+
 export default function ActivityCard() {
   const { timeline, timelineIndex } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
@@ -442,6 +476,26 @@ export default function ActivityCard() {
       return <DeathView payload={entry.payload} />;
     case 'vote_result':
       return <VoteResultView payload={entry.payload} />;
+    case 'exile_cancelled':
+      return (
+        <DayVerdictView
+          seat={entry.payload.target_seat}
+          title={`${entry.payload.target_seat}号翻牌免于出局`}
+          subtitle={`失去投票权，之后不再能被放逐 · 第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="FLIPPED"
+        />
+      );
+    case 'self_explode':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={`${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`}
+          subtitle={`本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
+          tone="#F6686C"
+          tag="SELF EXPLODE"
+        />
+      );
     default:
       return null;
   }

@@ -5,6 +5,7 @@ from app.agents.prompt_renderer import PromptRenderer
 from app.agents.state_filter import StateFilter
 from app.agents.game_rules import DAY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from app.core.conversation_log import ConversationLog
+from app.core.vote_service import eligible_exile_targets
 from app.models.conversation import ConversationScope
 from app.models.game import GameState
 from app.roles.registry import builtin_registry
@@ -431,6 +432,10 @@ class PromptBuilder:
             )
         else:
             status = f"这是第{state.vote_round}轮放逐投票。可投任意存活座位，也可弃权。"
+        immune = sorted(set(state.alive_players()) - eligible_exile_targets(state))
+        if immune:
+            seats = "、".join(f"{seat}号" for seat in immune)
+            status += f"\n以下存活座位已免于放逐（不可再被投票出局），不得作为投票目标：{seats}。"
         vote_example = json.dumps(
             {
                 "action_type": "vote",
@@ -463,6 +468,6 @@ class PromptBuilder:
     def _cn_phase(phase: str) -> str:
         return {
             "waiting": "等待中", "role_deal": "角色分配", "night": "夜晚", "dawn": "天亮",
-            "last_words": "遗言", "sheriff_election": "警长竞选", "speech": "发言阶段",
+            "last_words": "遗言", "speech": "发言阶段",
             "vote_casting": "投票阶段", "vote_resolution": "投票结算", "game_over": "游戏结束",
         }.get(phase, phase)

@@ -17,6 +17,36 @@ from app.models.game import GamePhase, GameState
 from app.models.pipeline import EffectKind, GameEffect
 from app.models.vote import CastVoteArgs, VoteError, VoteReceipt, VoteStatus, VoteWindow
 
+# Role-agnostic runtime statuses that shape exile-vote eligibility. Roles grant
+# them through ADD_STATUS effects; the vote domain only reads them.
+NO_VOTE_STATUS = "no_vote"
+EXILE_IMMUNE_STATUS = "exile_immune"
+
+
+def seats_with_status(state: GameState, status: str) -> frozenset[int]:
+    """Seats whose pipeline runtime currently carries ``status``."""
+    if type(state) is not GameState:
+        raise TypeError("state must be GameState")
+    if type(status) is not str or not status:
+        raise ValueError("status must be a non-empty string")
+    with state_transaction_lock(state):
+        runtime = getattr(state, "_pipeline_runtime", None)
+        statuses = {} if runtime is None else runtime.statuses
+        return frozenset(
+            seat for seat, values in statuses.items()
+            if isinstance(values, (set, frozenset)) and status in values
+        )
+
+
+def eligible_exile_voters(state: GameState) -> frozenset[int]:
+    """Alive seats that may cast an exile ballot."""
+    return frozenset(state.alive_players()) - seats_with_status(state, NO_VOTE_STATUS)
+
+
+def eligible_exile_targets(state: GameState) -> frozenset[int]:
+    """Alive seats that may still be exiled by vote."""
+    return frozenset(state.alive_players()) - seats_with_status(state, EXILE_IMMUNE_STATUS)
+
 
 class VoteService:
     """The sole state-writing boundary for exile votes."""
@@ -35,13 +65,12 @@ class VoteService:
                 raise VoteError("vote_wrong_phase")
             if type(timeout_seconds) is not float or timeout_seconds <= 0:
                 raise ValueError("timeout_seconds must be a positive float")
-            alive = frozenset(self._state.alive_players())
             window = VoteWindow(
                 game_id=self._state.game_id,
                 round_number=self._state.round_number,
                 vote_round=self._state.vote_round,
-                eligible_voters=alive,
-                eligible_targets=alive,
+                eligible_voters=eligible_exile_voters(self._state),
+                eligible_targets=eligible_exile_targets(self._state),
                 deadline=float(self._clock() + timeout_seconds),
             )
             return self._windows.setdefault(window.window_id, window)

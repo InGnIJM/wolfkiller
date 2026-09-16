@@ -15,7 +15,7 @@ export type GamePhase =
   | 'game_over'
   | 'error';
 
-export type DeathCause = 'wolf_kill' | 'poison' | 'hunter_shot' | 'exile';
+export type DeathCause = 'wolf_kill' | 'poison' | 'hunter_shot' | 'exile' | 'self_explode';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason = 'all_gods_dead' | 'all_villagers_dead' | 'all_wolves_dead';
 export type UtcTimestamp = `${string}Z`;
@@ -27,6 +27,8 @@ export interface PublicPlayerState {
   role?: string;
   camp?: string;
   revealed_role?: string | null;
+  /** False once a flipped card stripped this seat of its ballot. */
+  can_vote?: boolean;
 }
 
 export type ExecutionStatus =
@@ -65,6 +67,19 @@ export interface TechnicalAbstainPayload {
   voter_seat: number;
   round_number: number;
   failure_code: string;
+}
+
+/** The vote picked a seat that flipped its card and stayed in the game. */
+export interface ExileCancelledPayload {
+  round_number: number;
+  target_seat: number;
+}
+
+/** A daytime self-destruct that took another seat along. */
+export interface SelfExplodePayload {
+  round_number: number;
+  seat: number;
+  target_seat: number;
 }
 
 export type NightActionType =
@@ -111,7 +126,12 @@ export interface ThoughtPayload {
 export interface NightThoughtPayload {
   round_number: number;
   seat: number;
-  action_type: 'hunter_reasoning' | 'witch_reasoning' | 'seer_reasoning' | 'guard_reasoning';
+  action_type:
+    | 'hunter_reasoning'
+    | 'witch_reasoning'
+    | 'seer_reasoning'
+    | 'guard_reasoning'
+    | 'werewolf_king_reasoning';
   target_seat: number | null;
   reasoning: string;
 }
@@ -168,6 +188,8 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'vote', VoteRecord>
   | PublicReplayEnvelope<'vote_result', VoteResult>
   | PublicReplayEnvelope<'technical_abstain', TechnicalAbstainPayload>
+  | PublicReplayEnvelope<'exile_cancelled', ExileCancelledPayload>
+  | PublicReplayEnvelope<'self_explode', SelfExplodePayload>
   | PublicReplayEnvelope<'night_action', NightActionRecord>
   | PublicReplayEnvelope<'narration', NarrationPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>

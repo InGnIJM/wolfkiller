@@ -34,6 +34,7 @@ class SchedulePoint(str, Enum):
     NIGHT_SEER_ACTION = "night_seer_action"
     NIGHT_COMMIT = "night_commit"
     DAWN_REACTION = "dawn_reaction"
+    EXILE_VERDICT = "exile_verdict"
     DAY_ACTION = "day_action"
     VOTE_ACTION = "vote_action"
     ROUND_END = "round_end"

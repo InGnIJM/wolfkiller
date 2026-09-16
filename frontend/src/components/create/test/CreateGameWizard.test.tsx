@@ -37,11 +37,15 @@ const ROLES = [
   { role_id: 'wolf-killer-witch', display_name: 'Witch', name_zh: '女巫', camp: 'good', icon: 'witch', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
   { role_id: 'wolf-killer-hunter', display_name: 'Hunter', name_zh: '猎人', camp: 'good', icon: 'hunter', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
   { role_id: 'wolf-killer-guard', display_name: 'Guard', name_zh: '守卫', camp: 'good', icon: 'guard', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
+  { role_id: 'wolf-killer-idiot', display_name: 'Idiot', name_zh: '白痴', camp: 'good', icon: 'idiot', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
+  { role_id: 'wolf-killer-werewolf-king', display_name: 'Werewolf King', name_zh: '白狼王', camp: 'werewolf', icon: 'wolf_king', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
 ];
 
 const PRESETS: GamePreset[] = [
   { id: 'nine-player-standard', name: '九人标准场', description: '3狼 3民 1预言家 1女巫 1猎人', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1 } },
   { id: 'ten-player-standard', name: '十人标准场', description: '含守卫', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 } },
+  { id: 'twelve-player-idiot', name: '十二人预女猎白', description: '4狼 4民 预女猎白痴', role_counts: { 'wolf-killer-werewolf': 4, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-idiot': 1 } },
+  { id: 'twelve-player-wolf-king', name: '十二人白狼王', description: '3狼 1白狼王 4民 预女猎守', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-werewolf-king': 1, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 } },
 ];
 
 const CONSTRAINTS = { min_players: 4, max_players: 12, min_werewolves: 1, min_good: 1 };
@@ -123,6 +127,20 @@ describe('CreateGameWizard step 1', () => {
     fireEvent.click(screen.getByText('十人标准场'));
     expect(screen.getByText(/共 10 人/)).toBeInTheDocument();
   });
+
+  it('counts the werewolf king toward the wolf quota so the twelve-player board is valid', async () => {
+    vi.mocked(fetchConstraints).mockResolvedValue({ ...CONSTRAINTS, min_werewolves: 4 });
+    await renderStep1();
+    fireEvent.click(screen.getByText('十二人白狼王'));
+    expect(screen.getByText(/共 12 人/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '下一步' })).toBeEnabled();
+    // 3 狼 + 1 白狼王刚好达到下限，任一狼阵营角色都不能再减
+    expect(screen.getByRole('button', { name: '减少狼人' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '减少白狼王' })).toBeDisabled();
+    // 白痴 max_count=1 达到上限后不能再加
+    fireEvent.click(screen.getByText('十二人预女猎白'));
+    expect(screen.getByRole('button', { name: '增加白痴' })).toBeDisabled();
+  });
 });
 
 describe('CreateGameWizard step 2 and submission', () => {
@@ -172,6 +190,60 @@ describe('CreateGameWizard step 2 and submission', () => {
         ],
       })),
     );
+  });
+
+  it('jumps by five or ten seats and clamps to remaining players or zero', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '将环境默认模型减少 10 人' }));
+    expect(screen.getByText('还需分配 9 人')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '将 DeepSeek Pro 增加 5 人' }));
+    expect(screen.getByText('还需分配 4 人')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '将 DeepSeek Pro 增加 10 人' }));
+    expect(screen.getByText('分配完成')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '将 DeepSeek Pro 增加 5 人' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '将 DeepSeek Pro 增加 10 人' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: '将 DeepSeek Pro 减少 5 人' }));
+    expect(screen.getByText('还需分配 5 人')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '将 DeepSeek Pro 减少 10 人' }));
+    expect(screen.getByText('还需分配 9 人')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '将 DeepSeek Pro 减少 5 人' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '将 DeepSeek Pro 减少 10 人' })).toBeDisabled();
+  });
+
+  it('accepts a typed quantity, clamps overflow, and reverts invalid input', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '将环境默认模型减少 10 人' }));
+
+    const input = screen.getByRole('textbox', { name: 'DeepSeek Pro 人数输入' });
+    fireEvent.change(input, { target: { value: '4' } });
+    expect(screen.getByText('还需分配 9 人')).toBeInTheDocument();
+    fireEvent.blur(input);
+    expect(screen.getByText('还需分配 5 人')).toBeInTheDocument();
+    expect(input).toHaveValue('4');
+
+    fireEvent.change(input, { target: { value: '99' } });
+    fireEvent.blur(input);
+    expect(screen.getByText('分配完成')).toBeInTheDocument();
+    expect(input).toHaveValue('9');
+
+    fireEvent.change(input, { target: { value: 'abc' } });
+    fireEvent.blur(input);
+    expect(input).toHaveValue('9');
+    expect(screen.getByText('分配完成')).toBeInTheDocument();
+  });
+
+  it('commits a typed quantity on Enter from the input value', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '将环境默认模型减少 10 人' }));
+
+    const input = screen.getByRole('textbox', { name: 'DeepSeek Pro 人数输入' });
+    fireEvent.change(input, { target: { value: '3' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByText('还需分配 6 人')).toBeInTheDocument();
+    expect(input).toHaveValue('3');
   });
 
   it('preserves allocations when the player total changes and blocks a deficit', async () => {

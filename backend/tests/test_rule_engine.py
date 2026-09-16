@@ -155,3 +155,25 @@ class TestRuleEngine:
         ]
 
         assert RuleEngine().check_win(make_state(players)) is None
+
+    def test_living_idiot_counts_as_a_god(self):
+        players = [
+            make_player(1, "wolf-killer-werewolf-king", "werewolf"),
+            make_player(2, "wolf-killer-villager", "good"),
+            make_player(3, "wolf-killer-idiot", "good"),
+        ]
+
+        assert RuleEngine().check_win(make_state(players)) is None
+        players[2].is_alive = False
+        result = RuleEngine().check_win(make_state(players))
+        assert result is not None and result.winning_camp == "werewolf"
+
+    def test_lone_werewolf_king_keeps_the_wolf_camp_alive(self):
+        players = [
+            make_player(1, "wolf-killer-werewolf", "werewolf", alive=False),
+            make_player(2, "wolf-killer-werewolf-king", "werewolf"),
+            make_player(3, "wolf-killer-villager", "good"),
+            make_player(4, "wolf-killer-seer", "good"),
+        ]
+
+        assert RuleEngine().check_win(make_state(players)) is None

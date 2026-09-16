@@ -992,6 +992,67 @@ def test_public_audience_action_helper_rejects_non_dict_data():
     assert game_routes._public_audience_action_event({"data": "not-a-dict"}, 2) == []
 
 
+def _day_record(event_type: str, payload: object) -> dict:
+    return {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "speech", "data": {"event_type": event_type, "payload": payload},
+    }
+
+
+def test_public_day_verdict_events_project_flip_explode_and_reveal():
+    assert game_routes._public_operation_events(
+        _day_record("EXILE_CANCELLED", {"target_seat": 3, "round_number": 2}),
+    ) == [{"event_type": "exile_cancelled", "payload": {"round_number": 2, "target_seat": 3}}]
+    assert game_routes._public_operation_events(
+        _day_record("SELF_EXPLODE", {"seat": 1, "target_seat": 4, "round_number": 2}),
+    ) == [{"event_type": "self_explode", "payload": {"round_number": 2, "seat": 1, "target_seat": 4}}]
+    assert game_routes._public_operation_events(
+        _day_record("PLAYER_REVEALED", {"seat_number": 3, "role": "wolf-killer-idiot", "camp": "good"}),
+    ) == [{"event_type": "player_revealed", "payload": {
+        "seat_number": 3, "role": "wolf-killer-idiot", "camp": "good"}}]
+    assert game_routes._public_operation_events(
+        _day_record("WEREWOLF_KING_REASONING", {
+            "seat": 1, "action_type": "explode", "target_seat": 4, "reasoning": "r", "thought": "t",
+        }),
+    )[0]["payload"]["action_type"] == "werewolf_king_reasoning"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        ("EXILE_CANCELLED", {"target_seat": 3}),
+        ("EXILE_CANCELLED", {"target_seat": 0, "round_number": 2}),
+        ("EXILE_CANCELLED", "not-a-dict"),
+        ("SELF_EXPLODE", {"seat": 1, "target_seat": "4", "round_number": 2}),
+        ("SELF_EXPLODE", {"seat": -1, "target_seat": 4, "round_number": 2}),
+        ("SELF_EXPLODE", {"seat": 1, "target_seat": 4}),
+        ("PLAYER_REVEALED", {"seat_number": 3, "role": "", "camp": "good"}),
+        ("PLAYER_REVEALED", {"seat_number": 3, "role": 7, "camp": "good"}),
+        ("PLAYER_REVEALED", {"seat_number": 3, "role": "x", "camp": "third_party"}),
+        ("PLAYER_REVEALED", {"seat_number": "3", "role": "x", "camp": "good"}),
+    ],
+)
+def test_public_day_verdict_events_reject_malformed_payloads(event_type, payload):
+    assert game_routes._public_operation_events(_day_record(event_type, payload)) == []
+
+
+def test_game_logs_response_accepts_day_verdict_events():
+    from app.api.schemas import GameLogsResponse
+
+    response = GameLogsResponse(game_id="g", events=[
+        {"event_type": "exile_cancelled", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 2, "target_seat": 3}},
+        {"event_type": "self_explode", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 2, "seat": 1, "target_seat": 4}},
+        {"event_type": "player_revealed", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"seat_number": 3, "role": "wolf-killer-idiot", "camp": "good"}},
+        {"event_type": "death", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"player_seat": 1, "cause": "self_explode", "round_number": 2}},
+    ])
+    assert [event.event_type for event in response.events] == [
+        "exile_cancelled", "self_explode", "player_revealed", "death"]
+
+
 def test_narration_and_staged_night_events_project_to_public_events():
     records = [
         {"timestamp": "2026-08-14T00:00:01Z", "round": 1, "phase": "night",

@@ -79,10 +79,13 @@ class ConversationLog:
         return record
 
     def add_vote_result(
-        self, votes: list, exiled_seat: Optional[int], round_num: int
+        self, votes: list, exiled_seat: Optional[int], round_num: int,
+        *, cancelled_seat: Optional[int] = None,
     ) -> Conversation:
         if exiled_seat is not None:
             content = f"投票结果：{exiled_seat}号玩家被放逐出局。"
+        elif cancelled_seat is not None:
+            content = f"投票结果：{cancelled_seat}号玩家得票最高，但翻牌免于出局。"
         else:
             content = "投票结果：平票，无人被放逐。"
         record = Conversation(

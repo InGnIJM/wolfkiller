@@ -13,12 +13,13 @@ interface Props {
   roleCounts: Record<string, number>;
   onRoleCountsChange: (counts: Record<string, number>) => void;
   onConstraintsChange: (constraints: FieldConstraints) => void;
+  onRolesChange: (roles: RoleCatalogItem[]) => void;
   revealOnDeath: boolean;
   onRevealOnDeathChange: (value: boolean) => void;
 }
 
 export default function RoleStep({
-  roleCounts, onRoleCountsChange, onConstraintsChange,
+  roleCounts, onRoleCountsChange, onConstraintsChange, onRolesChange,
   revealOnDeath, onRevealOnDeathChange,
 }: Props) {
   const [presets, setPresets] = useState<GamePreset[]>([]);
@@ -36,6 +37,7 @@ export default function RoleStep({
         setRoles(roleList);
         setConstraints(constraintValues);
         onConstraintsChange(constraintValues);
+        onRolesChange(roleList);
         const nine = presetList.find((p) => p.id === 'nine-player-standard') ?? presetList[0];
         if (nine && Object.keys(roleCounts).length === 0) {
           setSelectedPresetId(nine.id);
@@ -50,9 +52,12 @@ export default function RoleStep({
   }, []);
 
   const total = Object.values(roleCounts).reduce((sum, n) => sum + n, 0);
-  const goodCount = roles
-    .filter((role) => role.camp === 'good')
+  const campCount = (camp: string) => roles
+    .filter((role) => role.camp === camp)
     .reduce((sum, role) => sum + (roleCounts[role.role_id] ?? 0), 0);
+  // 狼队人数按阵营汇总：白狼王等狼阵营变体与普通狼人一并计入
+  const wolfCount = campCount('werewolf');
+  const goodCount = campCount('good');
 
   const selectPreset = (preset: GamePreset) => {
     setSelectedPresetId(preset.id);
@@ -71,7 +76,7 @@ export default function RoleStep({
     if (current <= 0 || current <= role.min_count) return false;
     if (!constraints) return true;
     if (total - 1 < constraints.min_players) return false;
-    if (role.role_id === 'wolf-killer-werewolf' && current - 1 < constraints.min_werewolves) return false;
+    if (role.camp === 'werewolf' && wolfCount - 1 < constraints.min_werewolves) return false;
     if (role.camp === 'good' && goodCount - 1 < constraints.min_good) return false;
     return true;
   };
