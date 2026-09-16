@@ -128,14 +128,17 @@ async def test_executor_cancels_game_at_persisted_active_time_limit() -> None:
         {"active_elapsed_ms": 1000},
     ]
     waiting = asyncio.Event()
-    game_service = MagicMock()
 
     async def wait_forever(_game_id: str) -> dict[str, object]:
         await waiting.wait()
         return {"execution_status": "completed"}
 
-    game_service.wait_game = AsyncMock(side_effect=wait_forever)
-    game_service.cancel_benchmark_game = AsyncMock()
+    class ClocklessService:
+        def __init__(self) -> None:
+            self.wait_game = AsyncMock(side_effect=wait_forever)
+            self.cancel_benchmark_game = AsyncMock()
+
+    game_service = ClocklessService()
     executor = BenchmarkGameExecutor(
         repository, game_service, timeout_poll_seconds=0,
     )
@@ -144,7 +147,43 @@ async def test_executor_cancels_game_at_persisted_active_time_limit() -> None:
         "run_id": "run", "item_index": 0, "game_id": "existing",
     }) == ("existing", "cancelled", "benchmark_game_timeout")
     assert repository.get_runtime_clock.call_count == 2
-    game_service.cancel_benchmark_game.assert_awaited_once_with("existing")
+    game_service.cancel_benchmark_game.assert_awaited_once_with(
+        "existing", recovery_block_code="benchmark_game_timeout",
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_times_out_from_live_clock_when_persisted_clock_is_stale() -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {
+        "config": {"game_timeout_seconds": 1},
+    }
+    repository.get_game.return_value = {
+        "execution_status": "running", "recovery_block_code": None,
+    }
+    repository.get_runtime_clock.return_value = {"active_elapsed_ms": 0}
+    waiting = asyncio.Event()
+    game_service = MagicMock()
+
+    async def wait_forever(_game_id: str) -> dict[str, object]:
+        await waiting.wait()
+        return {"execution_status": "completed"}
+
+    game_service.wait_game = AsyncMock(side_effect=wait_forever)
+    game_service.cancel_benchmark_game = AsyncMock()
+    game_service.live_active_elapsed_ms = MagicMock(return_value=1500)
+    executor = BenchmarkGameExecutor(
+        repository, game_service, timeout_poll_seconds=0,
+    )
+
+    assert await asyncio.wait_for(executor({
+        "run_id": "run", "item_index": 0, "game_id": "existing",
+    }), timeout=1.0) == ("existing", "cancelled", "benchmark_game_timeout")
+    game_service.arm_benchmark_timeout.assert_called_once_with("existing", 1)
+    game_service.cancel_benchmark_game.assert_awaited_once_with(
+        "existing", recovery_block_code="benchmark_game_timeout",
+    )
+    repository.get_runtime_clock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -261,3 +300,8 @@ async def test_executor_clock_ignores_unknown_samples_and_control_delegates() ->
     assert result["recovery_block_code"] == "benchmark_game_timeout"
     game_service.pause_benchmark_game.assert_awaited_once_with("game")
     assert game_service.cancel_benchmark_game.await_count == 2
+    timeout_call, manual_call = game_service.cancel_benchmark_game.await_args_list
+    assert timeout_call.args == ("game",)
+    assert timeout_call.kwargs == {"recovery_block_code": "benchmark_game_timeout"}
+    assert manual_call.args == ("game",)
+    assert manual_call.kwargs == {}

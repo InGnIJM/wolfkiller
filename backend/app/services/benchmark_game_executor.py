@@ -140,6 +140,9 @@ class BenchmarkGameExecutor:
                 benchmark_item_index=item_index,
             )
 
+        arm = getattr(self._game_service, "arm_benchmark_timeout", None)
+        if callable(arm):
+            arm(game_id, timeout_seconds)
         info = await self._wait_with_active_timeout(game_id, timeout_seconds)
         status = str(info.get("execution_status", "failed"))
         reason = info.get("recovery_block_code")
@@ -156,13 +159,14 @@ class BenchmarkGameExecutor:
                 )
                 if done:
                     return await wait_task
-                clock = self._repository.get_runtime_clock(game_id) or {}
-                active_elapsed_ms = clock.get("active_elapsed_ms")
+                active_elapsed_ms = self._active_elapsed_ms(game_id)
                 if (
                     type(active_elapsed_ms) is int
                     and active_elapsed_ms >= timeout_seconds * 1000
                 ):
-                    await self._game_service.cancel_benchmark_game(game_id)
+                    await self._game_service.cancel_benchmark_game(
+                        game_id, recovery_block_code="benchmark_game_timeout",
+                    )
                     return {
                         "execution_status": "cancelled",
                         "recovery_block_code": "benchmark_game_timeout",
@@ -171,6 +175,16 @@ class BenchmarkGameExecutor:
             if not wait_task.done():
                 wait_task.cancel()
                 await asyncio.gather(wait_task, return_exceptions=True)
+
+    def _active_elapsed_ms(self, game_id: str) -> int | None:
+        live = getattr(self._game_service, "live_active_elapsed_ms", None)
+        if callable(live):
+            value = live(game_id)
+            if type(value) is int:
+                return value
+        clock = self._repository.get_runtime_clock(game_id) or {}
+        elapsed = clock.get("active_elapsed_ms")
+        return elapsed if type(elapsed) is int else None
 
     async def pause(self, game_id: str) -> None:
         await self._game_service.pause_benchmark_game(game_id)
