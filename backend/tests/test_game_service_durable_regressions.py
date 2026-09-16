@@ -275,6 +275,32 @@ async def test_clock_heartbeat_tracks_only_active_time_and_exits(durable, monkey
         assert ticks == 3
 
 
+@pytest.mark.asyncio
+async def test_clock_heartbeat_cancels_armed_benchmark_timeout(durable, monkeypatch):
+    service, repository = durable
+    add_game(service, repository, benchmark=True)
+    repository.save_runtime_clock(
+        "game", active_elapsed_ms=0, remaining_window_ms=None, execution_generation=1,
+    )
+    service._clock_state["game"] = {
+        "active_elapsed_ms": 1500, "remaining_window_ms": None,
+        "running_since": 1.0,
+    }
+    service.arm_benchmark_timeout("game", 1)
+    real_sleep = asyncio.sleep
+
+    async def one_tick(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1.0)
+    monkeypatch.setattr(module.asyncio, "sleep", one_tick)
+    service._start_clock_heartbeat("game")
+    await asyncio.wait_for(service._clock_tasks["game"], timeout=1.0)
+    record = repository.get_game("game")
+    assert record["execution_status"] == "cancelled"
+    assert record["recovery_block_code"] == "benchmark_game_timeout"
+
+
 @pytest.fixture
 def fake_provider(monkeypatch):
     class Client:

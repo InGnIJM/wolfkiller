@@ -559,6 +559,38 @@ class GameService:
                 recovery_block_code=code,
             )
 
+    def _clock_running_increment_ms(
+        self, values: dict[str, int | float | None], *, running: bool,
+    ) -> int:
+        started = values.get("running_since")
+        if running and isinstance(started, (int, float)):
+            return max(0, int((time.monotonic() - float(started)) * 1000))
+        return 0
+
+    def live_active_elapsed_ms(self, game_id: str) -> int | None:
+        """Persisted active time plus the in-memory running interval."""
+        values = self._clock_state.get(game_id)
+        if values is None:
+            if self.repository is None:
+                return None
+            clock = self.repository.get_runtime_clock(game_id) or {}
+            elapsed = clock.get("active_elapsed_ms")
+            return elapsed if type(elapsed) is int else None
+        persisted = values.get("active_elapsed_ms")
+        base = persisted if type(persisted) is int else 0
+        return base + self._clock_running_increment_ms(values, running=True)
+
+    def arm_benchmark_timeout(self, game_id: str, timeout_seconds: int) -> None:
+        """Remember the benchmark wall-clock budget for heartbeat enforcement."""
+        if type(timeout_seconds) is not int or timeout_seconds <= 0:
+            return
+        values = self._clock_state.setdefault(game_id, {
+            "active_elapsed_ms": 0,
+            "remaining_window_ms": None,
+            "running_since": None,
+        })
+        values["timeout_ms"] = timeout_seconds * 1000
+
     def _persist_runtime_clock(self, game_id: str, *, running: bool) -> None:
         if self.repository is None:
             return
@@ -570,10 +602,9 @@ class GameService:
             "running_since": time.monotonic() if running else None,
             "remaining_window_ms": None,
         })
-        started = values.get("running_since")
-        if running and isinstance(started, (int, float)):
-            elapsed = max(0, int((time.monotonic() - float(started)) * 1000))
-            values["active_elapsed_ms"] = int(values["active_elapsed_ms"] or 0) + elapsed
+        increment = self._clock_running_increment_ms(values, running=running)
+        if increment:
+            values["active_elapsed_ms"] = int(values["active_elapsed_ms"] or 0) + increment
             values["running_since"] = time.monotonic()
         self.repository.save_runtime_clock(
             game_id,
@@ -599,6 +630,18 @@ class GameService:
                         return
                     if record["execution_status"] == "running":
                         self._persist_runtime_clock(game_id, running=True)
+                        timeout_ms = self._clock_state.get(game_id, {}).get("timeout_ms")
+                        elapsed = self.live_active_elapsed_ms(game_id)
+                        if (
+                            type(timeout_ms) is int
+                            and type(elapsed) is int
+                            and elapsed >= timeout_ms
+                        ):
+                            await self.cancel_benchmark_game(
+                                game_id,
+                                recovery_block_code="benchmark_game_timeout",
+                            )
+                            return
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -2038,7 +2081,9 @@ class GameService:
             await asyncio.shield(task)
         return self.get_execution_info(game_id)
 
-    async def cancel_benchmark_game(self, game_id: str) -> dict[str, object]:
+    async def cancel_benchmark_game(
+        self, game_id: str, *, recovery_block_code: str | None = None,
+    ) -> dict[str, object]:
         """Stop a benchmark-owned game and durably isolate late results."""
         if self.repository is None:
             raise ValueError("benchmark persistence is unavailable")
@@ -2064,6 +2109,7 @@ class GameService:
             expected=("running", "paused", "interrupted", "recovery_blocked", "failed"),
             target="cancelled",
             increment_generation=True,
+            recovery_block_code=recovery_block_code,
         )
         await self._close_game_clients(game_id)
         return self.get_execution_info(game_id)

@@ -886,6 +886,25 @@ def test_runtime_clock_persists_elapsed_and_optional_window(tmp_path, monkeypatc
         assert clock["active_elapsed_ms"] == 350
         assert clock["remaining_window_ms"] == 900
         assert clock["execution_generation"] == 1
+        service._clock_state["game"]["running_since"] = 10.0
+        monkeypatch.setattr(service_module.time, "monotonic", lambda: 10.5)
+        assert service.live_active_elapsed_ms("game") == 850
+        service.arm_benchmark_timeout("game", 2)
+        assert service._clock_state["game"]["timeout_ms"] == 2000
+        service.arm_benchmark_timeout("game", 0)
+        assert service._clock_state["game"]["timeout_ms"] == 2000
+        assert service.live_active_elapsed_ms("missing") is None
+        saved_clock = service._clock_state.pop("game")
+        repository.save_runtime_clock(
+            "game",
+            active_elapsed_ms=777,
+            remaining_window_ms=None,
+            execution_generation=1,
+        )
+        assert service.live_active_elapsed_ms("game") == 777
+        service._clock_state["game"] = saved_clock
+        service.arm_benchmark_timeout("game", 1.5)
+        assert service._clock_state["game"]["timeout_ms"] == 2000
         service._clock_state["game"]["remaining_window_ms"] = "invalid"
         service._persist_runtime_clock("game", running=False)
         assert repository.get_runtime_clock("game")["remaining_window_ms"] is None
@@ -894,6 +913,7 @@ def test_runtime_clock_persists_elapsed_and_optional_window(tmp_path, monkeypatc
         legacy = GameService(WSManager(), EventBus(), data_dir=str(tmp_path / "legacy-clock"))
         try:
             legacy._persist_runtime_clock("game", running=True)
+            assert legacy.live_active_elapsed_ms("game") is None
         finally:
             asyncio.run(legacy.aclose())
     finally:
