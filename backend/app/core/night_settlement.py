@@ -33,8 +33,11 @@ def settle(
         raise ValueError("invalid alive map")
     settlement_key("validation", round_number)
     damage_totals, protection_totals = {}, {}
+    wolf_totals, other_totals = {}, {}
     protection_sources: dict[int, set[str]] = {}
     causes: dict[int, str] = {}
+    first_wolf_cause: dict[int, str] = {}
+    first_other_cause: dict[int, str] = {}
     damage_causes: dict[int, set[str]] = {}
     for record in damage:
         target, amount = _record(record, seats, frozenset({"target", "amount", "cause"}))
@@ -45,6 +48,12 @@ def settle(
         _add(damage_totals, target, amount)
         causes.setdefault(target, cause)
         damage_causes.setdefault(target, set()).add(cause)
+        if cause == "wolf_kill":
+            _add(wolf_totals, target, amount)
+            first_wolf_cause.setdefault(target, cause)
+        else:
+            _add(other_totals, target, amount)
+            first_other_cause.setdefault(target, cause)
     for record in protection:
         target, amount = _record(record, seats, frozenset({"target", "amount"}))
         _add(protection_totals, target, amount)
@@ -57,9 +66,18 @@ def settle(
             "wolf_kill" in damage_causes[target]
             and {"guard", "witch_antidote"}.issubset(protection_sources.get(target, set()))
         )
-        if resulting_alive[target] and (double_save or damage_totals[target] > protection_totals.get(target, 0)):
-            resulting_alive[target] = False
-            deaths.append({"seat": target, "cause": causes[target], "round_number": round_number})
+        lethal_wolf = double_save or wolf_totals.get(target, 0) > protection_totals.get(target, 0)
+        lethal_other = other_totals.get(target, 0) > 0
+        if not resulting_alive[target] or not (lethal_wolf or lethal_other):
+            continue
+        if lethal_wolf and lethal_other:
+            cause = causes[target]
+        elif lethal_wolf:
+            cause = first_wolf_cause[target]
+        else:
+            cause = first_other_cause[target]
+        resulting_alive[target] = False
+        deaths.append({"seat": target, "cause": cause, "round_number": round_number})
     return tuple(deaths), resulting_alive
 
 

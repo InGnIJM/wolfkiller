@@ -877,7 +877,7 @@ def test_resource_initialization_is_concurrently_idempotent() -> None:
 def test_settle_pending_is_atomic_stable_and_idempotent() -> None:
     s = state()
     EffectApplier().apply(s, batch([
-        (EffectKind.SUBMIT_DAMAGE, {"target": 3, "amount": 1, "cause": "z_damage"}, 3),
+        (EffectKind.SUBMIT_DAMAGE, {"target": 3, "amount": 1, "cause": "wolf_kill"}, 3),
         (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 2, "cause": "wolf_kill"}, 2),
         (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "poison"}, 2),
         (EffectKind.SUBMIT_PROTECTION, {"target": 2, "amount": 1}, 2),
