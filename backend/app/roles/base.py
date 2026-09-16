@@ -809,7 +809,10 @@ class BaseRole:
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
-        response = await model.ainvoke(messages)
+        response = await asyncio.wait_for(
+            model.ainvoke(messages),
+            timeout=self._action_timeout_seconds(retried=False, final=False),
+        )
         return response.content if hasattr(response, "content") else str(response)
 
     async def _invoke_llm_with_tools(self, prompt: str, tools: list[dict]):
@@ -827,10 +830,13 @@ class BaseRole:
                 SystemMessage(content=self.prompt_builder.get_system_prompt()),
                 HumanMessage(content=fallback_prompt),
             ]
-            result = await gateway(
-                messages,
-                tool_name=tool_name,
-                schema=function["parameters"],
+            result = await asyncio.wait_for(
+                gateway(
+                    messages,
+                    tool_name=tool_name,
+                    schema=function["parameters"],
+                ),
+                timeout=self._action_timeout_seconds(retried=False, final=False),
             )
             return ToolCallResult(
                 function_name=tool_name,
@@ -842,7 +848,10 @@ class BaseRole:
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
-        response = await model.ainvoke(messages)
+        response = await asyncio.wait_for(
+            model.ainvoke(messages),
+            timeout=self._action_timeout_seconds(retried=False, final=False),
+        )
 
         has_tool_calls = (
             hasattr(response, "tool_calls") and response.tool_calls

@@ -261,6 +261,26 @@ class TestBaseRoleSpeech:
         assert text is not None and len(text) >= 15
 
     @pytest.mark.asyncio
+    async def test_speak_times_out_locally_then_falls_back(self):
+        class HangingModel:
+            async def ainvoke(self, messages):
+                await asyncio.sleep(10)
+                raise AssertionError("provider hang must be cut by local deadline")
+
+        class HangingClient(ClientStub):
+            def __init__(self):
+                super().__init__(action_timeout_seconds=0.02)
+                self.tools_model = HangingModel()
+
+        role = make_role(client=HangingClient())
+        text = await asyncio.wait_for(
+            role.speak(make_state(), ConversationLog(), "day_speech"),
+            timeout=1.0,
+        )
+
+        assert text is not None and len(text) >= 15
+
+    @pytest.mark.asyncio
     async def test_vote_parses_json_response(self):
         client = ClientStub(plain=[AIMessage(content='{"target_seat": 2, "reasoning": "可疑"}')])
         role = make_role(client=client)
