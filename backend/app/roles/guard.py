@@ -99,7 +99,8 @@ GUARD_SPEC = RoleSpec(
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
         "Each night Guard may protect one living player or pass; the same seat cannot be "
-        "protected on consecutive nights. If Guard protection and Witch antidote both target "
+        "protected on consecutive nights. Guard protection only cancels werewolf-kill damage; "
+        "poison and hunter shots ignore it. If Guard protection and Witch antidote both target "
         "the same werewolf-kill target, that target dies by double-save penetration."
     ),
 )

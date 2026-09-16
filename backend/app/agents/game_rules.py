@@ -50,6 +50,7 @@ XML_CONTEXT_RULES = (
 PUBLIC_GAME_RULES = (
     "Seat numbers are identifiers and speaking order only; no spatial, physical, sound, movement, or night observation evidence exists.",
     "When Guard protection and Witch antidote both target the same nightly werewolf-kill target, that target dies (double-save penetration).",
+    "Guard protection and Witch antidote only cancel werewolf-kill damage; poison and hunter shots ignore them.",
     "If alive werewolves outnumber alive good players, werewolves win immediately.",
     "This game has no sheriff, sheriff election, or sheriff badge; do not mention sheriff-badge flows or treat daytime as a sheriff campaign.",
 )

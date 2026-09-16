@@ -124,8 +124,9 @@ WITCH_SPEC = RoleSpec(
         "the antidote may save only that night's werewolf-kill target, and saving "
         "yourself is allowed only on the first night (from the second night onward "
         "you cannot use the antidote on yourself), while poison may "
-        "target one living player. If the antidote and Guard protection both target that "
-        "werewolf-kill target, the target dies by double-save penetration."
+        "target one living player and ignores Guard protection. If the antidote and Guard "
+        "protection both target that werewolf-kill target, the target dies by double-save "
+        "penetration."
     ),
 )
 
