@@ -48,7 +48,23 @@
   opaque compatibility wording. Action: treat that client rejection as a
   one-time JSON fallback signal; keep authentication, rate-limit, network, and
   server failures in their original error classes.
+- Trigger: a thinking model reports `total_tokens` that includes reasoning or
+  cache tokens so `prompt + completion != total`. Action: keep the successful
+  action payload; persist the reported counts as-is, or store usage as unknown.
+  Do not mark the request `model_invocation_error` or degrade a night action
+  to the system-exception fallback.
 
 ## Frontend verification under WSL (/mnt/e)
 - Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond". After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.
+- Trigger: a live game looks frozen while the timeline speed is already 8x.
+  Action: treat this as waiting on the in-flight model call. Timeline 0.5x–8x
+  only advances events already persisted; daytime speech is serial and each
+  seat waits for the provider. Do not spend time wiring extra speed controls
+  for that stall. Latest mix-seat timings are in
+  `docs/notes/2026-09-16-mimo-mixed-arena.md`.
+- Trigger: a benchmark quote says werewolf vote concentration is ~12–27%.
+  Action: ignore the pooled `wolf_vote_concentration` on mixed-arena runs; it
+  aggregates target seat numbers across games. Recompute per daytime round
+  among living wolves. The 2026-09-16 snapshot (61 finished games) had median
+  100% per-round agreement.
 - Trigger: `npm run test:coverage` gate in `frontend/vite.config.ts`. Action: CI now runs this job against the 9 included files with 100% thresholds. On WSL `/mnt/e` the local run can still die from worker timeouts (see above); copy to an ext4 mirror before treating coverage as a local signal. If a mirror run is below 100%, compare against the current `main` CI job rather than a remembered 96.4% snapshot.

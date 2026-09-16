@@ -2,6 +2,8 @@
 
 本文说明 WolfKiller 的 benchmark 工具链：如何采集数据、如何跑批量对局评测，以及各指标的定义。
 
+最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
+
 ## 两层基准
 
 | 层 | LLM | 测什么 | 成本 | 频率 |
@@ -9,7 +11,7 @@
 | 评测层（仓库内 `scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。JSONL/`summary.json` 保留兼容与人工审计用途，不参与耐久 benchmark 报告的主口径。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v2 JSON 不含决策质量**（验狼、毒中、放逐命中、狼票集中度等）。那些指标仍由各局 `summary.json` 经 `app.benchmark.metrics` 聚合，评测详情页目前也不展示。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
@@ -89,7 +91,7 @@ API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 
 - 狼刀命中神职率：`WEREWOLF_KILL` 目标为神职（预言家/女巫/猎人/守卫）的比例。
 - 好人投票命中率 / 弃票率：好人阵营座位投票目标为狼人的比例 / 弃票比例。
 - 放逐命中狼率 / 误伤神职率：被放逐座位为狼人 / 神职的比例。
-- 狼队投票集中度：狼人票中最多票目标的占比（协同度参考）。
+- 狼队投票集中度：把**全部完成局**的狼票按目标座位号加总后，最多票目标的占比。混座局里座位号不代表同一身份，跨局值会接近均匀分布，**不能当协同度**。要看狼白天是否对齐，按每一轮、该轮存活狼的票面单独算集中度。
 
 **规范性**
 - LLM fallback 率：`parse_result` 为 `fallback` / `parse_failed` 的调用占比。

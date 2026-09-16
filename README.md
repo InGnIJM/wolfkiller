@@ -52,7 +52,7 @@ npm run dev
 
 ## 使用指南
 
-- **观看回放**：在大厅点击任意已结束的对局，用底部时间轴控制器播放、步进、调速（0.5x~8x）、拖拽进度；右侧历史面板可按事件类型筛选
+- **观看回放**：在大厅点击任意已结束的对局，用底部时间轴控制器播放、步进、调速（0.5x~8x）、拖拽进度；右侧历史面板可按事件类型筛选。倍速只加快已经生成的事件；直播仍要等当前座位的模型返回。
 - **进行中控制**：通过 WebSocket 对运行中的对局发送 `set_speed` / `pause` / `resume` / `skip_phase`
 - **模型配置**：大厅的「模型管理」页面集中管理 API 配置（名称、base_url、model、Key 加密存储），支持连通性测试；创建对局时可将环境默认与已存配置混合分配
 - **Benchmark**：`run_benchmark.py` 只连接已启动的后端。它先持久化并打印冻结草稿；只有显式传入 `--yes` 才开始真实模型调用：
@@ -73,6 +73,7 @@ python scripts/run_benchmark.py export <run-id> --format markdown -o report.md
 | [docs/architecture.md](docs/architecture.md) | 系统架构：模块划分、角色流水线、状态机、持久化 |
 | [docs/development.md](docs/development.md) | 开发指南：环境变量全表、测试与门禁、数据存储、踩坑记录 |
 | [docs/benchmark.md](docs/benchmark.md) | 耐久 benchmark API/CLI、指标口径与导出 |
+| [docs/notes/2026-09-16-mimo-mixed-arena.md](docs/notes/2026-09-16-mimo-mixed-arena.md) | 2026-09-16 本机混座评测快照（61 局） |
 | [docs/README.md](docs/README.md) | 文档索引（含历史设计稿归档） |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 编码助手入口：命令、架构速览、测试门禁 |
 

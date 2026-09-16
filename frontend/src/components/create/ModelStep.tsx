@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Box, Button, Chip, IconButton, Stack, Typography,
+  Alert, Box, Button, Chip, IconButton, Stack, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
@@ -8,6 +8,10 @@ import RemoveIcon from '@mui/icons-material/Remove';
 import ModelConfigDialog from '../models/ModelConfigDialog';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type { ModelAssignment, ModelConfigInput } from '../../store/types';
+import {
+  nextAssignmentCount,
+  parseAssignmentCount,
+} from './assignmentQuantity';
 
 const ENV_DEFAULT_NAME = '环境默认 (.env)';
 
@@ -27,6 +31,164 @@ interface AssignmentRow {
 
 function countFor(assignments: ModelAssignment[], configId: string | null): number {
   return assignments.find((entry) => entry.config_id === configId)?.count ?? 0;
+}
+
+const STEP_BUTTON_SX = {
+  minWidth: 40,
+  minHeight: 40,
+  px: 0.75,
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 600,
+} as const;
+
+function stepLabel(name: string, configId: string | null, delta: number): string {
+  const amount = Math.abs(delta);
+  const verb = delta < 0 ? '减少' : '增加';
+  if (configId === null) return `将环境默认模型${verb} ${amount} 人`;
+  return `将 ${name} ${verb} ${amount} 人`;
+}
+
+interface QuantityControlsProps {
+  name: string;
+  configId: string | null;
+  count: number;
+  assignedTotal: number;
+  totalPlayers: number;
+  disabled: boolean;
+  canIncrease: boolean;
+  decreaseOneLabel: string;
+  increaseOneLabel: string;
+  onChange: (nextCount: number) => void;
+}
+
+function AssignmentQuantityControls({
+  name,
+  configId,
+  count,
+  assignedTotal,
+  totalPlayers,
+  disabled,
+  canIncrease,
+  decreaseOneLabel,
+  increaseOneLabel,
+  onChange,
+}: QuantityControlsProps) {
+  const [draft, setDraft] = useState(String(count));
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(count));
+  }, [count]);
+
+  const commitValue = (raw: string) => {
+    const parsed = parseAssignmentCount(
+      raw, count, assignedTotal, totalPlayers, canIncrease,
+    );
+    if (parsed === null) {
+      setDraft(String(count));
+      return;
+    }
+    setDraft(String(parsed));
+    if (parsed !== count) onChange(parsed);
+  };
+
+  const applyDelta = (delta: number) => {
+    onChange(nextAssignmentCount(count, delta, assignedTotal, totalPlayers, canIncrease));
+  };
+
+  const decreaseDisabled = disabled || count <= 0;
+  const increaseDisabled = disabled
+    || nextAssignmentCount(count, 1, assignedTotal, totalPlayers, canIncrease) === count;
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: { xs: 'flex-start', sm: 'flex-end' },
+        flexWrap: 'wrap',
+        gap: 0.5,
+      }}
+    >
+      {([-10, -5] as const).map((delta) => (
+        <Button
+          key={delta}
+          type="button"
+          size="small"
+          variant="outlined"
+          aria-label={stepLabel(name, configId, delta)}
+          disabled={decreaseDisabled}
+          onClick={() => applyDelta(delta)}
+          sx={STEP_BUTTON_SX}
+        >
+          {delta}
+        </Button>
+      ))}
+      <IconButton
+        aria-label={decreaseOneLabel}
+        disabled={decreaseDisabled}
+        onClick={() => applyDelta(-1)}
+        sx={{ width: 48, height: 48 }}
+      >
+        <RemoveIcon />
+      </IconButton>
+      <TextField
+        size="small"
+        value={draft}
+        disabled={disabled}
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={() => { focusedRef.current = true; }}
+        onBlur={(event) => {
+          focusedRef.current = false;
+          commitValue(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          commitValue((event.target as HTMLInputElement).value);
+          (event.target as HTMLInputElement).blur();
+        }}
+        slotProps={{
+          htmlInput: {
+            inputMode: 'numeric',
+            pattern: '[0-9]*',
+            'aria-label': `${name} 人数输入`,
+          },
+        }}
+        sx={{
+          width: 64,
+          '& .MuiInputBase-input': {
+            textAlign: 'center',
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: 600,
+            py: 1,
+          },
+        }}
+      />
+      <IconButton
+        aria-label={increaseOneLabel}
+        disabled={increaseDisabled}
+        onClick={() => applyDelta(1)}
+        sx={{ width: 48, height: 48 }}
+      >
+        <AddIcon />
+      </IconButton>
+      {([5, 10] as const).map((delta) => (
+        <Button
+          key={delta}
+          type="button"
+          size="small"
+          variant="outlined"
+          aria-label={stepLabel(name, configId, delta)}
+          disabled={increaseDisabled}
+          onClick={() => applyDelta(delta)}
+          sx={STEP_BUTTON_SX}
+        >
+          +{delta}
+        </Button>
+      ))}
+    </Box>
+  );
 }
 
 export default function ModelStep({
@@ -228,48 +390,20 @@ export default function ModelStep({
                 )}
               </Box>
 
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: { xs: 'space-between', sm: 'flex-end' },
-                  gap: 1,
-                  minWidth: { sm: 152 },
-                }}
-              >
-                <IconButton
-                  aria-label={decreaseLabel}
-                  disabled={disabled || count <= 0}
-                  onClick={() => updateCount(row.configId, count - 1)}
-                  sx={{ width: 48, height: 48 }}
-                >
-                  <RemoveIcon />
-                </IconButton>
-                <Typography
-                  aria-label={`${row.name} 已分配 ${count} 人`}
-                  sx={{
-                    width: 40,
-                    textAlign: 'center',
-                    fontVariantNumeric: 'tabular-nums',
-                    fontWeight: 600,
-                  }}
-                >
-                  {count}
-                </Typography>
-                <IconButton
-                  aria-label={increaseLabel}
-                  disabled={
-                    disabled
-                    || invalid
-                    || (row.configId !== null && loading)
-                    || assignedTotal >= totalPlayers
-                  }
-                  onClick={() => updateCount(row.configId, count + 1)}
-                  sx={{ width: 48, height: 48 }}
-                >
-                  <AddIcon />
-                </IconButton>
-              </Box>
+              <AssignmentQuantityControls
+                name={row.name}
+                configId={row.configId}
+                count={count}
+                assignedTotal={assignedTotal}
+                totalPlayers={totalPlayers}
+                disabled={disabled}
+                canIncrease={
+                  !invalid && !(row.configId !== null && loading)
+                }
+                decreaseOneLabel={decreaseLabel}
+                increaseOneLabel={increaseLabel}
+                onChange={(nextCount) => updateCount(row.configId, nextCount)}
+              />
             </Box>
           );
         })}
