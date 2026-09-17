@@ -26,6 +26,24 @@ from app.roles.registry import builtin_registry
 from app.config import PipelineMode, config as app_config
 from app.core.effect_applier import CommitResult
 from app.core.vote_service import VoteService
+from app.core.sheriff_flow import (
+    SheriffDirector,
+    apply_badge,
+    badge_targets,
+    ballot_weight,
+    clear_office,
+    decide_after_runs,
+    decide_after_withdraw,
+    decide_tally,
+    badge_loss_message,
+    eligible_sheriff_voters,
+    night_death_seats,
+    set_sheriff,
+    sheriff_active,
+    should_run_election,
+    speech_order,
+    speech_sides,
+)
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult, Scheduler
@@ -217,6 +235,9 @@ class GameEngine:
         self._last_words_given: set[tuple[int, int]] = set()
         self._pipeline_scheduler = pipeline_scheduler
         self._director = director
+        self._sheriff_director = SheriffDirector(
+            getattr(director, "_invoke", None), self.conversation_log,
+        )
         self._pending_night_completion: _PendingNightCompletion | None = None
         self._pending_night_batch: _PendingNightBatch | None = None
         self._night_task: asyncio.Task | None = None
@@ -366,6 +387,7 @@ class GameEngine:
             data={
                 "role_counts": dict(self.config.role_counts),
                 "reveal_on_death": self.config.reveal_on_death,
+                "enable_sheriff": self.config.enable_sheriff,
             },
         )
         self.game_logger.log_role_init(self.game_id, players_dict)
@@ -382,6 +404,8 @@ class GameEngine:
             started = time.monotonic()
             if phase == GamePhase.NIGHT:
                 await self._execute_night()
+            elif phase == GamePhase.SHERIFF_ELECTION:
+                await self._execute_sheriff_election()
             elif phase == GamePhase.DAWN:
                 await self._execute_dawn()
             elif phase == GamePhase.LAST_WORDS:
@@ -421,6 +445,7 @@ class GameEngine:
         self.state.round_number += 1
         self.state.night_actions.clear()
         self.state.last_wolf_kill_target = None
+        self.state.sheriff_office.speech_side = None
 
     async def _execute_night(self) -> None:
         task = self._night_task
@@ -739,6 +764,7 @@ class GameEngine:
             await self._durable_checkpoint(
                 f"night_death:{self.state.round_number}:{snapshot.seat}"
             )
+        await self._maybe_reassign_badge()
         if pending.stage == 0:
             self.game_logger.log_deaths(self.game_id, self.state.round_number,
                 [DeathReport(item.seat, item.cause, item.round_number).to_dict() for item in pending.deaths])
@@ -773,11 +799,16 @@ class GameEngine:
                     win_result=WinResult(pending.win_result.winning_camp, pending.win_result.reason))
             pending = replace(pending, stage=6); self._pending_night_completion = pending
         if pending.stage == 6:
-            if pending.win_result is None and self.sm.get_state() is not GamePhase.DAWN:
-                try: self.sm.transition(SM_Event.NIGHT_ACTIONS_COMPLETE)
+            if pending.win_result is None and self.sm.get_state() is GamePhase.NIGHT:
+                event = (
+                    SM_Event.SHERIFF_ELECTION_START
+                    if should_run_election(self.state)
+                    else SM_Event.NIGHT_ACTIONS_COMPLETE
+                )
+                try: self.sm.transition(event)
                 except BaseException:
-                    if self.sm.get_state() is GamePhase.DAWN:
-                        self.state.phase = GamePhase.DAWN
+                    if self.sm.get_state() in {GamePhase.DAWN, GamePhase.SHERIFF_ELECTION}:
+                        self.state.phase = self.sm.get_state()
                         pending = replace(pending, stage=7); self._pending_night_completion = pending
                     raise
             pending = replace(pending, stage=7); self._pending_night_completion = pending
@@ -794,6 +825,292 @@ class GameEngine:
             await self._durable_checkpoint(
                 f"night_complete:{self.state.round_number}:{self.state.phase.value}"
             )
+
+    def _log_sheriff_audience(self, event_type: str, payload: dict[str, object]) -> None:
+        self.game_logger.log_audience_action(
+            self.game_id, self.state.round_number, self.state.phase.value,
+            event_type, payload,
+        )
+
+    async def _publish_public_speech(
+        self, seat: int, role: str, text: str, phase: str, *, log: bool = False,
+    ) -> None:
+        record = SpeechRecord(seat, text, self.state.round_number, phase)
+        self.state.speeches.append(record)
+        self.conversation_log.add_public_speech(
+            seat, role, text, self.state.round_number, phase,
+        )
+        await self.event_bus.publish(
+            BusEvent.SPEECH_MADE, game_id=self.game_id, speech=record,
+        )
+        if log:
+            self.game_logger.log_speech(
+                self.game_id, self.state.round_number, phase, seat, text,
+            )
+
+    async def _execute_sheriff_election(self) -> None:
+        """Hardcoded sheriff campaign. Agents only pick the bound tool."""
+        if self.sm.get_state() is not GamePhase.SHERIFF_ELECTION:
+            raise RuntimeError("sheriff election requires SHERIFF_ELECTION")
+        self.state.phase = GamePhase.SHERIFF_ELECTION
+        if self.state.sheriff_election_complete:
+            self.sm.transition(SM_Event.SHERIFF_ELECTION_COMPLETE)
+            await self._broadcast_phase_change()
+            return
+        office = self.state.sheriff_office
+        director = self._sheriff_director
+        if office.step in {"", "run"}:
+            office.step = "run"
+            ran: set[int] = set(office.candidates)
+            alive = frozenset(self.state.alive_players())
+            pending_seats = [seat for seat in sorted(alive) if seat not in ran]
+            for seat in pending_seats:
+                player = self.state.players[seat]
+                wolf = player.camp == Camp.WEREWOLF
+                choice = await asyncio.to_thread(
+                    director.campaign_turn, self.state, seat, wolf=wolf,
+                )
+                if choice == "explode":
+                    await self._election_explode(seat)
+                    return
+                if choice == "run":
+                    ran.add(seat)
+                office.candidates = set(ran)
+                self._log_sheriff_audience("SHERIFF_RUN", {
+                    "round_number": self.state.round_number,
+                    "seat": seat,
+                    "choice": choice,
+                })
+                await self._durable_checkpoint(
+                    f"sheriff_run:{self.state.round_number}:{seat}:{choice}"
+                )
+            outcome = decide_after_runs(frozenset(ran), frozenset(self.state.alive_players()))
+            if outcome != "campaign":
+                winner = next(iter(ran)) if outcome == "auto" else None
+                await self._finish_election(winner, outcome)
+                return
+            office.active = set(ran)
+            office.step = "campaign"
+        if office.step == "campaign":
+            for seat in sorted(office.active):
+                player = self.state.players.get(seat)
+                if player is None or not player.is_alive:
+                    continue
+                speech_text = await self.speak(seat, "sheriff_campaign")
+                if speech_text:
+                    await self._publish_public_speech(
+                        seat, player.role, speech_text, "sheriff_election",
+                    )
+                await self._durable_checkpoint(
+                    f"sheriff_campaign:{self.state.round_number}:{seat}"
+                )
+            office.step = "withdraw"
+        if office.step == "withdraw":
+            remaining: set[int] = set()
+            for seat in sorted(office.candidates):
+                player = self.state.players.get(seat)
+                if player is None or not player.is_alive:
+                    continue
+                wolf = player.camp == Camp.WEREWOLF
+                choice = await asyncio.to_thread(
+                    director.withdraw_turn, self.state, seat, wolf=wolf,
+                )
+                if choice == "explode":
+                    await self._election_explode(seat)
+                    return
+                if choice != "withdraw":
+                    remaining.add(seat)
+                self._log_sheriff_audience("SHERIFF_WITHDRAW", {
+                    "round_number": self.state.round_number,
+                    "seat": seat,
+                    "choice": choice,
+                })
+                await self._durable_checkpoint(
+                    f"sheriff_withdraw:{self.state.round_number}:{seat}:{choice}"
+                )
+            office.active = remaining
+            outcome = decide_after_withdraw(
+                frozenset(office.candidates), frozenset(remaining),
+                frozenset(self.state.alive_players()),
+            )
+            if outcome != "vote":
+                winner = next(iter(remaining)) if outcome == "auto" else None
+                await self._finish_election(winner, outcome)
+                return
+            office.step = "vote"
+        if office.step == "vote":
+            if await self._sheriff_vote_round(office.active, "vote"):
+                return
+        elif office.step != "pk":
+            return
+        for seat in sorted(office.pk_seats):
+            player = self.state.players.get(seat)
+            if player is None or not player.is_alive:
+                continue
+            speech_text = await self.speak(seat, "sheriff_campaign")
+            if speech_text:
+                await self._publish_public_speech(
+                    seat, player.role, speech_text, "sheriff_election",
+                )
+            await self._durable_checkpoint(
+                f"sheriff_pk:{self.state.round_number}:{seat}"
+            )
+        await self._sheriff_vote_round(office.pk_seats, "pk", final_tie=True)
+
+    async def _sheriff_vote_round(
+        self, candidates: set[int], step: str, *, final_tie: bool = False,
+    ) -> bool:
+        """Return True if the election already finished (including explode)."""
+        director = self._sheriff_director
+        office = self.state.sheriff_office
+        voters = eligible_sheriff_voters(
+            frozenset(office.candidates), frozenset(self.state.alive_players()),
+        )
+        counts: dict[int, int] = {}
+        legal = set(candidates)
+        for seat in sorted(voters):
+            player = self.state.players.get(seat)
+            if player is None or not player.is_alive:
+                continue
+            wolf = player.camp == Camp.WEREWOLF
+            choice = await asyncio.to_thread(
+                director.vote_turn, self.state, seat, tuple(sorted(legal)), wolf=wolf,
+            )
+            if choice == "explode":
+                await self._election_explode(seat)
+                return True
+            target = choice if type(choice) is int and choice in legal else None
+            if target is not None:
+                counts[target] = counts.get(target, 0) + 1
+            self._log_sheriff_audience("SHERIFF_VOTE", {
+                "round_number": self.state.round_number,
+                "voter_seat": seat,
+                "target_seat": target,
+                "kind": step,
+            })
+            await self._durable_checkpoint(
+                f"sheriff_vote:{self.state.round_number}:{step}:{seat}:"
+                f"{target if target is not None else 'none'}"
+            )
+        winner, tied = decide_tally(counts)
+        if winner is not None:
+            await self._finish_election(winner, "vote")
+            return True
+        if tied and not final_tie:
+            office.pk_seats = set(tied)
+            office.step = "pk"
+            return False
+        await self._finish_election(None, "tie" if tied else "none")
+        return True
+
+    async def _finish_election(self, seat: Optional[int], reason: str) -> None:
+        if seat is None:
+            clear_office(self.state, destroyed=True)
+            message = badge_loss_message(
+                reason,
+                frozenset(self.state.sheriff_office.candidates),
+                frozenset(self.state.alive_players()),
+                frozenset(self.state.sheriff_office.active),
+            )
+        else:
+            set_sheriff(self.state, seat)
+            message = f"{seat}号当选警长。"
+        self.state.sheriff_election_complete = True
+        self.state.sheriff_office.step = "done"
+        self.conversation_log.add_system_message(message, self.state.round_number, "public")
+        self._log_sheriff_audience("SHERIFF_ELECTED", {
+            "round_number": self.state.round_number,
+            "seat": seat,
+            "reason": reason,
+        })
+        await self._durable_checkpoint(
+            f"sheriff_elected:{self.state.round_number}:{seat or 'none'}:{reason}"
+        )
+        if not await self._check_game_over():
+            self.sm.transition(SM_Event.SHERIFF_ELECTION_COMPLETE)
+        await self._broadcast_phase_change()
+
+    async def _election_explode(self, seat: int) -> None:
+        player = self.state.players.get(seat)
+        if player is None or not player.is_alive:
+            return
+        player.mark_dead("self_explode")
+        death = DeathReport(seat, "self_explode", self.state.round_number)
+        self.state.death_history.append(death)
+        clear_office(self.state, destroyed=True)
+        self.state.sheriff_election_complete = True
+        self.state.sheriff_office.skip_remaining_day = True
+        self.state.sheriff_office.step = "done"
+        self.conversation_log.add_system_message(
+            f"{seat}号在警长竞选中自爆，警徽流失。",
+            self.state.round_number, "public",
+        )
+        self._log_sheriff_audience("SHERIFF_ELECTED", {
+            "round_number": self.state.round_number,
+            "seat": None,
+            "reason": "explode",
+        })
+        await self.event_bus.publish(
+            BusEvent.PLAYER_DIED, game_id=self.game_id, death=death,
+        )
+        await self._durable_checkpoint(
+            f"sheriff_explode:{self.state.round_number}:{seat}"
+        )
+        if not await self._check_game_over():
+            self.sm.transition(SM_Event.SHERIFF_ELECTION_COMPLETE)
+        await self._broadcast_phase_change()
+
+    async def _maybe_reassign_badge(self) -> None:
+        if not self.state.config.enable_sheriff or self.state.sheriff_office.badge_destroyed:
+            return
+        dead_sheriff = next(
+            (
+                seat for seat, player in self.state.players.items()
+                if player.is_sheriff and not player.is_alive
+            ),
+            None,
+        )
+        if dead_sheriff is None:
+            return
+        targets = badge_targets(self.state, dead_sheriff)
+        action, target = await asyncio.to_thread(
+            self._sheriff_director.badge_turn, self.state, dead_sheriff, targets,
+        )
+        apply_badge(self.state, dead_sheriff, action, target)
+        if self.state.sheriff is None:
+            message = f"{dead_sheriff}号撕毁警徽，本局不再有警长。"
+        else:
+            message = f"{dead_sheriff}号将警徽移交给{self.state.sheriff}号。"
+        self.conversation_log.add_system_message(message, self.state.round_number, "public")
+        self._log_sheriff_audience("SHERIFF_BADGE", {
+            "round_number": self.state.round_number,
+            "from_seat": dead_sheriff,
+            "to_seat": self.state.sheriff,
+        })
+        await self._durable_checkpoint(
+            f"sheriff_badge:{self.state.round_number}:{dead_sheriff}:"
+            f"{self.state.sheriff or 'tear'}"
+        )
+
+    async def _choose_speech_side(self) -> None:
+        if not sheriff_active(self.state) or self.state.sheriff_office.speech_side:
+            return
+        sheriff_seat = self.state.sheriff
+        assert sheriff_seat is not None
+        deaths = night_death_seats(self.state)
+        sides = speech_sides(len(deaths))
+        side = await asyncio.to_thread(
+            self._sheriff_director.side_turn, self.state, sheriff_seat, sides,
+        )
+        self.state.sheriff_office.speech_side = side
+        self._log_sheriff_audience("SHERIFF_SIDE", {
+            "round_number": self.state.round_number,
+            "seat": sheriff_seat,
+            "side": side,
+        })
+        await self._durable_checkpoint(
+            f"sheriff_side:{self.state.round_number}:{sheriff_seat}:{side}"
+        )
 
     async def give_last_words(self, seat: int, cause: str, death_round: int) -> Optional[str]:
         """Generate last words for a dying player. Standalone function with validation.
@@ -821,25 +1138,8 @@ class GameEngine:
 
         speech_text = await self.speak(seat, "last_words")
         if speech_text:
-            self.state.speeches.append(SpeechRecord(
-                player_seat=seat, text=speech_text,
-                round_number=self.state.round_number,
-            ))
-            self.conversation_log.add_public_speech(
-                seat, player.role, speech_text,
-                self.state.round_number, "last_words",
-            )
-            await self.event_bus.publish(
-                BusEvent.SPEECH_MADE,
-                game_id=self.game_id,
-                speech=SpeechRecord(
-                    player_seat=seat, text=speech_text,
-                    round_number=self.state.round_number,
-                ),
-            )
-            self.game_logger.log_speech(
-                self.game_id, self.state.round_number, "last_words",
-                seat, speech_text,
+            await self._publish_public_speech(
+                seat, player.role, speech_text, "last_words", log=True,
             )
 
         await self._durable_checkpoint(
@@ -880,6 +1180,16 @@ class GameEngine:
 
     async def _execute_speech_round(self) -> bool:
         """Run the speech round; True means a role interrupted the day."""
+        if self.state.sheriff_office.skip_remaining_day:
+            self.state.sheriff_office.skip_remaining_day = False
+            self.state.current_speaker = None
+            self.state.speaking_order = []
+            if not await self._check_game_over():
+                self.sm.transition(SM_Event.WEREWOLF_EXPLODED)
+            await self._broadcast_phase_change()
+            return True
+        if not self.state.is_tiebreak:
+            await self._choose_speech_side()
         alive = list(self.state.alive_players().items())
         if self.state.is_tiebreak:
             alive = [
@@ -892,6 +1202,7 @@ class GameEngine:
                 record.player_seat
                 for record in self.state.speeches
                 if record.round_number == self.state.round_number
+                and record.phase != "sheriff_election"
             }
             alive = [
                 (seat, player)
@@ -920,24 +1231,8 @@ class GameEngine:
             self.state.current_speaker = seat
             speech_text = await self.speak(seat, "day_speech")
             if speech_text:
-                self.state.speeches.append(SpeechRecord(
-                    player_seat=seat, text=speech_text,
-                    round_number=self.state.round_number,
-                ))
-                self.conversation_log.add_public_speech(
-                    seat, player.role, speech_text,
-                    self.state.round_number, "speech",
-                )
-                await self.event_bus.publish(
-                    BusEvent.SPEECH_MADE,
-                    game_id=self.game_id,
-                    speech=SpeechRecord(
-                        player_seat=seat, text=speech_text,
-                        round_number=self.state.round_number,
-                    ),
-                )
-                self.game_logger.log_speech(
-                    self.game_id, self.state.round_number, "speech", seat, speech_text,
+                await self._publish_public_speech(
+                    seat, player.role, speech_text, "speech", log=True,
                 )
                 if self.state.is_tiebreak:
                     self.state.supplemental_speakers.add(seat)
@@ -1072,6 +1367,7 @@ class GameEngine:
             await self._durable_checkpoint(
                 f"day_reaction:{label}:{self._seat_list(reaction)}"
             )
+        await self._maybe_reassign_badge()
         if self.memory_service:
             self.memory_service.save_memories(self.state)
         if not await self._check_game_over():
@@ -1102,8 +1398,21 @@ class GameEngine:
 
         Night deaths and exiles both append to ``death_history`` before the
         speech round runs, so its last entry is the anchor; with no deaths yet
-        (peaceful first night) the ascending seat order is kept.
+        (peaceful first night) the ascending seat order is kept. A living
+        sheriff instead picks sheriff-left/right or death-left/right.
         """
+        side = self.state.sheriff_office.speech_side
+        sheriff_seat = self.state.sheriff
+        if sheriff_active(self.state) and side and sheriff_seat is not None:
+            seats = [seat for seat, _ in alive]
+            deaths = night_death_seats(self.state)
+            anchor = deaths[0] if len(deaths) == 1 else sheriff_seat
+            by_seat = {seat: player for seat, player in alive}
+            return [
+                (seat, by_seat[seat])
+                for seat in speech_order(seats, anchor, side)
+                if seat in by_seat
+            ]
         if not alive or not self.state.death_history:
             return alive
         anchor = self.state.death_history[-1].player_seat
@@ -1569,6 +1878,7 @@ class GameEngine:
         await self._durable_checkpoint(
             f"exile_reaction:{self.state.round_number}:{exiled_seat}"
         )
+        await self._maybe_reassign_badge()
         await self.give_last_words(exiled_seat, "exile", self.state.round_number)
         return False
 
@@ -1756,7 +2066,9 @@ class GameEngine:
         tally: dict[int, int] = {}
         for vote in self.state.votes:
             if vote.target_seat is not None:
-                tally[vote.target_seat] = tally.get(vote.target_seat, 0) + 1
+                tally[vote.target_seat] = (
+                    tally.get(vote.target_seat, 0) + ballot_weight(self.state, vote.voter_seat)
+                )
         return tally
 
     @staticmethod
