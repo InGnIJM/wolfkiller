@@ -97,13 +97,19 @@ class PromptBuilder:
         ]
         latest_by_speaker: dict[int, int] = {}
         system_indexes: list[int] = []
+        ballot_indexes: list[int] = []
         for index, record in enumerate(visible_current_public):
-            if record.speaker_seat is None:
+            if record.phase == "sheriff_ballot":
+                ballot_indexes.append(index)
+            elif record.speaker_seat is None:
                 system_indexes.append(index)
             else:
                 latest_by_speaker[record.speaker_seat] = index
         selected_indexes = sorted({
-            *latest_by_speaker.values(), *system_indexes[-2:],
+            *latest_by_speaker.values(),
+            *system_indexes[-2:],
+            # Completed sheriff ballots carry vote evidence models must keep.
+            *ballot_indexes[-2:],
         })
         current_public = [
             visible_current_public[index] for index in selected_indexes
@@ -164,7 +170,7 @@ class PromptBuilder:
 - 公开板子：{state.config.total_players}人（{self._format_board(state)}）
 - 回合数：第{state.round_number}轮
 - 当前阶段：{self._cn_phase(state.phase.value)}
-- 存活玩家：{self._format_alive_players(state)}
+{self._format_sheriff_line(state)}- 存活玩家：{self._format_alive_players(state)}
 - 已出局玩家：{self._format_dead_players(state)}
 
 ## 本轮发言进度
@@ -266,7 +272,9 @@ class PromptBuilder:
         lines = [f"- 可用资源：{resource_text}"]
         facts = view.get("facts") or {}
         for key, value in facts.items():
-            if key in {"actor_identity", "sheriff"}:
+            if key in {"actor_identity"}:
+                continue
+            if key in {"sheriff", "sheriff_enabled"} and not facts.get("sheriff_enabled"):
                 continue
             if isinstance(value, (list, tuple)) and not value:
                 continue
@@ -360,8 +368,8 @@ class PromptBuilder:
     @staticmethod
     def _public_role_rules(state: GameState) -> str:
         specs = builtin_registry.freeze().specs
-        from app.agents.game_rules import PUBLIC_GAME_RULES
-        lines = list(PUBLIC_GAME_RULES)
+        from app.agents.game_rules import public_rules_for
+        lines = list(public_rules_for(enable_sheriff=bool(state.config.enable_sheriff)))
         for role_id, count in state.config.role_counts.items():
             if not count:
                 continue
@@ -387,6 +395,12 @@ class PromptBuilder:
                 "## 你的任务：白天发言\n"
                 "调用 `speak` 函数提交5至200字的中文发言；不要直接输出普通文本。"
                 + PromptBuilder._day_speech_rules(state, seat)
+            )
+        if context == "sheriff_campaign":
+            return (
+                "## 你的任务：警长竞选发言\n"
+                "调用 `speak` 函数提交5至200字中文竞选发言；不要直接输出普通文本。"
+                "说明你为什么适合当警长，或指出你认为的狼坑；不要编造未提供的查验或夜间结果。"
             )
         if context == "last_words":
             return "## 你的任务：遗言\n调用 `last_words` 函数提交5至200字的中文遗言；不要直接输出普通文本。"
@@ -468,6 +482,17 @@ class PromptBuilder:
     def _cn_phase(phase: str) -> str:
         return {
             "waiting": "等待中", "role_deal": "角色分配", "night": "夜晚", "dawn": "天亮",
-            "last_words": "遗言", "speech": "发言阶段",
+            "last_words": "遗言", "sheriff_election": "警长竞选", "speech": "发言阶段",
             "vote_casting": "投票阶段", "vote_resolution": "投票结算", "game_over": "游戏结束",
         }.get(phase, phase)
+
+    @staticmethod
+    def _format_sheriff_line(state: GameState) -> str:
+        if not state.config.enable_sheriff:
+            return ""
+        office = state.sheriff_office
+        if office.badge_destroyed or (state.sheriff_election_complete and state.sheriff is None):
+            return "- 警长职位：警徽已流失\n"
+        if state.sheriff is None:
+            return "- 警长职位：尚未产生\n"
+        return f"- 警长：{state.sheriff}号\n"

@@ -341,6 +341,13 @@ class SheriffDirector:
         speeches = self._speech_lines(state)
         if speeches:
             lines.append("警上已发言（仅作参考）：\n" + "\n".join(speeches))
+        if self._conversation_log is not None:
+            completed = [
+                record.content for record in self._conversation_log.get_public()
+                if record.phase == "sheriff_ballot"
+                and record.round_number == state.round_number
+            ][-2:]
+            lines.extend(completed)
         if wolf:
             lines.append("你是狼人阵营：警上可起跳伪装、可冲锋带节奏，也可自爆吞警徽（只死自己）。")
         return "\n".join(lines) + "\n"
