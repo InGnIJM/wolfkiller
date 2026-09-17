@@ -73,6 +73,33 @@
   withdrawal loses the sheriff vote) and make the badge-loss announcement name
   its concrete reason. Baseline prompt size is a smell: decision prompts whose
   char count is constant across seats/phases likely carry no context.
+- Trigger: a wolf votes for or runs against its agreed night plan because the
+  day-decision prompt carries no wolf context (all four wolves ran for sheriff
+  with nobody below, the planned seat included). Action: keep the wolf-team
+  roster and the current night's wolf-channel records inside every wolf's
+  sheriff campaign/withdraw/vote prompt (`SheriffDirector._wolf_team_block`),
+  never for good players; plans without a delivery path into the next decision
+  are theater, not strategy.
+- Trigger: discussion stops at the first unanimous kill target, so the wolf
+  channel never assigns roles (who runs, who counter-claims, who stays hidden)
+  before the sheriff election. Action: end discussion early only after at
+  least two full rounds (`_MIN_DISCUSSION_ROUNDS`), budget six turns per wolf
+  (`_TURNS_PER_WOLF`), and keep speech/plan limits at 400 chars
+  (`_MAX_UTTERANCE` / `_MAX_DAY_PLAN`); adjust the paired prompt text and the
+  engine budget together or prompts will promise turns the driver never runs.
+- Trigger: a strategy prompt forbids attacking or voting for teammates while
+  asking for hook plays (倒钩). Action: state the true objective — maximize
+  the camp's win probability from legal visible information — and enumerate
+  permitted tactics (cutting teammates, self-knife setups, concentrated votes)
+  instead of one-sided loyalty rules; also keep probability claims as
+  conjecture (a peaceful night may be a guard save, not proof the antidote is
+  spent). Winning is the only grading standard, not per-decision aesthetics.
+- Trigger: `_execute_vote_casting` gathers concurrent `collect_vote` tasks and
+  `EffectApplier` appends `RECORD_VOTE` payloads as each coroutine returns, so
+  `state.votes` order races with completion order
+  (`test_vote_casting_starts_all_votes_concurrently_and_keeps_seat_order`).
+  Action: sort `state.votes` by `voter_seat` after the gather (terminal
+  receipts stay authoritative); never re-submit or mutate receipts afterward.
 
 ## Frontend verification under WSL (/mnt/e)
 - Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond". After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.

@@ -79,6 +79,7 @@ WolfKiller/
 
 - `core/role_pipeline.py` — 流水线运行器（`RolePipeline.run_point`），引擎按调度点调用
 - `core/night_flow.py` — `NightDirector`：狼队夜间讨论/投票与旁白；`build_briefing` 等 Prompt/schema 构造。女巫/预言家思考已交给角色流水线，Director 不再提供 `witch_think` / `seer_think`
+- `core/sheriff_flow.py` — `SheriffDirector`：对局级警长职位（竞选、1.5 票、发言方向、交徽/撕徽）。不是角色，不进注册表。
 - `core/vote_service.py` — 可信投票域服务：原子、幂等的终局选票收据（accepted / voluntary-abstain / technical-abstain）
 - `core/conversation_log.py` — 全部对话记录及按角色过滤的视图
 - `core/state_transaction.py` — 状态事务与 revision 管理
@@ -89,7 +90,7 @@ WolfKiller/
 
 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
 
-随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。
+随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段；`enable_sheriff` 开局时发 `SHERIFF_ELECTION_START`，关局仍 `NIGHT_ACTIONS_COMPLETE → DAWN`。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；讨论预算为每狼 6 次、至少完整两圈（刀口共识也要等两圈后才能提前结束），发言与次日计划各 ≤400 字，狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。警长流程由 `SheriffDirector`（`core/sheriff_flow.py`）硬编码，Agent 只选当前步骤绑定的工具；狼玩家的竞选、退水与警长投票提示会额外注入狼队成员名单与本夜狼队频道记录（含次日计划），好人视角永不注入。
 
 ### 白天流水线窗口
 
@@ -110,7 +111,7 @@ WolfKiller/
 - 状态机（`core/state_machine.py`）以 `(current_phase, event, next_phase)` 三元组表驱动：
 
 ```
-WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CASTING → VOTE_RESOLUTION
+WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS → SPEECH → VOTE_CASTING → VOTE_RESOLUTION
                                                      │ WEREWOLF_EXPLODED  ↑              ↓
                                                      └──────────→ NIGHT ←──────────────┘
 ```
@@ -125,7 +126,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
   - `base.py`：`CallPurpose`、`ProviderProfile`、`call_budget()`（两种传输共用的 token/超时预算）
   - `errors.py`：跨 openai/anthropic SDK 的错误分类元组；`llm_client.py` 再导出，`roles/base.py` 只从 `llm_client` 导入（core/roles 不得 import providers，见 `test_architecture_boundary.py`）
   - `LLMClient` 对上层 API 不变：`_structured_response()` / `_content_text()` 同时兼容 OpenAI 字符串内容 / `finish_reason` 与 Anthropic 内容块列表（text、thinking、reasoning）/ `stop_reason`；Anthropic 强制工具绑定 `tool_choice="any"`（thinking 模式下点名工具会被 400）；`map_strict_capability_error()` 沿异常 cause 链识别 SDK 400/422；`aclose()` 同时关闭 `ChatOpenAI` 与 `ChatAnthropic` 的 SDK 客户端
-- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。提示词不出现警长概念；只允许提示里写明的规则，禁止模型用其他版本补流程；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。关警长时提示词省略警长词，不写「本局没有警长」；开警长时仅注入 `SHERIFF_GAME_RULES`。只允许提示里写明的规则，禁止模型用其他版本补流程。
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
 ## 模型配置与角色目录
@@ -147,12 +148,12 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 
 ### 公开事件同步
 
-公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）与白狼王自爆（`self_explode`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
+公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）、白狼王自爆（`self_explode`）、警长当选（`sheriff_elected`）与交徽/撕徽（`sheriff_badge`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
 
 ## 前端架构
 
 - **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。倍速只作用于已落盘事件；直播下一格仍要等当前座位的模型调用结束。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
-- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 仍带 `is_sheriff` 以兼容旧档，当前规则不竞选警长，新对局该字段为 false。
+- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 带 `is_sheriff`；仅 `enable_sheriff` 开局才会出现警长徽标。时间轴展示竞选当选与交徽/撕徽事件。
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
 - **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`
 - **大厅与评测隔离**：`GET /api/games` 只返回 `benchmark_run_id` 为空且 `source != benchmark` 的普通对局；评测局仍可通过 `GET /api/games/{id}` 回放。大厅用扁平文件夹（`GET/POST /api/folders`、`PUT /api/games/{id}/folder`、`POST /api/games/batch-move|batch-delete`）收纳与批量删除。评测对局只从评测页进出：`GET /api/benchmarks/{id}/games` 并上名称/阶段/胜负等投影；`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST .../games/batch-delete` 先解绑再删档；`DELETE /api/benchmarks/{id}` 取消进行中的 run 并级联删除绑定对局与报告。大厅独立 `DELETE /api/games/{id}` 对评测局仍返回 409。
