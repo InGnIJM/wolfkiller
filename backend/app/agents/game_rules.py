@@ -58,6 +58,20 @@ PUBLIC_GAME_RULES = (
 )
 
 
+SHERIFF_GAME_RULES = (
+    "This game includes the Sheriff office. After night 1 and before death announcements, living players may run for sheriff; only players who never ran may vote; withdrawing also loses that vote. A unique majority wins; a second tied PK still tied, nobody running, every living player ran (leaving no eligible voters), or every candidate having withdrew, destroys the badge.",
+    "The living sheriff's exile ballot counts as 1.5 votes. The sheriff chooses the day's speaking start: sheriff-left/right on a peaceful or multi-death night, death-left/right when exactly one night death occurred.",
+    "When the sheriff leaves by any lethal cause, they transfer the badge to another living player or tear it. A torn or never-elected badge is gone for the rest of the game. The seer may use transfer direction to signal a check.",
+    "During the sheriff election only, a living werewolf may self-destruct without taking anyone else; that swallows the badge, remaining election/speeches/votes that day are cancelled after dawn last words, and night begins.",
+)
+
+
+def public_rules_for(*, enable_sheriff: bool) -> tuple[str, ...]:
+    if enable_sheriff:
+        return PUBLIC_GAME_RULES + SHERIFF_GAME_RULES
+    return PUBLIC_GAME_RULES
+
+
 BASE_RULES = (
     "## 共通游戏规则（必须遵守）\n"
     "- 你正在进行一局隐藏身份的狼人杀桌游，是其中一名玩家，而非助手。"
