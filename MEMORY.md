@@ -48,6 +48,16 @@
   opaque compatibility wording. Action: treat that client rejection as a
   one-time JSON fallback signal; keep authentication, rate-limit, network, and
   server failures in their original error classes.
+- Trigger: a decision prompt carries context only via a collaborator that was
+  bound at construction while lifecycle paths (`create_new()`, restore)
+  recreate or replace the underlying store. Action: keep the store object
+  identity stable across the whole lifecycle — clear records for a new game
+  and let the codec replace records in place; add a regression that captures
+  real model requests through the real `create_new()`/`restore()` paths, not
+  constructor identity. Related smell: an event (e.g. `SHERIFF_VOTE`) that is
+  audience-only and never lands in the shared history is invisible to every
+  later model decision; publish a completed summary record (one per closed
+  ballot, never partial) that ordinary history consumers will pick up.
 - Trigger: a thinking model reports `total_tokens` that includes reasoning or
   cache tokens so `prompt + completion != total`. Action: keep the successful
   action payload; persist the reported counts as-is, or store usage as unknown.
