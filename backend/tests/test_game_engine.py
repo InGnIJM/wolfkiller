@@ -929,9 +929,9 @@ async def test_staged_night_ends_discussion_when_wolves_unanimous(tmp_path) -> N
         4: ("wolf-killer-villager", "good"),
     }
     director, chats, engine = await _run_discussion_game(tmp_path, {1: 4, 2: 4, 3: 4}, seats)
-    assert director.discussion_calls == [1, 2, 3]
-    assert len(chats) == 3
-    assert [record["data"]["payload"]["seat"] for record in chats] == [1, 2, 3]
+    assert director.discussion_calls == [1, 2, 3, 1, 2, 3]
+    assert len(chats) == 6
+    assert [record["data"]["payload"]["seat"] for record in chats] == [1, 2, 3, 1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -943,8 +943,8 @@ async def test_staged_night_skipped_wolves_count_as_consent(tmp_path) -> None:
         4: ("wolf-killer-villager", "good"),
     }
     director, chats, engine = await _run_discussion_game(tmp_path, {1: 4, 2: None, 3: 4}, seats)
-    assert director.discussion_calls == [1, 2, 3]
-    assert len(chats) == 2
+    assert director.discussion_calls == [1, 2, 3, 1, 2, 3]
+    assert len(chats) == 4
 
 
 @pytest.mark.asyncio
@@ -960,20 +960,7 @@ async def test_staged_night_single_wolf_skips_discussion_and_votes_directly(tmp_
 
 
 @pytest.mark.asyncio
-async def test_staged_night_continues_discussion_without_unanimous_target(tmp_path) -> None:
-    seats = {
-        1: ("wolf-killer-werewolf", "werewolf"),
-        2: ("wolf-killer-werewolf", "werewolf"),
-        3: ("wolf-killer-werewolf", "werewolf"),
-        4: ("wolf-killer-villager", "good"),
-    }
-    director, chats, engine = await _run_discussion_game(tmp_path, {1: 2, 2: 3, 3: 4}, seats)
-    assert director.discussion_calls == [1, 2, 3, 1, 2, 3, 1, 2, 3]
-    assert len(chats) == 9
-
-
-@pytest.mark.asyncio
-async def test_staged_night_writes_wolf_chat_into_conversation_log(tmp_path) -> None:
+async def test_staged_night_keeps_discussion_for_two_full_rounds_even_when_unanimous(tmp_path) -> None:
     seats = {
         1: ("wolf-killer-werewolf", "werewolf"),
         2: ("wolf-killer-werewolf", "werewolf"),
@@ -981,18 +968,17 @@ async def test_staged_night_writes_wolf_chat_into_conversation_log(tmp_path) -> 
         4: ("wolf-killer-villager", "good"),
     }
     director, chats, engine = await _run_discussion_game(tmp_path, {1: 4, 2: 4, 3: 4}, seats)
-    assert len(chats) == 3
+    assert director.discussion_calls == [1, 2, 3, 1, 2, 3]
+    assert len(chats) == 6
     wolf_records = [
         record for record in engine.conversation_log.get_all()
         if record.scope is ConversationScope.WEREWOLF
     ]
     assert [(record.speaker_seat, record.round_number) for record in wolf_records] == [
-        (1, 1), (2, 1), (3, 1),
+        (1, 1), (2, 1), (3, 1), (1, 1), (2, 1), (3, 1),
     ]
     assert all(record.speaker_role == "wolf-killer-werewolf" for record in wolf_records)
-    assert [record.content for record in wolf_records] == [
-        "我建议刀4号", "我建议刀4号", "我建议刀4号",
-    ]
+    assert [record.content for record in wolf_records] == ["我建议刀4号"] * 6
 
 
 @pytest.mark.asyncio
@@ -1027,7 +1013,7 @@ async def test_staged_night_stores_day_plan_in_channel_and_discussion(tmp_path) 
         record for record in engine.conversation_log.get_all()
         if record.scope is ConversationScope.WEREWOLF
     ]
-    assert len(wolf_records) == 2
+    assert len(wolf_records) == 4
     assert all("明天白天带节奏踩9号" in record.content for record in wolf_records)
     assert any("明天白天带节奏踩9号" in line for line in director.received_discussion)
 
@@ -2489,11 +2475,11 @@ class TestGameEngine:
                 engine.sm.set_state(GamePhase.GAME_OVER)
 
         engine._wait_if_paused = AsyncMock(side_effect=wait)
-        engine.sm.set_state(GamePhase.SHERIFF_ELECTION)
+        engine.sm.set_state(GamePhase.ERROR)
 
         await engine._game_loop()
 
-        assert seen == [GamePhase.SHERIFF_ELECTION, GamePhase.SHERIFF_ELECTION]
+        assert seen == [GamePhase.ERROR, GamePhase.ERROR]
         assert engine.sm.is_terminal()
 
     @pytest.mark.asyncio

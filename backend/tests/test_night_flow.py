@@ -135,7 +135,12 @@ def test_discussion_turn_spoke_empty_text():
 
 def test_discussion_turn_spoke_too_long():
     with pytest.raises(ValueError):
-        DiscussionTurn(1, True, "t" * 201)
+        DiscussionTurn(1, True, "t" * 401)
+
+
+def test_discussion_turn_spoke_boundary_400():
+    turn = DiscussionTurn(1, True, "t" * 400)
+    assert turn.text == "t" * 400
 
 
 def test_discussion_turn_spoke_non_string_text():
@@ -163,14 +168,14 @@ def test_discussion_turn_day_plan_defaults_empty():
     assert DiscussionTurn(1, True, "刀4号").day_plan == ""
 
 
-def test_discussion_turn_day_plan_boundary_150():
-    turn = DiscussionTurn(1, True, "刀4号", 4, "p" * 150)
-    assert turn.day_plan == "p" * 150
+def test_discussion_turn_day_plan_boundary_400():
+    turn = DiscussionTurn(1, True, "刀4号", 4, "p" * 400)
+    assert turn.day_plan == "p" * 400
 
 
 def test_discussion_turn_day_plan_too_long():
     with pytest.raises(ValueError):
-        DiscussionTurn(1, True, "刀4号", 4, "p" * 151)
+        DiscussionTurn(1, True, "刀4号", 4, "p" * 401)
 
 
 def test_discussion_turn_day_plan_non_string():
@@ -500,6 +505,19 @@ def test_wolf_prompts_omit_sheriff_and_forbid_invented_rules(
         assert "不得根据其他狼人杀版本" in text
 
 
+def test_wolf_prompts_inject_sheriff_rules_when_enabled(
+    state: GameState, director: NightDirector,
+) -> None:
+    state.config.enable_sheriff = True
+    discussion = director.discussion_prompt(state, 1, [])
+    vote = director.vote_prompt(state, 1, [], [])
+    for messages in (discussion, vote):
+        text = "\n".join(message["content"] for message in messages)
+        assert "This game includes the Sheriff office" in text
+        assert "1.5" in text
+        assert "不得根据其他狼人杀版本" in text
+
+
 def test_vote_prompt_renders_briefing_sections(state: GameState, director: NightDirector):
     briefing = NightBriefing(("第1轮公开 4号：我觉得3号可疑",), (), ("第1轮[night]：我怀疑女巫",))
     messages = director.vote_prompt(state, 1, [], [], briefing)
@@ -525,7 +543,7 @@ def test_discussion_prompt_later_night_omits_first_night_notice(state: GameState
 def test_discussion_prompt_tracks_turn_progress_and_consensus_rules(state: GameState, director: NightDirector):
     messages = director.discussion_prompt(state, 1, ["狼1：刀4号"])
     human = messages[1]["content"]
-    assert "第 2/3 轮发言" in human
+    assert "第 2/6 轮发言" in human
     assert "preferred_target" in human
     assert "跳过" in human
     assert "复述" in human
@@ -533,7 +551,7 @@ def test_discussion_prompt_tracks_turn_progress_and_consensus_rules(state: GameS
 
 def test_discussion_prompt_empty_history_starts_first_turn(state: GameState, director: NightDirector):
     messages = director.discussion_prompt(state, 1, [])
-    assert "第 1/3 轮发言" in messages[1]["content"]
+    assert "第 1/6 轮发言" in messages[1]["content"]
 
 
 def test_vote_prompt(state: GameState, director: NightDirector):
@@ -657,9 +675,37 @@ def test_wolf_discussion_turn_parses_day_plan(state: GameState):
     assert turn == DiscussionTurn(1, True, "刀4号", 4, "明天白天带节奏踩9号")
 
 
+def test_discussion_limits_allow_400_char_speech_and_plan(state: GameState):
+    director = _director(lambda _messages: (
+        '{"speak": true, "text": "' + "字" * 400 + '", '
+        '"preferred_target": 4, "day_plan": "' + "计" * 400 + '"}'
+    ))
+    turn = director.wolf_discussion_turn(state, 1, [])
+    assert turn.spoke is True
+    assert len(turn.text) == 400
+    assert len(turn.day_plan) == 400
+
+
+@pytest.mark.parametrize("payload", [
+    '{"speak": true, "text": "' + "x" * 401 + '"}',
+])
+def test_discussion_limits_reject_over_400_chars(state: GameState, payload: str):
+    director = _director(lambda _messages: payload)
+    assert director.wolf_discussion_turn(state, 1, []) == DiscussionTurn(1, False)
+
+
+def test_discussion_prompt_announces_extended_limits(state: GameState):
+    messages = director_prompt = NightDirector(
+        _snapshot(), lambda *_: "{}",
+    ).discussion_prompt(state, 1, [])
+    human = messages[1]["content"]
+    assert "≤400字" in human
+    assert "400字" in human
+    assert "≤150字" not in human
+
+
 @pytest.mark.parametrize("payload", [
     '{"speak": true, "text": "刀4号", "day_plan": 123}',
-    '{"speak": true, "text": "刀4号", "day_plan": "' + "x" * 151 + '"}',
     '{"speak": true, "text": "刀4号"}',
     '{"speak": false, "day_plan": "计划"}',
 ])
@@ -671,7 +717,7 @@ def test_wolf_discussion_turn_ignores_invalid_day_plan(state: GameState, payload
 
 def test_wolf_discussion_turn_fallback_too_long_text(state: GameState):
     director = _director(
-        lambda _messages: '{"speak": true, "text": "' + "x" * 201 + '"}'
+        lambda _messages: '{"speak": true, "text": "' + "x" * 401 + '"}'
     )
     assert director.wolf_discussion_turn(state, 1, []) == DiscussionTurn(1, False)
 

@@ -190,7 +190,8 @@ class TestPromptBuilder:
         )
         assert "阵营配合要求" in wolf_prompt
         assert "1号、2号、3号" in wolf_prompt
-        assert "不要投同阵营成员的票" in wolf_prompt
+        assert "不要投同阵营成员的票" not in wolf_prompt
+        assert "获胜" in wolf_prompt
         assert "阵营配合要求" not in villager_prompt
 
     def test_vote_prompt_also_carries_cooperation_guide_for_wolves(self):
@@ -207,9 +208,7 @@ class TestPromptBuilder:
         )
 
         assert "次日计划" in prompt
-        assert "按分工执行" in prompt
         assert "悍跳" in prompt
-        assert "分票" in prompt
         assert "不得机械复读计划原文" in prompt
         assert "untrusted proposal" not in prompt
 

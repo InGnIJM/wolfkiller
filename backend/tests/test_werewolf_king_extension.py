@@ -28,6 +28,7 @@ from app.roles.werewolf_king import (
     WEREWOLF_KING_EXPLODE_CONTRACT, WEREWOLF_KING_SPEC, WerewolfKing,
     resolve_werewolf_king_action, validate_werewolf_king_action, werewolf_king_applicable,
 )
+from app.agents.game_rules import SHERIFF_GAME_RULES
 
 KING, WOLF, HUNTER, VILLAGER = (
     "wolf-killer-werewolf-king", "wolf-killer-werewolf", "wolf-killer-hunter", "wolf-killer-villager",
@@ -62,6 +63,10 @@ def test_spec_shares_the_kill_contract_and_adds_a_day_explode() -> None:
     assert explode.per_window_limit == 1 and explode.per_game_limit is None
     assert {"PUBLIC", "ACTOR", "CAMP"} == explode.visibility_namespaces
     assert "sheriff" not in WEREWOLF_KING_SPEC.instructions.lower()
+    lowered = WEREWOLF_KING_SPEC.instructions.lower()
+    assert "late-game" not in lowered and "emergency" not in lowered
+    assert "win probability" in lowered
+    assert "badge" in SHERIFF_GAME_RULES[2] or "badge" in " ".join(SHERIFF_GAME_RULES)
 
 
 def test_applicable_while_alive_with_the_explode_left() -> None:

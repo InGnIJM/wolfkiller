@@ -316,6 +316,80 @@ def test_campaign_prompt_carries_identity_and_campaign_speeches() -> None:
     assert "已上警" in human
 
 
+def _wolf_channel_log() -> "object":
+    from app.core.conversation_log import ConversationLog
+    log = ConversationLog()
+    log.add_werewolf_channel(
+        "1号：今晚统一刀6号。白天2号悍跳预言家，12号警下冲票，10号倒钩做深水。",
+        1, speaker_seat=1, speaker_role="wolf-killer-werewolf",
+    )
+    log.add_werewolf_channel(
+        "2号：同意刀6号。我的次日计划：起跳发查杀，压8号；你们站边我。",
+        1, speaker_seat=2, speaker_role="wolf-killer-werewolf",
+    )
+    return log
+
+
+def test_wolf_sheriff_prompts_carry_teammates_and_channel_plan() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    log = _wolf_channel_log()
+    director = Director(conversation_log=log)
+    for prompt in (
+        director.campaign_prompt(state, 2, wolf=True),
+        director.withdraw_prompt(state, 2, wolf=True),
+        director.vote_prompt(state, 2, (5, 6), wolf=True),
+    ):
+        human = prompt[1]["content"]
+        assert "狼队成员" in human
+        assert "2号、6号、10号、12号" in human
+        assert "悍跳预言家" in human
+        assert "次日计划" in human or "白天" in human
+
+
+def test_good_player_sheriff_prompts_never_see_wolf_channel() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    director = Director(conversation_log=_wolf_channel_log())
+    for prompt in (
+        director.campaign_prompt(state, 5, wolf=False),
+        director.withdraw_prompt(state, 5, wolf=False),
+        director.vote_prompt(state, 9, (5, 6)),
+    ):
+        human = prompt[1]["content"]
+        assert "狼队成员" not in human
+        assert "悍跳预言家" not in human
+        assert "次日计划" not in human
+
+
+def test_sheriff_prompts_survive_empty_wolf_channel() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    director = Director()
+    human = director.campaign_prompt(state, 2, wolf=True)[1]["content"]
+    assert "狼队成员" in human
+    assert "2号、6号、10号、12号" in human
+    assert "狼队频道记录" not in human
+
+
+def test_wolf_team_block_skips_non_wolf_and_truncates_long_channel() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+    from app.core.conversation_log import ConversationLog
+    state = _rich_state()
+    director = Director()
+    # Good seat: no wolf block even when wolf=True is passed by mistake.
+    assert director._wolf_team_block(state, 5) == []
+    assert director._wolf_team_block(state, 99) == []
+    log = _wolf_channel_log()
+    log.add_werewolf_channel("长" * 1200, 1, speaker_seat=None,
+                             speaker_role="wolf-killer-werewolf")
+    director = Director(conversation_log=log)
+    lines = director._wolf_team_block(state, 2)
+    channel_line = lines[-1]
+    assert channel_line.endswith("...")
+    assert len(channel_line) < 1500
+
+
 def test_campaign_prompt_shows_seer_private_check() -> None:
     from app.core.sheriff_flow import SheriffDirector as Director
     from app.core.effect_applier import (

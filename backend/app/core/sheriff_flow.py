@@ -350,7 +350,40 @@ class SheriffDirector:
             lines.extend(completed)
         if wolf:
             lines.append("你是狼人阵营：警上可起跳伪装、可冲锋带节奏，也可自爆吞警徽（只死自己）。")
+            lines.extend(self._wolf_team_block(state, seat))
         return "\n".join(lines) + "\n"
+
+    _MAX_WOLF_CHANNEL_LINES = 24
+    _MAX_WOLF_CHANNEL_CHARS = 1000
+
+    def _wolf_team_block(self, state: GameState, seat: int) -> list[str]:
+        """Wolf-only lines: teammate seats and this night's wolf-channel plan."""
+        player = state.players.get(seat)
+        if player is None or player.camp != Camp.WEREWOLF:
+            return []
+        teammates = sorted(
+            mate.seat_number for mate in state.players.values()
+            if mate.camp == Camp.WEREWOLF
+        )
+        lines = ["狼队成员：" + "、".join(f"{item}号" for item in teammates) + "。"]
+        if self._conversation_log is not None:
+            channel = [
+                record for record in self._conversation_log.records
+                if record.scope is ConversationScope.WEREWOLF
+                and record.round_number == state.round_number
+            ][-self._MAX_WOLF_CHANNEL_LINES:]
+            if channel:
+                plan_lines = []
+                for record in channel:
+                    speaker = (
+                        f"{record.speaker_seat}号" if record.speaker_seat else "系统"
+                    )
+                    content = record.content
+                    if len(content) > self._MAX_WOLF_CHANNEL_CHARS:
+                        content = content[:self._MAX_WOLF_CHANNEL_CHARS] + "..."
+                    plan_lines.append(f"{speaker}：{content}")
+                lines.append("本夜狼队频道记录（含次日计划，仅作参考）：\n" + "\n".join(plan_lines))
+        return lines
 
     def campaign_prompt(self, state: GameState, seat: int, *, wolf: bool) -> list[dict[str, str]]:
         actions = [_RUN, _PASS] + ([_EXPLODE] if wolf else [])
@@ -375,13 +408,16 @@ class SheriffDirector:
         )
         return self._messages(self._system(), human)
 
-    def vote_prompt(self, state: GameState, seat: int, candidates: Sequence[int]) -> list[dict[str, str]]:
+    def vote_prompt(
+        self, state: GameState, seat: int, candidates: Sequence[int],
+        *, wolf: bool = False,
+    ) -> list[dict[str, str]]:
         listed = "、".join(f"{item}号" for item in candidates)
         human = (
             f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，因此拥有警长投票权，"
             f"请在候选人中选择：{listed}。结合警上发言判断谁更适合当警长。"
             f"输出 action_type=vote 且 target_seat 为候选座位，或 action_type=pass。\n"
-            + self._context_block(state, seat, wolf=False)
+            + self._context_block(state, seat, wolf=wolf)
         )
         return self._messages(self._system(), human)
 

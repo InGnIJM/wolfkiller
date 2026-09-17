@@ -106,6 +106,13 @@ def _discussion_consensus(wolves: list[int], history: list[str], leads: dict[int
     )
 
 
+# Discussion budget: each living wolf may speak up to six turns per night,
+# and the channel always keeps going for at least two full rounds so a
+# unanimous first round cannot end the meeting before the seats catch up.
+_TURNS_PER_WOLF = 6
+_MIN_DISCUSSION_ROUNDS = 2
+
+
 @dataclass(frozen=True)
 class _PendingDeath:
     seat: int
@@ -523,8 +530,10 @@ class GameEngine:
                         self._pending_night_batch = pending
                 # Serial discussion rounds: each wolf speaks in turn and sees
                 # everything said before, so the channel reads like a real
-                # conversation. Stops early on consensus or a full skipped round.
-                max_turns = 3 * len(wolves)
+                # conversation. Consensus can only end the meeting after the
+                # minimum full rounds; a full skipped round also stops it.
+                max_turns = _TURNS_PER_WOLF * len(wolves)
+                min_turns = _MIN_DISCUSSION_ROUNDS * len(wolves)
                 while len(history) < max_turns:
                     seat = wolves[len(history) % len(wolves)]
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
@@ -560,7 +569,7 @@ class GameEngine:
                     if (len(history) >= len(wolves)
                             and all(line.endswith("（跳过）") for line in history[-len(wolves):])):
                         break
-                    if _discussion_consensus(wolves, history, leads):
+                    if len(history) >= min_turns and _discussion_consensus(wolves, history, leads):
                         break
             pending = replace(pending, stage=4); self._pending_night_batch = pending
 
@@ -1558,6 +1567,10 @@ class GameEngine:
                     failure_code="request_timeout", timeout_type="phase_deadline",
                     window_id=window.window_id, vote_round=self.state.vote_round,
                 )
+        # Concurrent completions race for the ledger; the seat order of
+        # recorded votes is a deterministic invariant, so restore it after
+        # every ballot has reached a terminal receipt.
+        self.state.votes.sort(key=lambda item: item.voter_seat)
         receipts = {
             receipt.voter_seat: receipt
             for receipt in self._vote_service.receipts(window.window_id)

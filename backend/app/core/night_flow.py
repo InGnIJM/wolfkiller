@@ -10,13 +10,13 @@ from app.models.conversation import ConversationScope
 from app.models.game import Camp, GameState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
-from app.agents.game_rules import BASE_RULES, TARGET_SELECTION_RULE
+from app.agents.game_rules import BASE_RULES, TARGET_SELECTION_RULE, SHERIFF_GAME_RULES
 from app.agents.output_parser import extract_json_object
 
 logger = logging.getLogger(__name__)
 
-_MAX_UTTERANCE = 200
-_MAX_DAY_PLAN = 150
+_MAX_UTTERANCE = 400
+_MAX_DAY_PLAN = 400
 
 _WOLF_DISCUSSION_TOOL_NAME = "werewolf_discussion"
 _WOLF_VOTE_TOOL_NAME = "werewolf_kill"
@@ -245,6 +245,11 @@ class NightDirector:
     # ── prompts ────────────────────────────────────────────────
 
     @staticmethod
+    def _system_prefix(state: GameState) -> str:
+        extra = " ".join(SHERIFF_GAME_RULES) if state.config.enable_sheriff else ""
+        return BASE_RULES + extra
+
+    @staticmethod
     def _messages(system: str, human: str) -> list[dict[str, str]]:
         return [{"role": "system", "content": system}, {"role": "user", "content": human}]
 
@@ -289,11 +294,11 @@ class NightDirector:
     ) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
-        total_turns = 3 * len(wolves)
+        total_turns = 6 * len(wolves)
         turn_number = len(history) + 1
         remaining = max(total_turns - len(history) - 1, 0)
         system = (
-            BASE_RULES
+            self._system_prefix(state)
             + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Discuss tonight's kill target with your teammates in a natural "
             "private chat: reply to what your teammates just said (agree, "
@@ -322,11 +327,11 @@ class NightDirector:
             "不要为了说话而说话。\n"
             "- 如果你有倾向的刀人目标，把该座位号填入 preferred_target；没有倾向就填 null。\n"
             "- 除了今晚的刀人目标，还应商定明天白天的配合计划：带节奏方向、嫁祸对象等，"
-            "用 day_plan 字段（≤150字，没有计划则填空串）提交，计划会同步给全体队友。\n"
+            "用 day_plan 字段（≤400字，没有计划则填空串）提交，计划会同步给全体队友。\n"
             "- 当所有狼队友都认可同一个目标后，讨论会提前结束。\n"
             + _night_notice(state)
-            + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤200字)", '
-            '"preferred_target": 座位号或null, "day_plan": "次日白天配合计划(≤150字，可空)"} '
+            + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤400字)", '
+            '"preferred_target": 座位号或null, "day_plan": "次日白天配合计划(≤400字，可空)"} '
             '表示发言；{"speak": false, "text": "", "preferred_target": null, '
             '"day_plan": ""} 表示跳过本轮发言。'
         )
@@ -340,7 +345,7 @@ class NightDirector:
         wolves = self._wolf_team(state)
         alive = self._alive_text(state)
         system = (
-            BASE_RULES
+            self._system_prefix(state)
             + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "

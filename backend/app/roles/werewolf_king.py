@@ -137,9 +137,17 @@ WEREWOLF_KING_SPEC = RoleSpec(
         "players are eliminated without last words, the remaining speeches and this day's "
         "vote are cancelled, and the game goes straight to night. The self-destruct can be "
         "used only once and only while alive; when eliminated by poison, exile, or another "
-        "player's skill, Werewolf King leaves normally and takes nobody along. Exploding is "
-        "optional and usually a late-game or emergency play; pass whenever staying hidden "
-        "serves the wolf team better."
+        "player's skill, Werewolf King leaves normally and takes nobody along. Weigh every "
+        "window against win probability instead of a fixed stage of the game: exploding now "
+        "may remove a revealed or about-to-speak key role, cut information flow, or cancel "
+        "an unfavourable exile; waiting may reveal a higher-value target or keep the day's "
+        "exile pressure. Passing is safe while the team can still afford a night kill, but "
+        "an unused explode is lost when Werewolf King dies to poison, exile, or another "
+        "skill, so compare that risk each time. After exploding, the wolf team continues "
+        "without this card, so agree with the team how the next night and day are played "
+        "before choosing the moment. Exploding is optional; judge each window by its "
+        "expected value for the wolf team and pass whenever staying hidden serves the wolf "
+        "team better."
     ),
 )
 

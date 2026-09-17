@@ -219,7 +219,7 @@ class TestGameService:
         kwargs = service._manifest.add_game.call_args.kwargs
         assert args == (
             game_id,
-            {"role_counts": counts, "reveal_on_death": False},
+            {"role_counts": counts, "reveal_on_death": False, "enable_sheriff": False},
         )
         assert kwargs["model_snapshot_version"] == 2
         assert kwargs["name"] is not None
@@ -393,9 +393,9 @@ class TestGameService:
             "additionalProperties": False,
             "properties": {
                 "speak": {"type": "boolean"},
-                "text": {"type": "string", "maxLength": 200},
+                "text": {"type": "string", "maxLength": 400},
                 "preferred_target": {"type": ["integer", "null"]},
-                "day_plan": {"type": "string", "maxLength": 150},
+                "day_plan": {"type": "string", "maxLength": 400},
             },
             "required": ["speak", "text", "preferred_target", "day_plan"],
         }
@@ -557,6 +557,7 @@ class TestGameService:
 
         assert entry["config"] == {
             "role_counts": recovered_counts, "reveal_on_death": False,
+            "enable_sheriff": False,
         }
 
     def test_manifest_extracts_fallback_votes_and_ignores_bad_lines(self, tmp_path):
@@ -737,6 +738,7 @@ class TestGameService:
         assert entries["recovered"]["config"] == {
             "role_counts": {"wolf-killer-villager": 1},
             "reveal_on_death": False,
+            "enable_sheriff": False,
         }
 
     def test_manifest_ignores_non_mapping_role_init_players(self, tmp_path):
@@ -763,7 +765,7 @@ class TestGameService:
         (log / "game.log").write_text(
             json.dumps({
                 "operation": "game_config",
-                "data": {"role_counts": {"wolf-killer-villager": 1}, "reveal_on_death": True},
+                "data": {"role_counts": {"wolf-killer-villager": 1}, "reveal_on_death": True, "enable_sheriff": True},
             }) + "\n"
             + json.dumps({
                 "operation": "role_init",
@@ -790,10 +792,12 @@ class TestGameService:
         assert entries["flagged"]["config"] == {
             "role_counts": {"wolf-killer-villager": 1},
             "reveal_on_death": True,
+            "enable_sheriff": True,
         }
         assert entries["unparsed"]["config"] == {
             "role_counts": {"wolf-killer-villager": 1},
             "reveal_on_death": False,
+            "enable_sheriff": False,
         }
 
     def test_manifest_keeps_valid_role_init_after_malformed_players_record(
@@ -823,7 +827,7 @@ class TestGameService:
         assert entry["config"] == {"role_counts": {
             "wolf-killer-werewolf": 1,
             "wolf-killer-villager": 1,
-        }, "reveal_on_death": False}
+        }, "reveal_on_death": False, "enable_sheriff": False}
         assert "malformed role_init players" in caplog.text
 
     def test_manifest_ignores_invalid_phase_changes(self, tmp_path):
@@ -914,6 +918,7 @@ class TestGameService:
 
         assert result["config"] == {
             "role_counts": recovered_counts, "reveal_on_death": False,
+            "enable_sheriff": False,
         }
         assert result["player_count"] == 2
         assert result["created_at"] == "index-time"
@@ -1021,7 +1026,7 @@ class TestGameService:
         assert result["config"] == {"role_counts": {
             "wolf-killer-werewolf": 1,
             "wolf-killer-villager": 1,
-        }, "reveal_on_death": False}
+        }, "reveal_on_death": False, "enable_sheriff": False}
 
     @pytest.mark.parametrize(
         "index_config",
