@@ -412,6 +412,19 @@ class TestPromptBuilder:
         assert "system-middle" in compact
         assert "system-new" in compact
 
+    def test_compact_vote_retry_keeps_completed_sheriff_ballots(self):
+        state = make_state()
+        state.phase = GamePhase.VOTE_CASTING
+        log = ConversationLog()
+        log.add_sheriff_ballot({2: 1, 3: None}, 1, "vote")
+        log.add_sheriff_ballot({2: 1}, 1, "pk")
+
+        compact = PromptBuilder().build_vote_retry_prompt(
+            state, 4, "wolf-killer-villager", log,
+        )
+
+        assert "警长首轮投票结束" in compact and "警长PK投票结束" in compact
+
     def test_tiebreak_vote_prompt_mentions_candidates_and_resume(self):
         builder = PromptBuilder()
         state = make_state()
@@ -503,6 +516,42 @@ class TestPromptBuilderHelpers:
         assert "警徽" not in prompt
         assert "sheriff" not in lowered
         assert "do not invent mechanics from other Werewolf variants" in prompt
+
+    def test_day_speech_prompt_injects_sheriff_rules_when_enabled(self):
+        state = make_state()
+        state.config.enable_sheriff = True
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech",
+        )
+        assert "This game includes the Sheriff office" in prompt
+        assert "1.5" in prompt
+        assert "警长职位：尚未产生" in prompt
+        assert "do not invent mechanics from other Werewolf variants" in prompt
+
+    def test_sheriff_campaign_prompt_uses_campaign_task(self):
+        state = make_state()
+        state.config.enable_sheriff = True
+        state.phase = GamePhase.SHERIFF_ELECTION
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "sheriff_campaign",
+        )
+        assert "你的任务：警长竞选发言" in prompt
+        assert "This game includes the Sheriff office" in prompt
+
+    def test_format_sheriff_line_covers_office_states(self):
+        state = make_state()
+        assert PromptBuilder._format_sheriff_line(state) == ""
+        state.config.enable_sheriff = True
+        assert "尚未产生" in PromptBuilder._format_sheriff_line(state)
+        state.sheriff = 4
+        state.players[4].is_sheriff = True
+        assert "4号" in PromptBuilder._format_sheriff_line(state)
+        state.sheriff_office.badge_destroyed = True
+        assert "流失" in PromptBuilder._format_sheriff_line(state)
+        state.sheriff_office.badge_destroyed = False
+        state.sheriff = None
+        state.sheriff_election_complete = True
+        assert "流失" in PromptBuilder._format_sheriff_line(state)
 
     def test_camp_cooperation_block_ignores_malformed_facts(self):
         builder = PromptBuilder()
