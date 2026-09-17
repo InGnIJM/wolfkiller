@@ -53,6 +53,16 @@
   action payload; persist the reported counts as-is, or store usage as unknown.
   Do not mark the request `model_invocation_error` or degrade a night action
   to the system-exception fallback.
+- Trigger: an LLM decision prompt for a short structured action (sheriff
+  run/withdraw/vote) omits the actor's identity, camp, private facts, and the
+  public record of the current phase; models then make homogeneous choices
+  (12/12 all `run`) and contradict their own earlier speeches when deciding
+  (seer says "I am not the seer"). Action: every decision prompt must inject
+  the actor identity/camp, relevant private facts, and a short excerpt of the
+  current phase's public records; also state each option's consequence (e.g.
+  withdrawal loses the sheriff vote) and make the badge-loss announcement name
+  its concrete reason. Baseline prompt size is a smell: decision prompts whose
+  char count is constant across seats/phases likely carry no context.
 
 ## Frontend verification under WSL (/mnt/e)
 - Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond". After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.

@@ -63,7 +63,7 @@ npm run test:e2e                      # Playwright 浏览器验收
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
 | `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴是仅 `react` 的无 LLM 契约 |
 
-- **夜晚流程**：`GameEngine._execute_night()` 分阶段执行（`_execute_staged_night()`），调度点顺序为 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动。
+- **夜晚流程**：`GameEngine._execute_night()` 分阶段执行（`_execute_staged_night()`），调度点顺序为 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`（结算伤害、响应窗口触发猎人开枪等），随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段。开警长时进入 `SHERIFF_ELECTION`（`SheriffDirector`，`core/sheriff_flow.py`）：上警/退水/警长投票的决策提示注入本人身份与阵营、私有事实（查验、药、枪）、已上警与候选人名单及本轮警上发言摘录；警徽流失时按原因（无人上警 / 全员退水 / 全员上警无选民 / 平票）播报（`badge_loss_message`）。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动。
 - **白天流水线窗口**：每位发言者开口前跑 `DAY_ACTION`（`slot=f"{vote_round}:{seat}"`），提交事件含 `DAY_INTERRUPTED` 时 `_resolve_day_interruption()` 结算双死、按 `death_history` 去重发布、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点并以 `WEREWOLF_EXPLODED` 转 NIGHT（续跑由 `_journaled_day_interruption()` 幂等重放）；放逐前 `_apply_exile()` 以 `EXILE_PENDING` 跑 `EXILE_VERDICT`，提交事件含 `EXILE_CANCELLED` 时写 `revealed_role`、记 `vote_result exiled=None` 并跳过遗言。引擎只认这些通用事件名，不出现角色名
 - **放逐反应**：引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人等响应契约通过流水线反应；猎人 `_SHOOT_REASONS` 含 `self_explode`
 - **白天发言/投票**：引擎内角色无关路径，经 `BaseRole`（`roles/base.py`）调用 LLM；投票通过纯校验器验证并以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）；投票资格读 `runtime.statuses`（`core/vote_service.py`：`no_vote` 不进选民、`exile_immune` 不进候选），狼队按 `camp == Camp.WEREWOLF` 识别
@@ -74,7 +74,7 @@ npm run test:e2e                      # Playwright 浏览器验收
 **状态机 (`core/state_machine.py`)** 管理阶段转换，使用 `(current_phase, event, next_phase)` 三元组表：
 
 ```
-WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CASTING → VOTE_RESOLUTION
+WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS → SPEECH → VOTE_CASTING → VOTE_RESOLUTION
                                                                     ↑              ↓
                                                               NIGHT ←──────────────┘
 ```
@@ -86,7 +86,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 ### 角色 LLM 交互（白天路径）
 
 - `roles/base.py` 的 `BaseRole` 处理发言（tool calling 两层防线 + ≥15 字校验 + 兜底）与投票（strict tool → JSON 降级 → 安全 fallback）
-- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。提示词不出现警长概念；只允许提示里写明的规则，禁止模型用其他版本补流程；渲染给 LLM 的事实会去掉未实现的 `sheriff` 字段
+- `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。关警长时提示词省略警长词；开警长时仅注入 `SHERIFF_GAME_RULES`。只允许提示里写明的规则，禁止模型用其他版本补流程。
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 
 ### 模型配置与角色目录
@@ -120,7 +120,7 @@ WAITING → ROLE_DEAL → NIGHT → DAWN → LAST_WORDS → SPEECH → VOTE_CAST
 - 回放模式：从 HTTP 加载完整游戏日志，支持播放/暂停、逐帧步进、0.5x~8x 速度调节、按事件类型筛选
 - 对局级 `modelSnapshot`：从详情或观众快照加载，供座位悬停卡按座位反查模型；回放 seek 不改写
 
-**座位图 (`frontend/src/components/game/SeatMap.tsx`)** 渲染椭圆/双列座位；悬停弹出详情卡（身份、存活状态、所用模型名 / model_id / 提供方）。公开 DTO 仍带 `is_sheriff` 以兼容旧档，当前规则不竞选警长。
+**座位图 (`frontend/src/components/game/SeatMap.tsx`)** 渲染椭圆/双列座位；悬停弹出详情卡（身份、存活状态、所用模型名 / model_id / 提供方）。公开 DTO 带 `is_sheriff`；仅开启 `enable_sheriff` 的对局才会出现警长。
 
 **WebSocket (`frontend/src/api/websocket.ts`)** 自定义 hook，建立 WebSocket 连接后将 JSON 消息路由到 Zustand store 对应的处理函数。
 

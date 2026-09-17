@@ -51,7 +51,7 @@ npm run build
 
 夜晚由 `GameEngine._execute_staged_night()` 驱动，顺序固定：
 
-`NIGHT_ACTION`（守卫）→ 狼队讨论/投票（`NightDirector`，`core/night_flow.py`）→ `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
+`NIGHT_ACTION`（守卫）→ 狼队讨论/投票（`NightDirector`，`core/night_flow.py`）→ `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`。开警长时随后进入 `SHERIFF_ELECTION`（`SheriffDirector`，`core/sheriff_flow.py`），再转 DAWN。
 
 白天发言/投票/遗言是引擎内与角色无关的路径。投票经校验器后以 `EffectApplier` 的 `ACCEPT_ACTION` 落账。白天另有两个角色无关窗口：每位发言者前跑 `DAY_ACTION`（slot=`vote_round:seat`；事件含 `DAY_INTERRUPTED` 则结算双死、跑 `DAWN_REACTION`、以 `WEREWOLF_EXPLODED` 转 NIGHT），放逐前跑 `EXILE_VERDICT`（事件含 `EXILE_CANCELLED` 则翻牌免死、不走遗言）。引擎只认这些通用事件，不出现角色名。
 
@@ -65,7 +65,7 @@ npm run build
 - 白痴：被放逐时翻牌，公开身份、不死、失去投票权、不再能被放逐，仍可发言；夜刀/毒/枪/自爆带走时正常死亡。计入神职。
 - 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，双方无遗言，当日发言投票取消直接入夜；被毒/放逐/枪杀不能带人。被带走的猎人可开枪（`_SHOOT_REASONS` 含 `self_explode`）。
 - 神职含守卫、白痴。狼人胜：神职全灭 / 平民全灭 / 狼人数（含白狼王）大于好人数。先判狼（狼刀在先）。
-- 本局无警长。公开 DTO 的 `is_sheriff` 只为兼容旧档。LLM 提示词不出现警长概念；只允许提示里写明的规则，禁止模型用其他版本补流程。
+- 可选警长（`GameConfig.enable_sheriff`，默认关）。关局时提示词省略警长词、状态机不进入竞选；开局时由 `SheriffDirector` 硬编码竞选/交徽，Agent 只选当前工具，竞选决策提示注入本人身份、私有事实与警上发言摘录。九人、十人预设建议关，十二人预设建议开。
 - 公开 DTO / 前端消费链不得出现 `role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等私有字段。
 - `prompt_builder.py` / `state_filter.py` 是委托外壳，源码不得出现内置角色名。
 - 提供方在 `agents/providers/`；`core/` 与 `roles/` 禁止直接 import providers。
