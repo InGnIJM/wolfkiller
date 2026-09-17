@@ -112,6 +112,32 @@ class ConversationLog:
         self._persist(record)
         return record
 
+    def add_sheriff_ballot(
+        self, votes: dict[int, int | None], round_num: int, kind: str,
+    ) -> Conversation:
+        """Publish a completed election ballot, separate from exile votes.
+
+        Called only after the whole ballot closes; never expose partial votes
+        or model reasoning to later voters in the same ballot.
+        """
+        choices = "；".join(
+            f"{seat}号→{target}号" if target is not None else f"{seat}号→弃票"
+            for seat, target in sorted(votes.items())
+        )
+        counts: dict[int, int] = {}
+        for target in votes.values():
+            if target is not None:
+                counts[target] = counts.get(target, 0) + 1
+        tally = "、".join(f"{seat}号{count}票" for seat, count in sorted(counts.items())) or "无有效票"
+        record = Conversation(
+            scope=ConversationScope.PUBLIC, round_number=round_num,
+            phase="sheriff_ballot",
+            content=f"警长{'PK' if kind == 'pk' else '首轮'}投票结束：{choices}。计票：{tally}。",
+        )
+        self.records.append(record)
+        self._persist(record)
+        return record
+
     # ── Thought (internal monologue) methods ────────────────────────
 
     def add_thought(

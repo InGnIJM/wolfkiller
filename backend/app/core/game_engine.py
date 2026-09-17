@@ -298,7 +298,8 @@ class GameEngine:
         self.state.effect_schema_version = previous_state.effect_schema_version
         self._vote_service = VoteService(self.state)
         self._active_vote_window_id = None
-        self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
+        # Collaborators retain this log; reset its contents, not its identity.
+        self.conversation_log.records.clear()
         self._pending_night_completion = None
         self._pending_night_batch = None
         self._checkpoint_counter = 0
@@ -341,9 +342,7 @@ class GameEngine:
         self.sm.reset()
         self.sm.set_state(state.phase)
         self._vote_service = VoteService(self.state)
-        self.conversation_log = ConversationLog(
-            logger=self.game_logger, game_id=self.game_id,
-        )
+        # The codec replaces records on the shared log, keeping director bindings live.
         from app.persistence.engine_checkpoint import restore_engine_orchestration
         restore_engine_orchestration(self, codec, orchestration)
         self._running = False
@@ -967,6 +966,7 @@ class GameEngine:
             frozenset(office.candidates), frozenset(self.state.alive_players()),
         )
         counts: dict[int, int] = {}
+        ballots: dict[int, int | None] = {}
         legal = set(candidates)
         for seat in sorted(voters):
             player = self.state.players.get(seat)
@@ -982,6 +982,7 @@ class GameEngine:
             target = choice if type(choice) is int and choice in legal else None
             if target is not None:
                 counts[target] = counts.get(target, 0) + 1
+            ballots[seat] = target
             self._log_sheriff_audience("SHERIFF_VOTE", {
                 "round_number": self.state.round_number,
                 "voter_seat": seat,
@@ -992,6 +993,7 @@ class GameEngine:
                 f"sheriff_vote:{self.state.round_number}:{step}:{seat}:"
                 f"{target if target is not None else 'none'}"
             )
+        self.conversation_log.add_sheriff_ballot(ballots, self.state.round_number, step)
         winner, tied = decide_tally(counts)
         if winner is not None:
             await self._finish_election(winner, "vote")
@@ -999,6 +1001,7 @@ class GameEngine:
         if tied and not final_tie:
             office.pk_seats = set(tied)
             office.step = "pk"
+            await self._durable_checkpoint(f"sheriff_pk_ready:{self.state.round_number}")
             return False
         await self._finish_election(None, "tie" if tied else "none")
         return True
