@@ -17,6 +17,7 @@ function getWsBase(): string {
 export async function createGame(config?: {
   role_counts?: Record<string, number>;
   reveal_on_death?: boolean;
+  enable_sheriff?: boolean;
   model_assignments?: ModelAssignment[];
 }): Promise<{ game_id: string; model_snapshot?: ModelSnapshotEntry[] }> {
   const res = await fetch(`${getApiBase()}/api/games`, {

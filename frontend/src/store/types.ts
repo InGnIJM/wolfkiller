@@ -82,6 +82,52 @@ export interface SelfExplodePayload {
   target_seat: number;
 }
 
+export interface SheriffElectedPayload {
+  round_number: number;
+  seat: number | null;
+  reason: string;
+}
+
+export interface SheriffBadgePayload {
+  round_number: number;
+  from_seat: number;
+  to_seat: number | null;
+}
+
+export type SheriffRunChoice = 'run' | 'pass';
+export type SheriffWithdrawChoice = 'stay' | 'withdraw';
+export type SheriffVoteKind = 'vote' | 'pk';
+export type SheriffSpeechSide =
+  | 'sheriff_left'
+  | 'sheriff_right'
+  | 'death_left'
+  | 'death_right';
+
+export interface SheriffRunPayload {
+  round_number: number;
+  seat: number;
+  choice: SheriffRunChoice;
+}
+
+export interface SheriffWithdrawPayload {
+  round_number: number;
+  seat: number;
+  choice: SheriffWithdrawChoice;
+}
+
+export interface SheriffVotePayload {
+  round_number: number;
+  voter_seat: number;
+  target_seat: number | null;
+  kind: SheriffVoteKind;
+}
+
+export interface SheriffSidePayload {
+  round_number: number;
+  seat: number;
+  side: SheriffSpeechSide;
+}
+
 export type NightActionType =
   | 'werewolf_kill'
   | 'witch_save'
@@ -162,6 +208,7 @@ export interface PublicGameState {
   phase: GamePhase;
   round_number: number;
   reveal_on_death?: boolean;
+  enable_sheriff?: boolean;
   players: Record<number, PublicPlayerState>;
   sheriff: number | null;
   speeches: SpeechRecord[];
@@ -190,6 +237,12 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'technical_abstain', TechnicalAbstainPayload>
   | PublicReplayEnvelope<'exile_cancelled', ExileCancelledPayload>
   | PublicReplayEnvelope<'self_explode', SelfExplodePayload>
+  | PublicReplayEnvelope<'sheriff_elected', SheriffElectedPayload>
+  | PublicReplayEnvelope<'sheriff_badge', SheriffBadgePayload>
+  | PublicReplayEnvelope<'sheriff_run', SheriffRunPayload>
+  | PublicReplayEnvelope<'sheriff_withdraw', SheriffWithdrawPayload>
+  | PublicReplayEnvelope<'sheriff_vote', SheriffVotePayload>
+  | PublicReplayEnvelope<'sheriff_side', SheriffSidePayload>
   | PublicReplayEnvelope<'night_action', NightActionRecord>
   | PublicReplayEnvelope<'narration', NarrationPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>
@@ -200,7 +253,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'winner', WinResult>
   | PublicReplayEnvelope<'game_initialized', {
       players?: Record<string, PublicPlayerState> | PublicPlayerState[];
-      config?: { reveal_on_death?: boolean };
+      config?: { reveal_on_death?: boolean; enable_sheriff?: boolean };
     }>
   | PublicReplayEnvelope<'player_revealed', {
       seat_number: number;
@@ -370,6 +423,7 @@ export interface GamePreset {
   name: string;
   description: string;
   role_counts: Record<string, number>;
+  enable_sheriff?: boolean;
 }
 
 export interface FieldConstraints {
