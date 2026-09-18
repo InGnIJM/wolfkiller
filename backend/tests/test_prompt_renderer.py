@@ -131,3 +131,16 @@ def test_renderer_omits_sheriff_and_forbids_invented_rules() -> None:
     assert "no sheriff" not in lowered
     assert "sheriff-badge" not in lowered
     assert "do not invent mechanics from other Werewolf variants" in rendered
+
+
+def test_renderer_injects_sheriff_rules_when_enabled() -> None:
+    spec, contract, context = values()
+    context = replace(
+        context,
+        facts={**dict(context.facts), "sheriff_enabled": True, "sheriff": 2},
+    )
+    rendered = PromptRenderer().render(spec, contract, context, "")
+    assert "This game includes the Sheriff office" in rendered
+    assert "1.5" in rendered
+    assert '"sheriff":2' in rendered.replace(" ", "")
+    assert "do not invent mechanics from other Werewolf variants" in rendered

@@ -347,7 +347,7 @@ class ContextProjector:
         for seat in seats:
             cls._positive_int(seat, "player seat")
         sheriff = cls._optional_positive_int(state.sheriff, "sheriff")
-        return {
+        facts: dict[str, object] = {
             "alive_seats": tuple(
                 sorted(seat for seat, player in state.players.items() if player.is_alive)
             ),
@@ -356,7 +356,6 @@ class ContextProjector:
                     seat for seat, player in state.players.items() if not player.is_alive
                 )
             ),
-            "sheriff": sheriff,
             "phase": state.phase.value if hasattr(state.phase, "value") else state.phase,
             "round_number": state.round_number,
             "public_role_rules": tuple(
@@ -380,6 +379,10 @@ class ContextProjector:
                 if (projected := cls._project_vote(record)) is not None
             ),
         }
+        facts["sheriff"] = sheriff
+        if getattr(state.config, "enable_sheriff", False):
+            facts["sheriff_enabled"] = True
+        return facts
 
     @classmethod
     def _project_speech(cls, record: object) -> dict[str, object] | None:

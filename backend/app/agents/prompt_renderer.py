@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from html import escape
 
-from app.agents.game_rules import PUBLIC_GAME_RULES, TARGET_SELECTION_RULE
+from app.agents.game_rules import TARGET_SELECTION_RULE, public_rules_for
 from app.models.pipeline import ActionContext, ActionContract, RoleSpec
 
 _MAX_HISTORY = 20_000
@@ -77,6 +77,7 @@ class PromptRenderer:
             "schedule_point": contract.schedule_point.value,
             "fallback_action_type": contract.fallback_action_type,
         }
+        enabled = bool(context.facts.get("sheriff_enabled"))
         projected = {
             "revision": context.revision,
             "round_number": context.round_number,
@@ -85,7 +86,7 @@ class PromptRenderer:
             "actor_alive": context.actor_alive,
             "facts": {
                 key: value for key, value in context.facts.items()
-                if key != "sheriff"
+                if enabled or key not in {"sheriff", "sheriff_enabled"}
             },
             "resources": context.resources,
             "counters": context.counters,
@@ -106,7 +107,7 @@ class PromptRenderer:
             },
         }
         public_rules = {
-            "rules": PUBLIC_GAME_RULES,
+            "rules": public_rules_for(enable_sheriff=enabled),
             "roles": context.facts.get("public_role_rules", ()),
         }
         prompt = "\n".join((
