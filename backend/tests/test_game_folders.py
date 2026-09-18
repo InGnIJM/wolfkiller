@@ -24,7 +24,7 @@ def test_v1_database_migrates_to_folder_schema(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 2
+        assert repository.schema_version() == 3
         assert {"game_folders", "game_folder_items"} <= repository.table_names()
     finally:
         repository.close()
