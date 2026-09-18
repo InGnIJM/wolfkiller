@@ -6,6 +6,7 @@ import hashlib
 import time
 from collections.abc import Callable
 
+from app.core.sheriff_flow import ballot_weight
 from app.core.effect_applier import (
     EffectApplier,
     EffectPermission,
@@ -220,7 +221,7 @@ class VoteService:
             if receipt.status is VoteStatus.ACCEPTED_VOTE:
                 target = receipt.target_seat
                 assert target is not None
-                tally[target] = tally.get(target, 0) + 1
+                tally[target] = tally.get(target, 0) + ballot_weight(self._state, receipt.voter_seat)
         return tally
 
     def _commit(

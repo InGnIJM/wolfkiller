@@ -328,6 +328,21 @@ def test_runtime_statuses_shape_exile_voters_and_targets():
     assert window.eligible_targets == frozenset({2, 3})
 
 
+def test_tally_uses_sheriff_half_votes_when_office_is_active():
+    from app.core.sheriff_flow import set_sheriff
+    from app.core.vote_service import VoteService
+
+    state = make_state()
+    state.config.enable_sheriff = True
+    set_sheriff(state, 1)
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=30.0)
+    service.submit(window.window_id, 1, vote(3))
+    service.submit(window.window_id, 2, vote(2))
+    service.submit(window.window_id, 3, vote(2))
+    assert service.tally(window.window_id) == {3: 3, 2: 4}
+
+
 def test_seats_with_status_rejects_invalid_inputs():
     from app.core.vote_service import seats_with_status
 
