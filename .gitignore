@@ -19,3 +19,11 @@ backend/scripts/*
 
 .zcode/
 .playwright-manual-data/
+
+# Local debug artifacts
+.workbuddy-ai/
+inspect_report.txt
+final_inspect_report.txt
+inspect_dbs.py
+run_inspection.py
+test_simple.py
