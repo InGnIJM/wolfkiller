@@ -64,6 +64,22 @@ def test_technical_abstain_player_seat_becomes_voter_seat() -> None:
     }
 
 
+def test_death_without_any_seat_key_is_projected_unchanged() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("PLAYER_DIED", {"cause": "wolf_kill", "round_number": 1}),
+    ])
+
+    assert projected[0]["payload"] == {"cause": "wolf_kill", "round_number": 1}
+
+
+def test_technical_abstain_without_any_seat_key_is_projected_unchanged() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("TECHNICAL_ABSTAIN", {"round_number": 1, "failure_code": "parse_error"}),
+    ])
+
+    assert projected[0]["payload"] == {"round_number": 1, "failure_code": "parse_error"}
+
+
 def test_technical_abstain_already_using_voter_seat_is_preserved() -> None:
     projected = AudienceProjector().project_events("game", [
         _event("TECHNICAL_ABSTAIN", {
