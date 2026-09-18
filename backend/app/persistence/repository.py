@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 T = TypeVar("T")
 _FOLDER_NAME_MAX = 50
 
@@ -286,6 +286,38 @@ def _normalize_folder_name(name: object) -> str:
     return stripped
 
 
+def _backfill_audience_death_player_seat(connection: sqlite3.Connection) -> None:
+    """Rename the legacy ``seat`` death key to the public ``player_seat``.
+
+    Early audience projections forwarded the raw pipeline payload, which keyed
+    the victim as ``seat``; viewers only understand ``player_seat``. Migration
+    v3 rewrites those rows in place.
+    """
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audience_events'"
+    ).fetchone()
+    if exists is None:
+        return
+    rows = connection.execute(
+        "SELECT game_id, seq, payload_json FROM audience_events WHERE event_type = 'death'"
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or "player_seat" in payload:
+            continue
+        seat = payload.pop("seat", None)
+        if seat is None:
+            continue
+        payload["player_seat"] = seat
+        connection.execute(
+            "UPDATE audience_events SET payload_json = ? WHERE game_id = ? AND seq = ?",
+            (_json(payload), row["game_id"], row["seq"]),
+        )
+
+
 class GameRepository:
     """Durable repository with one serialized writer and transactional reads."""
 
@@ -342,6 +374,13 @@ class GameRepository:
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (2, _now()),
+                )
+                current = 2
+            if current < 3:
+                _backfill_audience_death_player_seat(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (3, _now()),
                 )
 
     def _write(self, function: Callable[..., T], *args: object) -> T:
