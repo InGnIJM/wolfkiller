@@ -54,8 +54,21 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "SEER_THOUGHT": frozenset({"seat", "text"}),
     "EXILE_CANCELLED": frozenset({"target_seat", "round_number"}),
     "SELF_EXPLODE": frozenset({"seat", "target_seat", "round_number"}),
+    "SHERIFF_ELECTED": frozenset({"seat", "round_number", "reason"}),
+    "SHERIFF_BADGE": frozenset({"from_seat", "to_seat", "round_number"}),
+    "SHERIFF_RUN": frozenset({"seat", "choice", "round_number"}),
+    "SHERIFF_WITHDRAW": frozenset({"seat", "choice", "round_number"}),
+    "SHERIFF_VOTE": frozenset({"voter_seat", "target_seat", "kind", "round_number"}),
+    "SHERIFF_SIDE": frozenset({"seat", "side", "round_number"}),
     "PLAYER_REVEALED": frozenset({"seat_number", "role", "camp"}),
 }
+
+_SHERIFF_RUN_CHOICES = frozenset({"run", "pass"})
+_SHERIFF_WITHDRAW_CHOICES = frozenset({"stay", "withdraw"})
+_SHERIFF_VOTE_KINDS = frozenset({"vote", "pk"})
+_SHERIFF_SIDES = frozenset({
+    "sheriff_left", "sheriff_right", "death_left", "death_right",
+})
 
 _REASONING_EVENT_SCHEMA = frozenset(
     {"seat", "action_type", "target_seat", "reasoning", "thought"}
@@ -116,6 +129,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
         if req.role_counts is not None:
             game_id = await service.create_game(
                 role_counts=req.role_counts, reveal_on_death=req.reveal_on_death,
+                enable_sheriff=req.enable_sheriff,
                 model_assignments=assignments,
             )
         else:
@@ -126,6 +140,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 num_witches=req.num_witches,
                 num_hunters=req.num_hunters,
                 reveal_on_death=req.reveal_on_death,
+                enable_sheriff=req.enable_sheriff,
                 model_assignments=assignments,
             )
     except ValueError as error:
@@ -139,6 +154,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
         config={
             "role_counts": state.config.role_counts,
             "reveal_on_death": state.config.reveal_on_death,
+            "enable_sheriff": state.config.enable_sheriff,
             **{
                 field: state.config.role_counts.get(role_id, 0)
                 for field, role_id in _LEGACY_ROLE_COUNT_FIELDS.items()
@@ -259,6 +275,7 @@ async def get_game(game_id: str):
         phase=public_state["phase"],
         round_number=public_state["round_number"],
         reveal_on_death=public_state["reveal_on_death"],
+        enable_sheriff=public_state.get("enable_sheriff", False),
         players=public_state["players"],
         sheriff=public_state["sheriff"],
         speeches=public_state["speeches"],
@@ -495,6 +512,53 @@ def _public_day_verdict_event(
             return []
         return [{"event_type": "self_explode", "payload": {
             "round_number": round_number, "seat": seat, "target_seat": target}}]
+    if event_type == "SHERIFF_ELECTED":
+        seat = payload.get("seat")
+        reason = payload.get("reason")
+        if seat is not None and not _is_positive_int(seat):
+            return []
+        if not isinstance(reason, str) or not reason:
+            return []
+        return [{"event_type": "sheriff_elected", "payload": {
+            "round_number": round_number, "seat": seat, "reason": reason}}]
+    if event_type == "SHERIFF_BADGE":
+        from_seat = payload.get("from_seat"); to_seat = payload.get("to_seat")
+        if not _is_positive_int(from_seat):
+            return []
+        if to_seat is not None and not _is_positive_int(to_seat):
+            return []
+        return [{"event_type": "sheriff_badge", "payload": {
+            "round_number": round_number, "from_seat": from_seat, "to_seat": to_seat}}]
+    if event_type == "SHERIFF_RUN":
+        seat = payload.get("seat"); choice = payload.get("choice")
+        if not _is_positive_int(seat) or choice not in _SHERIFF_RUN_CHOICES:
+            return []
+        return [{"event_type": "sheriff_run", "payload": {
+            "round_number": round_number, "seat": seat, "choice": choice}}]
+    if event_type == "SHERIFF_WITHDRAW":
+        seat = payload.get("seat"); choice = payload.get("choice")
+        if not _is_positive_int(seat) or choice not in _SHERIFF_WITHDRAW_CHOICES:
+            return []
+        return [{"event_type": "sheriff_withdraw", "payload": {
+            "round_number": round_number, "seat": seat, "choice": choice}}]
+    if event_type == "SHERIFF_VOTE":
+        voter = payload.get("voter_seat"); target = payload.get("target_seat")
+        kind = payload.get("kind")
+        if (
+            not _is_positive_int(voter)
+            or (target is not None and not _is_positive_int(target))
+            or kind not in _SHERIFF_VOTE_KINDS
+        ):
+            return []
+        return [{"event_type": "sheriff_vote", "payload": {
+            "round_number": round_number, "voter_seat": voter,
+            "target_seat": target, "kind": kind}}]
+    if event_type == "SHERIFF_SIDE":
+        seat = payload.get("seat"); side = payload.get("side")
+        if not _is_positive_int(seat) or side not in _SHERIFF_SIDES:
+            return []
+        return [{"event_type": "sheriff_side", "payload": {
+            "round_number": round_number, "seat": seat, "side": side}}]
     seat = payload.get("seat_number"); role = payload.get("role"); camp = payload.get("camp")
     if (not _is_positive_int(seat) or not isinstance(role, str) or not role
             or camp not in _PUBLIC_WINNING_CAMPS):
@@ -539,7 +603,9 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         if not isinstance(payload, dict) or set(payload) != _REASONING_EVENT_SCHEMA:
             return []
         return _public_reasoning_event(event_type, payload, round_number)
-    if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "PLAYER_REVEALED"):
+    if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "PLAYER_REVEALED",
+                      "SHERIFF_ELECTED", "SHERIFF_BADGE",
+                      "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE"):
         if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
             return []
         return _public_day_verdict_event(event_type, payload, round_number)

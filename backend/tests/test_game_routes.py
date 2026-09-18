@@ -152,18 +152,19 @@ async def test_create_game_passes_dynamic_role_counts_and_returns_canonical_conf
     service.create_game = AsyncMock(return_value="game-123")
     service.get_game_state.return_value = SimpleNamespace(
         players={1: object(), 2: object(), 3: object(), 4: object()},
-        config=SimpleNamespace(role_counts=counts, reveal_on_death=False),
+        config=SimpleNamespace(role_counts=counts, reveal_on_death=False, enable_sheriff=False),
     )
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
     response = await game_routes.create_game(CreateGameRequest(role_counts=counts))
 
     service.create_game.assert_awaited_once_with(
-        role_counts=counts, reveal_on_death=False, model_assignments=None,
+        role_counts=counts, reveal_on_death=False, enable_sheriff=False, model_assignments=None,
     )
     assert response.config == {
         "role_counts": counts,
         "reveal_on_death": False,
+        "enable_sheriff": False,
         "num_werewolves": 1,
         "num_villagers": 3,
         "num_seers": 0,
@@ -186,7 +187,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
     service.create_game = AsyncMock(return_value="game-456")
     service.get_game_state.return_value = SimpleNamespace(
         players={seat: object() for seat in range(1, 6)},
-        config=SimpleNamespace(role_counts=counts, reveal_on_death=False),
+        config=SimpleNamespace(role_counts=counts, reveal_on_death=False, enable_sheriff=False),
     )
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
@@ -201,6 +202,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
         num_witches=0,
         num_hunters=0,
         reveal_on_death=False,
+        enable_sheriff=False,
         model_assignments=None,
     )
     assert response.config["role_counts"] == counts
@@ -1014,7 +1016,59 @@ def test_public_day_verdict_events_project_flip_explode_and_reveal():
         _day_record("WEREWOLF_KING_REASONING", {
             "seat": 1, "action_type": "explode", "target_seat": 4, "reasoning": "r", "thought": "t",
         }),
-    )[0]["payload"]["action_type"] == "werewolf_king_reasoning"
+    ) == [{"event_type": "night_thought", "payload": {
+        "round_number": 2, "seat": 1, "action_type": "werewolf_king_reasoning",
+        "target_seat": 4, "reasoning": "r"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_ELECTED", {"seat": 2, "round_number": 1, "reason": "auto"}),
+    ) == [{"event_type": "sheriff_elected", "payload": {
+        "round_number": 2, "seat": 2, "reason": "auto"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_ELECTED", {"seat": None, "round_number": 1, "reason": "none"}),
+    ) == [{"event_type": "sheriff_elected", "payload": {
+        "round_number": 2, "seat": None, "reason": "none"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_BADGE", {"from_seat": 3, "to_seat": 5, "round_number": 1}),
+    ) == [{"event_type": "sheriff_badge", "payload": {
+        "round_number": 2, "from_seat": 3, "to_seat": 5}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_BADGE", {"from_seat": 3, "to_seat": None, "round_number": 1}),
+    ) == [{"event_type": "sheriff_badge", "payload": {
+        "round_number": 2, "from_seat": 3, "to_seat": None}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_RUN", {"seat": 2, "choice": "run", "round_number": 1}),
+    ) == [{"event_type": "sheriff_run", "payload": {
+        "round_number": 2, "seat": 2, "choice": "run"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_RUN", {"seat": 4, "choice": "pass", "round_number": 1}),
+    ) == [{"event_type": "sheriff_run", "payload": {
+        "round_number": 2, "seat": 4, "choice": "pass"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_WITHDRAW", {"seat": 2, "choice": "withdraw", "round_number": 1}),
+    ) == [{"event_type": "sheriff_withdraw", "payload": {
+        "round_number": 2, "seat": 2, "choice": "withdraw"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_WITHDRAW", {"seat": 3, "choice": "stay", "round_number": 1}),
+    ) == [{"event_type": "sheriff_withdraw", "payload": {
+        "round_number": 2, "seat": 3, "choice": "stay"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_VOTE", {
+            "voter_seat": 4, "target_seat": 2, "kind": "vote", "round_number": 1,
+        }),
+    ) == [{"event_type": "sheriff_vote", "payload": {
+        "round_number": 2, "voter_seat": 4, "target_seat": 2, "kind": "vote"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_VOTE", {
+            "voter_seat": 1, "target_seat": None, "kind": "pk", "round_number": 1,
+        }),
+    ) == [{"event_type": "sheriff_vote", "payload": {
+        "round_number": 2, "voter_seat": 1, "target_seat": None, "kind": "pk"}}]
+    assert game_routes._public_operation_events(
+        _day_record("SHERIFF_SIDE", {
+            "seat": 2, "side": "sheriff_left", "round_number": 1,
+        }),
+    ) == [{"event_type": "sheriff_side", "payload": {
+        "round_number": 2, "seat": 2, "side": "sheriff_left"}}]
 
 
 @pytest.mark.parametrize(
@@ -1025,7 +1079,19 @@ def test_public_day_verdict_events_project_flip_explode_and_reveal():
         ("EXILE_CANCELLED", "not-a-dict"),
         ("SELF_EXPLODE", {"seat": 1, "target_seat": "4", "round_number": 2}),
         ("SELF_EXPLODE", {"seat": -1, "target_seat": 4, "round_number": 2}),
-        ("SELF_EXPLODE", {"seat": 1, "target_seat": 4}),
+        ("SHERIFF_ELECTED", {"seat": 0, "round_number": 2, "reason": "auto"}),
+        ("SHERIFF_ELECTED", {"seat": None, "round_number": 2, "reason": ""}),
+        ("SHERIFF_ELECTED", {"seat": 1, "round_number": 2, "reason": 1}),
+        ("SHERIFF_BADGE", {"from_seat": 0, "to_seat": None, "round_number": 2}),
+        ("SHERIFF_BADGE", {"from_seat": 1, "to_seat": 0, "round_number": 2}),
+        ("SHERIFF_RUN", {"seat": 0, "choice": "run", "round_number": 2}),
+        ("SHERIFF_RUN", {"seat": 1, "choice": "explode", "round_number": 2}),
+        ("SHERIFF_WITHDRAW", {"seat": 1, "choice": "run", "round_number": 2}),
+        ("SHERIFF_VOTE", {"voter_seat": 0, "target_seat": None, "kind": "vote", "round_number": 2}),
+        ("SHERIFF_VOTE", {"voter_seat": 1, "target_seat": 0, "kind": "pk", "round_number": 2}),
+        ("SHERIFF_VOTE", {"voter_seat": 1, "target_seat": None, "kind": "final", "round_number": 2}),
+        ("SHERIFF_SIDE", {"seat": 1, "side": "left", "round_number": 2}),
+        ("SHERIFF_SIDE", {"seat": 0, "side": "sheriff_left", "round_number": 2}),
         ("PLAYER_REVEALED", {"seat_number": 3, "role": "", "camp": "good"}),
         ("PLAYER_REVEALED", {"seat_number": 3, "role": 7, "camp": "good"}),
         ("PLAYER_REVEALED", {"seat_number": 3, "role": "x", "camp": "third_party"}),
@@ -1046,11 +1112,23 @@ def test_game_logs_response_accepts_day_verdict_events():
          "payload": {"round_number": 2, "seat": 1, "target_seat": 4}},
         {"event_type": "player_revealed", "timestamp": "2026-01-01T00:00:00Z",
          "payload": {"seat_number": 3, "role": "wolf-killer-idiot", "camp": "good"}},
+        {"event_type": "sheriff_elected", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 1, "seat": 2, "reason": "vote"}},
+        {"event_type": "sheriff_run", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 1, "seat": 2, "choice": "pass"}},
+        {"event_type": "sheriff_withdraw", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 1, "seat": 2, "choice": "stay"}},
+        {"event_type": "sheriff_vote", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 1, "voter_seat": 3, "target_seat": None, "kind": "pk"}},
+        {"event_type": "sheriff_side", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 1, "seat": 2, "side": "death_right"}},
         {"event_type": "death", "timestamp": "2026-01-01T00:00:00Z",
          "payload": {"player_seat": 1, "cause": "self_explode", "round_number": 2}},
     ])
     assert [event.event_type for event in response.events] == [
-        "exile_cancelled", "self_explode", "player_revealed", "death"]
+        "exile_cancelled", "self_explode", "player_revealed",
+        "sheriff_elected", "sheriff_run", "sheriff_withdraw", "sheriff_vote", "sheriff_side",
+        "death"]
 
 
 def test_narration_and_staged_night_events_project_to_public_events():
