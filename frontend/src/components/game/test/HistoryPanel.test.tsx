@@ -281,7 +281,7 @@ describe('HistoryPanel staged night event cards', () => {
         ...replayEventMeta,
         event_type: 'sheriff_side',
         payload: { round_number: 1, seat: 3, side: 'future_side' },
-      } as PublicReplayEvent,
+      } as unknown as PublicReplayEvent,
     ];
     useGameStore.setState({ timeline });
     render(<HistoryPanel onClose={vi.fn()} />);
