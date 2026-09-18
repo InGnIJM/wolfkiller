@@ -67,6 +67,25 @@ describe('incremental audience synchronization', () => {
     ]);
   });
 
+  it('normalizes a legacy death payload that keys the victim as seat', () => {
+    const store = useGameStore.getState();
+    const initial = snapshot('game-1');
+    initial.state.players[5] = { seat_number: 5, is_alive: true, is_sheriff: false };
+    store.loadAudienceSnapshot(initial);
+
+    store.loadAudienceHistory('game-1', [
+      event(1, 'death', { seat: 5, cause: 'hunter_shot', round_number: 3 }),
+    ]);
+
+    expect(useGameStore.getState().timeline[0].payload).toEqual({
+      seat: 5, cause: 'hunter_shot', round_number: 3, player_seat: 5,
+    });
+    expect(useGameStore.getState().players[5].is_alive).toBe(false);
+    expect(useGameStore.getState().deathHistory).toEqual([
+      { seat: 5, cause: 'hunter_shot', round_number: 3, player_seat: 5 },
+    ]);
+  });
+
   it('deduplicates events and holds out-of-order events until a gap is filled', () => {
     const store = useGameStore.getState();
     store.loadAudienceSnapshot(snapshot('game-1'));

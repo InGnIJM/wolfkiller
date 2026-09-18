@@ -166,19 +166,33 @@ function applyCurrentSheriffSnapshot(
   }
 }
 
+// Legacy audience projections keyed the victim as `seat`; the public death
+// contract is `player_seat`. Tolerate both shapes so old archives still render.
+function normalizeDeathSeat<T extends PublicReplayEvent>(event: T): T {
+  if (event.event_type !== 'death') return event;
+  const payload = event.payload as unknown as Record<string, unknown>;
+  if (payload.player_seat === undefined && typeof payload.seat === 'number') {
+    return {
+      ...event,
+      payload: { ...payload, player_seat: payload.seat },
+    } as unknown as T;
+  }
+  return event;
+}
+
 function buildTimeline(logs: GameLogs): PublicReplayEvent[] {
-  return logs.events.map((event) => ({ ...event }));
+  return logs.events.map((event) => normalizeDeathSeat({ ...event }));
 }
 
 function toReplayEvent(event: AudienceEvent): PublicReplayEvent {
-  return {
+  return normalizeDeathSeat({
     timestamp: (event.created_at ?? event.timestamp ?? new Date(0).toISOString()) as PublicReplayEvent['timestamp'],
     event_type: event.event_type,
     payload: event.payload,
     seq: event.seq,
     event_id: event.event_id,
     schema_version: event.schema_version,
-  } as PublicReplayEvent;
+  } as PublicReplayEvent);
 }
 
 function latestExecutionPayload(events: AudienceEvent[]): Record<string, unknown> | undefined {
@@ -306,6 +320,38 @@ function deriveState(
       case 'self_explode':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         currentSpeaker = null;
+        break;
+      case 'sheriff_elected': {
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        for (const [seat, player] of Object.entries(players)) {
+          players[Number(seat)] = { ...player, is_sheriff: false };
+        }
+        if (event.payload.seat != null) {
+          const elected = players[event.payload.seat];
+          if (elected) {
+            players[event.payload.seat] = { ...elected, is_sheriff: true };
+          }
+        }
+        break;
+      }
+      case 'sheriff_badge': {
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        for (const [seat, player] of Object.entries(players)) {
+          players[Number(seat)] = { ...player, is_sheriff: false };
+        }
+        if (event.payload.to_seat != null) {
+          const nextSheriff = players[event.payload.to_seat];
+          if (nextSheriff) {
+            players[event.payload.to_seat] = { ...nextSheriff, is_sheriff: true };
+          }
+        }
+        break;
+      }
+      case 'sheriff_run':
+      case 'sheriff_withdraw':
+      case 'sheriff_vote':
+      case 'sheriff_side':
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
       case 'narration':
         roundNumber = Math.max(roundNumber, event.payload.round_number);

@@ -58,6 +58,79 @@ describe('public replay state', () => {
     expect(useGameStore.getState().players[2].is_sheriff).toBe(true);
   });
 
+  it('derives sheriff badges from elected and badge events before the tail', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+      3: { seat_number: 3, is_alive: true, is_sheriff: true },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'sheriff_election', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 1, choice: 'run' } },
+        { ...replayEventMeta, event_type: 'sheriff_withdraw', payload: { round_number: 1, seat: 2, choice: 'stay' } },
+        { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 3, target_seat: 1, kind: 'vote' } },
+        { ...replayEventMeta, event_type: 'sheriff_elected', payload: { round_number: 1, seat: 1, reason: 'vote' } },
+        { ...replayEventMeta, event_type: 'sheriff_side', payload: { round_number: 1, seat: 1, side: 'sheriff_left' } },
+        { ...replayEventMeta, event_type: 'sheriff_badge', payload: { round_number: 2, from_seat: 1, to_seat: 3 } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 3, text: 'tail', round_number: 2 } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+
+    useGameStore.getState().seekTo(4);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(true);
+    expect(useGameStore.getState().players[3].is_sheriff).toBe(false);
+
+    useGameStore.getState().seekTo(6);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+    expect(useGameStore.getState().players[3].is_sheriff).toBe(true);
+
+    useGameStore.getState().seekTo(0);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+    expect(useGameStore.getState().players[3].is_sheriff).toBe(false);
+  });
+
+  it('clears the badge on lost elections, torn badges, and missing seats', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'sheriff_elected', payload: { round_number: 1, seat: 1, reason: 'vote' } },
+        { ...replayEventMeta, event_type: 'sheriff_badge', payload: { round_number: 2, from_seat: 1, to_seat: null } },
+        { ...replayEventMeta, event_type: 'sheriff_elected', payload: { round_number: 1, seat: null, reason: 'none' } },
+        { ...replayEventMeta, event_type: 'sheriff_elected', payload: { round_number: 1, seat: 9, reason: 'vote' } },
+        { ...replayEventMeta, event_type: 'sheriff_badge', payload: { round_number: 2, from_seat: 1, to_seat: 9 } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: 'tail', round_number: 2 } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+
+    useGameStore.getState().seekTo(0);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(true);
+
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+    expect(useGameStore.getState().players[2].is_sheriff).toBe(false);
+
+    useGameStore.getState().seekTo(2);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+
+    useGameStore.getState().seekTo(3);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+
+    useGameStore.getState().seekTo(4);
+    expect(useGameStore.getState().players[1].is_sheriff).toBe(false);
+  });
+
   it('keeps snapshot updates out of history and applies them at the tail', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
