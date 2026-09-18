@@ -270,6 +270,209 @@ describe('CenterDisplay event summary', () => {
     expect(screen.getByText('狼人阵营获胜')).toBeInTheDocument();
   });
 
+  it('summarizes sheriff election events and campaign report', () => {
+    renderCenter({
+      phase: 'sheriff_election',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_run',
+          payload: { round_number: 1, seat: 2, choice: 'run' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('2号上警')).toBeInTheDocument();
+    expect(screen.getByText('2号上警竞选')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'sheriff_election',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_run',
+          payload: { round_number: 1, seat: 4, choice: 'pass' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('4号过')).toBeInTheDocument();
+    expect(screen.getByText('4号选择不上警')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'sheriff_election',
+      roundNumber: 1,
+      timeline: [],
+      timelineIndex: -1,
+    });
+    expect(screen.getByText('警长竞选进行中……')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_elected',
+          payload: { round_number: 1, seat: 2, reason: 'vote' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getAllByText('2号当选警长').length).toBeGreaterThan(0);
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_elected',
+          payload: { round_number: 1, seat: null, reason: 'none' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getAllByText('警长竞选结束，警徽流失').length).toBeGreaterThan(0);
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_badge',
+          payload: { round_number: 2, from_seat: 2, to_seat: 5 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getAllByText('2号将警徽移交给5号').length).toBeGreaterThan(0);
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_badge',
+          payload: { round_number: 2, from_seat: 5, to_seat: null },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getAllByText('5号撕毁警徽').length).toBeGreaterThan(0);
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_withdraw',
+          payload: { round_number: 1, seat: 2, choice: 'withdraw' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('2号退水')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_withdraw',
+          payload: { round_number: 1, seat: 3, choice: 'stay' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('3号留下')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_vote',
+          payload: { round_number: 1, voter_seat: 4, target_seat: 2, kind: 'vote' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('4号投给 2号')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_vote',
+          payload: { round_number: 1, voter_seat: 1, target_seat: null, kind: 'pk' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('1号弃权')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_side',
+          payload: { round_number: 1, seat: 2, side: 'sheriff_right' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('2号选择警右发言')).toBeInTheDocument();
+  });
+
+  it('labels campaign explode deaths as 竞选自爆', () => {
+    renderCenter({
+      phase: 'sheriff_election',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'death',
+          payload: { player_seat: 1, cause: 'self_explode', round_number: 1 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('1号 竞选自爆')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'dawn',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'death',
+          payload: { player_seat: 1, cause: 'self_explode', round_number: 1 },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'sheriff_elected',
+          payload: { round_number: 1, seat: null, reason: 'explode' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('1号 竞选自爆')).toBeInTheDocument();
+  });
+
   it('renders no summary for phase events', () => {
     renderCenter({
       phase: 'night',

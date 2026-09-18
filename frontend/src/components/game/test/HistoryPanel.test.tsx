@@ -199,6 +199,110 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.queryByText(/7号翻牌免于出局/)).not.toBeInTheDocument();
   });
 
+  it('renders sheriff election, badge transfer, and campaign speech', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'speech',
+        payload: { player_seat: 2, text: '请投我', round_number: 1, phase: 'sheriff_election' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_elected',
+        payload: { round_number: 1, seat: 2, reason: 'vote' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_elected',
+        payload: { round_number: 1, seat: null, reason: 'none' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_badge',
+        payload: { round_number: 2, from_seat: 2, to_seat: 5 },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_badge',
+        payload: { round_number: 2, from_seat: 5, to_seat: null },
+      },
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+    expect(screen.getByText(/2号竞选发言/)).toBeVisible();
+    expect(screen.getByText(/2号当选警长 · 第1轮/)).toBeVisible();
+    expect(screen.getByText(/警长竞选结束，警徽流失 · 第1轮/)).toBeVisible();
+    expect(screen.getByText(/2号将警徽移交给5号 · 第2轮/)).toBeVisible();
+    expect(screen.getByText(/5号撕毁警徽 · 第2轮/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
+    expect(screen.getByText(/2号当选警长 · 第1轮/)).toBeVisible();
+    expect(screen.queryByText(/2号竞选发言/)).not.toBeInTheDocument();
+  });
+
+  it('renders sheriff run, withdraw, vote and speech-side events', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_run',
+        payload: { round_number: 1, seat: 2, choice: 'run' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_run',
+        payload: { round_number: 1, seat: 4, choice: 'pass' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_withdraw',
+        payload: { round_number: 1, seat: 2, choice: 'withdraw' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_withdraw',
+        payload: { round_number: 1, seat: 3, choice: 'stay' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_vote',
+        payload: { round_number: 1, voter_seat: 4, target_seat: 3, kind: 'vote' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_vote',
+        payload: { round_number: 1, voter_seat: 1, target_seat: null, kind: 'pk' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_side',
+        payload: { round_number: 1, seat: 3, side: 'death_left' },
+      },
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_side',
+        payload: { round_number: 1, seat: 3, side: 'future_side' },
+      } as PublicReplayEvent,
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+    expect(screen.getByText(/2号上警/)).toBeVisible();
+    expect(screen.getByText(/4号过/)).toBeVisible();
+    expect(screen.getByText(/2号退水/)).toBeVisible();
+    expect(screen.getByText(/3号留下/)).toBeVisible();
+    expect(screen.getByText(/4号 → 3号/)).toBeVisible();
+    expect(screen.getByText(/1号PK票 → 弃权/)).toBeVisible();
+    expect(screen.getByText(/3号选择死左发言/)).toBeVisible();
+    expect(screen.getByText(/3号选择future_side发言/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
+    expect(screen.getByText(/2号上警/)).toBeVisible();
+    expect(screen.queryByText(/3号选择死左发言/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /发言/ }));
+    expect(screen.getByText(/3号选择死左发言/)).toBeVisible();
+    expect(screen.queryByText(/2号上警/)).not.toBeInTheDocument();
+  });
+
   it('renders every public event fallback without hiding unfamiliar public data', () => {
     const timeline = [
       { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: '同一天', round_number: 1 } },
