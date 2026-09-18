@@ -966,6 +966,7 @@ class GameService:
         num_hunters: Optional[int] = None,
         role_counts: Optional[dict[str, int]] = None,
         reveal_on_death: bool = False,
+        enable_sheriff: bool = False,
         model_assignments: Optional[list[dict]] = None,
         *,
         game_id_override: str | None = None,
@@ -992,6 +993,7 @@ class GameService:
             num_witches=num_witches,
             num_hunters=num_hunters,
             reveal_on_death=reveal_on_death,
+            enable_sheriff=enable_sheriff,
         )
         if runtime_seed is not None and (type(runtime_seed) is not int or runtime_seed < 0):
             raise ValueError("runtime seed must be a non-negative integer")
@@ -1219,6 +1221,7 @@ class GameService:
                 {
                     "role_counts": dict(config.role_counts),
                     "reveal_on_death": config.reveal_on_death,
+                    "enable_sheriff": config.enable_sheriff,
                 },
                 model_snapshot=model_snapshot,
                 model_snapshot_version=2,
@@ -1242,6 +1245,7 @@ class GameService:
                     config={
                         "role_counts": dict(config.role_counts),
                         "reveal_on_death": config.reveal_on_death,
+                        "enable_sheriff": config.enable_sheriff,
                         "model_runtime_version": 1,
                         "model_runtime": frozen_model_runtime,
                         "prompt_digest": _prompt_digest(),
@@ -1404,6 +1408,11 @@ class GameService:
                 events = []
                 for index, event in enumerate(pending.raw_results[-1].events):
                     row = _plain_json(event)
+                    # Night deaths are announced once through the dedicated
+                    # ``night_death:{round}:{seat}`` checkpoints, so the
+                    # settlement commit must not project them a second time.
+                    if row.get("event_type") == "PLAYER_DIED":
+                        continue
                     payload = row.get("payload")
                     if isinstance(payload, dict):
                         payload.setdefault("round_number", engine.state.round_number)
@@ -1421,6 +1430,7 @@ class GameService:
                 "config": {
                     "role_counts": dict(engine.state.config.role_counts),
                     "reveal_on_death": engine.state.config.reveal_on_death,
+                    "enable_sheriff": engine.state.config.enable_sheriff,
                 },
             }
         elif (
@@ -1450,10 +1460,90 @@ class GameService:
                 "exiled_seat": exiled_seat,
                 "counts": dict(sorted(counts.items(), key=lambda item: int(item[0]))),
             }
-        elif label.startswith("speech:") or label.startswith("last_words:"):
+        elif label.startswith("speech:") or label.startswith("last_words:") or label.startswith("sheriff_campaign:") or label.startswith("sheriff_pk:"):
             event_type = "SPEECH_MADE"
             speech = engine.state.speeches[-1] if engine.state.speeches else None
-            payload = {} if speech is None else speech.to_dict()
+            payload = {} if speech is None else dict(speech.to_dict())
+            if speech is not None and (
+                label.startswith("sheriff_campaign:") or label.startswith("sheriff_pk:")
+            ):
+                payload["phase"] = "sheriff_election"
+        elif label.startswith("sheriff_run"):
+            parts = label.split(":")
+            event_type = "SHERIFF_RUN"
+            payload = {
+                "round_number": engine.state.round_number,
+                "seat": int(parts[2]) if len(parts) > 2 else 0,
+                "choice": parts[3] if len(parts) > 3 else "pass",
+            }
+        elif label.startswith("sheriff_withdraw"):
+            parts = label.split(":")
+            event_type = "SHERIFF_WITHDRAW"
+            payload = {
+                "round_number": engine.state.round_number,
+                "seat": int(parts[2]) if len(parts) > 2 else 0,
+                "choice": parts[3] if len(parts) > 3 else "stay",
+            }
+        elif label.startswith("sheriff_vote"):
+            parts = label.split(":")
+            raw_target = parts[4] if len(parts) > 4 else "none"
+            event_type = "SHERIFF_VOTE"
+            payload = {
+                "round_number": engine.state.round_number,
+                "voter_seat": int(parts[3]) if len(parts) > 3 else 0,
+                "target_seat": None if raw_target == "none" else int(raw_target),
+                "kind": parts[2] if len(parts) > 2 else "vote",
+            }
+        elif label.startswith("sheriff_side"):
+            parts = label.split(":")
+            event_type = "SHERIFF_SIDE"
+            payload = {
+                "round_number": engine.state.round_number,
+                "seat": int(parts[2]) if len(parts) > 2 else 0,
+                "side": parts[3] if len(parts) > 3 else "",
+            }
+        elif label.startswith("sheriff_elected:"):
+            parts = label.split(":")
+            raw_seat = parts[2] if len(parts) > 2 else "none"
+            event_type = "SHERIFF_ELECTED"
+            payload = {
+                "round_number": engine.state.round_number,
+                "seat": None if raw_seat == "none" else int(raw_seat),
+                "reason": parts[3] if len(parts) > 3 else "done",
+            }
+        elif label.startswith("sheriff_badge:"):
+            parts = label.split(":")
+            to_raw = parts[-1] if parts else "tear"
+            event_type = "SHERIFF_BADGE"
+            payload = {
+                "round_number": engine.state.round_number,
+                "from_seat": int(parts[2]) if len(parts) > 2 else 0,
+                "to_seat": None if to_raw == "tear" else int(to_raw),
+            }
+        elif label.startswith("sheriff_explode:"):
+            seat = int(label.split(":")[-1])
+            deaths = [item for item in engine.state.death_history if item.player_seat == seat]
+            death_payload = deaths[-1].to_dict() if deaths else {}
+            return [
+                {
+                    "event_id": f"domain:{event_id}:0",
+                    "event_type": "PLAYER_DIED",
+                    "payload": death_payload,
+                    "visibility": ["PUBLIC"],
+                    "schema_version": 1,
+                },
+                {
+                    "event_id": f"domain:{event_id}:1",
+                    "event_type": "SHERIFF_ELECTED",
+                    "payload": {
+                        "round_number": engine.state.round_number,
+                        "seat": None,
+                        "reason": "explode",
+                    },
+                    "visibility": ["PUBLIC"],
+                    "schema_version": 1,
+                },
+            ]
         elif label.startswith("vote_received:"):
             event_type = "VOTE_CAST"
             parts = label.split(":")

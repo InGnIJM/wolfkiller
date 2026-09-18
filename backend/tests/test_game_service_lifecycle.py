@@ -98,6 +98,34 @@ def test_night_point_checkpoint_promotes_scheduler_public_events() -> None:
     }]
 
 
+def test_night_point_checkpoint_defers_pipeline_deaths_to_night_death_steps() -> None:
+    state = GameState(game_id="game", config=GameConfig(
+        role_counts={"wolf-killer-villager": 1},
+    ))
+    state.round_number = 2
+    raw = PointResult((), (), ({
+        "event_type": "NIGHT_ACTION",
+        "payload": {"action_type": "werewolf_kill", "target_seat": 4, "round_number": 2},
+        "visibility": ("PUBLIC",),
+    }, {
+        "event_type": "PLAYER_DIED",
+        "payload": {"seat": 4, "cause": "wolf_kill", "round_number": 2},
+        "visibility": ("PUBLIC",),
+    }), "digest")
+    engine = SimpleNamespace(
+        game_id="game", state=state,
+        _pending_night_batch=SimpleNamespace(raw_results=(raw,)),
+    )
+
+    events = GameService._checkpoint_domain_events(
+        engine, "00000010:night_point:2:night_commit",
+    )
+
+    # Deaths are announced once, through the dedicated ``night_death`` steps,
+    # so the settlement commit must not project them a second time.
+    assert [event["event_type"] for event in events] == ["NIGHT_ACTION"]
+
+
 def test_vote_result_checkpoint_emits_tally_without_replaying_private_data() -> None:
     state = GameState(game_id="game", config=GameConfig(
         role_counts={"wolf-killer-villager": 3},
@@ -293,6 +321,7 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     )[0]
     assert initialized["event_type"] == "GAME_INITIALIZED"
     assert initialized["payload"]["config"]["reveal_on_death"] is True
+    assert initialized["payload"]["config"]["enable_sheriff"] is False
 
     state.phase = GamePhase.SPEECH
     phase = GameService._checkpoint_domain_events(
@@ -314,6 +343,71 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     assert GameService._checkpoint_domain_events(
         engine, "00000005:last_words:2:1",
     )[0]["payload"]["text"] == "hello"
+    campaign = GameService._checkpoint_domain_events(
+        engine, "00000005b:sheriff_campaign:2:1",
+    )[0]
+    assert campaign["payload"]["text"] == "hello"
+    assert campaign["payload"]["phase"] == "sheriff_election"
+    pk_speech = GameService._checkpoint_domain_events(
+        engine, "00000005b2:sheriff_pk:2:1",
+    )[0]
+    assert pk_speech["payload"]["phase"] == "sheriff_election"
+    run = GameService._checkpoint_domain_events(
+        engine, "00000005b3:sheriff_run:2:1:run",
+    )[0]
+    assert run["event_type"] == "SHERIFF_RUN"
+    assert run["payload"] == {"round_number": 2, "seat": 1, "choice": "run"}
+    withdrawn = GameService._checkpoint_domain_events(
+        engine, "00000005b4:sheriff_withdraw:2:3:stay",
+    )[0]
+    assert withdrawn["payload"] == {"round_number": 2, "seat": 3, "choice": "stay"}
+    sheriff_vote = GameService._checkpoint_domain_events(
+        engine, "00000005b5:sheriff_vote:2:pk:4:none",
+    )[0]
+    assert sheriff_vote["payload"] == {
+        "round_number": 2, "voter_seat": 4, "target_seat": None, "kind": "pk",
+    }
+    named_vote = GameService._checkpoint_domain_events(
+        engine, "00000005b5b:sheriff_vote:2:vote:4:3",
+    )[0]
+    assert named_vote["payload"]["target_seat"] == 3
+    assert named_vote["payload"]["kind"] == "vote"
+    side = GameService._checkpoint_domain_events(
+        engine, "00000005b6:sheriff_side:2:1:sheriff_left",
+    )[0]
+    assert side["payload"] == {
+        "round_number": 2, "seat": 1, "side": "sheriff_left",
+    }
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005b7:sheriff_run",
+    )[0]["payload"] == {"round_number": 2, "seat": 0, "choice": "pass"}
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005b8:sheriff_withdraw",
+    )[0]["payload"] == {"round_number": 2, "seat": 0, "choice": "stay"}
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005b9:sheriff_vote",
+    )[0]["payload"] == {
+        "round_number": 2, "voter_seat": 0, "target_seat": None, "kind": "vote",
+    }
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005ba:sheriff_side",
+    )[0]["payload"] == {"round_number": 2, "seat": 0, "side": ""}
+    elected = GameService._checkpoint_domain_events(
+        engine, "00000005c:sheriff_elected:2:3:auto",
+    )[0]
+    assert elected["event_type"] == "SHERIFF_ELECTED" and elected["payload"]["seat"] == 3
+    lost = GameService._checkpoint_domain_events(
+        engine, "00000005d:sheriff_elected:2:none:none",
+    )[0]
+    assert lost["payload"]["seat"] is None
+    badge = GameService._checkpoint_domain_events(
+        engine, "00000005e:sheriff_badge:2:1:4",
+    )[0]
+    assert badge["payload"] == {"round_number": 2, "from_seat": 1, "to_seat": 4}
+    torn = GameService._checkpoint_domain_events(
+        engine, "00000005f:sheriff_badge:2:1:tear",
+    )[0]
+    assert torn["payload"]["to_seat"] is None
 
     assert GameService._checkpoint_domain_events(
         engine, "00000006:vote_received:2:2",
@@ -330,6 +424,17 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     assert GameService._checkpoint_domain_events(
         engine, "00000009:night_death:2:1",
     )[0]["payload"]["cause"] == "wolf_kill"
+    explode = GameService._checkpoint_domain_events(
+        engine, "00000009b:sheriff_explode:2:1",
+    )
+    assert explode[0]["event_type"] == "PLAYER_DIED" and explode[0]["payload"]["cause"] == "wolf_kill"
+    assert explode[1]["event_type"] == "SHERIFF_ELECTED"
+    assert explode[1]["payload"] == {"round_number": 2, "seat": None, "reason": "explode"}
+    empty_explode = GameService._checkpoint_domain_events(
+        engine, "00000009c:sheriff_explode:2:9",
+    )
+    assert empty_explode[0]["payload"] == {}
+    assert empty_explode[1]["payload"]["reason"] == "explode"
 
     fallback = GameService._checkpoint_domain_events(
         engine, "00000010:exile_reaction:2:1",
