@@ -65,27 +65,30 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     poisoned = resolve_witch_action(context(), command("poison", 3))
     assert [item.kind for item in saved] == [
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
+        EffectKind.SET_PRIVATE_DATA,
         EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert [item.kind for item in poisoned] == [
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
         EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
-    assert [item.sort_key for item in saved] == [(1,), (2,), (3,), (4,)]
+    assert [item.sort_key for item in saved] == [(1,), (2,), (3,), (4,), (5,)]
     assert saved[0].target_seat == 1 and saved[1].target_seat == 2
     assert saved[1].payload == {"target": 2, "amount": 1, "source": "witch_antidote"}
+    assert saved[2].payload == {"target": 1, "key": "saved_seat", "value": 2}
+    assert saved[2].visibility == ("ACTOR",)
     assert poisoned[1].payload == {"target": 3, "amount": 1, "cause": "poison"}
     assert saved[0].preconditions["resource_equals"] == {"resource": "antidote", "value": 1}
-    assert saved[2].payload["event_type"] == "WITCH_REASONING"
-    assert saved[2].payload["payload"] == {
+    assert saved[3].payload["event_type"] == "WITCH_REASONING"
+    assert saved[3].payload["payload"] == {
         "seat": 1, "action_type": "save", "target_seat": 2,
         "reasoning": "ok", "thought": "决定使用解药救 2 号玩家：ok",
     }
     assert poisoned[2].payload["event_type"] == "WITCH_REASONING"
     assert poisoned[2].payload["payload"]["thought"] == "决定使用毒药毒杀 3 号玩家：ok"
-    assert saved[3].payload == {"event_type": "WITCH_SAVE", "payload": {"target_seat": 2}}
+    assert saved[4].payload == {"event_type": "WITCH_SAVE", "payload": {"target_seat": 2}}
     assert poisoned[3].payload == {"event_type": "WITCH_POISON", "payload": {"target_seat": 3}}
-    assert saved[3].visibility == poisoned[3].visibility == ("PUBLIC",)
+    assert saved[4].visibility == poisoned[3].visibility == ("PUBLIC",)
 
 
 def test_resolve_pass_emits_reasoning_event() -> None:
@@ -129,14 +132,15 @@ def test_resolver_adds_accept_and_registry_preserves_legacy() -> None:
     effects = ActionResolver().resolve_effects(context(), spec, spec.contracts[0], command("save", 2))
     assert [item.kind for item in effects] == [
         EffectKind.ACCEPT_ACTION, EffectKind.CONSUME_RESOURCE,
-        EffectKind.SUBMIT_PROTECTION, EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
+        EffectKind.SUBMIT_PROTECTION, EffectKind.SET_PRIVATE_DATA,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert spec is WITCH_SPEC and spec.initial_resources == {"antidote": 1, "poison": 1}
     assert builtin_registry.require("wolf-killer-witch").role_factory is not None
 
 
 def test_spec_declares_dynamic_wolf_kill_target() -> None:
-    assert WITCH_SPEC.initial_private_data == {"wolf_kill_target": None}
+    assert WITCH_SPEC.initial_private_data == {"wolf_kill_target": None, "saved_seat": None}
 
 
 def test_scheduler_save_projects_target_and_applies_resources_atomically() -> None:

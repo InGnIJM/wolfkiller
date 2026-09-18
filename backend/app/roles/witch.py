@@ -84,7 +84,7 @@ def resolve_witch_action(
         outcome_payload["cause"] = "poison"
     common = {"expected_revision": context.revision, "source_event_id": context.source_event_id}
     emit_type = "WITCH_SAVE" if command.action_type == "save" else "WITCH_POISON"
-    return (
+    effects = [
         GameEffect(derive_effect_id(context.action_key, 1), EffectKind.CONSUME_RESOURCE,
             context.action_key, target_seat=context.actor_seat,
             payload={"target": context.actor_seat, "resource": resource, "amount": 1},
@@ -92,12 +92,30 @@ def resolve_witch_action(
             sort_key=(1,), **common),
         GameEffect(derive_effect_id(context.action_key, 2), outcome, context.action_key,
             target_seat=target, payload=outcome_payload, sort_key=(2,), **common),
-        _witch_reasoning_effect(context, command, 3, **common),
-        GameEffect(derive_effect_id(context.action_key, 4), EffectKind.EMIT_EVENT,
+    ]
+    if command.action_type == "save":
+        effects.append(
+            GameEffect(
+                derive_effect_id(context.action_key, 3),
+                EffectKind.SET_PRIVATE_DATA,
+                context.action_key,
+                target_seat=context.actor_seat,
+                payload={"target": context.actor_seat, "key": "saved_seat", "value": target},
+                visibility=("ACTOR",),
+                sort_key=(3,),
+                **common,
+            )
+        )
+    idx = len(effects) + 1
+    effects.append(_witch_reasoning_effect(context, command, idx, **common))
+    idx += 1
+    effects.append(
+        GameEffect(derive_effect_id(context.action_key, idx), EffectKind.EMIT_EVENT,
             context.action_key,
             payload={"event_type": emit_type, "payload": {"target_seat": target}},
-            visibility=("PUBLIC",), sort_key=(4,), **common),
+            visibility=("PUBLIC",), sort_key=(idx,), **common),
     )
+    return tuple(effects)
 
 
 WITCH_SPEC = RoleSpec(
@@ -107,13 +125,19 @@ WITCH_SPEC = RoleSpec(
         contract_id="witch_action", schedule_point=SchedulePoint.NIGHT_WITCH_ACTION, order=20,
         action_types=("save", "poison", "pass"),
         actions_requiring_target=frozenset({"save", "poison"}), fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+        allowed_effects=frozenset({
+            EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
+            EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
+        }),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}), per_window_limit=1, per_round_limit=1,
         is_applicable=witch_applicable, validate=validate_witch_action, resolve=resolve_witch_action,
     ),),
     initial_resources={"antidote": 1, "poison": 1},
-    initial_private_data={"wolf_kill_target": None},
-    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+    initial_private_data={"wolf_kill_target": None, "saved_seat": None},
+    allowed_effects=frozenset({
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
+        EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
+    }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
         "The Witch has one antidote and one poison, each usable once per game. "

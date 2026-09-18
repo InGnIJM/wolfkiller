@@ -281,6 +281,10 @@ class PromptBuilder:
                 continue
             if isinstance(value, (list, tuple)) and not value:
                 continue
+            if key == "saved_seat":
+                if value is not None:
+                    lines.append(f"- 解药救治目标（银水）：{value}号玩家（你曾在夜间对该玩家使用了解药）")
+                continue
             lines.append(f"- {key}：{json.dumps(value, ensure_ascii=False, sort_keys=True)}")
         return "\n".join(lines) if len(lines) > 1 else "- 无额外私有事实。"
 
