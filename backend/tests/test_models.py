@@ -19,6 +19,7 @@ class TestGameConfig:
         }
         assert config.total_players == 9
         assert config.reveal_on_death is False
+        assert config.enable_sheriff is False
 
     def test_role_distribution(self):
         config = GameConfig()
@@ -239,6 +240,9 @@ class TestActionModels:
         s = SpeechRecord(player_seat=2, text="hello", round_number=1)
         d = s.to_dict()
         assert d["text"] == "hello"
+        assert "phase" not in d
+        campaign = SpeechRecord(player_seat=2, text="竞选", round_number=1, phase="sheriff_election")
+        assert campaign.to_dict()["phase"] == "sheriff_election"
 
     def test_death_report_to_dict(self):
         d = DeathReport(player_seat=5, cause="wolf_kill", round_number=1)

@@ -310,6 +310,7 @@ async def test_create_game_route_passes_assignments_and_returns_snapshot(monkeyp
     service.create_game.assert_awaited_once_with(
         role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 1},
         reveal_on_death=False,
+        enable_sheriff=False,
         model_assignments=[{"config_id": None, "count": 2}],
     )
     assert [entry.model_dump() for entry in response.model_snapshot] == expected_snapshot

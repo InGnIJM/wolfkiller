@@ -123,12 +123,13 @@ def _has_valid_config(config: object) -> bool:
     if not isinstance(config, dict) or not config:
         return False
     if "role_counts" in config:
-        allowed = {"role_counts", "reveal_on_death"}
+        allowed = {"role_counts", "reveal_on_death", "enable_sheriff"}
         return (
             set(config) <= allowed
             and "role_counts" in config
             and _is_valid_role_counts(config["role_counts"])
             and isinstance(config.get("reveal_on_death", False), bool)
+            and isinstance(config.get("enable_sheriff", False), bool)
         )
     return (
         set(config) == _LEGACY_ROLE_COUNT_KEYS
@@ -436,6 +437,7 @@ class GameManifest:
         }
         players: dict = {}
         reveal_on_death: bool = False
+        enable_sheriff: bool = False
 
         for line in lines:
             try:
@@ -467,6 +469,9 @@ class GameManifest:
                 flag = data.get("reveal_on_death")
                 if isinstance(flag, bool):
                     reveal_on_death = flag
+                sheriff_flag = data.get("enable_sheriff")
+                if isinstance(sheriff_flag, bool):
+                    enable_sheriff = sheriff_flag
                 continue
 
             if op == "role_init":
@@ -523,6 +528,7 @@ class GameManifest:
 
         if isinstance(meta.get("config"), dict) and meta["config"].get("role_counts"):
             meta["config"]["reveal_on_death"] = reveal_on_death
+            meta["config"]["enable_sheriff"] = enable_sheriff
         return meta
 
     def _persist(self) -> None:
