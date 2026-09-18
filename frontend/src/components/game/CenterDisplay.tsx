@@ -49,6 +49,30 @@ const NIGHT_ACTION_LABELS: Record<string, string> = {
   guard_protect: '守卫守护',
 };
 
+const SHERIFF_SIDE_LABELS: Record<string, string> = {
+  sheriff_left: '警左',
+  sheriff_right: '警右',
+  death_left: '死左',
+  death_right: '死右',
+};
+
+function deathCauseLabel(
+  event: Extract<PublicReplayEvent, { event_type: 'death' }>,
+  phase: string,
+  events: PublicReplayEvent[],
+  index: number,
+): string {
+  if (event.payload.cause !== 'self_explode') {
+    return CAUSE_LABELS[event.payload.cause] ?? '未明';
+  }
+  if (phase === 'sheriff_election') return '竞选自爆';
+  const nearby = [events[index - 1], events[index + 1]];
+  if (nearby.some((item) => item?.event_type === 'sheriff_elected' && item.payload.reason === 'explode')) {
+    return '竞选自爆';
+  }
+  return CAUSE_LABELS.self_explode;
+}
+
 // 中央面板内容全部使用容器查询单位（cqh 相对舞台高度 / cqi 相对面板宽度），
 // 舞台变小时间距与字号同步收缩，避免固有高度挤占座位通道
 const panelSx = {
@@ -117,18 +141,34 @@ function buildReport(phase: string, events: PublicReplayEvent[]): string {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.event_type === 'death') {
-      return `${e.payload.player_seat}号在夜色中出局，死因：${CAUSE_LABELS[e.payload.cause] ?? '未明'}`;
+      return `${e.payload.player_seat}号在夜色中出局，死因：${deathCauseLabel(e, phase, events, i)}`;
     }
     if (e.event_type === 'vote_result') {
       return e.payload.exiled_seat === null
         ? '公投平票，无人被放逐'
         : `${e.payload.exiled_seat}号被公投放逐，尘土落定`;
     }
+    if (e.event_type === 'sheriff_elected') {
+      return e.payload.seat == null
+        ? '警长竞选结束，警徽流失'
+        : `${e.payload.seat}号当选警长`;
+    }
+    if (e.event_type === 'sheriff_badge') {
+      return e.payload.to_seat == null
+        ? `${e.payload.from_seat}号撕毁警徽`
+        : `${e.payload.from_seat}号将警徽移交给${e.payload.to_seat}号`;
+    }
+    if (e.event_type === 'sheriff_run') {
+      return e.payload.choice === 'run'
+        ? `${e.payload.seat}号上警竞选`
+        : `${e.payload.seat}号选择不上警`;
+    }
     if (e.event_type === 'night_action' && e.payload.action_type === 'werewolf_kill') {
       return `狼人的刀锋昨夜指向 ${e.payload.target_seat}号`;
     }
   }
   if (phase === 'night' || phase === 'dawn') return '长夜未尽，狼人已在暗中谋划……';
+  if (phase === 'sheriff_election') return '警长竞选进行中……';
   if (phase === 'speech') return '众人各执一词，真伪难辨……';
   if (phase === 'vote_casting' || phase === 'vote_resolution') return '公投在即，人心浮动……';
   return '村中灯火未熄，只待天明';
@@ -247,7 +287,17 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
 }
 
 // 阶段页下方的一句话事件摘要（完整内容见底部活动栏 / 右侧编年史）
-function EventSummary({ entry }: { entry: PublicReplayEvent }) {
+function EventSummary({
+  entry,
+  phase,
+  events,
+  index,
+}: {
+  entry: PublicReplayEvent;
+  phase: string;
+  events: PublicReplayEvent[];
+  index: number;
+}) {
   let text: string;
   let tone = '#E8C887';
 
@@ -255,7 +305,9 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
     case 'speech':
       text = entry.payload.phase === 'last_words'
         ? `${entry.payload.player_seat}号遗言`
-        : `${entry.payload.player_seat}号正在发言`;
+        : entry.payload.phase === 'sheriff_election'
+          ? `${entry.payload.player_seat}号竞选发言`
+          : `${entry.payload.player_seat}号正在发言`;
       break;
     case 'witch_thought':
     case 'seer_thought':
@@ -276,7 +328,7 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
       tone = '#9DC8E8';
       break;
     case 'death':
-      text = `${entry.payload.player_seat}号 ${CAUSE_LABELS[entry.payload.cause] ?? '出局'}`;
+      text = `${entry.payload.player_seat}号 ${deathCauseLabel(entry, phase, events, index)}`;
       tone = '#F4B3B6';
       break;
     case 'vote':
@@ -297,6 +349,34 @@ function EventSummary({ entry }: { entry: PublicReplayEvent }) {
     case 'self_explode':
       text = `${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
+      break;
+    case 'sheriff_elected':
+      text = entry.payload.seat == null
+        ? '警长竞选结束，警徽流失'
+        : `${entry.payload.seat}号当选警长`;
+      break;
+    case 'sheriff_badge':
+      text = entry.payload.to_seat == null
+        ? `${entry.payload.from_seat}号撕毁警徽`
+        : `${entry.payload.from_seat}号将警徽移交给${entry.payload.to_seat}号`;
+      break;
+    case 'sheriff_run':
+      text = entry.payload.choice === 'run'
+        ? `${entry.payload.seat}号上警`
+        : `${entry.payload.seat}号过`;
+      break;
+    case 'sheriff_withdraw':
+      text = entry.payload.choice === 'withdraw'
+        ? `${entry.payload.seat}号退水`
+        : `${entry.payload.seat}号留下`;
+      break;
+    case 'sheriff_vote':
+      text = entry.payload.target_seat == null
+        ? `${entry.payload.voter_seat}号弃权`
+        : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`;
+      break;
+    case 'sheriff_side':
+      text = `${entry.payload.seat}号选择${SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side}发言`;
       break;
     case 'narration':
       text = entry.payload.title;
@@ -364,7 +444,15 @@ export default function CenterDisplay() {
   return (
     <Box sx={{ width: '100%', textAlign: 'center' }}>
       <PhaseContent phase={phase} roundNumber={roundNumber} />
-      {entry && <EventSummary key={`summary-${timelineIndex}`} entry={entry} />}
+      {entry && (
+        <EventSummary
+          key={`summary-${timelineIndex}`}
+          entry={entry}
+          phase={phase}
+          events={timeline}
+          index={timelineIndex}
+        />
+      )}
     </Box>
   );
 }

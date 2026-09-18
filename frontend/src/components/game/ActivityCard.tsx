@@ -29,6 +29,13 @@ const CAUSE_LABELS: Record<string, string> = {
   self_explode: '白狼王自爆',
 };
 
+const SHERIFF_SIDE_LABELS: Record<string, string> = {
+  sheriff_left: '警左',
+  sheriff_right: '警右',
+  death_left: '死左',
+  death_right: '死右',
+};
+
 function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
@@ -132,7 +139,21 @@ function SpeechView({
   timestamp: string;
   durationSec: number | null;
 }) {
-  const isLastWords = payload.phase === 'last_words';
+  const kind = payload.phase === 'last_words'
+    ? '遗言'
+    : payload.phase === 'sheriff_election'
+      ? '竞选发言'
+      : '正在发言';
+  const metaKind = payload.phase === 'last_words'
+    ? '遗言'
+    : payload.phase === 'sheriff_election'
+      ? '竞选发言'
+      : '发言';
+  const tag = payload.phase === 'last_words'
+    ? 'LAST WORDS'
+    : payload.phase === 'sheriff_election'
+      ? 'CAMPAIGN'
+      : 'LIVE · 第' + String(payload.round_number) + '轮';
   return (
     <ActivityFrame tone="#E5484D">
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
@@ -142,10 +163,10 @@ function SpeechView({
             {payload.player_seat}号
           </Typography>
           <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
-            {isLastWords ? '遗言' : '正在发言'}
+            {kind}
           </Typography>
         </Box>
-        <LiveTag label={isLastWords ? 'LAST WORDS' : 'LIVE · 第' + String(payload.round_number) + '轮'} />
+        <LiveTag label={tag} />
       </Box>
       <Typography
         variant="body2"
@@ -164,7 +185,7 @@ function SpeechView({
       </Typography>
       <MetaRow
         roundNumber={payload.round_number}
-        kind={isLastWords ? '遗言' : '发言'}
+        kind={metaKind}
         timestamp={timestamp}
         durationSec={durationSec}
       />
@@ -312,6 +333,15 @@ function ChatView({
 }
 
 function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'], { player_seat: number; cause: string; round_number: number }> }) {
+  const { timeline, timelineIndex, phase } = useGameStore.getState();
+  const explodeLabel = payload.cause === 'self_explode' && (
+    phase === 'sheriff_election'
+    || [timeline[timelineIndex - 1], timeline[timelineIndex + 1]].some(
+      (event) => event?.event_type === 'sheriff_elected' && event.payload.reason === 'explode',
+    )
+  )
+    ? '竞选自爆'
+    : (CAUSE_LABELS[payload.cause] ?? payload.cause);
   return (
     <ActivityFrame tone="#F6686C">
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -336,7 +366,7 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
             {payload.player_seat}号玩家出局
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-            {CAUSE_LABELS[payload.cause] ?? payload.cause} · 第{payload.round_number}轮
+            {explodeLabel} · 第{payload.round_number}轮
           </Typography>
         </Box>
         <LiveTag label="DEATH" />
@@ -392,14 +422,34 @@ function DayVerdictView({
 }: {
   title: string;
   subtitle: string;
-  seat: number;
+  seat?: number | null;
   tone: string;
   tag: string;
 }) {
   return (
     <ActivityFrame tone={tone}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-        <SeatAvatar seat={seat} />
+        {seat != null ? (
+          <SeatAvatar seat={seat} />
+        ) : (
+          <Box
+            aria-hidden="true"
+            sx={{
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              color: 'background.paper',
+              bgcolor: tone,
+              flexShrink: 0,
+              fontSize: 16,
+              fontWeight: 800,
+            }}
+          >
+            警
+          </Box>
+        )}
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: tone }}>
             {title}
@@ -494,6 +544,70 @@ export default function ActivityCard() {
           subtitle={`本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
           tone="#F6686C"
           tag="SELF EXPLODE"
+        />
+      );
+    case 'sheriff_elected':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={entry.payload.seat == null ? '警长竞选结束，警徽流失' : `${entry.payload.seat}号当选警长`}
+          subtitle={`第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="SHERIFF"
+        />
+      );
+    case 'sheriff_badge':
+      return (
+        <DayVerdictView
+          seat={entry.payload.to_seat ?? entry.payload.from_seat}
+          title={entry.payload.to_seat == null
+            ? `${entry.payload.from_seat}号撕毁警徽`
+            : `${entry.payload.from_seat}号将警徽移交给${entry.payload.to_seat}号`}
+          subtitle={`第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="BADGE"
+        />
+      );
+    case 'sheriff_run':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={entry.payload.choice === 'run' ? `${entry.payload.seat}号上警` : `${entry.payload.seat}号过`}
+          subtitle={`警长竞选 · 第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="RUN"
+        />
+      );
+    case 'sheriff_withdraw':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={entry.payload.choice === 'withdraw' ? `${entry.payload.seat}号退水` : `${entry.payload.seat}号留下`}
+          subtitle={`警长竞选 · 第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="WITHDRAW"
+        />
+      );
+    case 'sheriff_vote':
+      return (
+        <DayVerdictView
+          seat={entry.payload.voter_seat}
+          title={entry.payload.target_seat == null
+            ? `${entry.payload.voter_seat}号弃权`
+            : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`}
+          subtitle={`${entry.payload.kind === 'pk' ? 'PK票' : '警票'} · 第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag={entry.payload.kind === 'pk' ? 'PK VOTE' : 'SHERIFF VOTE'}
+        />
+      );
+    case 'sheriff_side':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={`${entry.payload.seat}号选择${SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side}发言`}
+          subtitle={`第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="SIDE"
         />
       );
     default:

@@ -75,6 +75,12 @@ const EVENT_TAGS: Record<string, string> = {
   vote_result: '放逐',
   exile_cancelled: '翻牌',
   self_explode: '自爆',
+  sheriff_elected: '警长',
+  sheriff_badge: '警徽',
+  sheriff_run: '上警',
+  sheriff_withdraw: '退水',
+  sheriff_vote: '警票',
+  sheriff_side: '警序',
   night_action: '夜间',
   narration: '旁白',
   wolf_chat_message: '狼聊',
@@ -85,6 +91,13 @@ const EVENT_TAGS: Record<string, string> = {
   death: '死亡',
   phase: '阶段',
   winner: '结局',
+};
+
+const SHERIFF_SIDE_LABELS: Record<string, string> = {
+  sheriff_left: '警左',
+  sheriff_right: '警右',
+  death_left: '死左',
+  death_right: '死右',
 };
 
 function eventTone(event: PublicReplayEvent): string {
@@ -251,7 +264,9 @@ function EventCard({
           <Typography variant="caption" sx={{ fontWeight: 500 }}>
             {event.payload.phase === 'last_words'
               ? `${event.payload.player_seat}号遗言`
-              : `${event.payload.player_seat}号发言`} · 第{event.payload.round_number}轮
+              : event.payload.phase === 'sheriff_election'
+                ? `${event.payload.player_seat}号竞选发言`
+                : `${event.payload.player_seat}号发言`} · 第{event.payload.round_number}轮
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.text}
@@ -291,6 +306,58 @@ function EventCard({
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
           {event.payload.seat}号自爆带走{event.payload.target_seat}号，本日发言与投票取消 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'sheriff_elected':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat == null
+            ? `警长竞选结束，警徽流失 · 第${event.payload.round_number}轮`
+            : `${event.payload.seat}号当选警长 · 第${event.payload.round_number}轮`}
+        </Typography>
+      );
+      break;
+    case 'sheriff_badge':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {event.payload.to_seat == null
+            ? `${event.payload.from_seat}号撕毁警徽 · 第${event.payload.round_number}轮`
+            : `${event.payload.from_seat}号将警徽移交给${event.payload.to_seat}号 · 第${event.payload.round_number}轮`}
+        </Typography>
+      );
+      break;
+    case 'sheriff_run':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {event.payload.choice === 'run'
+            ? `${event.payload.seat}号上警 · 第${event.payload.round_number}轮`
+            : `${event.payload.seat}号过 · 第${event.payload.round_number}轮`}
+        </Typography>
+      );
+      break;
+    case 'sheriff_withdraw':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {event.payload.choice === 'withdraw'
+            ? `${event.payload.seat}号退水 · 第${event.payload.round_number}轮`
+            : `${event.payload.seat}号留下 · 第${event.payload.round_number}轮`}
+        </Typography>
+      );
+      break;
+    case 'sheriff_vote':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {`${event.payload.voter_seat}号${event.payload.kind === 'pk' ? 'PK票' : ''} → ${
+            event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`
+          } · 第${event.payload.round_number}轮`}
+        </Typography>
+      );
+      break;
+    case 'sheriff_side':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {`${event.payload.seat}号选择${SHERIFF_SIDE_LABELS[event.payload.side] ?? event.payload.side}发言 · 第${event.payload.round_number}轮`}
         </Typography>
       );
       break;
@@ -458,9 +525,18 @@ export default function HistoryPanel({ onClose }: Props) {
   const [memoriesError, setMemoriesError] = useState<string | null>(null);
   const { timeline, seekTo, pause, gameId } = useGameStore();
   const indexedEvents = timeline.map((event, index) => ({ event, index })).reverse();
-  const speeches = indexedEvents.filter(({ event }) => event.event_type === 'speech');
+  const speeches = indexedEvents.filter(({ event }) => (
+    event.event_type === 'speech' || event.event_type === 'sheriff_side'
+  ));
   const votes = indexedEvents.filter(({ event }) => (
-    event.event_type === 'vote' || event.event_type === 'vote_result' || event.event_type === 'exile_cancelled'
+    event.event_type === 'vote'
+    || event.event_type === 'vote_result'
+    || event.event_type === 'exile_cancelled'
+    || event.event_type === 'sheriff_elected'
+    || event.event_type === 'sheriff_badge'
+    || event.event_type === 'sheriff_run'
+    || event.event_type === 'sheriff_withdraw'
+    || event.event_type === 'sheriff_vote'
   ));
   const deaths = indexedEvents.filter(({ event }) => event.event_type === 'death' || event.event_type === 'self_explode');
   const nightActions = indexedEvents.filter(({ event }) => (
