@@ -53,13 +53,17 @@ class SpeechRecord:
     player_seat: int
     text: str
     round_number: int
+    phase: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "player_seat": self.player_seat,
             "text": self.text,
             "round_number": self.round_number,
         }
+        if self.phase is not None:
+            payload["phase"] = self.phase
+        return payload
 
 
 @dataclass

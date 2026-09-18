@@ -38,10 +38,22 @@ def _default_role_counts() -> dict[str, int]:
     }
 
 
+@dataclass
+class SheriffOfficeState:
+    candidates: set[int] = field(default_factory=set)
+    active: set[int] = field(default_factory=set)
+    pk_seats: set[int] = field(default_factory=set)
+    badge_destroyed: bool = False
+    skip_remaining_day: bool = False
+    speech_side: Optional[str] = None
+    step: str = ""
+
+
 @dataclass(init=False)
 class GameConfig:
     role_counts: dict[str, int] = field(default_factory=_default_role_counts)
     reveal_on_death: bool = False
+    enable_sheriff: bool = False
 
     def __init__(
         self,
@@ -53,6 +65,7 @@ class GameConfig:
         num_witches: Optional[int] = None,
         num_hunters: Optional[int] = None,
         reveal_on_death: bool = False,
+        enable_sheriff: bool = False,
     ) -> None:
         legacy_counts = (
             ("wolf-killer-werewolf", num_werewolves, 3),
@@ -75,6 +88,7 @@ class GameConfig:
         else:
             self.role_counts = _default_role_counts()
         self.reveal_on_death = bool(reveal_on_death)
+        self.enable_sheriff = bool(enable_sheriff)
 
     @property
     def total_players(self) -> int:
@@ -129,6 +143,7 @@ class GameState:
     win_result: Optional[dict] = None
     last_wolf_kill_target: Optional[int] = None
     sheriff_election_complete: bool = False
+    sheriff_office: SheriffOfficeState = field(default_factory=SheriffOfficeState)
     speaking_order: list[int] = field(default_factory=list)  # 本轮发言顺序
     current_speaker: Optional[int] = None  # 当前正在发言的玩家
     # ── Pipeline snapshot versioning ─────────────────────────────
@@ -157,6 +172,7 @@ class GameState:
             "phase": self.phase.value,
             "round_number": self.round_number,
             "reveal_on_death": self.config.reveal_on_death,
+            "enable_sheriff": self.config.enable_sheriff,
             "players": {
                 s: {
                     "seat_number": p.seat_number,

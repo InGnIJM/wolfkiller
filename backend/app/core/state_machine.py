@@ -15,6 +15,8 @@ class GameEvent(str, Enum):
     VOTE_RESOLVED = "vote_resolved"
     WIN_CHECKED = "win_checked"
     WEREWOLF_EXPLODED = "werewolf_exploded"
+    SHERIFF_ELECTION_START = "sheriff_election_start"
+    SHERIFF_ELECTION_COMPLETE = "sheriff_election_complete"
     GAME_OVER = "game_over"
 
 
@@ -29,7 +31,10 @@ class GameStateMachine:
         (GamePhase.WAITING, GameEvent.START, GamePhase.ROLE_DEAL),
         (GamePhase.ROLE_DEAL, GameEvent.ROLES_ASSIGNED, GamePhase.NIGHT),
         (GamePhase.NIGHT, GameEvent.NIGHT_ACTIONS_COMPLETE, GamePhase.DAWN),
+        (GamePhase.NIGHT, GameEvent.SHERIFF_ELECTION_START, GamePhase.SHERIFF_ELECTION),
         (GamePhase.NIGHT, GameEvent.GAME_OVER, GamePhase.GAME_OVER),
+        (GamePhase.SHERIFF_ELECTION, GameEvent.SHERIFF_ELECTION_COMPLETE, GamePhase.DAWN),
+        (GamePhase.SHERIFF_ELECTION, GameEvent.GAME_OVER, GamePhase.GAME_OVER),
         (GamePhase.DAWN, GameEvent.DAWN_COMPLETE, GamePhase.LAST_WORDS),
 
         # Day cycle
