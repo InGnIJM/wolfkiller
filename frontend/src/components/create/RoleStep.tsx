@@ -16,11 +16,14 @@ interface Props {
   onRolesChange: (roles: RoleCatalogItem[]) => void;
   revealOnDeath: boolean;
   onRevealOnDeathChange: (value: boolean) => void;
+  enableSheriff: boolean;
+  onEnableSheriffChange: (value: boolean) => void;
 }
 
 export default function RoleStep({
   roleCounts, onRoleCountsChange, onConstraintsChange, onRolesChange,
   revealOnDeath, onRevealOnDeathChange,
+  enableSheriff, onEnableSheriffChange,
 }: Props) {
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
@@ -42,6 +45,7 @@ export default function RoleStep({
         if (nine && Object.keys(roleCounts).length === 0) {
           setSelectedPresetId(nine.id);
           onRoleCountsChange({ ...nine.role_counts });
+          onEnableSheriffChange(Boolean(nine.enable_sheriff));
         }
       })
       .catch((error) => {
@@ -62,6 +66,7 @@ export default function RoleStep({
   const selectPreset = (preset: GamePreset) => {
     setSelectedPresetId(preset.id);
     onRoleCountsChange({ ...preset.role_counts });
+    onEnableSheriffChange(Boolean(preset.enable_sheriff));
   };
 
   const canIncrement = (role: RoleCatalogItem) => {
@@ -182,6 +187,19 @@ export default function RoleStep({
         />
         <Typography variant="body2" color="text.secondary">
           开启后，夜晚死亡、放逐、猎人开枪带走的玩家都会当场亮明身份，所有 Agent 与观众都能看到。
+        </Typography>
+        <FormControlLabel
+          control={(
+            <Checkbox
+              checked={enableSheriff}
+              onChange={(event) => onEnableSheriffChange(event.target.checked)}
+            />
+          )}
+          label="警长：竞选、1.5 票、警徽流"
+          slotProps={{ typography: { variant: 'body2' } }}
+        />
+        <Typography variant="body2" color="text.secondary">
+          九人、十人预设默认关闭；十二人预设建议开启。关闭时提示词不出现警长，流程也不进入竞选。
         </Typography>
       </Box>
     </Box>

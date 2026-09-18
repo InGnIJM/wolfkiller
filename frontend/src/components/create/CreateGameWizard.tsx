@@ -19,6 +19,7 @@ export default function CreateGameWizard() {
   const [modelAssignments, setModelAssignments] = useState<ModelAssignment[]>([]);
   const [modelAssignmentsInitialized, setModelAssignmentsInitialized] = useState(false);
   const [revealOnDeath, setRevealOnDeath] = useState(false);
+  const [enableSheriff, setEnableSheriff] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const modelConfigs = useModelConfigStore((state) => state.configs);
@@ -69,6 +70,7 @@ export default function CreateGameWizard() {
       const res = await createGame({
         role_counts: roleCounts,
         reveal_on_death: revealOnDeath,
+        enable_sheriff: enableSheriff,
         model_assignments: modelAssignments.filter((assignment) => assignment.count > 0),
       });
       navigate(`/game/${res.game_id}`);
@@ -96,6 +98,8 @@ export default function CreateGameWizard() {
           onRolesChange={setRoles}
           revealOnDeath={revealOnDeath}
           onRevealOnDeathChange={setRevealOnDeath}
+          enableSheriff={enableSheriff}
+          onEnableSheriffChange={setEnableSheriff}
         />
       )}
       {step === 1 && (

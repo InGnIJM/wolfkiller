@@ -42,10 +42,10 @@ const ROLES = [
 ];
 
 const PRESETS: GamePreset[] = [
-  { id: 'nine-player-standard', name: '九人标准场', description: '3狼 3民 1预言家 1女巫 1猎人', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1 } },
-  { id: 'ten-player-standard', name: '十人标准场', description: '含守卫', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 } },
-  { id: 'twelve-player-idiot', name: '十二人预女猎白', description: '4狼 4民 预女猎白痴', role_counts: { 'wolf-killer-werewolf': 4, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-idiot': 1 } },
-  { id: 'twelve-player-wolf-king', name: '十二人白狼王', description: '3狼 1白狼王 4民 预女猎守', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-werewolf-king': 1, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 } },
+  { id: 'nine-player-standard', name: '九人标准场', description: '3狼 3民 1预言家 1女巫 1猎人', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1 }, enable_sheriff: false },
+  { id: 'ten-player-standard', name: '十人标准场', description: '含守卫', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 }, enable_sheriff: false },
+  { id: 'twelve-player-idiot', name: '十二人预女猎白', description: '4狼 4民 预女猎白痴', role_counts: { 'wolf-killer-werewolf': 4, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-idiot': 1 }, enable_sheriff: true },
+  { id: 'twelve-player-wolf-king', name: '十二人白狼王', description: '3狼 1白狼王 4民 预女猎守', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-werewolf-king': 1, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 }, enable_sheriff: true },
 ];
 
 const CONSTRAINTS = { min_players: 4, max_players: 12, min_werewolves: 1, min_good: 1 };
@@ -91,6 +91,13 @@ describe('CreateGameWizard step 1', () => {
     await renderStep1();
     expect(screen.getByText(/共 9 人/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '下一步' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: /警长/ })).not.toBeChecked();
+  });
+
+  it('turns sheriff on when selecting a twelve-player preset', async () => {
+    await renderStep1();
+    fireEvent.click(screen.getByText('十二人预女猎白'));
+    expect(screen.getByRole('checkbox', { name: /警长/ })).toBeChecked();
   });
 
   it('adjusting a role switches to custom preset and updates the total', async () => {
@@ -168,6 +175,7 @@ describe('CreateGameWizard step 2 and submission', () => {
       expect(createGame).toHaveBeenCalledWith({
         role_counts: expect.objectContaining({ 'wolf-killer-werewolf': 3 }),
         reveal_on_death: false,
+        enable_sheriff: false,
         model_assignments: [{ config_id: null, count: 9 }],
       }),
     );
