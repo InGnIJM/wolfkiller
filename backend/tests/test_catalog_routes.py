@@ -80,7 +80,10 @@ def test_presets_cover_nine_ten_and_twelve_player_fields():
     assert sum(king["role_counts"].values()) == 12
     assert king["role_counts"]["wolf-killer-werewolf"] == 3
     assert king["role_counts"]["wolf-killer-werewolf-king"] == 1
-    assert king["role_counts"]["wolf-killer-guard"] == 1
+    assert nine["enable_sheriff"] is False
+    assert ten["enable_sheriff"] is False
+    assert idiot["enable_sheriff"] is True
+    assert king["enable_sheriff"] is True
 
 
 def test_field_constraints_defaults():

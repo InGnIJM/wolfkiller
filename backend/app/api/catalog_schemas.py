@@ -23,6 +23,7 @@ class PresetItem(BaseModel):
     name: str
     description: str
     role_counts: dict[str, int]
+    enable_sheriff: bool = False
 
 
 class PresetsResponse(BaseModel):

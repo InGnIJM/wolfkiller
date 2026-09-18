@@ -53,6 +53,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
         },
+        "enable_sheriff": False,
     },
     {
         "id": "ten-player-standard",
@@ -66,6 +67,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-hunter": 1,
             "wolf-killer-guard": 1,
         },
+        "enable_sheriff": False,
     },
     {
         "id": "twelve-player-idiot",
@@ -79,6 +81,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-hunter": 1,
             "wolf-killer-idiot": 1,
         },
+        "enable_sheriff": True,
     },
     {
         "id": "twelve-player-wolf-king",
@@ -93,6 +96,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-hunter": 1,
             "wolf-killer-guard": 1,
         },
+        "enable_sheriff": True,
     },
 ]
 
