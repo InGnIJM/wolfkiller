@@ -48,12 +48,30 @@ def test_day_verdict_events_are_projected_for_viewers():
         {"event_id": "why", "event_type": "WEREWOLF_KING_REASONING", "visibility": ["PUBLIC"],
          "payload": {"seat": 1, "action_type": "explode", "target_seat": 4,
                      "reasoning": "r", "thought": "private", "round_number": 2}},
+        {"event_id": "badge", "event_type": "SHERIFF_BADGE", "visibility": ["PUBLIC"],
+         "payload": {"from_seat": 4, "to_seat": None, "round_number": 1, "secret": "x"}},
+        {"event_id": "win", "event_type": "SHERIFF_ELECTED", "visibility": ["PUBLIC"],
+         "payload": {"seat": 2, "round_number": 1, "reason": "auto"}},
+        {"event_id": "run", "event_type": "SHERIFF_RUN", "visibility": ["PUBLIC"],
+         "payload": {"seat": 2, "choice": "run", "round_number": 1, "secret": "x"}},
+        {"event_id": "out", "event_type": "SHERIFF_WITHDRAW", "visibility": ["PUBLIC"],
+         "payload": {"seat": 3, "choice": "withdraw", "round_number": 1}},
+        {"event_id": "ballot", "event_type": "SHERIFF_VOTE", "visibility": ["PUBLIC"],
+         "payload": {"voter_seat": 4, "target_seat": None, "kind": "vote", "round_number": 1}},
+        {"event_id": "side", "event_type": "SHERIFF_SIDE", "visibility": ["PUBLIC"],
+         "payload": {"seat": 2, "side": "death_left", "round_number": 1}},
     ])
     assert [(row["event_type"], row["payload"]) for row in projected] == [
         ("exile_cancelled", {"target_seat": 3, "round_number": 2}),
         ("self_explode", {"seat": 1, "target_seat": 4, "round_number": 2}),
         ("night_thought", {"seat": 1, "action_type": "werewolf_king_reasoning",
                            "target_seat": 4, "reasoning": "r", "round_number": 2}),
+        ("sheriff_badge", {"from_seat": 4, "to_seat": None, "round_number": 1}),
+        ("sheriff_elected", {"seat": 2, "round_number": 1, "reason": "auto"}),
+        ("sheriff_run", {"seat": 2, "choice": "run", "round_number": 1}),
+        ("sheriff_withdraw", {"seat": 3, "choice": "withdraw", "round_number": 1}),
+        ("sheriff_vote", {"voter_seat": 4, "target_seat": None, "kind": "vote", "round_number": 1}),
+        ("sheriff_side", {"seat": 2, "side": "death_left", "round_number": 1}),
     ]
 
 

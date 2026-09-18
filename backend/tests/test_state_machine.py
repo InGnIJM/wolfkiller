@@ -98,3 +98,11 @@ class TestGameStateMachine:
         sm.transition(GameEvent.DAWN_COMPLETE)
         sm.transition(GameEvent.LAST_WORDS_COMPLETE)
         assert sm.get_state() == GamePhase.SPEECH
+
+    def test_sheriff_election_fork_from_night(self):
+        sm = GameStateMachine()
+        sm.set_state(GamePhase.NIGHT)
+        sm.transition(GameEvent.SHERIFF_ELECTION_START)
+        assert sm.get_state() == GamePhase.SHERIFF_ELECTION
+        sm.transition(GameEvent.SHERIFF_ELECTION_COMPLETE)
+        assert sm.get_state() == GamePhase.DAWN
