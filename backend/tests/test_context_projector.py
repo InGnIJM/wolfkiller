@@ -287,6 +287,7 @@ def test_projects_public_and_only_declared_actor_and_camp_namespaces(
     assert wolf.facts["alive_seats"] == (1, 2, 3, 4, 6)
     assert wolf.facts["dead_seats"] == (5,)
     assert wolf.facts["sheriff"] == 1
+    assert "sheriff_enabled" not in wolf.facts
     assert wolf.facts["phase"] == "night"
     assert wolf.facts["round_number"] == 2
     assert wolf.facts["camp_members"] == (1, 2)
@@ -305,6 +306,19 @@ def test_projects_public_and_only_declared_actor_and_camp_namespaces(
     forbidden = repr(villager)
     for secret in ("werewolf", "seer", "has_poison", "wolf_kill_target"):
         assert secret not in forbidden
+
+
+def test_sheriff_enabled_fact_is_only_projected_when_config_is_on(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    projector = ContextProjector()
+    off = projector.project(state, _request(registry, 6, "villager"), registry)
+    assert "sheriff_enabled" not in off.facts
+    assert off.facts["sheriff"] == 1
+    state.config.enable_sheriff = True
+    on = projector.project(state, _request(registry, 6, "villager"), registry)
+    assert on.facts["sheriff_enabled"] is True
+    assert on.facts["sheriff"] == 1
 
 
 def test_public_history_is_allowlisted_and_drops_reasoning_and_private_fields(

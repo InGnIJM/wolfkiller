@@ -405,6 +405,40 @@ class TestBaseRoleProperties:
         valid, reason = role._validate_last_words(state)
         assert valid is False and "不符合遗言条件" in reason
 
+    def test_sheriff_campaign_validation_paths(self):
+        role = make_role()
+        state = make_state(phase=GamePhase.SHERIFF_ELECTION)
+        state.players = {}
+        valid, reason = role._validate_sheriff_campaign(state)
+        assert valid is False and "不存在" in reason
+        state.players = {1: PlayerState(1, "wolf-killer-villager", "good", is_alive=False)}
+        valid, reason = role._validate_sheriff_campaign(state)
+        assert valid is False and "已出局" in reason
+        state.players[1].is_alive = True
+        state.phase = GamePhase.SPEECH
+        valid, reason = role._validate_sheriff_campaign(state)
+        assert valid is False and "不是警长竞选" in reason
+        state.phase = GamePhase.SHERIFF_ELECTION
+        valid, reason = role._validate_sheriff_campaign(state)
+        assert valid is True
+
+    @pytest.mark.asyncio
+    async def test_sheriff_campaign_speak_and_short_text_fallback(self):
+        client = ClientStub(tools=[tool_msg("speak", "我认为今晚的上警顺序值得认真讨论一下。")])
+        role = make_role(client=client)
+        state = make_state(phase=GamePhase.SHERIFF_ELECTION)
+        text = await role.speak(state, ConversationLog(), "sheriff_campaign")
+        assert "上警" in text
+        short = ClientStub(tools=[tool_msg("speak", "过")])
+        role = make_role(client=short)
+        fallback = await role.speak(state, ConversationLog(), "sheriff_campaign")
+        assert len(fallback) >= 15
+        assert await role.speak(make_state(), ConversationLog(), "sheriff_campaign") is None
+        wrong = ClientStub(tools=[tool_msg("last_words", "这段不该当作竞选发言通过。")])
+        role = make_role(client=wrong)
+        swapped = await role.speak(state, ConversationLog(), "sheriff_campaign")
+        assert len(swapped) >= 15
+
     @pytest.mark.asyncio
     async def test_invoke_json_action_rejects_non_text_content(self):
         role = make_role()

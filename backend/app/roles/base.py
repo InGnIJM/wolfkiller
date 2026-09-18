@@ -108,7 +108,7 @@ class BaseRole:
         )
 
         # Use tool calling for speech/last_words contexts
-        if context in ("day_speech", "last_words"):
+        if context in ("day_speech", "last_words", "sheriff_campaign"):
             return await self._speak_with_tools(state, prompt, context, conversation_log)
 
         # Other contexts (e.g. werewolf chat handled elsewhere) use plain LLM
@@ -139,7 +139,7 @@ class BaseRole:
         expected_tool_name = (
             "last_words" if context == "last_words" else "speak"
         )
-        if context in ("day_speech", "last_words"):
+        if context in ("day_speech", "last_words", "sheriff_campaign"):
             tools = [
                 tool for tool in tools
                 if tool.get("function", {}).get("name") == expected_tool_name
@@ -150,6 +150,12 @@ class BaseRole:
             valid, reason = self._validate_speak(state)
             if not valid:
                 logger.warning(f"Seat {self.seat} speak validation failed: {reason}")
+                return None
+
+        elif context == "sheriff_campaign":
+            valid, reason = self._validate_sheriff_campaign(state)
+            if not valid:
+                logger.warning(f"Seat {self.seat} sheriff campaign validation failed: {reason}")
                 return None
 
         elif context == "last_words":
@@ -238,7 +244,7 @@ class BaseRole:
         text = args.get("text", "").strip()
 
         # Validate: context must match function name
-        if context == "day_speech" and fn_name != "speak":
+        if context in {"day_speech", "sheriff_campaign"} and fn_name != "speak":
             logger.warning(
                 f"Seat {self.seat}: 校验失败——发言阶段调用了 {fn_name} 而非 speak，"
                 f"fallback to auto speech"
@@ -261,7 +267,7 @@ class BaseRole:
 
         # Reject speeches that are too short — "过" or trivial replies are never acceptable
         MIN_SPEECH_LENGTH = 15
-        if context in ("day_speech", "last_words") and len(text) < MIN_SPEECH_LENGTH:
+        if context in ("day_speech", "last_words", "sheriff_campaign") and len(text) < MIN_SPEECH_LENGTH:
             logger.warning(
                 f"Seat {self.seat}: {fn_name} text too short ({len(text)} chars), "
                 f"minimum is {MIN_SPEECH_LENGTH}. Text was: '{text}'. "
@@ -323,6 +329,18 @@ class BaseRole:
             return False, (
                 f"校验失败：当前游戏阶段为「{state.phase.value}」，不是发言阶段。"
                 f"发言只能在发言阶段（speech）或平票补充发言（vote_resolution）中进行。"
+            )
+        return True, ""
+
+    def _validate_sheriff_campaign(self, state: GameState) -> tuple[bool, str]:
+        player = state.players.get(self.seat)
+        if player is None:
+            return False, f"校验失败：{self.seat}号玩家不存在于游戏中"
+        if not player.is_alive:
+            return False, f"校验失败：{self.seat}号玩家已出局，无法竞选发言。"
+        if state.phase.value != "sheriff_election":
+            return False, (
+                f"校验失败：当前游戏阶段为「{state.phase.value}」，不是警长竞选。"
             )
         return True, ""
 
