@@ -44,7 +44,7 @@ def _rich_state() -> GameState:
             2: PlayerState(2, "wolf-killer-villager", "good", is_alive=False),
         },
         sheriff=1,
-        speeches=[SpeechRecord(1, "测试发言", 3)],
+        speeches=[SpeechRecord(1, "测试发言", 3, "speech")],
         votes=[VoteAction(1, 2, "理由", "思考")],
         night_actions=[NightAction(1, "kill", 2, "理由", "思考")],
         death_history=[DeathReport(2, "wolf_kill", 3)],
@@ -165,6 +165,7 @@ def test_checkpoint_round_trip_preserves_all_game_state_fields_and_runtime() -> 
     assert restored.tiebreak_candidates == {1, 2}
     assert restored.players[1].check_results == [{"seat": 2, "camp": "good"}]
     assert restored.speeches[0].text == "测试发言"
+    assert restored.speeches[0].phase == "speech"
     assert restored.votes[0].thinking == "思考"
     assert restored.night_actions[0].target_seat == 2
     assert restored.death_history[0].cause == "wolf_kill"
@@ -190,6 +191,29 @@ def test_checkpoint_json_is_canonical_and_round_trips() -> None:
     assert raw == json.dumps(json.loads(raw), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     restored, _ = codec.loads(raw)
     assert restored.game_id == "game-checkpoint"
+    assert restored.config.enable_sheriff is False
+    assert restored.sheriff_office.badge_destroyed is False
+
+
+def test_checkpoint_accepts_legacy_config_without_sheriff_fields() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(_rich_state(), orchestration={})
+    document["state"]["config"].pop("enable_sheriff")
+    document["state"].pop("sheriff_office")
+    restored, _ = codec.decode(document)
+    assert restored.config.enable_sheriff is False
+    assert restored.sheriff_office.step == ""
+    assert restored.sheriff_office.candidates == set()
+
+
+def test_checkpoint_accepts_legacy_speech_without_phase() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(_rich_state(), orchestration={})
+    document["state"]["speeches"][0].pop("phase")
+    restored, _ = codec.decode(document)
+    assert restored.speeches[0].phase is None
 
 
 @pytest.mark.parametrize(
@@ -272,6 +296,9 @@ def _mutate_nested(document: dict, *path_and_value) -> None:
         (lambda doc: doc.update(registry_digest="wrong"), "registry mismatch"),
         (lambda doc: _mutate_nested(doc, "state", "config", "role_counts", {"role": -1}), "role_counts"),
         (lambda doc: _mutate_nested(doc, "state", "config", "reveal_on_death", 1), "reveal_on_death"),
+        (lambda doc: _mutate_nested(doc, "state", "config", "enable_sheriff", 1), "enable_sheriff"),
+        (lambda doc: _mutate_nested(doc, "state", "sheriff_office", "speech_side", 1), "speech_side"),
+        (lambda doc: _mutate_nested(doc, "state", "sheriff_office", "step", 1), "sheriff step"),
         (lambda doc: _mutate_nested(doc, "state", "players", {"bad": {}}), "players seat"),
         (lambda doc: _mutate_nested(doc, "state", "players", {"01": {}}), "players seat"),
         (lambda doc: _mutate_nested(doc, "state", "players", {1: {}}), "players must be an object"),
@@ -282,6 +309,9 @@ def _mutate_nested(document: dict, *path_and_value) -> None:
         (lambda doc: _mutate_nested(doc, "state", "voted_seats", [1, 1]), "duplicate voted_seats"),
         (lambda doc: _mutate_nested(doc, "state", "accepted_action_keys", ["a", "a"]), "duplicate accepted_action_keys"),
         (lambda doc: _mutate_nested(doc, "state", "speeches", {}), "speeches"),
+        (lambda doc: _mutate_nested(doc, "state", "speeches", 0, "phase", 1), "speech phase"),
+        (lambda doc: doc["state"]["speeches"][0].pop("text"), "speech fields"),
+        (lambda doc: _mutate_nested(doc, "state", "speeches", 0, "secret", "x"), "speech fields"),
         (lambda doc: _mutate_nested(doc, "pipeline_runtime", "relations", {"1": [["bad"]]}), "invalid relation"),
         (lambda doc: _mutate_nested(doc, "pipeline_runtime", "action_counts", {"window": {}}), "pipeline runtime"),
         (lambda doc: _mutate_nested(doc, "pipeline_runtime", "commits", "action-a", "action_key", ""), "invalid commit"),

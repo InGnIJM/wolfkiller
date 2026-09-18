@@ -12,7 +12,7 @@ from app.core.point_journal import (
     PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal,
 )
 from app.models.actions import DeathReport, NightAction, SpeechRecord, VoteAction
-from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+from app.models.game import GameConfig, GamePhase, GameState, PlayerState, SheriffOfficeState
 from app.models.pipeline import IssuedActionRequest, SchedulePoint
 from app.roles.registry import RegistrySnapshot
 
@@ -26,6 +26,16 @@ class CheckpointError(ValueError):
 
 _STATE_FIELDS = {field.name for field in fields(GameState)}
 _PLAYER_FIELDS = {field.name for field in fields(PlayerState)}
+_CONFIG_FIELDS = {"role_counts", "reveal_on_death", "enable_sheriff"}
+_OFFICE_FIELDS = {
+    "candidates", "active", "pk_seats", "badge_destroyed",
+    "skip_remaining_day", "speech_side", "step",
+}
+_DEFAULT_SHERIFF_OFFICE = {
+    "candidates": [], "active": [], "pk_seats": [],
+    "badge_destroyed": False, "skip_remaining_day": False,
+    "speech_side": None, "step": "",
+}
 _RUNTIME_FIELDS = {field.name for field in fields(_Runtime)}
 _COMMIT_FIELDS = {field.name for field in fields(CommitResult)}
 
@@ -155,6 +165,7 @@ class CheckpointCodec:
             "config": {
                 "role_counts": dict(sorted(state.config.role_counts.items())),
                 "reveal_on_death": state.config.reveal_on_death,
+                "enable_sheriff": state.config.enable_sheriff,
             },
             "players": {
                 str(seat): {
@@ -176,6 +187,15 @@ class CheckpointCodec:
             "win_result": _plain(state.win_result),
             "last_wolf_kill_target": state.last_wolf_kill_target,
             "sheriff_election_complete": state.sheriff_election_complete,
+            "sheriff_office": {
+                "candidates": sorted(state.sheriff_office.candidates),
+                "active": sorted(state.sheriff_office.active),
+                "pk_seats": sorted(state.sheriff_office.pk_seats),
+                "badge_destroyed": state.sheriff_office.badge_destroyed,
+                "skip_remaining_day": state.sheriff_office.skip_remaining_day,
+                "speech_side": state.sheriff_office.speech_side,
+                "step": state.sheriff_office.step,
+            },
             "speaking_order": list(state.speaking_order),
             "current_speaker": state.current_speaker,
             "state_revision": state.state_revision,
@@ -270,7 +290,9 @@ class CheckpointCodec:
             raise CheckpointError("unsupported checkpoint version")
         if root["registry_digest"] != self._registry.digest:
             raise CheckpointError("registry mismatch")
-        state_row = _exact(root["state"], _STATE_FIELDS, "state")
+        raw_state = dict(_mapping(root["state"], "state"))
+        raw_state.setdefault("sheriff_office", dict(_DEFAULT_SHERIFF_OFFICE))
+        state_row = _exact(raw_state, _STATE_FIELDS, "state")
         state = self._decode_state(state_row)
         runtime = self._decode_runtime(root["pipeline_runtime"])
         setattr(state, "_pipeline_runtime", runtime)
@@ -284,12 +306,16 @@ class CheckpointCodec:
             phase = GamePhase(row["phase"])
         except (TypeError, ValueError) as error:
             raise CheckpointError("invalid phase") from error
-        config = _exact(row["config"], {"role_counts", "reveal_on_death"}, "config")
+        config_row = dict(_mapping(row["config"], "config"))
+        config_row.setdefault("enable_sheriff", False)
+        config = _exact(config_row, _CONFIG_FIELDS, "config")
         role_counts = _mapping(config["role_counts"], "role_counts")
         if any(type(k) is not str or type(v) is not int or v < 0 for k, v in role_counts.items()):
             raise CheckpointError("invalid role_counts")
         if type(config["reveal_on_death"]) is not bool:
             raise CheckpointError("invalid reveal_on_death")
+        if type(config["enable_sheriff"]) is not bool:
+            raise CheckpointError("invalid enable_sheriff")
         players: dict[int, PlayerState] = {}
         for seat, raw in _seat_map(row["players"], "players").items():
             item = _exact(raw, _PLAYER_FIELDS, "player")
@@ -318,7 +344,11 @@ class CheckpointCodec:
             supplemental_speakers=self._int_set(row["supplemental_speakers"], "supplemental_speakers"),
             voted_seats=self._int_set(row["voted_seats"], "voted_seats"),
             accepted_action_keys=self._str_set(row["accepted_action_keys"], "accepted_action_keys"),
-            config=GameConfig(role_counts=dict(role_counts), reveal_on_death=config["reveal_on_death"]),
+            config=GameConfig(
+                role_counts=dict(role_counts),
+                reveal_on_death=config["reveal_on_death"],
+                enable_sheriff=config["enable_sheriff"],
+            ),
             players=players,
             sheriff=_optional_integer(row["sheriff"], "sheriff", minimum=1),
             speeches=[self._speech(item) for item in _array(row["speeches"], "speeches")],
@@ -328,6 +358,7 @@ class CheckpointCodec:
             win_result=_plain(row["win_result"]),
             last_wolf_kill_target=_optional_integer(row["last_wolf_kill_target"], "last_wolf_kill_target", minimum=1),
             sheriff_election_complete=self._bool(row["sheriff_election_complete"], "sheriff_election_complete"),
+            sheriff_office=self._office(row["sheriff_office"]),
             speaking_order=self._int_list(row["speaking_order"], "speaking_order"),
             current_speaker=_optional_integer(row["current_speaker"], "current_speaker", minimum=1),
             state_revision=_integer(row["state_revision"], "state_revision"),
@@ -338,6 +369,24 @@ class CheckpointCodec:
             last_consistent_checkpoint=_string(row["last_consistent_checkpoint"], "last_consistent_checkpoint", optional=True),
         )
         return result
+
+    def _office(self, value: object) -> SheriffOfficeState:
+        row = _exact(value, _OFFICE_FIELDS, "sheriff_office")
+        side = row["speech_side"]
+        if side is not None and type(side) is not str:
+            raise CheckpointError("invalid speech_side")
+        step = row["step"]
+        if type(step) is not str:
+            raise CheckpointError("invalid sheriff step")
+        return SheriffOfficeState(
+            candidates=self._int_set(row["candidates"], "sheriff candidates"),
+            active=self._int_set(row["active"], "sheriff active"),
+            pk_seats=self._int_set(row["pk_seats"], "sheriff pk_seats"),
+            badge_destroyed=self._bool(row["badge_destroyed"], "badge_destroyed"),
+            skip_remaining_day=self._bool(row["skip_remaining_day"], "skip_remaining_day"),
+            speech_side=side,
+            step=step,
+        )
 
     def _decode_runtime(self, value: object) -> _Runtime:
         row = _exact(value, _RUNTIME_FIELDS, "pipeline runtime")
@@ -480,8 +529,19 @@ class CheckpointCodec:
 
     @staticmethod
     def _speech(value: object) -> SpeechRecord:
-        row = _exact(value, {"player_seat", "text", "round_number"}, "speech")
-        return SpeechRecord(_integer(row["player_seat"], "speech seat", minimum=1), _string(row["text"], "speech text"), _integer(row["round_number"], "speech round"))
+        row = _mapping(value, "speech")
+        extra = set(row) - {"player_seat", "text", "round_number", "phase"}
+        if extra or not {"player_seat", "text", "round_number"} <= set(row):
+            raise CheckpointError("speech fields")
+        phase = row.get("phase")
+        if phase is not None and type(phase) is not str:
+            raise CheckpointError("speech phase")
+        return SpeechRecord(
+            _integer(row["player_seat"], "speech seat", minimum=1),
+            _string(row["text"], "speech text"),
+            _integer(row["round_number"], "speech round"),
+            phase,
+        )
 
     @staticmethod
     def _vote(value: object) -> VoteAction:
