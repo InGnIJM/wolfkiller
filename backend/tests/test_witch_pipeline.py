@@ -260,6 +260,46 @@ def test_nightly_prompt_keeps_fresh_target_after_both_potions_are_consumed() -> 
     assert not scheduler.issue(game, SchedulePoint.NIGHT_WITCH_ACTION, registry)
 
 
+def test_nightly_prompt_keeps_the_saved_seat_on_later_nights() -> None:
+    """The witch must still know whom she rescued once the night advances."""
+    registry = builtin_registry.freeze()
+    game = GameState(
+        "witch-memory", phase="night", round_number=1,
+        players={
+            1: PlayerState(1, WITCH_SPEC.role_id, "good"),
+            2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+            3: PlayerState(3, "wolf-killer-villager", "good"),
+        },
+        last_wolf_kill_target=2,
+    )
+    prompts = []
+
+    def provider(request, projected, attempt):
+        prompt = PromptRenderer().render(WITCH_SPEC, request.contract, projected, "")
+        line = next(line for line in prompt.splitlines() if line.startswith("PROJECTED_CONTEXT="))
+        prompts.append(json.loads(line.split("=", 1)[1]))
+        return command("save", 2) if projected.round_number == 1 else command("pass")
+
+    scheduler = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(), EffectApplier(), provider,
+    )
+
+    result = scheduler.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
+    assert not result.faults
+    assert prompts[-1]["facts"]["saved_seat"] is None
+    assert role_resource_view(game, 1) == {"antidote": 0, "poison": 1}
+
+    game.round_number = 2
+    game.last_wolf_kill_target = 3
+    result = scheduler.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
+
+    assert not result.faults
+    assert prompts[-1]["round_number"] == 2
+    assert prompts[-1]["facts"]["wolf_kill_target"] == 3
+    assert prompts[-1]["facts"]["saved_seat"] == 2
+    assert role_resource_view(game, 1) == {"antidote": 0, "poison": 1}
+
+
 def test_legacy_target_validation_branches_remain_available() -> None:
     role = object.__new__(Witch); role.seat = 1
     state = GameState("g", players={1: PlayerState(1, "wolf-killer-witch", "good"), 2: PlayerState(2, "x", "good", is_alive=False), 3: PlayerState(3, "x", "good")})
