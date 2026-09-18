@@ -466,6 +466,17 @@ def test_rules_text_matches_withdraw_semantics() -> None:
     text = " ".join(SHERIFF_GAME_RULES)
     assert "every living player ran" in text
     assert "withdrew" in text
+    # The engine runs and campaigns in ascending seat order, so the rules must
+    # tell agents that seat order, not intent, decides who speaks first.
+    assert "ascending seat number" in text
+    assert "counter-claim" in text
+
+
+def test_public_game_rules_cover_hidden_role_mode() -> None:
+    from app.agents.game_rules import PUBLIC_GAME_RULES
+    text = " ".join(PUBLIC_GAME_RULES)
+    assert "unrevealed" in text
+    assert "non-reveals" in text
 
 
 def test_withdraw_turn_receives_context_messages() -> None:

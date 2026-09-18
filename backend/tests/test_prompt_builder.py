@@ -633,3 +633,10 @@ class TestPromptBuilderHelpers:
 
     def test_task_instruction_default_context(self):
         assert PromptBuilder._task_instruction("unknown_context", make_state()) == "请根据你的身份和当前局势做出合理决策。"
+
+    def test_private_facts_block_renders_saved_seat(self):
+        view = {"facts": {"saved_seat": 5}}
+        block = PromptBuilder._private_facts_block(view)
+        assert "5" in block
+        assert "解药" in block or "银水" in block
+
