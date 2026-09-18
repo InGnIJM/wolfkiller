@@ -14,6 +14,7 @@ class CreateGameRequest(BaseModel):
     num_witches: int = 1
     num_hunters: int = 1
     reveal_on_death: bool = False
+    enable_sheriff: bool = False
     model_assignments: Optional[list[ModelAssignment]] = None
 
     @model_validator(mode="after")
@@ -271,6 +272,43 @@ class PublicExileCancelledResponse(_PublicResponse):
     target_seat: PositivePublicInt
 
 
+class PublicSheriffElectedResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: Optional[PositivePublicInt] = None
+    reason: Annotated[str, Field(min_length=1, max_length=32)]
+
+
+class PublicSheriffBadgeResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    from_seat: PositivePublicInt
+    to_seat: Optional[PositivePublicInt] = None
+
+
+class PublicSheriffRunResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    choice: Literal["run", "pass"]
+
+
+class PublicSheriffWithdrawResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    choice: Literal["stay", "withdraw"]
+
+
+class PublicSheriffVoteResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    voter_seat: PositivePublicInt
+    target_seat: Optional[PositivePublicInt] = None
+    kind: Literal["vote", "pk"]
+
+
+class PublicSheriffSideResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    side: Literal["sheriff_left", "sheriff_right", "death_left", "death_right"]
+
+
 class PublicSelfExplodeResponse(_PublicResponse):
     """A daytime self-destruct that took another seat along."""
     round_number: NonNegativePublicInt
@@ -369,10 +407,46 @@ class PublicPlayerRevealedReplayEvent(_PublicReplayEvent):
     payload: PublicPlayerRevealedResponse
 
 
+class PublicSheriffElectedReplayEvent(_PublicReplayEvent):
+    event_type: Literal["sheriff_elected"]
+    payload: PublicSheriffElectedResponse
+
+
+class PublicSheriffBadgeReplayEvent(_PublicReplayEvent):
+    event_type: Literal["sheriff_badge"]
+    payload: PublicSheriffBadgeResponse
+
+
+class PublicSheriffRunReplayEvent(_PublicReplayEvent):
+    event_type: Literal["sheriff_run"]
+    payload: PublicSheriffRunResponse
+
+
+class PublicSheriffWithdrawReplayEvent(_PublicReplayEvent):
+    event_type: Literal["sheriff_withdraw"]
+    payload: PublicSheriffWithdrawResponse
+
+
+class PublicSheriffVoteReplayEvent(_PublicReplayEvent):
+    event_type: Literal["sheriff_vote"]
+    payload: PublicSheriffVoteResponse
+
+
+class PublicSheriffSideReplayEvent(_PublicReplayEvent):
+    event_type: Literal["sheriff_side"]
+    payload: PublicSheriffSideResponse
+
+
 PublicReplayEvent = Annotated[
     Union[
         PublicExileCancelledReplayEvent,
         PublicSelfExplodeReplayEvent,
+        PublicSheriffElectedReplayEvent,
+        PublicSheriffBadgeReplayEvent,
+        PublicSheriffRunReplayEvent,
+        PublicSheriffWithdrawReplayEvent,
+        PublicSheriffVoteReplayEvent,
+        PublicSheriffSideReplayEvent,
         PublicPlayerRevealedReplayEvent,
         PublicSpeechReplayEvent,
         PublicDeathReplayEvent,
@@ -397,6 +471,7 @@ class GameDetailResponse(_PublicResponse):
     phase: PublicGamePhase
     round_number: NonNegativePublicInt
     reveal_on_death: bool
+    enable_sheriff: bool = False
     players: dict[PositivePublicInt, PublicPlayerResponse]
     sheriff: Optional[PositivePublicInt]
     speeches: list[PublicSpeechResponse]

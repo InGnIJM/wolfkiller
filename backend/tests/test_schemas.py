@@ -58,6 +58,24 @@ PUBLIC_REPLAY_EVENTS = [
     {"event_type": "winner", "payload": {
         "winning_camp": "good", "reason": "all_wolves_dead",
     }},
+    {"event_type": "sheriff_elected", "payload": {
+        "round_number": 1, "seat": 2, "reason": "vote",
+    }},
+    {"event_type": "sheriff_badge", "payload": {
+        "round_number": 2, "from_seat": 2, "to_seat": None,
+    }},
+    {"event_type": "sheriff_run", "payload": {
+        "round_number": 1, "seat": 2, "choice": "run",
+    }},
+    {"event_type": "sheriff_withdraw", "payload": {
+        "round_number": 1, "seat": 3, "choice": "stay",
+    }},
+    {"event_type": "sheriff_vote", "payload": {
+        "round_number": 1, "voter_seat": 4, "target_seat": None, "kind": "pk",
+    }},
+    {"event_type": "sheriff_side", "payload": {
+        "round_number": 1, "seat": 2, "side": "sheriff_right",
+    }},
 ]
 
 
@@ -186,14 +204,15 @@ class TestSchemas:
         assert req.num_werewolves == 3
         assert req.num_villagers == 3
         assert req.reveal_on_death is False
+        assert req.enable_sheriff is False
 
     def test_create_game_request_custom(self):
         req = CreateGameRequest(num_werewolves=4, num_villagers=4)
         assert req.num_werewolves == 4
 
-    def test_create_game_request_accepts_reveal_on_death(self):
-        req = CreateGameRequest(reveal_on_death=True)
-        assert req.reveal_on_death is True
+    def test_create_game_request_accepts_enable_sheriff(self):
+        req = CreateGameRequest(enable_sheriff=True)
+        assert req.enable_sheriff is True
 
     def test_create_game_request_rejects_mixed_role_count_formats(self):
         with pytest.raises(ValidationError, match="role_counts cannot be combined"):
