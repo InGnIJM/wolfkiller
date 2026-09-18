@@ -13,14 +13,20 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "EXECUTION_STATE": ("execution_state", frozenset({"execution_status", "recoverable", "recovery_block_code"})),
     "PHASE_CHANGED": ("phase", frozenset({"phase", "round_number"})),
     "SPEECH_MADE": ("speech", frozenset({"player_seat", "text", "round_number", "phase"})),
-    "PLAYER_DIED": ("death", frozenset({"player_seat", "seat", "cause", "round_number"})),
+    "PLAYER_DIED": ("death", frozenset({"player_seat", "seat", "target_seat", "cause", "round_number"})),
     "VOTE_CAST": ("vote", frozenset({"voter_seat", "target_seat", "round_number", "status"})),
     "VOTE_RESULT": ("vote_result", frozenset({"round_number", "exiled_seat", "counts"})),
     "GAME_OVER": ("winner", frozenset({"winning_camp", "reason"})),
     "NIGHT_ACTION": ("night_action", frozenset({"action_type", "target_seat", "round_number", "vote_counts", "result"})),
-    "TECHNICAL_ABSTAIN": ("technical_abstain", frozenset({"player_seat", "round_number", "phase", "failure_code"})),
+    "TECHNICAL_ABSTAIN": ("technical_abstain", frozenset({"player_seat", "voter_seat", "round_number", "failure_code"})),
     "EXILE_CANCELLED": ("exile_cancelled", frozenset({"target_seat", "round_number"})),
     "SELF_EXPLODE": ("self_explode", frozenset({"seat", "target_seat", "round_number"})),
+    "SHERIFF_ELECTED": ("sheriff_elected", frozenset({"seat", "round_number", "reason"})),
+    "SHERIFF_BADGE": ("sheriff_badge", frozenset({"from_seat", "to_seat", "round_number"})),
+    "SHERIFF_RUN": ("sheriff_run", frozenset({"seat", "choice", "round_number"})),
+    "SHERIFF_WITHDRAW": ("sheriff_withdraw", frozenset({"seat", "choice", "round_number"})),
+    "SHERIFF_VOTE": ("sheriff_vote", frozenset({"voter_seat", "target_seat", "kind", "round_number"})),
+    "SHERIFF_SIDE": ("sheriff_side", frozenset({"seat", "side", "round_number"})),
 }
 
 _PUBLIC_ROLE_ACTIONS = {
@@ -41,7 +47,7 @@ _PUBLIC_REASONING_EVENTS = {
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",
 })
-_PUBLIC_CONFIG_FIELDS = frozenset({"role_counts", "reveal_on_death"})
+_PUBLIC_CONFIG_FIELDS = frozenset({"role_counts", "reveal_on_death", "enable_sheriff"})
 for _domain_type in _PUBLIC_ROLE_ACTIONS:
     _EVENTS[_domain_type] = (
         "night_action",
@@ -81,6 +87,27 @@ class AudienceProjector:
             public_payload: dict[str, object] = {
                 key: value for key, value in payload.items() if key in allowed
             }
+            if event_type == "PLAYER_DIED":
+                # Emitters disagree on the seat key (pipeline uses ``seat``,
+                # the engine lifecycle fact uses ``target_seat``); the public
+                # contract is always ``player_seat``.
+                seat = public_payload.get("player_seat")
+                if seat is None:
+                    seat = public_payload.get("seat")
+                if seat is None:
+                    seat = public_payload.get("target_seat")
+                for key in ("player_seat", "seat", "target_seat"):
+                    public_payload.pop(key, None)
+                if seat is not None:
+                    public_payload["player_seat"] = seat
+            if event_type == "TECHNICAL_ABSTAIN":
+                seat = public_payload.get("voter_seat")
+                if seat is None:
+                    seat = public_payload.get("player_seat")
+                public_payload.pop("player_seat", None)
+                public_payload.pop("voter_seat", None)
+                if seat is not None:
+                    public_payload["voter_seat"] = seat
             if event_type == "GAME_INITIALIZED":
                 players = payload.get("players")
                 if isinstance(players, Mapping):
