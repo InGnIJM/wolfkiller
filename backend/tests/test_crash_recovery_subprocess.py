@@ -184,7 +184,10 @@ def _start_child(*arguments: object) -> subprocess.Popen[str]:
         for name in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONUTF8")
         if name in os.environ
     }
-    environment["PYTHONPATH"] = str(_BACKEND)
+    parent_pp = os.environ.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = (
+        f"{_BACKEND}{os.pathsep}{parent_pp}" if parent_pp else str(_BACKEND)
+    )
     return subprocess.Popen(
         [sys.executable, str(Path(__file__).resolve()), "--child",
          *(str(value) for value in arguments)],
