@@ -1,14 +1,52 @@
 import { useState } from 'react';
 import {
   Button, Dialog, DialogActions, DialogContent, DialogTitle,
-  Stack, TextField, Typography,
+  IconButton, Stack, TextField, Typography,
 } from '@mui/material';
+import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
 
 import { testModelConnection } from '../../api/client';
 import type {
   ModelConfig, ModelConfigInput, ModelTestResult, ProviderProfileId,
 } from '../../store/types';
 import { PROVIDER_PROFILE_OPTIONS, isProviderProfileId } from './providerProfiles';
+
+/** RFC 7230 token charset, mirrors the backend header-name rule. */
+const HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
+/** Managed by the SDK or gateway; mirrors the backend reserved list. */
+const RESERVED_HEADERS = new Set([
+  'authorization', 'content-type', 'content-length', 'host', 'connection',
+  'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection',
+  'te', 'trailer', 'transfer-encoding', 'upgrade', 'accept-encoding',
+]);
+const MAX_HEADER_ROWS = 32;
+
+interface HeaderRow {
+  key: string;
+  value: string;
+}
+
+/** Deterministic row order: sorted by key name, case-insensitively. */
+function headerRowsFrom(headers: Record<string, string> | undefined): HeaderRow[] {
+  const entries = Object.entries(headers ?? {});
+  entries.sort(([a], [b]) => {
+    const left = a.toLowerCase();
+    const right = b.toLowerCase();
+    if (left === right) return a < b ? -1 : a > b ? 1 : 0;
+    return left < right ? -1 : 1;
+  });
+  return entries.map(([key, value]) => ({ key, value }));
+}
+
+function headerRowError(row: HeaderRow, duplicate: boolean): string {
+  const key = row.key.trim();
+  if (!key) return '名称必填';
+  if (!HEADER_NAME_PATTERN.test(key)) return '名称含非法字符';
+  if (RESERVED_HEADERS.has(key.toLowerCase())) return '该请求头由系统管理，不能自定义';
+  if (/[\r\n\0]/.test(row.value)) return '值不能包含换行';
+  if (duplicate) return '名称重复';
+  return '';
+}
 
 interface Props {
   open: boolean;
@@ -29,6 +67,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     initial?.temperature != null ? String(initial.temperature) : '',
   );
   const [strictUrl, setStrictUrl] = useState(initial?.strict_base_url ?? '');
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => headerRowsFrom(initial?.headers));
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -40,15 +79,54 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     ? '必须以 http:// 或 https:// 开头'
     : '';
   const modelError = !modelId.trim() ? '模型 ID 必填' : '';
-  const hasErrors = Boolean(nameError || urlError || modelError);
+  const duplicateKeys = new Set(
+    headerRows
+      .map((row) => row.key.trim().toLowerCase())
+      .filter((key, index, keys) => Boolean(key) && keys.indexOf(key) !== index),
+  );
+  const headerErrors = headerRows.map((row) =>
+    headerRowError(row, duplicateKeys.has(row.key.trim().toLowerCase())),
+  );
+  const headersError = headerErrors.some(Boolean);
+  const tooManyHeaders = headerRows.length > MAX_HEADER_ROWS;
+  const hasErrors = Boolean(
+    nameError || urlError || modelError || headersError || tooManyHeaders,
+  );
   const tested = testResult?.ok === true;
   const canSave = !hasErrors && tested && !saving;
   const baseUrlPlaceholder = PROVIDER_PROFILE_OPTIONS
     .find((option) => option.id === providerProfile)?.baseUrlPlaceholder ?? '';
   const isAnthropic = providerProfile === 'anthropic' || providerProfile === 'custom-anthropic';
 
+  /** Non-empty rows only, keys and values trimmed. */
+  const headersPayload = (): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    headerRows.forEach((row) => {
+      const key = row.key.trim();
+      if (key) headers[key] = row.value.trim();
+    });
+    return headers;
+  };
+
   const invalidateTest = () => {
     setTestResult((prev) => (prev?.ok ? null : prev));
+  };
+
+  const updateHeaderRow = (index: number, patch: Partial<HeaderRow>) => {
+    setHeaderRows((rows) =>
+      rows.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    );
+    invalidateTest();
+  };
+
+  const addHeaderRow = () => {
+    setHeaderRows((rows) => [...rows, { key: '', value: '' }]);
+    invalidateTest();
+  };
+
+  const removeHeaderRow = (index: number) => {
+    setHeaderRows((rows) => rows.filter((_, i) => i !== index));
+    invalidateTest();
   };
 
   const handleSave = async () => {
@@ -63,6 +141,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
       temperature: temperature.trim() ? Number(temperature) : null,
       strict_base_url: strictUrl.trim() || null,
       provider_profile: providerProfile,
+      headers: headersPayload(),
     });
     setSaving(false);
   };
@@ -72,14 +151,20 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     if (hasErrors) return;
     setTesting(true);
     try {
+      // Saving is gated on a passing test, so the test must carry the current
+      // form value of every editable field. Sending only ``config_id`` would
+      // test the stored config and unlock saving for an untested edit.
+      const values = {
+        base_url: baseUrl.trim(),
+        model_id: modelId.trim(),
+        strict_base_url: strictUrl.trim(),
+        api_key: apiKey,
+        provider_profile: providerProfile,
+        headers: headersPayload(),
+      };
       const result = initial
-        ? await testModelConnection({
-            config_id: initial.id, api_key: apiKey, provider_profile: providerProfile,
-          })
-        : await testModelConnection({
-            base_url: baseUrl.trim(), api_key: apiKey, model_id: modelId.trim(),
-            provider_profile: providerProfile,
-          });
+        ? await testModelConnection({ config_id: initial.id, ...values })
+        : await testModelConnection(values);
       setTestResult(result);
     } catch (error) {
       setTestResult({
@@ -196,6 +281,60 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                 size="small"
                 fullWidth
               />
+              <Stack spacing={1}>
+                <Typography variant="body2" color="text.secondary">
+                  自定义请求头（可选）
+                </Typography>
+                {headerRows.map((row, index) => (
+                  <Stack
+                    key={index}
+                    direction="row"
+                    spacing={1}
+                    sx={{ alignItems: 'flex-start' }}
+                  >
+                    <TextField
+                      label="名称"
+                      value={row.key}
+                      onChange={(e) => updateHeaderRow(index, { key: e.target.value })}
+                      onBlur={() => setTouched(true)}
+                      error={touched && Boolean(headerErrors[index])}
+                      helperText={touched ? headerErrors[index] : ''}
+                      size="small"
+                      fullWidth
+                      slotProps={{ htmlInput: { 'aria-label': '请求头名称' } }}
+                    />
+                    <TextField
+                      label="值"
+                      value={row.value}
+                      onChange={(e) => updateHeaderRow(index, { value: e.target.value })}
+                      size="small"
+                      fullWidth
+                      slotProps={{ htmlInput: { 'aria-label': '请求头值' } }}
+                    />
+                    <IconButton
+                      aria-label={`删除请求头 ${index + 1}`}
+                      onClick={() => removeHeaderRow(index)}
+                      size="small"
+                      sx={{ mt: 0.5, color: 'text.secondary' }}
+                    >
+                      <DeleteOutlinedIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                ))}
+                <Button
+                  color="inherit"
+                  onClick={addHeaderRow}
+                  size="small"
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  添加请求头
+                </Button>
+                {tooManyHeaders && (
+                  <Typography variant="body2" color="error.main">
+                    最多 {MAX_HEADER_ROWS} 个请求头
+                  </Typography>
+                )}
+              </Stack>
             </>
           )}
           {testResult && (

@@ -276,6 +276,8 @@ export async function testModelConnection(input: {
   api_key?: string;
   model_id?: string;
   provider_profile?: ProviderProfileId;
+  headers?: Record<string, string> | null;
+  strict_base_url?: string | null;
 }): Promise<ModelTestResult> {
   const res = await fetch(`${getApiBase()}/api/models/test`, {
     method: 'POST',
