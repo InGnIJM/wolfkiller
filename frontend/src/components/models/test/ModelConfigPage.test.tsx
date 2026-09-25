@@ -28,6 +28,7 @@ const sample = {
   temperature: 1.2,
   strict_base_url: null,
   provider_profile: 'auto' as const,
+  headers: {},
   created_at: '2026-08-16T00:00:00',
   updated_at: '2026-08-16T00:00:00',
 };
@@ -40,6 +41,22 @@ afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
+
+/** Header-editor rows carry `aria-label` so they do not collide with the config 名称 field. */
+function headerNames(): HTMLInputElement[] {
+  return screen.queryAllByLabelText('请求头名称') as HTMLInputElement[];
+}
+
+function headerValues(): HTMLInputElement[] {
+  return screen.queryAllByLabelText('请求头值') as HTMLInputElement[];
+}
+
+/** The helper text under a header row; `名称必填` also exists for the config name field. */
+function headerHelperText(index: number): string {
+  const rows = headerNames();
+  const row = rows[index]?.closest('.MuiStack-root');
+  return row?.querySelector('.MuiFormHelperText-root')?.textContent ?? '';
+}
 
 describe('ModelConfigPage', () => {
   it('loads and renders configs on mount', async () => {
@@ -166,7 +183,9 @@ describe('ModelConfigPage', () => {
 
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
-        config_id: 'a1', api_key: 'sk-typed', provider_profile: 'auto',
+        config_id: 'a1', base_url: 'https://api.deepseek.com/v1',
+        model_id: 'deepseek-v4-pro', strict_base_url: '',
+        api_key: 'sk-typed', provider_profile: 'auto', headers: {},
       }),
     );
   });
@@ -185,7 +204,8 @@ describe('ModelConfigPage', () => {
 
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
-        base_url: 'https://x/v1', api_key: 'sk-f', model_id: 'm', provider_profile: 'auto',
+        base_url: 'https://x/v1', model_id: 'm', strict_base_url: '',
+        api_key: 'sk-f', provider_profile: 'auto', headers: {},
       }),
     );
   });
@@ -211,8 +231,8 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
-        base_url: 'https://api.anthropic.com', api_key: 'sk-ant',
-        model_id: 'claude-sonnet-4-5', provider_profile: 'anthropic',
+        base_url: 'https://api.anthropic.com', model_id: 'claude-sonnet-4-5',
+        strict_base_url: '', api_key: 'sk-ant', provider_profile: 'anthropic', headers: {},
       }),
     );
     await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
@@ -257,7 +277,9 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
-        config_id: 'a1', api_key: '', provider_profile: 'custom-anthropic',
+        config_id: 'a1', base_url: 'https://api.deepseek.com/v1',
+        model_id: 'deepseek-v4-pro', strict_base_url: '',
+        api_key: '', provider_profile: 'custom-anthropic', headers: {},
       }),
     );
   });
@@ -341,5 +363,207 @@ describe('ModelConfigPage', () => {
     fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm2' } });
 
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  });
+
+  it('renders header rows loaded from the stored config', async () => {
+    vi.mocked(listModels).mockResolvedValue([
+      { ...sample, name: 'With Headers', headers: { 'X-Beta': '2', 'X-Alpha': '1' } },
+    ]);
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('With Headers')).toBeInTheDocument());
+    expect(screen.getByText(/2 个自定义请求头/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+
+    expect(headerNames().map((input) => input.value)).toEqual(['X-Alpha', 'X-Beta']);
+    expect(headerValues().map((input) => input.value)).toEqual(['1', '2']);
+  });
+
+  it('adds and removes header rows', async () => {
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    expect(headerNames()).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    fireEvent.change(headerNames()[0], { target: { value: 'X-One' } });
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    expect(headerNames()).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: '删除请求头 1' }));
+    expect(headerNames()).toHaveLength(1);
+    expect(headerNames()[0].value).toBe('');
+  });
+
+  it('blocks save on an invalid header name and clears it when fixed', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    fireEvent.change(headerNames()[0], { target: { value: 'X Bad Name' } });
+    fireEvent.blur(headerNames()[0]);
+
+    expect(screen.getByText('名称含非法字符')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+
+    fireEvent.change(headerNames()[0], { target: { value: 'X-Good' } });
+    expect(screen.queryByText('名称含非法字符')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+  });
+
+  it('blocks save on a reserved header name and on an empty header name', async () => {
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    fireEvent.blur(headerNames()[0]);
+    expect(headerHelperText(0)).toBe('名称必填');
+
+    fireEvent.change(headerNames()[0], { target: { value: 'Authorization' } });
+    fireEvent.blur(headerNames()[0]);
+    expect(headerHelperText(0)).toBe('该请求头由系统管理，不能自定义');
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  });
+
+  it('flags duplicate header names', async () => {
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+
+    fireEvent.change(headerNames()[0], { target: { value: 'X-Dup' } });
+    fireEvent.change(headerNames()[1], { target: { value: 'x-dup' } });
+    fireEvent.blur(headerNames()[1]);
+    expect(headerHelperText(1)).toBe('名称重复');
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  });
+
+  // A single-line input strips typed CR/LF, so the guard is exercised through a
+  // stored value that already carries a newline.
+  it('flags a header value containing a newline', async () => {
+    vi.mocked(listModels).mockResolvedValue([
+      { ...sample, name: 'NL', headers: { 'X-Bad': 'bad\nvalue' } },
+    ]);
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('NL')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.blur(headerNames()[0]);
+
+    expect(headerHelperText(0)).toBe('值不能包含换行');
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '测试连接' })).toBeDisabled();
+  });
+
+  it('sends headers in both the connection-test and save payloads', async () => {
+    vi.mocked(createModel).mockResolvedValue({ ...sample, id: 'h1', name: 'Heads' });
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Heads' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    fireEvent.change(headerNames()[0], { target: { value: ' X-Extra ' } });
+    fireEvent.change(headerValues()[0], { target: { value: ' v ' } });
+
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith({
+        base_url: 'https://x/v1', model_id: 'm', strict_base_url: '',
+        api_key: '', provider_profile: 'auto', headers: { 'X-Extra': 'v' },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(createModel).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'Heads', headers: { 'X-Extra': 'v' },
+      })),
+    );
+  });
+
+  it('sends the stored headers with the edit-mode connection test', async () => {
+    vi.mocked(listModels).mockResolvedValue([
+      { ...sample, name: 'With Headers', headers: { 'X-One': '1' } },
+    ]);
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 7, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('With Headers')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith({
+        config_id: 'a1', base_url: 'https://api.deepseek.com/v1',
+        model_id: 'deepseek-v4-pro', strict_base_url: '',
+        api_key: '', provider_profile: 'auto', headers: { 'X-One': '1' },
+      }),
+    );
+  });
+
+  it('re-disables save when the headers change after a successful test', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  });
+
+  it('rejects more than 32 header rows', async () => {
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
+    for (let i = 0; i < 33; i += 1) {
+      fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
+    }
+
+    expect(screen.getByText('最多 32 个请求头')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  }, 20000);
+
+  it('exposes the OpenCode profile with its Base URL placeholder', async () => {
+    render(<ModelConfigPage />);
+    await waitFor(() => expect(screen.getByText('DeepSeek Pro')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
+    fireEvent.change(screen.getByLabelText('接口协议'), { target: { value: 'opencode' } });
+
+    expect(screen.getByLabelText('Base URL'))
+      .toHaveAttribute('placeholder', 'https://opencode.ai/zen/v1');
   });
 });
