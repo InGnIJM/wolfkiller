@@ -90,7 +90,7 @@ WolfKiller/
 
 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
 
-随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段；`enable_sheriff` 开局时发 `SHERIFF_ELECTION_START`，关局仍 `NIGHT_ACTIONS_COMPLETE → DAWN`。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；讨论预算为每狼 6 次、至少完整两圈（刀口共识也要等两圈后才能提前结束），发言与次日计划各 ≤400 字，狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。警长流程由 `SheriffDirector`（`core/sheriff_flow.py`）硬编码，Agent 只选当前步骤绑定的工具；狼玩家的竞选、退水与警长投票提示会额外注入狼队成员名单与本夜狼队频道记录（含次日计划），好人视角永不注入。
+随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段；`enable_sheriff` 开局时发 `SHERIFF_ELECTION_START`，关局仍 `NIGHT_ACTIONS_COMPLETE → DAWN`。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；讨论预算为每狼 6 次、至少完整两圈（刀口共识也要等两圈后才能提前结束），发言与次日计划各 ≤400 字，狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。警长流程由 `SheriffDirector`（`core/sheriff_flow.py`）硬编码，Agent 只选当前步骤绑定的工具；竞选、退水与警长投票提示注入已上警座位、当前候选人与未上警（警下）选民名单；狼玩家的竞选、退水与警长投票提示会额外注入狼队成员名单与本夜狼队频道记录（含次日计划），好人视角永不注入。警上/警下名单同时进入竞选发言、白天发言、放逐投票与超时重试投票的权威状态（警上=`office.candidates`，警下=`off_badge_seats`：开选时存活且从未上警，排除开选前死亡，`office.candidates` 整局保留），竞选期再由 `PromptBuilder._format_badge_speaking_progress` 给出竞选发言顺序与已发言/尚未发言名单，避免模型把警下玩家误说成警上。
 
 ### 白天流水线窗口
 
@@ -121,9 +121,11 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 ## LLM 交互层
 
 - `agents/llm_client.py` + `agents/providers/` — 提供方抽象，按 provider profile 决定传输协议、strict tool 端点、超时与重试策略：
-  - `registry.py`：显式 `provider_profile` 或按 Base URL 域名（`api.openai.com / api.deepseek.com / openrouter.ai / api.anthropic.com`）解析 `ProviderProfile`；未识别域名回退 `custom-openai`，Anthropic 兼容中转站需显式选 `custom-anthropic`
-  - `transports.py`：按 `api_mode` 选择传输——`openai_compatible.py`（`ChatOpenAI`，Chat Completions）或 `anthropic_messages.py`（`ChatAnthropic`，Messages API；去掉 Base URL 尾部 `/v1`、temperature 截断到 0~1、无 strict endpoint）
+  - `registry.py`：显式 `provider_profile` 或按 Base URL 域名（`api.openai.com / api.deepseek.com / openrouter.ai / api.anthropic.com / opencode.ai`）解析 `ProviderProfile`；未识别域名回退 `custom-openai`，Anthropic 兼容中转站需显式选 `custom-anthropic`。OpenCode 的 Zen 与 Go 共用 `opencode.ai` 域名，只能按路径前缀区分（`/zen/go` 必须先于 `/zen` 匹配；未知路径回落 Zen）
+  - **Responses 方言**：Base URL 路径以 `/responses` 结尾时，`_apply_endpoint_dialect()` 用 `replace()` 把 profile 切成 `openai_responses` 并关掉 strict —— 只换方言与 strict，provider 自己的 headers/能力全部保留，所以把官网模型表里的 URL 原样粘进来既走对了协议又不会丢 Zen 的会话头。这条覆盖是必需的：Zen 的部分模型（如 `muse-spark-1.3-contributor-free`，其目录项为 `provider.npm = "@ai-sdk/openai"`）只在 Responses API 上提供，同一域名打 `/chat/completions` 返回 500
+  - `transports.py`：按 `api_mode` 选择传输——`openai_compatible.py`（`ChatOpenAI`，Chat Completions）、`openai_responses.py`（同一 builder 的子类，只多传 `use_responses_api=True`；交给 SDK 前用 `strip_responses_suffix()` 去掉尾部 `/responses`）或 `anthropic_messages.py`（`ChatAnthropic`，Messages API；去掉 Base URL 尾部 `/v1`、temperature 截断到 0~1、无 strict endpoint）
   - `base.py`：`CallPurpose`、`ProviderProfile`、`call_budget()`（两种传输共用的 token/超时预算）
+  - **自定义请求头**：`ProviderProfile.default_headers` / `session_header` + `ModelConfig.headers` → `merge_request_headers()`，优先级为 profile 默认头 → 自动会话头 → 用户配置头（后者覆盖前者）。`header_error()` 是唯一校验入口（RFC 7230 token 名、值禁 CR/LF/NUL、SDK/网关保留头拒绝），API 校验器与 transport 共用同一函数。`opencode / opencode-go` 声明 `session_header="x-opencode-session"`，值由 transport 实例 `__init__` 生成（`ses_` + 26 位十六进制），一个座位一个 transport，所以会话 ID 座位级稳定且互不相同；用户填了同名头即覆盖。
   - `errors.py`：跨 openai/anthropic SDK 的错误分类元组；`llm_client.py` 再导出，`roles/base.py` 只从 `llm_client` 导入（core/roles 不得 import providers，见 `test_architecture_boundary.py`）
   - `LLMClient` 对上层 API 不变：`_structured_response()` / `_content_text()` 同时兼容 OpenAI 字符串内容 / `finish_reason` 与 Anthropic 内容块列表（text、thinking、reasoning）/ `stop_reason`；Anthropic 强制工具绑定 `tool_choice="any"`（thinking 模式下点名工具会被 400）；`map_strict_capability_error()` 沿异常 cause 链识别 SDK 400/422；`aclose()` 同时关闭 `ChatOpenAI` 与 `ChatAnthropic` 的 SDK 客户端
 - `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。关警长时提示词省略警长词，不写「本局没有警长」；开警长时仅注入 `SHERIFF_GAME_RULES`。只允许提示里写明的规则，禁止模型用其他版本补流程。
@@ -132,9 +134,10 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 ## 模型配置与角色目录
 
 - `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束
-- `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点
+- `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点；配置项还含自定义请求头 `headers`（管理面可见可编辑）与严格模式地址 `strict_base_url`；`POST /api/models/test` 带 `config_id` 时，请求里显式给出的可编辑字段（`base_url` / `model_id` / `strict_base_url` / `api_key` / `provider_profile` / `headers`）一律覆盖已存配置、传 `None` 沿用存储值（`strict_base_url` 传空串表示清空），所以对话框能在保存前试通当前表单值
 - `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 `NightDirector`（`core/night_flow.py`）都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
-- `GET /api/games/{id}` 与 `GET /api/games/{id}/snapshot` 向观众暴露无密钥的 v2 `model_snapshot`（`name / model_id / provider_profile / seats`）；旧档缺少 `seats` 的条目会被滤掉而不是 500。前端座位图悬停卡按 `seats` 反查模型，不把 `model_id` 写入玩家 DTO 或隐私白名单
+- `GET /api/games/{id}` 与 `GET /api/games/{id}/snapshot` 向观众暴露无密钥的 v2 `model_snapshot`（`name / model_id / provider_profile / seats`）；旧档缺少 `seats` 的条目会被滤掉而不是 500。前端座位图悬停卡按 `seats` 反查模型，不把 `model_id` 写入玩家 DTO 或隐私白名单。**自定义请求头不进快照**：它可能携带中转站凭据，`ModelSnapshotEntry` 也不声明该字段，多传也会被丢弃
+- 模型参数 digest 与检查点**不含 headers**，续跑时与 `api_key` 一样从当前模型配置读取。这样新增 headers 不会改变 `parameters_digest`，处于 `interrupted` 的旧局仍可续跑；代价是续跑不检测 headers 变化（与 api_key 的既有语义一致）
 - 分配只引用创建时物化的配置快照；之后编辑或删除 `models.json` 中的配置不会改变进行中的对局
 - 前端：`components/create/CreateGameWizard.tsx` 两步向导；`ModelStep.tsx` 以数量分配环境默认与已存配置；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
 
