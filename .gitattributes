@@ -1,0 +1,3 @@
+# 仓库内统一按 LF 存储：Windows 编辑器写回的 CRLF 不再产生整文件假 diff。
+# text=auto 会自动识别二进制文件（如 *.png）并跳过，不做任何转换。
+* text=auto eol=lf
