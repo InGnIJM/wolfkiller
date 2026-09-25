@@ -343,6 +343,54 @@ async def test_connection_test_by_id_invalid_key_returns_400(store, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_connection_test_by_id_prefers_edited_base_url_and_model_id(store, monkeypatch):
+    """The dialog gates saving on a test, so edited fields must beat stored ones."""
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store, api_key_encrypted="")
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        mock_client.return_value.probe.return_value = _CAPABILITIES
+        await model_routes.test_model(ModelTestRequest(
+            config_id=cfg.id, base_url="https://edited.test/v1", model_id="edited-model",
+        ))
+
+    config = mock_client.call_args_list[0].kwargs["config"]
+    assert config.base_url == "https://edited.test/v1"
+    assert config.model_id == "edited-model"
+
+
+@pytest.mark.asyncio
+async def test_connection_test_by_id_prefers_edited_strict_base_url(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store, api_key_encrypted="")
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        mock_client.return_value.probe.return_value = _CAPABILITIES
+        await model_routes.test_model(ModelTestRequest(
+            config_id=cfg.id, strict_base_url="https://edited-strict.test/beta",
+        ))
+
+    calls = mock_client.call_args_list
+    assert calls[0].kwargs["config"].strict_base_url == "https://edited-strict.test/beta"
+    assert calls[1].kwargs["config"].base_url == "https://edited-strict.test/beta"
+
+
+@pytest.mark.asyncio
+async def test_connection_test_by_id_blank_strict_base_url_clears_stored_value(store, monkeypatch):
+    """Clearing the strict address must not silently fall back to the stored one."""
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(
+        name="DeepSeek Strict", base_url="https://api.deepseek.com/v1",
+        model_id="deepseek-v4-pro", strict_base_url="https://stored-strict.test/beta",
+    )
+    store.upsert(cfg)
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        mock_client.return_value.probe.return_value = _CAPABILITIES
+        await model_routes.test_model(ModelTestRequest(config_id=cfg.id, strict_base_url=""))
+
+    calls = mock_client.call_args_list
+    assert calls[0].kwargs["config"].strict_base_url == "https://api.deepseek.com/beta"
+
+
+@pytest.mark.asyncio
 async def test_connection_test_by_fields_requires_base_url_and_model_id(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     with pytest.raises(HTTPException) as exc:

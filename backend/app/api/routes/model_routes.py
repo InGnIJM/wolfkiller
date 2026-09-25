@@ -41,6 +41,7 @@ def _to_response(config: ModelConfig) -> ModelConfigResponse:
         api_key_masked=masked, key_invalid=key_invalid,
         temperature=config.temperature, strict_base_url=config.strict_base_url,
         provider_profile=config.provider_profile,
+        headers=dict(config.headers),
         created_at=config.created_at, updated_at=config.updated_at,
     )
 
@@ -62,6 +63,7 @@ async def create_model(req: ModelConfigRequest):
         api_key_encrypted=crypto.encrypt(req.api_key) if req.api_key else "",
         temperature=req.temperature, strict_base_url=req.strict_base_url,
         provider_profile=req.provider_profile,
+        headers=req.headers,
     )
     store.upsert(config)
     return _to_response(config)
@@ -99,6 +101,7 @@ async def update_model(config_id: str, req: ModelConfigRequest):
         model_id=req.model_id, api_key_encrypted=encrypted,
         temperature=req.temperature, strict_base_url=req.strict_base_url,
         provider_profile=req.provider_profile,
+        headers=req.headers,
         created_at=existing.created_at,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -136,22 +139,34 @@ async def test_model(req: ModelTestRequest):
         config = get_model_config_store().get(req.config_id)
         if config is None:
             raise HTTPException(404, "model config not found")
-        base_url, model_id = config.base_url, config.model_id
+        # Saving is gated on a passing test, so every editable field follows
+        # one rule: an explicit request value wins over the stored config and
+        # ``None`` means "not sent, use the stored value". An empty strict
+        # address is an edited value (it clears the stored one), not an
+        # omission.
+        base_url = req.base_url or config.base_url
+        model_id = req.model_id or config.model_id
         api_key = req.api_key or ""
         if config.api_key_encrypted and not api_key:
             try:
                 api_key = crypto.decrypt(config.api_key_encrypted)
             except KeyDecryptionError:
                 raise HTTPException(400, "stored api key cannot be decrypted") from None
-        explicit_strict_base_url = config.strict_base_url
+        explicit_strict_base_url = (
+            config.strict_base_url if req.strict_base_url is None else req.strict_base_url
+        )
         provider_profile = req.provider_profile or config.provider_profile
+        # ``None`` keeps the stored headers so the dialog can test a profile
+        # change without losing them; an explicit dict (even empty) wins.
+        headers = dict(config.headers) if req.headers is None else req.headers
     else:
         if not req.base_url or not req.model_id:
             raise HTTPException(422, "base_url and model_id are required")
         base_url, model_id = req.base_url, req.model_id
         api_key = req.api_key or ""
-        explicit_strict_base_url = None
+        explicit_strict_base_url = req.strict_base_url
         provider_profile = req.provider_profile or "auto"
+        headers = req.headers or {}
     resolved_profile = ProviderRegistry().resolve(
         provider_profile, base_url, model_id,
     )
@@ -174,6 +189,7 @@ async def test_model(req: ModelTestRequest):
                 action_timeout_seconds=10,
                 action_retry_timeout_seconds=10,
                 provider_profile=resolved_profile.profile_id,
+                headers=tuple(headers.items()),
             ))
             if not prefix:
                 capabilities = result
