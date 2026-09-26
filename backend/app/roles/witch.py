@@ -150,7 +150,11 @@ WITCH_SPEC = RoleSpec(
         "you cannot use the antidote on yourself), while poison may "
         "target one living player and ignores Guard protection. If the antidote and Guard "
         "protection both target that werewolf-kill target, the target dies by double-save "
-        "penetration."
+        "penetration. "
+        "Tactical advice: If special werewolves with daytime kill capabilities (such as the Werewolf King) "
+        "are present, revealing your Witch identity prematurely during daytime speech carries a severe "
+        "risk of being immediately eliminated, losing your remaining potions and night Intel. "
+        "Consider hiding your identity or only taking the lead when you are prepared to poison key threats."
     ),
 )
 

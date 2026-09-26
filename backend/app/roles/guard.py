@@ -101,7 +101,10 @@ GUARD_SPEC = RoleSpec(
         "Each night Guard may protect one living player or pass; the same seat cannot be "
         "protected on consecutive nights. Guard protection only cancels werewolf-kill damage; "
         "poison and hunter shots ignore it. If Guard protection and Witch antidote both target "
-        "the same werewolf-kill target, that target dies by double-save penetration."
+        "the same werewolf-kill target, that target dies by double-save penetration. "
+        "Tactical advice: The Guard is a critical unverified god. Focus on discerning the real Seer "
+        "and protecting key targets from wolf kills while avoiding double-save conflicts with the Witch. "
+        "During the day, avoid revealing your identity lightly and stay vigilant against deceptive gold-water claims."
     ),
 )
 
