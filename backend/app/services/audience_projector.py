@@ -27,6 +27,11 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "SHERIFF_WITHDRAW": ("sheriff_withdraw", frozenset({"seat", "choice", "round_number"})),
     "SHERIFF_VOTE": ("sheriff_vote", frozenset({"voter_seat", "target_seat", "kind", "round_number"})),
     "SHERIFF_SIDE": ("sheriff_side", frozenset({"seat", "side", "round_number"})),
+    # The judge announces the duel verdict publicly, so the audience sees the
+    # challenged camp; the charm deliberately omits its target seat.
+    "KNIGHT_DUEL": ("knight_duel", frozenset({"seat", "target_seat", "camp", "round_number"})),
+    "WOLF_BEAUTY_CHARM": ("wolf_beauty_charm", frozenset({"seat", "round_number"})),
+    "WOLF_BEAUTY_REVENGE": ("wolf_beauty_revenge", frozenset({"seat", "target_seat", "cause", "round_number"})),
 }
 
 _PUBLIC_ROLE_ACTIONS = {
@@ -43,6 +48,8 @@ _PUBLIC_REASONING_EVENTS = {
     "SEER_REASONING": "seer_reasoning",
     "GUARD_REASONING": "guard_reasoning",
     "WEREWOLF_KING_REASONING": "werewolf_king_reasoning",
+    "KNIGHT_REASONING": "knight_reasoning",
+    "WOLF_BEAUTY_REASONING": "wolf_beauty_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

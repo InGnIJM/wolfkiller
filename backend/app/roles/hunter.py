@@ -10,6 +10,9 @@ from app.models.pipeline import (
 )
 
 
+# Ways out that still let the hunter fire. Deliberately absent: "poison" (the
+# rules forbid it) and "charm", because a hunter dragged along by Wolf Beauty's
+# charm may not shoot either.
 _SHOOT_REASONS = frozenset({"wolf_kill", "exile", "hunter_shot", "self_explode"})
 
 
@@ -94,6 +97,7 @@ def resolve_hunter_action(
 
 
 HUNTER_SPEC = RoleSpec(
+    tags=frozenset({"god"}),
     role_id="wolf-killer-hunter", display_name="Hunter", camp_id="good",
     contracts=(ActionContract(
         contract_id="hunter_shoot", schedule_point=SchedulePoint.DAWN_REACTION,
