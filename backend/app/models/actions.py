@@ -69,7 +69,9 @@ class SpeechRecord:
 @dataclass
 class DeathReport:
     player_seat: int
-    cause: str  # wolf_kill, poison, exile, hunter_shot, self_explode, love_death
+    # wolf_kill, poison, exile, hunter_shot, self_explode, knight_duel, charm;
+    # love_death stays reserved for an unimplemented cause (see docs/gameplay.md).
+    cause: str
     round_number: int
 
     def to_dict(self) -> dict:
