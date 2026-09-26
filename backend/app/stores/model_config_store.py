@@ -5,7 +5,7 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Protocol
@@ -25,6 +25,9 @@ class ModelConfig:
     created_at: str = ""
     updated_at: str = ""
     provider_profile: str = "auto"
+    #: Extra request headers sent with every call (may carry relay-specific
+    #: values, so they are never copied into public snapshots or game logs).
+    headers: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def new(
@@ -32,6 +35,7 @@ class ModelConfig:
         api_key_encrypted: str = "", temperature: Optional[float] = None,
         strict_base_url: Optional[str] = None,
         provider_profile: str = "auto",
+        headers: Optional[dict[str, str]] = None,
     ) -> "ModelConfig":
         now = datetime.now(timezone.utc).isoformat()
         return cls(
@@ -40,6 +44,7 @@ class ModelConfig:
             api_key_encrypted=api_key_encrypted,
             temperature=temperature, strict_base_url=strict_base_url,
             provider_profile=provider_profile,
+            headers=dict(headers) if headers else {},
             created_at=now, updated_at=now,
         )
 
@@ -69,6 +74,7 @@ class JsonModelConfigStore:
                     continue
                 entry = entry.copy()
                 entry.setdefault("provider_profile", "auto")
+                entry.setdefault("headers", {})
                 configs.append(ModelConfig(**entry))
             return configs
 

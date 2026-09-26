@@ -73,6 +73,9 @@ class LLMClientConfig:
     action_retry_timeout_seconds: float = 120.0
     action_final_retry_timeout_seconds: float = 30.0
     provider_profile: str = "auto"
+    #: Extra request headers. Held as pairs, not a dict, because a frozen
+    #: config is used as a cache key and therefore has to stay hashable.
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

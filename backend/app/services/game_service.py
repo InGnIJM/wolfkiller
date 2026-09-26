@@ -249,6 +249,7 @@ def _saved_client_config(
         action_retry_timeout_seconds=env_config.action_retry_timeout_seconds,
         action_final_retry_timeout_seconds=env_config.action_final_retry_timeout_seconds,
         provider_profile=config.provider_profile,
+        headers=tuple(config.headers.items()),
     )
     resolved_profile = ProviderRegistry().resolve(
         client_config.provider_profile,
@@ -1724,6 +1725,11 @@ class GameService:
                     action_retry_timeout_seconds=float(parameters["action_retry_timeout_seconds"]),
                     action_final_retry_timeout_seconds=float(parameters["action_final_retry_timeout_seconds"]),
                     provider_profile=str(parameters["provider_profile"]),
+                    # Taken from the live config, exactly like ``api_key``:
+                    # headers may carry relay credentials, so they stay out of
+                    # the checkpoint and its digest, and a resumed game picks
+                    # up whatever the model config currently holds.
+                    headers=current.headers,
                 )
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError("checkpoint_corrupt") from error
@@ -2433,9 +2439,11 @@ class GameService:
     async def delete_game(self, game_id: str) -> None:
         if game_id not in self._games:
             raise KeyError(game_id)
-        if self.repository is not None:
-            # Make the game disappear atomically before best-effort derived
-            # file cleanup. Benchmark ownership is checked in this transaction.
+        # Games restored from a legacy manifest may have no repository row.
+        # Only soft-delete when a live row exists; orphaned games are removed
+        # from the manifest and disk directly. Benchmark ownership is still
+        # enforced inside mark_game_deleted for rows that do exist.
+        if self.repository is not None and self.repository.get_game(game_id) is not None:
             self.repository.mark_game_deleted(game_id)
         await self._discard_game_runtime(game_id)
 
