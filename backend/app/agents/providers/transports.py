@@ -1,13 +1,16 @@
 from .anthropic_messages import AnthropicMessagesTransport
 from .base import (
-    API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS, ProviderProfile,
+    API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS,
+    API_MODE_OPENAI_RESPONSES, ProviderProfile,
 )
 from .openai_compatible import OpenAICompatibleTransport
+from .openai_responses import OpenAIResponsesTransport
 
 
 _TRANSPORTS = {
     API_MODE_CHAT_COMPLETIONS: OpenAICompatibleTransport,
     API_MODE_ANTHROPIC_MESSAGES: AnthropicMessagesTransport,
+    API_MODE_OPENAI_RESPONSES: OpenAIResponsesTransport,
 }
 
 
