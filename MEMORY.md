@@ -177,3 +177,18 @@
   `error code: 1010` for *every* model, which looks exactly like a blanket
   region block and will send the diagnosis the wrong way. Probe sequentially
   with ~2.5s spacing; the rule clears by itself.
+- Trigger: adding a role to the backend registry. Action: the frontend keeps
+  **four** independent role-id → Chinese-name tables and they drift silently —
+  `components/game/SeatMap.tsx` (`ROLE_BADGES`), `components/game/DeathAnnouncement.tsx`
+  (`ROLE_LABELS`), `components/game/HistoryPanel.tsx` (`ROLE_LABELS`) and
+  `components/shared/RoleIcon.tsx` (`ROLE_ICONS`); `theme/tokens.ts` (`ROLE_COLORS`)
+  is a fifth one, but it only supplies colours. A missing key never throws:
+  SeatMap renders `{badge && ...}`, so the seat card silently loses its role line
+  *and* falls back to the camp colour, while the hover card drops the role from
+  its identity line; DeathAnnouncement falls back to the raw id
+  (`身份：wolf-killer-wolf-beauty`). Seen 2026-09-26 on game `aea935c4`: seats 2
+  (wolf beauty) and 7 (old drunkard) showed no name while the other ten did —
+  the knight was missing from the table too but was not in that line-up, which
+  is why the symptom looked like "two players". The `it.each` role tables in
+  `test/SeatMap.test.tsx` and `test/DeathAnnouncement.test.tsx` are the only
+  guard: they fail whenever a table is short.
