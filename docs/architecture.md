@@ -98,7 +98,7 @@ WolfKiller/
 
 - **`DAY_ACTION`**（每位发言者开口前，`slot=f"{vote_round}:{seat}"`）：角色可提交行动；若提交事件含 `DAY_INTERRUPTED`，引擎 `_resolve_day_interruption()` 结算 pending damage、按 `death_history` 去重发布死亡、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点，随后判胜负或以 `WEREWOLF_EXPLODED` 转入 NIGHT。续跑时 `_journaled_day_interruption()` 从 journal 识别已发生的中断并幂等重放。白狼王自爆是当前唯一实现。
 
-- **`POST_SPEECH_ACTION`**（全体存活玩家发言完毕、放逐投票前，`slot="post_speech"`）：与 `DAY_ACTION` 同构的第二个白天窗口，只在有角色声明该调度点时运行（`_post_speech_action_enabled()`）。骑士翻牌决斗是当前唯一实现：是狼人则提交 `DAY_INTERRUPTED`（`cause="knight_duel"`）走同一条中断路径；是好人则只提交自身伤害。窗口跑完引擎先 `_settle_and_publish()`（白天伤害立即生效、绝不带进夜里），再 `_resolve_delayed_deaths()`，最后才 `SPEECHES_COMPLETE`。`_journaled_day_interruption()` 按 slot 后缀匹配两个窗口的检查点，因此续跑时即使阶段已推进到 NIGHT 也能幂等重放。
+- **`POST_SPEECH_ACTION`**（全体存活玩家发言完毕、放逐投票前，`slot="post_speech"`）：与 `DAY_ACTION` 同构的第二个白天窗口，只在有角色声明该调度点时运行（`_post_speech_action_enabled()`）。骑士翻牌决斗是当前唯一实现：是狼人则提交 `DAY_INTERRUPTED`（`cause="knight_duel"`）走同一条中断路径，被裁决者在转 NIGHT 前经 `give_last_words(..., daytime=True)` 发表遗言（骑士本人同为该 cause 但不走这条路，因此不会被补发遗言）；是好人则只提交自身伤害。窗口跑完引擎先 `_settle_and_publish()`（白天伤害立即生效、绝不带进夜里），再 `_resolve_delayed_deaths()`，最后才 `SPEECHES_COMPLETE`。`_journaled_day_interruption()` 按 slot 后缀匹配两个窗口的检查点，因此续跑时即使阶段已推进到 NIGHT 也能幂等重放。
 - **`EXILE_VERDICT`**（放逐前）：`_apply_exile(seat)` 先以 `EXILE_PENDING{target_seat, cause="exile"}` 跑该点；若提交事件含 `EXILE_CANCELLED`，则对随行 `PLAYER_REVEALED` 写 `revealed_role`、系统消息播报翻牌、`add_vote_result(..., cancelled_seat)` 记为无人出局并跳过遗言；否则走原 `mark_dead("exile")` 路径。白痴翻牌是当前唯一实现。
 
 ### 放逐反应
