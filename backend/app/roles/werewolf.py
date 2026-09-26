@@ -68,6 +68,7 @@ WEREWOLF_KILL_CONTRACT = ActionContract(
 )
 
 WEREWOLF_SPEC = RoleSpec(
+    tags=frozenset({"wolf"}),
     role_id="wolf-killer-werewolf", display_name="Werewolf", camp_id="werewolf",
     schema_version=2,
     contracts=(WEREWOLF_KILL_CONTRACT,),

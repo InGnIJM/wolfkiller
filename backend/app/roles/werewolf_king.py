@@ -123,6 +123,7 @@ WEREWOLF_KING_EXPLODE_CONTRACT = ActionContract(
 )
 
 WEREWOLF_KING_SPEC = RoleSpec(
+    tags=frozenset({"wolf"}),
     role_id="wolf-killer-werewolf-king", display_name="Werewolf King", camp_id="werewolf",
     contracts=(WEREWOLF_KILL_CONTRACT, WEREWOLF_KING_EXPLODE_CONTRACT),
     initial_resources={"explode": 1},

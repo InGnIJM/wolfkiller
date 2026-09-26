@@ -3,6 +3,7 @@ from app.models.pipeline import RoleSpec
 
 
 VILLAGER_SPEC = RoleSpec(
+    tags=frozenset({"villager"}),
     role_id="wolf-killer-villager",
     display_name="Villager",
     camp_id="good",
