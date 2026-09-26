@@ -24,14 +24,23 @@ from app.models.pipeline import (
 from app.roles.hunter import HUNTER_SPEC, Hunter
 from app.roles.guard import GUARD_SPEC, Guard
 from app.roles.idiot import IDIOT_SPEC, Idiot
+from app.roles.knight import KNIGHT_SPEC, Knight
+from app.roles.old_drunkard import OLD_DRUNKARD_SPEC, OldDrunkard
 from app.roles.seer import SEER_SPEC, Seer
 from app.roles.villager import VILLAGER_SPEC, Villager
-from app.roles.werewolf import WEREWOLF_SPEC, Werewolf
+from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC, Werewolf
 from app.roles.werewolf_king import WEREWOLF_KING_SPEC, WerewolfKing
+from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
 from app.roles.witch import WITCH_SPEC, Witch
 
 
 _VISIBLE_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
+# Selected-target facts a contract may request. Kept in sync with the
+# projector's whitelists: requesting a namespace is what makes the target's
+# observable camp/statuses/public resources visible to the hook.
+_SELECTED_TARGET_NAMESPACES = frozenset(
+    {"camp_label", "status_labels", "resource_labels"}
+)
 _MAX_ORDER = 1_000_000
 _STABLE_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
 
@@ -121,6 +130,11 @@ class RoleRegistry:
                 raise ValueError(f"role already registered: {spec.role_id}")
             self._pipeline_specs[spec.role_id] = spec
 
+    def pipeline_spec(self, role_id: str) -> PipelineRoleSpec | None:
+        """The declared spec for ``role_id``, or None when it has none."""
+        with self._lock:
+            return self._pipeline_specs.get(role_id)
+
     def freeze(self) -> RegistrySnapshot:
         with self._lock:
             local_specs = dict(self._pipeline_specs)
@@ -201,7 +215,7 @@ class RoleRegistry:
             raise ValueError("effect permission exceeds role declaration")
         if not contract.visibility_namespaces <= spec.visibility_namespaces:
             raise ValueError("contract visibility exceeds role declaration")
-        if not contract.selected_target_fact_namespaces <= {"camp_label"}:
+        if not contract.selected_target_fact_namespaces <= _SELECTED_TARGET_NAMESPACES:
             raise ValueError("unknown selected target fact namespace")
         if contract.selected_target_fact_namespaces and contract.aggregate is not None:
             raise ValueError("selected target facts cannot be used by aggregate contracts")
@@ -420,6 +434,9 @@ builtin_registry.register_pipeline(HUNTER_SPEC)
 builtin_registry.register_pipeline(VILLAGER_SPEC)
 builtin_registry.register_pipeline(GUARD_SPEC)
 builtin_registry.register_pipeline(IDIOT_SPEC)
+builtin_registry.register_pipeline(KNIGHT_SPEC)
+builtin_registry.register_pipeline(OLD_DRUNKARD_SPEC)
+builtin_registry.register_pipeline(WOLF_BEAUTY_SPEC)
 builtin_registry.register_pipeline(WEREWOLF_KING_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
@@ -493,6 +510,28 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-idiot", Camp.GOOD, Idiot, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-knight", Camp.GOOD, Knight, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-old-drunkard", Camp.GOOD, OldDrunkard, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec(
+        "wolf-killer-wolf-beauty",
+        Camp.WEREWOLF,
+        WolfBeauty,
+        (
+            _contract(
+                "werewolf_kill",
+                GamePhase.NIGHT,
+                ("kill", "pass"),
+                frozenset({"kill"}),
+                resolution_priority=10,
+            ),
+        ),
+    )
 )
 builtin_registry.register(
     LegacyRoleSpec(

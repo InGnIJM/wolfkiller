@@ -39,6 +39,18 @@ ROLE_METADATA: dict[str, dict[str, str]] = {
         "name_zh": "白狼王", "icon": "wolf_king",
         "description": "狼人，白天发言阶段可自爆带走一名玩家",
     },
+    "wolf-killer-knight": {
+        "name_zh": "骑士", "icon": "knight",
+        "description": "发言结束后投票前翻牌决斗一名玩家，是狼人则白天立即结束",
+    },
+    "wolf-killer-wolf-beauty": {
+        "name_zh": "狼美人", "icon": "wolf_beauty",
+        "description": "狼人，每晚可魅惑一名好人，出局时被魅惑者殉情",
+    },
+    "wolf-killer-old-drunkard": {
+        "name_zh": "老酒鬼", "icon": "old_drunkard",
+        "description": "平民，免疫魅惑；被毒或枪杀延到次日发言结束后死亡",
+    },
 }
 
 STANDARD_PRESETS: list[dict] = [
@@ -91,6 +103,36 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-werewolf": 3,
             "wolf-killer-werewolf-king": 1,
             "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
+        },
+        "enable_sheriff": True,
+    },
+    {
+        "id": "twelve-player-knight",
+        "name": "十二人骑士",
+        "description": "4狼 4民 1预言家 1女巫 1猎人 1骑士",
+        "role_counts": {
+            "wolf-killer-werewolf": 4,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-knight": 1,
+        },
+        "enable_sheriff": False,
+    },
+    {
+        "id": "twelve-player-wolf-beauty",
+        "name": "十二人狼美人",
+        "description": "3狼 1狼美人 3民 1老酒鬼 1预言家 1女巫 1猎人 1守卫",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-wolf-beauty": 1,
+            "wolf-killer-villager": 3,
+            "wolf-killer-old-drunkard": 1,
             "wolf-killer-seer": 1,
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
