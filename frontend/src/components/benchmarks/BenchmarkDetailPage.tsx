@@ -17,6 +17,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import { benchmarkExportUrl } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import type { BenchmarkReport, BenchmarkStatus } from '../../store/types';
+import { BACKDROP } from '../../theme/tokens';
 
 const PHASE_LABELS: Record<string, string> = {
   waiting: '等待中', role_deal: '分配角色', night: '黑夜', dawn: '天亮',
@@ -152,7 +153,11 @@ export default function BenchmarkDetailPage() {
   const status = current.status;
 
   return (
-    <Container component="main" maxWidth="xl" sx={{ py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 } }}>
+    <Container component="main" maxWidth="xl" sx={{
+      position: 'relative', zIndex: 1,
+      py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
+    }}>
       <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/benchmarks')} sx={{ mb: 2 }}>返回任务列表</Button>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <Box>
