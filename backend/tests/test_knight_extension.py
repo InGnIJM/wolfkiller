@@ -314,6 +314,60 @@ async def test_duel_on_a_good_player_gives_the_knight_no_last_words(tmp_path) ->
 
 
 @pytest.mark.asyncio
+async def test_last_words_are_claimed_before_the_llm_speaks(tmp_path) -> None:
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "knight_duel":
+            return command("duel", 5, "查杀 5 号")
+        return command("pass")
+
+    engine = _engine(tmp_path, provider, "knight-words-claim")
+    order: list[str] = []
+    engine._checkpoint_hook = order.append
+    original_speak = engine.speak
+
+    async def recording_speak(seat, context):
+        order.append(f"speak:{context}")
+        return await original_speak(seat, context)
+
+    engine.speak = recording_speak
+
+    assert await engine._execute_speech_round() is True
+
+    # The claim is persisted *before* the LLM call, so a crash mid-speech costs
+    # the line instead of replaying it into the timeline twice.
+    claim = next(i for i, entry in enumerate(order) if "last_words_pending" in entry)
+    spoken = next(i for i, entry in enumerate(order) if entry == "speak:last_words")
+    assert claim < spoken
+
+
+@pytest.mark.asyncio
+async def test_a_crash_during_last_words_keeps_the_claim(tmp_path) -> None:
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "knight_duel":
+            return command("duel", 5, "查杀 5 号")
+        return command("pass")
+
+    engine = _engine(tmp_path, provider, "knight-words-crash")
+    keys: list[str] = []
+    engine._checkpoint_hook = keys.append
+
+    async def exploding_speak(seat, context):
+        if context == "last_words":
+            raise RuntimeError("simulated crash")
+        return f"{seat}号发言"
+
+    engine.speak = exploding_speak
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        await engine._execute_speech_round()
+
+    # The resumed run reads the claim back from the checkpoint and treats the
+    # victim as already spoken, so the words are never emitted twice.
+    assert any("last_words_pending" in key for key in keys)
+    assert (5, 2, "knight_duel") in engine._last_words_given
+
+
+@pytest.mark.asyncio
 async def test_duel_on_a_good_player_leaves_the_day_running(tmp_path) -> None:
     def provider(request, projected, attempt):
         if request.contract.contract_id == "knight_duel":
