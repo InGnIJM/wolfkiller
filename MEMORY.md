@@ -191,4 +191,10 @@
   the knight was missing from the table too but was not in that line-up, which
   is why the symptom looked like "two players". The `it.each` role tables in
   `test/SeatMap.test.tsx` and `test/DeathAnnouncement.test.tsx` are the only
-  guard: they fail whenever a table is short.
+  guard: they fail whenever a table is short. The same drift hits death causes:
+  the `DeathCause` union in `store/types.ts` plus four `CAUSE_LABELS` tables
+  (`DeathAnnouncement.tsx`, `ActivityCard.tsx`, `CenterDisplay.tsx`,
+  `HistoryPanel.tsx`). Only DeathAnnouncement's lagged behind `knight_duel` and
+  `charm`, and it degrades to the raw cause (`charm · 第2轮`) rather than
+  failing. Typing the test table as `Array<[DeathCause, string]>` makes a
+  missing cause break `tsc` as well as the render.
