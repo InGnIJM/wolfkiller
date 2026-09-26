@@ -119,6 +119,7 @@ def resolve_witch_action(
 
 
 WITCH_SPEC = RoleSpec(
+    tags=frozenset({"god"}),
     role_id="wolf-killer-witch", display_name="Witch", camp_id="good",
     schema_version=2,
     contracts=(ActionContract(
