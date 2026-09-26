@@ -25,6 +25,7 @@ from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 from app.config import PipelineMode, config as app_config
 from app.core.effect_applier import CommitResult
+from app.core.night_settlement import resolve_delayed_deaths
 from app.core.vote_service import VoteService
 from app.core.sheriff_flow import (
     SheriffDirector,
@@ -75,6 +76,10 @@ _NIGHT_POINTS = (
 # Staged night batch stages at which each pipeline point executes; a batch
 # with `stage > point_stage` must carry that point's result in raw_results.
 _NIGHT_POINT_STAGES = (1, 5, 7, 9, 10)
+
+# Slot of the POST_SPEECH_ACTION window that opens once every living seat has
+# spoken and before the exile vote starts.
+_POST_SPEECH_SLOT = "post_speech"
 
 
 def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
@@ -1225,12 +1230,13 @@ class GameEngine:
         self.state.speaking_order = [s for s, _ in alive]
         resumed = self._journaled_day_interruption()
         if resumed is not None:
-            # A DAY_ACTION window already interrupted this round before the
-            # phase advanced (crash in between): finish that interruption
-            # instead of letting the remaining seats speak.
+            # A daytime window already interrupted this round before the phase
+            # advanced (crash in between): finish that interruption instead of
+            # letting the remaining seats speak.
             self.state.current_speaker = None
             self.state.speaking_order = []
-            await self._resolve_day_interruption(*resumed)
+            if self.sm.get_state() is GamePhase.SPEECH:
+                await self._resolve_day_interruption(*resumed)
             return True
         for seat, player in alive:
             # Every speaker's turn opens a role-agnostic DAY_ACTION window
@@ -1260,6 +1266,19 @@ class GameEngine:
 
         self.state.current_speaker = None
         self.state.speaking_order = []
+        # Every living seat has now spoken: open the post-speech DAY_ACTION
+        # window before the exile vote, so a daytime skill that must land after
+        # the speeches (and before the ballot) still can interrupt the day.
+        if await self._run_post_speech_day_action():
+            return True
+        # A post-speech action kills through pending damage, and that death is
+        # immediate: settle and announce it before the delayed deaths and before
+        # the vote, never letting it linger into the night.
+        if self._pipeline_scheduler is not None:
+            await self._settle_and_publish()
+        # Then finalise any death the settlement delayed: the rules put it right
+        # after the speeches and before the exile vote.
+        await self._resolve_delayed_deaths()
         self.sm.transition(SM_Event.SPEECHES_COMPLETE)
         await self._broadcast_phase_change()
         return False
@@ -1274,6 +1293,13 @@ class GameEngine:
         Dead holders still count so a resumed speech round replays the
         journaled window that interrupted the day instead of skipping it.
         """
+        return self._contract_point_enabled(SchedulePoint.DAY_ACTION)
+
+    def _post_speech_action_enabled(self) -> bool:
+        """True when this game seats a role with a POST_SPEECH_ACTION contract."""
+        return self._contract_point_enabled(SchedulePoint.POST_SPEECH_ACTION)
+
+    def _contract_point_enabled(self, point: SchedulePoint) -> bool:
         scheduler = self._pipeline_scheduler
         if scheduler is None:
             return False
@@ -1283,7 +1309,7 @@ class GameEngine:
         for player in self.state.players.values():
             spec = specs.get(player.role)
             for contract in () if spec is None else spec.contracts:
-                if contract.schedule_point is SchedulePoint.DAY_ACTION:
+                if contract.schedule_point is point:
                     return True
         return False
 
@@ -1294,17 +1320,34 @@ class GameEngine:
     def _journaled_day_interruption(
         self,
     ) -> tuple[int, tuple[Mapping[str, object], ...]] | None:
-        """Find a DAY_ACTION window of this speech round that already
-        interrupted the day: ``(speaker_seat, interruption payloads)``."""
-        if not self._day_action_enabled():
+        """Find a daytime window of this speech round that already interrupted
+        the day: ``(speaker_seat, interruption payloads)``.
+
+        Two windows can interrupt a speech round: the per-speaker DAY_ACTION
+        window (``r<vote_round>-s<seat>``) and the POST_SPEECH_ACTION window
+        (``post_speech``) that opens once every living seat has spoken.
+        """
+        day_action = self._day_action_enabled()
+        post_speech = self._post_speech_action_enabled()
+        if not (day_action or post_speech):
             return None
-        prefix = f"{Scheduler.point_phase(self.state)}#r{self.state.vote_round}-s"
+        # The journal key embeds the phase the window ran in. A resumed round
+        # may already have advanced to NIGHT, so match on the slot suffix rather
+        # than rebuilding the key from the current phase.
+        speaker_suffix = f"#r{self.state.vote_round}-s"
+        post_speech_suffix = f"#{_POST_SPEECH_SLOT}"
         for key, checkpoint in point_journal(self.state).entries():
-            if (
-                key.round_number != self.state.round_number
-                or key.point is not SchedulePoint.DAY_ACTION
-                or not key.phase.startswith(prefix)
+            if key.round_number != self.state.round_number:
+                continue
+            if day_action and key.point is SchedulePoint.DAY_ACTION and (
+                speaker_suffix in key.phase
             ):
+                seat = int(key.phase.rsplit(speaker_suffix, 1)[1])
+            elif post_speech and key.point is SchedulePoint.POST_SPEECH_ACTION and (
+                key.phase.endswith(post_speech_suffix)
+            ):
+                seat = 0
+            else:
                 continue
             interruptions = tuple(
                 event["payload"] for event in checkpoint.events
@@ -1312,7 +1355,7 @@ class GameEngine:
                 and isinstance(event.get("payload"), Mapping)
             )
             if interruptions:
-                return int(key.phase[len(prefix):]), interruptions
+                return seat, interruptions
         return None
 
     async def _run_day_action(self, seat: int) -> bool:
@@ -1323,8 +1366,28 @@ class GameEngine:
         """
         if not self._day_action_enabled():
             return False
-        slot = self._day_slot(self.state.vote_round, seat)
-        result = await self._run_pipeline_point(SchedulePoint.DAY_ACTION, slot=slot)
+        return await self._run_day_window(
+            self._day_slot(self.state.vote_round, seat), seat,
+        )
+
+    async def _run_post_speech_day_action(self) -> bool:
+        """Open the POST_SPEECH_ACTION window after the last speaker, before the vote.
+
+        This is the role-agnostic window a daytime skill that must run once every
+        living player has spoken (and before the exile vote starts) declares its
+        contract on. Returns True when a role interrupted the day; the phase has
+        then already advanced to NIGHT (or GAME_OVER).
+        """
+        if not self._post_speech_action_enabled():
+            return False
+        return await self._run_day_window(
+            _POST_SPEECH_SLOT, 0, point=SchedulePoint.POST_SPEECH_ACTION,
+        )
+
+    async def _run_day_window(
+        self, slot: str, seat: int, *, point: SchedulePoint = SchedulePoint.DAY_ACTION,
+    ) -> bool:
+        result = await self._run_pipeline_point(point, slot=slot)
         interruptions = tuple(
             payload for event_type, payload in self._pipeline_audience_events(result)
             if event_type == "DAY_INTERRUPTED"
@@ -1813,7 +1876,36 @@ class GameEngine:
             DeathReport(event["payload"]["seat"], event["payload"]["cause"],
                         event["payload"]["round_number"])
             for event in settlement.events
+            if event["event_type"] == "PLAYER_DIED"
         )
+
+    async def _resolve_delayed_deaths(self) -> tuple[DeathReport, ...]:
+        """Finalise the deaths a delayable seat was spared earlier.
+
+        A role marks itself delayable and the settlement then reports a lethal
+        non-wolf hit as pending instead of killing the seat; the death lands
+        here, once the day's speeches are over and before the exile vote starts.
+        Role-agnostic: the engine reads only the generic statuses.
+        """
+        runtime = getattr(self.state, "_pipeline_runtime", None)
+        if runtime is None:
+            return ()
+        deaths, cleared = resolve_delayed_deaths(
+            runtime.statuses, self.state.round_number,
+        )
+        if not deaths:
+            return ()
+        reports = tuple(
+            DeathReport(death["seat"], death["cause"], death["round_number"])
+            for death in deaths
+        )
+        for seat, statuses in cleared.items():
+            runtime.statuses[seat] = frozenset(runtime.statuses[seat]) - frozenset(statuses)
+            self.state.players[seat].is_alive = False
+        runtime.revision += 1
+        self.state.death_history.extend(reports)
+        await self._publish_deaths(reports)
+        return reports
 
     async def _publish_deaths(self, deaths: tuple[DeathReport, ...]) -> None:
         for death in deaths:
