@@ -11,6 +11,7 @@ import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
 
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import type { BenchmarkRun, BenchmarkStatus } from '../../store/types';
+import { BACKDROP } from '../../theme/tokens';
 
 const TERMINAL = new Set<BenchmarkStatus>(['completed', 'failed', 'cancelled']);
 const STATUS_LABEL: Record<BenchmarkStatus, string> = {
@@ -41,7 +42,11 @@ export default function BenchmarkListPage() {
   }, [loadRuns, runs]);
 
   return (
-    <Container component="main" maxWidth="lg" sx={{ py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 } }}>
+    <Container component="main" maxWidth="lg" sx={{
+      position: 'relative', zIndex: 1,
+      py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
+    }}>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Box>
           <Typography component="h1" variant="h4">模型评测</Typography>

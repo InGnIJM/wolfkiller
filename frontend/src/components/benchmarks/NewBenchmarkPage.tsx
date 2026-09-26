@@ -11,6 +11,7 @@ import { fetchPresets } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type { BenchmarkCreateInput, BenchmarkMode, GamePreset } from '../../store/types';
+import { BACKDROP } from '../../theme/tokens';
 
 function requestId(): string {
   return globalThis.crypto?.randomUUID?.()
@@ -90,7 +91,11 @@ export default function NewBenchmarkPage() {
   };
 
   return (
-    <Container component="main" maxWidth="md" sx={{ py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 } }}>
+    <Container component="main" maxWidth="md" sx={{
+      position: 'relative', zIndex: 1,
+      py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
+    }}>
       <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/benchmarks')} sx={{ mb: 2 }}>返回任务列表</Button>
       <Typography component="h1" variant="h4">新建评测草稿</Typography>
       <Typography color="text.secondary" sx={{ mt: 1, mb: 3 }}>

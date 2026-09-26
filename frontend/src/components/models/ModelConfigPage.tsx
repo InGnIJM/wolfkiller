@@ -6,6 +6,7 @@ import { providerProfileLabel } from './providerProfiles';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import { testModelConnection } from '../../api/client';
 import type { ModelConfig, ModelConfigInput, ModelTestResult } from '../../store/types';
+import { BACKDROP } from '../../theme/tokens';
 
 export default function ModelConfigPage() {
   const { configs, loading, error, load, create, update, remove } = useModelConfigStore();
@@ -53,7 +54,10 @@ export default function ModelConfigPage() {
   };
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
+    <Container maxWidth="md" sx={{
+      position: 'relative', zIndex: 1, py: 4,
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
+    }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 400 }}>模型配置</Typography>
