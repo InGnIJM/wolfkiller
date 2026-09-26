@@ -115,3 +115,65 @@
   among living wolves. The 2026-09-16 snapshot (61 finished games) had median
   100% per-round agreement.
 - Trigger: `npm run test:coverage` gate in `frontend/vite.config.ts`. Action: CI now runs this job against the 9 included files with 100% thresholds. On WSL `/mnt/e` the local run can still die from worker timeouts (see above); copy to an ext4 mirror before treating coverage as a local signal. If a mirror run is below 100%, compare against the current `main` CI job rather than a remembered 96.4% snapshot.
+- Trigger: a claim that "provider X now requires header Y" arrives from web
+  search. Action: read the client's own shipped code instead of the search
+  results. For OpenCode, the npm package `opencode-ai` ships a compiled Bun
+  binary (`bin/opencode.exe`); `grep -ao 'x-opencode-[a-z-]*'` plus a Python
+  byte-offset dump of the surrounding text recovers the real implementation.
+  Verified for v1.18.31: the header block is sent only when
+  `providerID.startsWith("opencode")`, i.e. for `opencode` (Zen,
+  `https://opencode.ai/zen/v1`) and `opencode-go` (Go,
+  `https://opencode.ai/zen/go/v1`) — both `@ai-sdk/openai-compatible`. Values
+  are `x-opencode-session` = the client's own session id (`ses_` + 26 chars),
+  `x-opencode-request` = the OpenCode user id, `x-opencode-client` = client
+  flag, `x-opencode-project` = project id. For *third-party* providers OpenCode
+  sends `x-session-affinity` + `X-Session-Id` instead. The server-side
+  enforcement of these headers is still unverified — only the client exists in
+  hand, so treat "required" as unproven until a real endpoint returns 4xx.
+- Trigger: running backend tests on this machine. Action: the repo has no
+  virtualenv and system Python has no deps; `python3 -m venv` also fails here
+  ("Failing command: .../bin/python3", missing ensurepip). Use
+  `python3 -m pip install --target ~/.venvs/wk-deps -r requirements.txt` and run
+  `PYTHONPATH=~/.venvs/wk-deps python3 -m pytest tests app --cov=app --cov-branch`.
+- Trigger: a provider returns HTTP 500 on `/chat/completions` for one specific
+  model while other models on the same host work. Action: check whether that
+  model is served on a *different endpoint* before suspecting the request body,
+  headers or key. OpenCode Zen is the worked example: the provider-level catalog
+  entry is `@ai-sdk/openai-compatible` at `https://opencode.ai/zen/v1`, but
+  individual models override it with `provider:{npm:"@ai-sdk/openai"}`
+  (`muse-spark-1.3-contributor-free` does), and the client then dispatches with
+  `if (api.npm === "@ai-sdk/openai") return client.responses(id)` — i.e. the
+  **OpenAI Responses API** at `{base}/responses`. The same client also clears
+  `strict` on every tool for that dialect (`strict:!1`), so strict tools must be
+  off there. Recover the per-model override by finding the model id in
+  `bin/opencode.exe` and dumping the bytes around it; the `provider:{npm:...}`
+  key sits inside the model's catalog object, not in the provider block.
+  Implementation notes: the OpenAI SDK appends `/responses` itself, so a Base
+  URL copied from a model table must be stripped first or it posts to
+  `/responses/responses`; LangChain normalises Responses output blocks to
+  `{"type":"text","text":...}`, so an existing `_content_text()` that reads
+  `type == "text"` needs no change; `finish_reason` is absent in that dialect
+  (LangChain reports `status` instead), which is harmless only as long as
+  nothing branches on it.
+- Trigger: OpenCode Zen returns HTTP 500 on `/chat/completions` for one model.
+  Action: the gateway's own `/zen/v1/models` (GET, plain OpenAI-compatible)
+  lists the authoritative catalog — use it instead of guessing model ids from
+  the client binary, whose catalog spans *every* provider (247 free models
+  across all of them, not the 74 Zen serves). Zen's error types are
+  `AuthError` (401, bad key), `ModelError` (401, id not served),
+  `RegionError` (**403**, "not available in your country"); note the gateway
+  reports `ModelError` with status 401, so classify on the JSON `error.type`
+  and not on the status code. A 403 maps to `openai.PermissionDeniedError` in
+  the SDK, so a bare `PermissionDeniedError` in a log means RegionError, not a
+  key problem. Verified 2026-09-21 from a China Mobile (Nanjing, CN) egress:
+  **both `muse-spark-1.3-contributor-free` and `muse-spark-1.2-contributor-free`
+  are region-blocked** — the gate runs *before* auth, so even a request with no
+  `Authorization` header gets 403 — while `jev-1.13-free`,
+  `deepseek-v4-flash-free`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`,
+  `nemotron-3-ultra-free` and `nemotron-3.5-lightning-free` return `AuthError`
+  and are therefore usable. Those six also route on `/chat/completions`, so
+  they need no Responses dialect. Do not burst-probe the gateway: a rapid
+  concurrent batch trips a Cloudflare client-signature rule that answers
+  `error code: 1010` for *every* model, which looks exactly like a blanket
+  region block and will send the diagnosis the wrong way. Probe sequentially
+  with ~2.5s spacing; the rule clears by itself.
