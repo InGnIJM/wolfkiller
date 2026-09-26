@@ -85,6 +85,7 @@ def react_idiot_flip(context: ActionContext) -> tuple[GameEffect, ...]:
 
 
 IDIOT_SPEC = RoleSpec(
+    tags=frozenset({"god"}),
     role_id="wolf-killer-idiot", display_name="Idiot", camp_id="good",
     contracts=(ActionContract(
         contract_id="idiot_flip", schedule_point=SchedulePoint.EXILE_VERDICT,

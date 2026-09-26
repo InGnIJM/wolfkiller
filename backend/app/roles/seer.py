@@ -99,6 +99,7 @@ def resolve_seer_action(
 
 
 SEER_SPEC = RoleSpec(
+    tags=frozenset({"god"}),
     role_id="wolf-killer-seer",
     display_name="Seer",
     camp_id="good",

@@ -78,6 +78,7 @@ def resolve_guard_action(
 
 
 GUARD_SPEC = RoleSpec(
+    tags=frozenset({"god"}),
     role_id="wolf-killer-guard",
     display_name="Guard",
     camp_id="good",
