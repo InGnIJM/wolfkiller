@@ -20,6 +20,9 @@ const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> 
   'wolf-killer-guard': { label: '守卫', ...ROLE_COLORS.guard },
   'wolf-killer-idiot': { label: '白痴', ...ROLE_COLORS.idiot },
   'wolf-killer-werewolf-king': { label: '白狼王', ...ROLE_COLORS.werewolf_king },
+  'wolf-killer-knight': { label: '骑士', ...ROLE_COLORS.knight },
+  'wolf-killer-wolf-beauty': { label: '狼美人', ...ROLE_COLORS.wolf_beauty },
+  'wolf-killer-old-drunkard': { label: '老酒鬼', ...ROLE_COLORS.old_drunkard },
 };
 
 // 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字

@@ -66,6 +66,9 @@ describe('SeatMap role badges', () => {
       6: { seat_number: 6, is_alive: true, is_sheriff: false, role: 'wolf-killer-guard', camp: 'good' },
       7: { seat_number: 7, is_alive: true, is_sheriff: false, role: 'wolf-killer-idiot', camp: 'good' },
       8: { seat_number: 8, is_alive: true, is_sheriff: false, role: 'wolf-killer-werewolf-king', camp: 'werewolf' },
+      9: { seat_number: 9, is_alive: true, is_sheriff: false, role: 'wolf-killer-knight', camp: 'good' },
+      10: { seat_number: 10, is_alive: true, is_sheriff: false, role: 'wolf-killer-wolf-beauty', camp: 'werewolf' },
+      11: { seat_number: 11, is_alive: true, is_sheriff: false, role: 'wolf-killer-old-drunkard', camp: 'good' },
     };
 
     render(<SeatMap players={players} />);
@@ -79,6 +82,32 @@ describe('SeatMap role badges', () => {
     expect(screen.getByText('守卫')).toBeInTheDocument();
     expect(screen.getByText('白痴')).toBeInTheDocument();
     expect(screen.getByText('白狼王')).toBeInTheDocument();
+    expect(screen.getByText('骑士')).toBeInTheDocument();
+    expect(screen.getByText('狼美人')).toBeInTheDocument();
+    expect(screen.getByText('老酒鬼')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['wolf-killer-werewolf', '狼人'],
+    ['wolf-killer-villager', '村民'],
+    ['wolf-killer-seer', '预言家'],
+    ['wolf-killer-witch', '女巫'],
+    ['wolf-killer-hunter', '猎人'],
+    ['wolf-killer-guard', '守卫'],
+    ['wolf-killer-idiot', '白痴'],
+    ['wolf-killer-werewolf-king', '白狼王'],
+    ['wolf-killer-knight', '骑士'],
+    ['wolf-killer-wolf-beauty', '狼美人'],
+    ['wolf-killer-old-drunkard', '老酒鬼'],
+  ])('names %s on the seat card as %s', (role, label) => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false, role, camp: 'good' },
+    };
+
+    render(<SeatMap players={players} />);
+    fireResize(800, 600);
+
+    expect(screen.getByLabelText(`1号 ${label} 存活`)).toBeInTheDocument();
   });
 
   it('marks a flipped seat as alive without a ballot', async () => {
