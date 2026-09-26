@@ -4,7 +4,10 @@ from langchain_anthropic._client_utils import (
 )
 from langchain_core.language_models import BaseChatModel
 
-from .base import CallPurpose, ProviderProfile, call_budget, provider_max_retries
+from .base import (
+    CallPurpose, ProviderProfile, call_budget, merge_request_headers,
+    new_session_id, provider_max_retries,
+)
 
 
 # The Messages API only accepts temperatures in [0, 1]; the project default
@@ -38,6 +41,12 @@ class AnthropicMessagesTransport:
     format and are converted by ``ChatAnthropic.bind_tools``.
     """
 
+    def __init__(self) -> None:
+        # One transport per LLMClient, i.e. one per seat: the session id is
+        # minted here so it stays stable for that seat's whole lifetime while
+        # two seats never share one.
+        self.session_id = new_session_id()
+
     def build(
         self,
         config,
@@ -56,6 +65,11 @@ class AnthropicMessagesTransport:
         }
         if profile.capabilities.temperature:
             kwargs["temperature"] = clamp_temperature(config.temperature)
+        headers = merge_request_headers(
+            profile, getattr(config, "headers", ()), self.session_id,
+        )
+        if headers:
+            kwargs["default_headers"] = headers
         factory = chat_model_factory or ChatAnthropic
         return factory(**kwargs)
 
