@@ -3,11 +3,27 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-def is_last_words_eligible(cause: str, round_number: int) -> bool:
-    """Return whether a death cause grants the player last words."""
-    return cause == "exile" or (
-        round_number == 1 and cause in {"wolf_kill", "poison"}
-    )
+def is_last_words_eligible(cause: str, round_number: int, *, daytime: bool = False) -> bool:
+    """Return whether a death cause grants the player last words.
+
+    ``daytime`` selects the daytime rule ("every daytime death gets last
+    words") instead of the night rule ("only the first night does"). The
+    interrupted-day path passes it; the night path never does, which is what
+    keeps the knight's own death silent even though it shares the
+    ``knight_duel`` cause with the victim's.
+    """
+    if cause == "exile":
+        return True
+    if daytime:
+        return cause in _DAYTIME_LAST_WORDS_CAUSES
+    return round_number == 1 and cause in {"wolf_kill", "poison"}
+
+
+# Daytime deaths that earn last words. The duel victim dies during the day; the
+# knight's penance death is an explicit no-last-words exception in the rule
+# text, and the werewolf king's self-explosion takes both sides down without
+# words, so neither is listed here.
+_DAYTIME_LAST_WORDS_CAUSES = frozenset({"knight_duel"})
 
 
 @dataclass

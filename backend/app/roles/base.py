@@ -4,7 +4,7 @@ import logging
 import random
 import time
 from typing import TYPE_CHECKING
-from app.models.game import GameState
+from app.models.game import GamePhase, GameState
 from app.models.actions import VoteAction, is_last_words_eligible
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import (
@@ -37,6 +37,15 @@ if TYPE_CHECKING:
     from app.agents.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+# Phases in which a death is a *daytime* death. The LAST_WORDS phase announces
+# night deaths only, so anything else that asks for last words is speaking for a
+# daytime death — which is what lets a duel victim speak while the knight's own
+# death, sharing the same cause, stays silent.
+_DAYTIME_PHASES = frozenset({
+    GamePhase.SPEECH, GamePhase.VOTE_CASTING, GamePhase.VOTE_RESOLUTION,
+})
+
 
 def _validation_failure_code(error: ActionValidationError) -> str:
     """Return a stable, non-secret classification for an invalid action."""
@@ -351,6 +360,7 @@ class BaseRole:
         Eligibility:
         - First-night deaths (wolf_kill, poison) in round 1
         - Exiled players (any round)
+        - Daytime skill deaths the rule text grants words to (a duel victim)
         - Must not have already given last words
         """
         if self._last_words_used:
@@ -378,15 +388,19 @@ class BaseRole:
 
         cause = death.cause
         round_num = death.round_number
-        if not is_last_words_eligible(cause, round_num):
+        if not is_last_words_eligible(
+            cause, round_num, daytime=state.phase in _DAYTIME_PHASES,
+        ):
             cause_cn_map = {
                 "wolf_kill": "被狼杀", "poison": "被毒",
                 "exile": "被放逐", "hunter_shot": "被猎人带走",
+                "knight_duel": "骑士裁决",
             }
             cause_cn = cause_cn_map.get(cause, cause)
             return False, (
                 f"校验失败：{self.seat}号玩家因「{cause_cn}」出局，不符合遗言条件。"
-                f"只有第一夜死亡（被狼刀或被毒）和被放逐的玩家可以发表遗言。"
+                f"只有第一夜死亡（被狼刀或被毒）、被放逐的玩家，"
+                f"以及白天技能出局中规则允许的死者可以发表遗言。"
             )
 
         return True, ""

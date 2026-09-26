@@ -1129,18 +1129,21 @@ class GameEngine:
             f"sheriff_side:{self.state.round_number}:{sheriff_seat}:{side}"
         )
 
-    async def give_last_words(self, seat: int, cause: str, death_round: int) -> Optional[str]:
+    async def give_last_words(
+        self, seat: int, cause: str, death_round: int, *, daytime: bool = False,
+    ) -> Optional[str]:
         """Generate last words for a dying player. Standalone function with validation.
 
         Eligibility:
         - First-night eligible night deaths
         - Vote-exiled players (any round)
+        - Daytime skill deaths that the rule text grants words to (``daytime``)
 
         Validation:
         - Player must exist and not have already given last words
         - Death cause must be eligible
         """
-        if not is_last_words_eligible(cause, death_round):
+        if not is_last_words_eligible(cause, death_round, daytime=daytime):
             return None
 
         death_key = (seat, death_round, cause)
@@ -1443,6 +1446,14 @@ class GameEngine:
                 f"day_reaction:{label}:{self._seat_list(reaction)}"
             )
         await self._maybe_reassign_badge()
+        # The day's own deaths speak before it closes: a duel victim dies during
+        # the day and every daytime death gets last words. Reactive deaths (a
+        # charmed player dragged along, an explosion's passenger) are not
+        # daytime skill victims and stay silent.
+        for death in deaths:
+            await self.give_last_words(
+                death.player_seat, death.cause, death.round_number, daytime=True,
+            )
         if self.memory_service:
             self.memory_service.save_memories(self.state)
         if not await self._check_game_over():
