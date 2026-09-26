@@ -33,6 +33,9 @@ const ROLE_LABELS: Record<string, string> = {
   'wolf-killer-guard': '守卫',
   'wolf-killer-idiot': '白痴',
   'wolf-killer-werewolf-king': '白狼王',
+  'wolf-killer-knight': '骑士',
+  'wolf-killer-wolf-beauty': '狼美人',
+  'wolf-killer-old-drunkard': '老酒鬼',
 };
 
 const CAUSE_ICONS: Record<string, SvgIconComponent> = {

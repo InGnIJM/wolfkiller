@@ -45,6 +45,23 @@ describe('DeathAnnouncement', () => {
   });
 
   it.each([
+    ['wolf-killer-werewolf', '狼人'],
+    ['wolf-killer-villager', '村民'],
+    ['wolf-killer-seer', '预言家'],
+    ['wolf-killer-witch', '女巫'],
+    ['wolf-killer-hunter', '猎人'],
+    ['wolf-killer-guard', '守卫'],
+    ['wolf-killer-idiot', '白痴'],
+    ['wolf-killer-werewolf-king', '白狼王'],
+    ['wolf-killer-knight', '骑士'],
+    ['wolf-killer-wolf-beauty', '狼美人'],
+    ['wolf-killer-old-drunkard', '老酒鬼'],
+  ])('names the revealed role %s as %s', (role, label) => {
+    render(<DeathAnnouncement deaths={[record('exile')]} revealedRole={role} />);
+    expect(screen.getByText(`身份：${label}`)).toBeInTheDocument();
+  });
+
+  it.each([
     ['poison', '毒杀'],
     ['hunter_shot', '猎人带走'],
   ])('maps cause "%s" to a Material icon announcement', (cause, label) => {
