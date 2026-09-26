@@ -370,7 +370,10 @@ export type ProviderProfileId =
   | 'openai'
   | 'deepseek'
   | 'openrouter'
+  | 'opencode'
+  | 'opencode-go'
   | 'custom-openai'
+  | 'openai-responses'
   | 'anthropic'
   | 'custom-anthropic';
 
@@ -385,6 +388,7 @@ export interface ModelConfig {
   temperature: number | null;
   strict_base_url: string | null;
   provider_profile: ProviderProfileId;
+  headers: Record<string, string>;
   created_at: string;
   updated_at: string;
 }
@@ -397,6 +401,7 @@ export interface ModelConfigInput {
   temperature?: number | null;
   strict_base_url?: string | null;
   provider_profile?: ProviderProfileId;
+  headers?: Record<string, string>;
 }
 
 export interface ModelTestResult {

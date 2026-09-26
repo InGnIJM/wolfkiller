@@ -107,6 +107,9 @@ export default function ModelConfigPage() {
                       ? ` · ${providerProfileLabel(config.provider_profile)}`
                       : ''}
                     {config.temperature != null ? ` · temp ${config.temperature}` : ''}
+                    {Object.keys(config.headers ?? {}).length > 0
+                      ? ` · ${Object.keys(config.headers).length} 个自定义请求头`
+                      : ''}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     API Key：{config.has_key ? config.api_key_masked : '未设置'}

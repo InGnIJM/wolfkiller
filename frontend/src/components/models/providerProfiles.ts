@@ -13,7 +13,10 @@ export const PROVIDER_PROFILE_OPTIONS: readonly ProviderProfileOption[] = [
   { id: 'openai', label: 'OpenAI', baseUrlPlaceholder: 'https://api.openai.com/v1' },
   { id: 'deepseek', label: 'DeepSeek', baseUrlPlaceholder: 'https://api.deepseek.com/v1' },
   { id: 'openrouter', label: 'OpenRouter', baseUrlPlaceholder: 'https://openrouter.ai/api/v1' },
+  { id: 'opencode', label: 'OpenCode Zen（自动附带 x-opencode-session）', baseUrlPlaceholder: 'https://opencode.ai/zen/v1' },
+  { id: 'opencode-go', label: 'OpenCode Go（自动附带 x-opencode-session）', baseUrlPlaceholder: 'https://opencode.ai/zen/go/v1' },
   { id: 'custom-openai', label: '自定义 · OpenAI 兼容（Chat Completions）', baseUrlPlaceholder: 'https://your-relay.example/v1' },
+  { id: 'openai-responses', label: 'OpenAI Responses API（/responses）', baseUrlPlaceholder: 'https://api.openai.com/v1' },
   { id: 'anthropic', label: 'Anthropic（Messages API）', baseUrlPlaceholder: 'https://api.anthropic.com' },
   { id: 'custom-anthropic', label: '自定义 · Anthropic 兼容（Messages API）', baseUrlPlaceholder: 'https://your-relay.example' },
 ];
