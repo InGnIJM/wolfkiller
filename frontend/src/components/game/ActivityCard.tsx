@@ -17,6 +17,8 @@ const THOUGHT_LABELS: Record<string, string> = {
   hunter_reasoning: '猎人思考',
   guard_reasoning: '守卫思考',
   werewolf_king_reasoning: '白狼王思考',
+  knight_reasoning: '骑士思考',
+  wolf_beauty_reasoning: '狼美人思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -27,6 +29,8 @@ const CAUSE_LABELS: Record<string, string> = {
   exile: '被放逐',
   hunter_shot: '猎人带走',
   self_explode: '白狼王自爆',
+  knight_duel: '骑士决斗',
+  charm: '殉情',
 };
 
 const SHERIFF_SIDE_LABELS: Record<string, string> = {

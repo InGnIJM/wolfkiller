@@ -28,6 +28,8 @@ const CAUSE_LABELS: Record<string, string> = {
   exile: '被放逐',
   hunter_shot: '猎人带走',
   self_explode: '白狼王自爆',
+  knight_duel: '骑士决斗',
+  charm: '殉情',
 };
 
 const THOUGHT_LABELS: Record<string, string> = {
@@ -36,6 +38,8 @@ const THOUGHT_LABELS: Record<string, string> = {
   hunter_reasoning: '猎人',
   guard_reasoning: '守卫',
   werewolf_king_reasoning: '白狼王',
+  knight_reasoning: '骑士',
+  wolf_beauty_reasoning: '狼美人',
   witch_thought: '女巫',
   seer_thought: '预言家',
 };
@@ -47,6 +51,7 @@ const NIGHT_ACTION_LABELS: Record<string, string> = {
   seer_check: '预言家查验',
   hunter_shot: '猎人开枪',
   guard_protect: '守卫守护',
+  knight_duel: '骑士决斗',
 };
 
 const SHERIFF_SIDE_LABELS: Record<string, string> = {

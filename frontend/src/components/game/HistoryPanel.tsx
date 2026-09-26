@@ -15,6 +15,8 @@ const CAUSE_LABELS: Record<string, string> = {
   exile: '放逐',
   hunter_shot: '猎人带走',
   self_explode: '白狼王自爆',
+  knight_duel: '骑士决斗',
+  charm: '殉情',
 };
 
 const NIGHT_ACTION_LABELS: Record<string, string> = {
@@ -24,6 +26,7 @@ const NIGHT_ACTION_LABELS: Record<string, string> = {
   seer_check: '预言家查验',
   hunter_shot: '猎人开枪',
   guard_protect: '守卫守护',
+  knight_duel: '骑士决斗',
 };
 
 const THOUGHT_LABELS: Record<string, string> = {
@@ -57,6 +60,9 @@ const ROLE_LABELS: Record<string, string> = {
   'wolf-killer-guard': '守卫',
   'wolf-killer-idiot': '白痴',
   'wolf-killer-werewolf-king': '白狼王',
+  'wolf-killer-knight': '骑士',
+  'wolf-killer-wolf-beauty': '狼美人',
+  'wolf-killer-old-drunkard': '老酒鬼',
 };
 
 const KNOWLEDGE_LABELS: Record<string, string> = {
@@ -75,6 +81,9 @@ const EVENT_TAGS: Record<string, string> = {
   vote_result: '放逐',
   exile_cancelled: '翻牌',
   self_explode: '自爆',
+  knight_duel: '决斗',
+  wolf_beauty_charm: '魅惑',
+  wolf_beauty_revenge: '殉情',
   sheriff_elected: '警长',
   sheriff_badge: '警徽',
   sheriff_run: '上警',
