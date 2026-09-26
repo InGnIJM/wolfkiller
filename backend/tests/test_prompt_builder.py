@@ -9,7 +9,7 @@ from app.agents.game_rules import DAY_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT
 from app.core.conversation_log import ConversationLog
 from app.core.game_engine import VOTE_CONTRACT
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
-from app.models.actions import SpeechRecord, VoteAction
+from app.models.actions import DeathReport, SpeechRecord, VoteAction
 from app.roles.registry import builtin_registry
 
 
@@ -68,6 +68,8 @@ def test_system_prompts_omit_sheriff_and_forbid_invented_rules() -> None:
         assert "警徽" not in prompt
         assert "sheriff" not in lowered
         assert "不得根据其他狼人杀版本" in prompt
+        assert "不得编造未实际发生过的公共历史事件" in prompt
+        assert "合法的语言博弈手段" in prompt
 
 
 def test_system_prompts_define_xml_history_trust_boundaries() -> None:
@@ -536,6 +538,10 @@ class TestPromptBuilderHelpers:
         )
         assert "你的任务：警长竞选发言" in prompt
         assert "This game includes the Sheriff office" in prompt
+        assert "说明你为什么适合当警长" in prompt
+        assert "自由决定发言策略" in prompt
+        assert "必须与上方权威名单一致" in prompt
+        assert "不要编造未提供的查验" not in prompt
 
     def test_format_sheriff_line_covers_office_states(self):
         state = make_state()
@@ -551,6 +557,178 @@ class TestPromptBuilderHelpers:
         state.sheriff = None
         state.sheriff_election_complete = True
         assert "流失" in PromptBuilder._format_sheriff_line(state)
+
+    @staticmethod
+    def _badge_state(*, candidates=(1, 2), active=(1, 2), step="campaign",
+                     phase=GamePhase.SHERIFF_ELECTION):
+        state = make_state()
+        state.config.enable_sheriff = True
+        state.phase = phase
+        state.sheriff_office.candidates = set(candidates)
+        state.sheriff_office.active = set(active)
+        state.sheriff_office.step = step
+        return state
+
+    @staticmethod
+    def _badge_seats(line: str) -> set[int]:
+        return {int(seat) for seat in re.findall(r"(\d+)号", line)}
+
+    def test_sheriff_line_lists_authoritative_badge_and_off_badge_seats(self):
+        state = self._badge_state()
+
+        rows = PromptBuilder._format_sheriff_line(state).splitlines()
+        on_badge = next(row for row in rows if row.startswith("- 警上玩家"))
+        off_badge = next(row for row in rows if row.startswith("- 警下玩家"))
+
+        assert self._badge_seats(on_badge) == {1, 2}
+        assert self._badge_seats(off_badge) == {3, 4, 5, 6, 7, 8, 9}
+
+    def test_sheriff_line_omits_badge_roster_before_any_candidate(self):
+        state = self._badge_state(candidates=(), active=(), step="run")
+
+        line = PromptBuilder._format_sheriff_line(state)
+
+        assert "尚未产生" in line
+        assert "警上玩家" not in line
+        assert "警下玩家" not in line
+
+    def test_badge_roster_and_rules_are_absent_when_sheriff_disabled(self):
+        state = make_state()
+
+        speech = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech",
+        )
+        campaign = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "sheriff_campaign",
+        )
+        vote = PromptBuilder().build_vote_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "exile_vote",
+        )
+        retry = PromptBuilder().build_vote_retry_prompt(
+            state, 4, "wolf-killer-villager", make_log(),
+        )
+
+        for prompt in (speech, campaign, vote, retry):
+            assert "警上" not in prompt
+            assert "警下" not in prompt
+
+    def test_badge_rules_require_candidates_before_claiming_off_badge(self):
+        state = self._badge_state(candidates=(), active=(), step="run")
+        without = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech",
+        )
+        assert "警上/警下" not in without
+
+        state.sheriff_office.candidates = {1, 2}
+        with_roster = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "day_speech",
+        )
+        assert "警上/警下" in with_roster
+        assert "不得凭印象把警下玩家说成警上" in with_roster
+
+    def test_campaign_prompt_renders_badge_speaking_order_and_progress(self):
+        state = self._badge_state(candidates=(1, 2, 3), active=(1, 2, 3))
+
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 2, "wolf-killer-werewolf", make_log(), "sheriff_campaign",
+        )
+
+        assert "警长竞选发言顺序：1号 → 2号 → 3号" in prompt
+        assert "当前发言者：2号（第2/3位）" in prompt
+        assert "已发言：1号" in prompt
+        assert "尚未发言：3号" in prompt
+
+    def test_campaign_prompt_tells_off_badge_speaker_they_do_not_speak(self):
+        state = self._badge_state(candidates=(1, 2, 3), active=(1, 2, 3))
+
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 7, "wolf-killer-seer", make_log(), "sheriff_campaign",
+        )
+
+        assert "警长竞选发言顺序：1号 → 2号 → 3号" in prompt
+        assert "不在本次竞选发言名单中" in prompt
+        assert "当前发言者" not in prompt
+
+    def test_pk_campaign_prompt_uses_pk_seats_not_remaining_candidates(self):
+        state = self._badge_state(
+            candidates=(1, 2, 3, 4), active=(2, 3, 4), step="pk",
+        )
+        state.sheriff_office.pk_seats = {2, 3}
+
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 3, "wolf-killer-werewolf", make_log(), "sheriff_campaign",
+        )
+
+        assert "警长PK发言顺序：2号 → 3号" in prompt
+        assert "当前发言者：3号（第2/2位）" in prompt
+        assert "本轮是警长PK" in prompt
+        assert "其余警上玩家本轮不发言" in prompt
+        assert "本轮只有警上玩家发言" not in prompt
+
+    def test_campaign_task_still_says_only_on_badge_seats_speak(self):
+        state = self._badge_state(candidates=(1, 2, 3), active=(1, 2, 3))
+
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 2, "wolf-killer-werewolf", make_log(), "sheriff_campaign",
+        )
+
+        assert "本轮只有警上玩家发言" in prompt
+        assert "本轮是警长PK" not in prompt
+
+    def test_pk_prompt_does_not_call_an_on_badge_non_speaker_off_badge(self):
+        state = self._badge_state(
+            candidates=(1, 2, 3, 4), active=(2, 3, 4), step="pk",
+        )
+        state.sheriff_office.pk_seats = {2, 3}
+
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 4, "wolf-killer-villager", make_log(), "sheriff_campaign",
+        )
+
+        assert "已上警，但不在本轮PK发言名单中" in prompt
+        assert "你属于警下玩家" not in prompt
+
+    def test_badge_roster_omits_pre_election_deaths_and_keeps_later_ones(self):
+        state = self._badge_state(candidates=(1, 2))
+        state.death_history = [
+            DeathReport(8, "wolf_kill", 1),
+            DeathReport(9, "exile", 1),
+            DeathReport(7, "wolf_kill", 2),
+        ]
+
+        off_badge = next(
+            row for row in PromptBuilder._format_sheriff_line(state).splitlines()
+            if row.startswith("- 警下玩家")
+        )
+
+        assert self._badge_seats(off_badge) == {3, 4, 5, 6, 7, 9}
+        assert "开选前已死亡的座位不在这两份名单里" in (
+            PromptBuilder._badge_context_line(state)
+        )
+
+    def test_badge_progress_falls_back_outside_campaign_and_pk(self):
+        withdrawing = self._badge_state(step="withdraw")
+        assert PromptBuilder._format_speaking_progress(withdrawing, 1) == "（当前不是发言阶段）"
+
+        no_candidates = self._badge_state(candidates=(), active=(), step="campaign")
+        assert PromptBuilder._format_speaking_progress(no_candidates, 1) == "（当前不是发言阶段）"
+
+        disabled = self._badge_state(phase=GamePhase.SPEECH)
+        disabled.config.enable_sheriff = False
+        assert PromptBuilder._format_speaking_progress(disabled, 1) == "（当前不是发言阶段）"
+
+        wrong_phase = self._badge_state(phase=GamePhase.SPEECH)
+        assert PromptBuilder._format_speaking_progress(wrong_phase, 1) == "（当前不是发言阶段）"
+
+    def test_compact_vote_retry_prompt_includes_badge_roster(self):
+        state = self._badge_state()
+
+        prompt = PromptBuilder().build_vote_retry_prompt(
+            state, 4, "wolf-killer-villager", make_log(),
+        )
+
+        assert "警上玩家" in prompt
+        assert "警下玩家" in prompt
 
     def test_camp_cooperation_block_ignores_malformed_facts(self):
         builder = PromptBuilder()

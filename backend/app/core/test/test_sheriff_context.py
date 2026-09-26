@@ -1,5 +1,6 @@
 """Regression tests for live election context, not constructor-only wiring."""
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -130,6 +131,59 @@ async def test_completed_ballots_enter_later_decisions_not_current_voters(tmp_pa
     restored = engine_at_election(tmp_path, scripted([]))
     restored.load_restored_state(state, orchestration, codec)
     assert [r.content for r in restored.conversation_log.records if r.phase == "sheriff_ballot"] == [summary.content]
+
+
+@pytest.mark.asyncio
+async def test_badge_roster_reaches_real_campaign_and_day_prompts(tmp_path):
+    """Regression (game 0ab500ff): seats 1-2 ran, seats 3-4 stayed off badge.
+
+    A real election must publish the on-badge/off-badge roster into every prompt
+    that can make a "stand with the badge" claim, so no model has to guess.
+    """
+    captured = []
+    engine = engine_at_election(tmp_path, scripted(captured))
+    await engine.create_new()
+    enter_election(engine)
+    builder = PromptBuilder()
+    mid_campaign: list[str] = []
+
+    async def checkpoint(step_key):
+        if ":sheriff_campaign:" not in step_key:
+            return
+        seat = int(step_key.rsplit(":", 1)[1])
+        for prompt_seat in (seat, 3):
+            mid_campaign.append(builder.build_speech_prompt(
+                engine.state, prompt_seat, engine.state.players[prompt_seat].role,
+                engine.conversation_log, "sheriff_campaign",
+            ))
+
+    engine._checkpoint_hook = checkpoint
+    await engine._execute_sheriff_election()
+
+    day = builder.build_speech_prompt(
+        engine.state, 3, engine.state.players[3].role, engine.conversation_log,
+        "day_speech",
+    )
+    vote = builder.build_vote_prompt(
+        engine.state, 3, engine.state.players[3].role, engine.conversation_log,
+        "exile_vote",
+    )
+
+    for prompt in (*mid_campaign, day, vote):
+        assert _seats(_badge_row(prompt, "- 警上玩家")) == {1, 2}
+        assert _seats(_badge_row(prompt, "- 警下玩家")) == {3, 4}
+    assert mid_campaign
+    assert "警长竞选发言顺序：1号 → 2号" in mid_campaign[0]
+    assert "当前发言者：1号（第1/2位）" in mid_campaign[0]
+    assert "不在本次竞选发言名单中" in mid_campaign[1]
+
+
+def _badge_row(prompt: str, prefix: str) -> str:
+    return next(row for row in prompt.splitlines() if row.startswith(prefix))
+
+
+def _seats(line: str) -> set[int]:
+    return {int(seat) for seat in re.findall(r"(\d+)号", line)}
 
 
 @pytest.mark.asyncio

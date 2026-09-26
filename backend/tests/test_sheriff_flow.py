@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -19,6 +20,7 @@ from app.core.sheriff_flow import (
     decide_tally,
     eligible_sheriff_voters,
     night_death_seats,
+    off_badge_seats,
     office_enabled,
     parse_badge,
     parse_campaign,
@@ -147,6 +149,22 @@ def test_badge_transfer_and_tear() -> None:
     apply_badge(state, 4, "transfer", 99)
     assert state.sheriff is None
     assert state.sheriff_office.badge_destroyed is True
+
+
+def test_off_badge_seats_skip_first_night_deaths_and_keep_later_ones() -> None:
+    state = _state(seats=9)
+    state.sheriff_office.candidates = {1, 2}
+    state.death_history = [
+        DeathReport(3, "wolf_kill", 2),
+        DeathReport(4, "poison", 1),
+        DeathReport(5, "love_death", 1),
+        DeathReport(6, "hunter_shot", 1),
+        DeathReport(7, "exile", 1),
+        DeathReport(8, "hunter_shot", 1),
+        DeathReport(9, "self_explode", 1),
+    ]
+
+    assert off_badge_seats(state) == (3, 5, 7, 8, 9)
 
 
 def test_night_death_seats_are_current_round_only() -> None:
@@ -328,6 +346,33 @@ def _wolf_channel_log() -> "object":
         1, speaker_seat=2, speaker_role="wolf-killer-werewolf",
     )
     return log
+
+
+def test_sheriff_context_block_lists_off_badge_voters() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    office = state.sheriff_office
+    office.candidates = {1, 2, 3, 4, 5}
+    office.active = {1, 2, 3, 4, 5}
+    director = Director(conversation_log=_campaign_log())
+
+    human = director.campaign_prompt(state, 6, wolf=True)[1]["content"]
+
+    off_badge = next(
+        line for line in human.splitlines() if line.startswith("未上警座位")
+    )
+    assert {6, 7, 8, 9, 10, 11, 12} <= {int(seat) for seat in re.findall(r"(\d+)号", off_badge)}
+    assert "1号" not in re.findall(r"(\d+)号", off_badge)
+    assert "已上警座位" in human
+
+    state.death_history = [DeathReport(9, "wolf_kill", 1)]
+    human = director.campaign_prompt(state, 6, wolf=True)[1]["content"]
+    off_badge = next(
+        line for line in human.splitlines() if line.startswith("未上警座位")
+    )
+    seats = {int(seat) for seat in re.findall(r"(\d+)号", off_badge)}
+    assert 9 not in seats
+    assert {6, 7, 8, 10, 11, 12} <= seats
 
 
 def test_wolf_sheriff_prompts_carry_teammates_and_channel_plan() -> None:
