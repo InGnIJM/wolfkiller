@@ -1142,6 +1142,9 @@ class GameEngine:
         Validation:
         - Player must exist and not have already given last words
         - Death cause must be eligible
+
+        The claim is checkpointed before the LLM is asked to speak, so a resume
+        after a mid-speech crash skips the words rather than repeating them.
         """
         if not is_last_words_eligible(cause, death_round, daytime=daytime):
             return None
@@ -1155,6 +1158,12 @@ class GameEngine:
             return None
 
         self._last_words_given.add(death_key)
+        # Persist the claim *before* the LLM call. A crash mid-speech then costs
+        # the line on resume instead of replaying it into the timeline twice,
+        # which matters more for a game the audience reads in order.
+        await self._durable_checkpoint(
+            f"last_words_pending:{death_round}:{seat}:{cause}"
+        )
 
         speech_text = await self.speak(seat, "last_words")
         if speech_text:
