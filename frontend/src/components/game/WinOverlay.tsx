@@ -1,6 +1,7 @@
 import { Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Button } from '@mui/material';
 import type { WinResult, WinningCamp } from '../../store/types';
 import { useGameStore } from '../../store/gameStore';
+import { CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 interface Props {
   winResult: WinResult;
@@ -36,6 +37,20 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
   return (
     <Dialog open={true} maxWidth="sm" fullWidth aria-labelledby="game-over-title">
       <DialogTitle sx={{ textAlign: 'center', pt: 4 }}>
+        <Box
+          aria-hidden="true"
+          sx={{
+            width: 72, mx: 'auto', mb: 1.5, borderRadius: 1, overflow: 'hidden',
+            border: `1px solid ${HAIRLINE.strong}`,
+          }}
+        >
+          <Box
+            component="img"
+            alt=""
+            src={CARD_BACK}
+            sx={{ display: 'block', width: '100%', height: 96, objectFit: 'cover' }}
+          />
+        </Box>
         <Typography component="span" variant="h6" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 8 }}>
           游 戏 结 束
         </Typography>

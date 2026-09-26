@@ -12,6 +12,8 @@ import Science from '@mui/icons-material/Science';
 import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
 import type { DeathRecord } from '../../store/types';
+import { roleMetaFor } from '../shared/roleMeta';
+import { BACKDROP, CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 interface Props {
   deaths: DeathRecord[];
@@ -26,20 +28,6 @@ const CAUSE_LABELS: Record<string, string> = {
   self_explode: '白狼王自爆',
   knight_duel: '骑士决斗',
   charm: '殉情',
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  'wolf-killer-werewolf': '狼人',
-  'wolf-killer-villager': '村民',
-  'wolf-killer-seer': '预言家',
-  'wolf-killer-witch': '女巫',
-  'wolf-killer-hunter': '猎人',
-  'wolf-killer-guard': '守卫',
-  'wolf-killer-idiot': '白痴',
-  'wolf-killer-werewolf-king': '白狼王',
-  'wolf-killer-knight': '骑士',
-  'wolf-killer-wolf-beauty': '狼美人',
-  'wolf-killer-old-drunkard': '老酒鬼',
 };
 
 const CAUSE_ICONS: Record<string, SvgIconComponent> = {
@@ -58,13 +46,28 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
 
   const causeLabel = CAUSE_LABELS[latest.cause] || latest.cause;
   const Icon = CAUSE_ICONS[latest.cause] ?? PersonOff;
-  const roleLabel = revealedRole
-    ? (ROLE_LABELS[revealedRole] ?? revealedRole)
-    : null;
+  const revealed = roleMetaFor(revealedRole);
+  const roleLabel = revealed?.label ?? revealedRole ?? null;
+  const art = revealed?.art ?? CARD_BACK;
 
   return (
     <Dialog open maxWidth="xs" fullWidth aria-label="死亡公告">
       <DialogContent sx={{ textAlign: 'center', py: 4, px: 3 }}>
+        <Box
+          aria-hidden="true"
+          sx={{
+            position: 'relative', width: 88, mx: 'auto', mb: 1.5, borderRadius: 1, overflow: 'hidden',
+            border: `1px solid ${HAIRLINE.strong}`,
+          }}
+        >
+          <Box
+            component="img"
+            alt=""
+            src={art}
+            sx={{ display: 'block', width: '100%', height: 116, objectFit: 'cover', objectPosition: 'center 15%' }}
+          />
+          <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '46%', background: BACKDROP.cardScrim }} />
+        </Box>
         <Box
           aria-hidden="true"
           sx={{
