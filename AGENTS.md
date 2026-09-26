@@ -6,7 +6,7 @@ Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.
 
 ## 项目
 
-完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴或白狼王）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
+完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、骑士、狼美人与老酒鬼）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
 
 ## 常用命令
 
@@ -53,9 +53,9 @@ npm run build
 
 `NIGHT_ACTION`（守卫）→ 狼队讨论/投票（`NightDirector`，`core/night_flow.py`）→ `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`。开警长时随后进入 `SHERIFF_ELECTION`（`SheriffDirector`，`core/sheriff_flow.py`），再转 DAWN。
 
-白天发言/投票/遗言是引擎内与角色无关的路径。投票经校验器后以 `EffectApplier` 的 `ACCEPT_ACTION` 落账。白天另有两个角色无关窗口：每位发言者前跑 `DAY_ACTION`（slot=`vote_round:seat`；事件含 `DAY_INTERRUPTED` 则结算双死、跑 `DAWN_REACTION`、以 `WEREWOLF_EXPLODED` 转 NIGHT），放逐前跑 `EXILE_VERDICT`（事件含 `EXILE_CANCELLED` 则翻牌免死、不走遗言）。引擎只认这些通用事件，不出现角色名。
+白天发言/投票/遗言是引擎内与角色无关的路径。投票经校验器后以 `EffectApplier` 的 `ACCEPT_ACTION` 落账。白天另有三个角色无关窗口：每位发言者前跑 `DAY_ACTION`（slot=`vote_round:seat`），全体发言结束后、投票前跑 `POST_SPEECH_ACTION`（slot=`post_speech`），放逐前跑 `EXILE_VERDICT`（事件含 `EXILE_CANCELLED` 则翻牌免死、不走遗言）。前两个窗口的事件含 `DAY_INTERRUPTED` 时都会结算双死、跑 `DAWN_REACTION`、以 `WEREWOLF_EXPLODED` 转 NIGHT。引擎只认这些通用事件，不出现角色名。
 
-狼队按 `camp == Camp.WEREWOLF` 识别（含白狼王），不要用 `role == "wolf-killer-werewolf"`。投票资格读 `runtime.statuses`：`no_vote` 不投票，`exile_immune` 不进候选。
+狼队按 `camp == Camp.WEREWOLF` 识别（含白狼王、狼美人），不要用 `role == "wolf-killer-werewolf"`。投票资格读 `runtime.statuses`：`no_vote` 不投票，`exile_immune` 不进候选。
 
 `GameEngine` 运行时固定 `PipelineMode.V2`。环境变量 `ROLE_PIPELINE_V2` **不改变对局**。
 
@@ -64,7 +64,12 @@ npm run build
 - 守卫：不能连续两晚守同一人；守护只抵消狼刀，毒药与猎枪无视守卫；守卫守护与女巫解药同时作用于同一狼刀目标时目标仍死亡（对穿）。
 - 白痴：被放逐时翻牌，公开身份、不死、失去投票权、不再能被放逐，仍可发言；夜刀/毒/枪/自爆带走时正常死亡。计入神职。
 - 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，双方无遗言，当日发言投票取消直接入夜；被毒/放逐/枪杀不能带人。被带走的猎人可开枪（`_SHOOT_REASONS` 含 `self_explode`）。
-- 神职含守卫、白痴。狼人胜：神职全灭 / 平民全灭 / 狼人数（含白狼王）大于好人数。先判狼（狼刀在先）。
+- 神职含守卫、白痴、骑士。老酒鬼是**平民**（`tags={"villager"}`），不是神职。狼人胜：神职全灭 / 平民全灭 / 狼人数（含白狼王、狼美人）大于好人数。先判狼（狼刀在先）。
+- 神职/平民归属**读 `RoleSpec.tags`（`god` / `villager` / `wolf`）**，不要用角色名子串匹配：`rule_engine._role_tags()` 从 registry 取 tag，未注册的角色不带任何 tag。历史上按 `"seer"/"villager"` 等子串计数会漏掉骑士，导致「骑士是最后一名存活神职」时提前判狼胜。
+- 骑士：好人神职。**全体发言结束后、放逐投票前**（`POST_SPEECH_ACTION` 调度点）翻牌决斗一名玩家；是狼人则该玩家立即死亡、当日发言投票取消直接入夜；是好人则骑士以死谢罪、**无遗言**、当日投票照常。一局一次（`duel` 资源）。
+- 狼美人：狼人阵营。夜晚与狼队共享 `werewolf_kill` 契约；另在 `NIGHT_WITCH_ACTION` 调度点（狼刀投票之后）可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）。出局时当晚被魅惑者殉情（死因 `charm`）。不能自爆、不能自刀。被魅惑带走的猎人**不能开枪**。
+- 老酒鬼：好人平民。免疫魅惑（`initial_resources={"charm_immune": 1}`，经 `selected_target.resource_labels` 对狼美人可见）。被毒或枪杀时 `delayable` 资源让 `settle()` 跳过致死、落 `poisoned`/`wounded` + `delayed_death` 状态，**次日发言结束后投票前**由 `_resolve_delayed_deaths()` 结算；夜刀/放逐/自爆当夜即死。
+- 新增调度点 `POST_SPEECH_ACTION`（`post_speech_action`）承载「发言结束后」的白天技能；引擎的发言后窗口只在有角色声明该调度点时才跑（`_post_speech_action_enabled()`），跑完会 `_settle_and_publish()` 让 pending damage 立即生效、再结算延迟死亡，最后才 `SPEECHES_COMPLETE`。
 - 可选警长（`GameConfig.enable_sheriff`，默认关）。关局时提示词省略警长词、状态机不进入竞选；开局时由 `SheriffDirector` 硬编码竞选/交徽，Agent 只选当前工具，竞选决策提示注入本人身份、私有事实、已上警/未上警（警下）名单与警上发言摘录；竞选发言与白天发言、放逐投票、超时重试投票的权威状态都带警上/警下名单（警上=`office.candidates`，警下=`off_badge_seats`：开选时存活且从未上警，排除开选前死亡）与固定事实约束，竞选期另给竞选发言顺序与已发言/尚未发言名单，避免模型把警下玩家说成警上；`ConversationLog` 全程同一对象（新局清空记录、恢复时由编解码器替换记录），每轮警长投票后以 PUBLIC `phase=sheriff_ballot` 记录发布完整票型供后续决策使用。九人、十人预设建议关，十二人预设建议开。
 - 公开 DTO / 前端消费链不得出现 `role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等私有字段。
 - `prompt_builder.py` / `state_filter.py` 是委托外壳，源码不得出现内置角色名。
@@ -82,7 +87,7 @@ npm run build
 - `tests/test_game_engine.py` 引擎禁词
 - `tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 角色名禁词
 - `tests/test_prompt_renderer.py` 渲染器禁词
-- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`；`tests/test_catalog_routes.py` 断言 8 角色 4 预设
+- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`、`tests/test_knight_extension.py`、`tests/test_wolf_beauty_extension.py`、`tests/test_old_drunkard_extension.py`；`tests/test_catalog_routes.py` 断言 11 角色 6 预设
 
 **不要**再改 `test_guard_extension.py` 里已经不存在的 `CORE_BLOBS_BEFORE_GUARD`。
 
