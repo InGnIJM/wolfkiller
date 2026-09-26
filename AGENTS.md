@@ -66,7 +66,7 @@ npm run build
 - 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，双方无遗言，当日发言投票取消直接入夜；被毒/放逐/枪杀不能带人。被带走的猎人可开枪（`_SHOOT_REASONS` 含 `self_explode`）。
 - 神职含守卫、白痴、骑士。老酒鬼是**平民**（`tags={"villager"}`），不是神职。狼人胜：神职全灭 / 平民全灭 / 狼人数（含白狼王、狼美人）大于好人数。先判狼（狼刀在先）。
 - 神职/平民归属**读 `RoleSpec.tags`（`god` / `villager` / `wolf`）**，不要用角色名子串匹配：`rule_engine._role_tags()` 从 registry 取 tag，未注册的角色不带任何 tag。历史上按 `"seer"/"villager"` 等子串计数会漏掉骑士，导致「骑士是最后一名存活神职」时提前判狼胜。
-- 骑士：好人神职。**全体发言结束后、放逐投票前**（`POST_SPEECH_ACTION` 调度点）翻牌决斗一名玩家；是狼人则该玩家立即死亡、当日发言投票取消直接入夜；是好人则骑士以死谢罪、**无遗言**、当日投票照常。一局一次（`duel` 资源）。
+- 骑士：好人神职。**全体发言结束后、放逐投票前**（`POST_SPEECH_ACTION` 调度点）翻牌决斗一名玩家；是狼人则该玩家立即死亡、**在进入夜晚前发表遗言**、当日发言投票取消直接入夜；是好人则骑士以死谢罪、**无遗言**、当日投票照常。一局一次（`duel` 资源）。两种死亡共用死因 `knight_duel`，遗言只发给被裁决者：中断路径给 `give_last_words` 传 `daytime=True`，夜间遗言路径不传，因此骑士本人不会被补发。
 - 狼美人：狼人阵营。夜晚与狼队共享 `werewolf_kill` 契约；另在 `NIGHT_WITCH_ACTION` 调度点（狼刀投票之后）可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）。出局时当晚被魅惑者殉情（死因 `charm`）。不能自爆、不能自刀。被魅惑带走的猎人**不能开枪**。
 - 老酒鬼：好人平民。免疫魅惑（`initial_resources={"charm_immune": 1}`，经 `selected_target.resource_labels` 对狼美人可见）。被毒或枪杀时 `delayable` 资源让 `settle()` 跳过致死、落 `poisoned`/`wounded` + `delayed_death` 状态，**次日发言结束后投票前**由 `_resolve_delayed_deaths()` 结算；夜刀/放逐/自爆当夜即死。
 - 新增调度点 `POST_SPEECH_ACTION`（`post_speech_action`）承载「发言结束后」的白天技能；引擎的发言后窗口只在有角色声明该调度点时才跑（`_post_speech_action_enabled()`），跑完会 `_settle_and_publish()` 让 pending damage 立即生效、再结算延迟死亡，最后才 `SPEECHES_COMPLETE`。
