@@ -175,6 +175,45 @@ def night_death_seats(state: GameState) -> tuple[int, ...]:
     )
 
 
+#: The election runs once, after the first night.
+_ELECTION_ROUND = 1
+
+#: Recorded before any seat can choose to run.
+_PRE_ELECTION_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot"})
+
+#: These causes begin at the election or the day after it. A death of one of
+#: the causes above that appears later in the same round happened to someone
+#: who was alive when the election started.
+_POST_ELECTION_DEATH_CAUSES = frozenset({"exile", "self_explode"})
+
+
+def seats_dead_before_election(state: GameState) -> frozenset[int]:
+    """Seats that died on the first night, before they could run for sheriff."""
+    dead: set[int] = set()
+    for death in state.death_history:
+        if death.round_number != _ELECTION_ROUND:
+            continue
+        if death.cause in _POST_ELECTION_DEATH_CAUSES:
+            break
+        if death.cause in _PRE_ELECTION_DEATH_CAUSES:
+            dead.add(death.player_seat)
+    return frozenset(dead)
+
+
+def off_badge_seats(state: GameState) -> tuple[int, ...]:
+    """Seats that were alive at the election and never ran, in seat order.
+
+    A seat that stayed off badge remains listed after a later death. A seat
+    that was already dead when the election started is omitted.
+    """
+    excluded = seats_dead_before_election(state)
+    candidates = state.sheriff_office.candidates
+    return tuple(sorted(
+        seat for seat in state.players
+        if seat not in candidates and seat not in excluded
+    ))
+
+
 def _as_object(raw: object) -> Mapping[str, object]:
     if isinstance(raw, Mapping):
         return raw
@@ -337,7 +376,9 @@ class SheriffDirector:
         office = state.sheriff_office
         ran = "、".join(f"{seat}号" for seat in sorted(office.candidates)) or "无"
         active = "、".join(f"{seat}号" for seat in sorted(office.active)) or "无"
+        off_badge = "、".join(f"{seat}号" for seat in off_badge_seats(state)) or "无"
         lines.append(f"已上警座位：{ran}；当前候选人：{active}。")
+        lines.append(f"未上警座位（警下，拥有警长投票权）：{off_badge}。")
         speeches = self._speech_lines(state)
         if speeches:
             lines.append("警上已发言（仅作参考）：\n" + "\n".join(speeches))

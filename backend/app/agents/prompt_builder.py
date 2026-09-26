@@ -5,6 +5,7 @@ from app.agents.prompt_renderer import PromptRenderer
 from app.agents.state_filter import StateFilter
 from app.agents.game_rules import DAY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from app.core.conversation_log import ConversationLog
+from app.core.sheriff_flow import off_badge_seats
 from app.core.vote_service import eligible_exile_targets
 from app.models.conversation import ConversationScope
 from app.models.game import GameState
@@ -137,6 +138,10 @@ class PromptBuilder:
             f"- phase={state.phase.value}",
             f"- alive_seats={alive_seats}",
             f"- dead_seats={dead_seats}",
+            # Badge status and roster survive the compaction: a timeout retry must
+            # not be the one prompt that has to guess who stood on badge.
+            self._format_sheriff_line(state).rstrip("\n"),
+            self._badge_context_line(state).rstrip("\n"),
             self._private_facts_block(compact_view),
             self._camp_cooperation_block(view),
             "</authoritative_state>",
@@ -163,6 +168,7 @@ class PromptBuilder:
     ) -> str:
         thoughts = self._format_thoughts(conversation_log, state.round_number, seat) if include_thoughts else ""
         thoughts = self._format_thought_history_xml(conversation_log, seat) if include_thoughts else ""
+        badge_rules = PromptBuilder._badge_context_line(state)
         return f"""<authoritative_state>
 {self._identity_block(seat, view)}
 
@@ -186,7 +192,7 @@ class PromptBuilder:
 - 所有夜晚行动（守护、击杀、救援、查验）都发生在天亮之前；死亡结果在天亮时才统一公布。
 - 因此，夜里对某位玩家执行查验、救援或守护时，该玩家当时处于存活状态；不得用"查验了已死亡的玩家"之类的说法质疑他人的夜晚行动。
 - 白天发言按固定座次顺序进行，每位玩家只能在自己的发言轮次发言；座次靠后的玩家起跳或表态的时机由座次决定，不能以"起跳晚"为由质疑其身份。
-- 首夜没有任何白天发言信息，首夜的查验与击杀通常没有明确依据，随机选择属于正常现象。
+{badge_rules}- 首夜没有任何白天发言信息，首夜的查验与击杀通常没有明确依据，随机选择属于正常现象。
 - 提出质疑或攻击他人之前，必须先核对自己的论据是否符合上述座次与时序规则；不合规的论据不得使用。
 
 ## 历史与对话
@@ -256,7 +262,10 @@ class PromptBuilder:
     def _format_speaking_progress(state: GameState, seat: int) -> str:
         order = state.speaking_order
         if not order:
-            return "（当前不是发言阶段）"
+            return (
+                PromptBuilder._format_badge_speaking_progress(state, seat)
+                or "（当前不是发言阶段）"
+            )
         if seat not in order:
             return f"发言顺序：{' → '.join(f'{item}号' for item in order)}"
         position = order.index(seat)
@@ -267,6 +276,48 @@ class PromptBuilder:
             f"当前发言者：{seat}号（第{position + 1}/{len(order)}位）\n"
             f"已发言：{spoken}\n尚未发言：{remaining}"
         )
+
+    @staticmethod
+    def _format_badge_speaking_progress(state: GameState, seat: int) -> str:
+        """Campaign/PK speaking progress, derived from the authoritative office.
+
+        Day speeches carry ``speaking_order``; election speeches do not, so the
+        engine's ascending-seat iteration over the office is the only source of
+        truth for who speaks on badge and who is still waiting.
+        """
+        office = state.sheriff_office
+        if (
+            not state.config.enable_sheriff
+            or not office.candidates
+            or state.phase.value != "sheriff_election"
+            or office.step not in ("campaign", "pk")
+        ):
+            return ""
+        if office.step == "pk":
+            order = sorted(office.pk_seats)
+            label = "警长PK发言顺序"
+        else:
+            order = sorted(office.active)
+            label = "警长竞选发言顺序"
+        lines = [f"{label}：{' → '.join(f'{item}号' for item in order)}"]
+        if seat not in order:
+            if office.step == "pk" and seat in office.candidates:
+                lines.append(
+                    f"你（{seat}号）已上警，但不在本轮PK发言名单中，本轮不发言。"
+                )
+            else:
+                lines.append(
+                    f"你（{seat}号）不在本次竞选发言名单中：你属于警下玩家，"
+                    "本轮只参与警长投票，不发言。"
+                )
+            return "\n".join(lines)
+        position = order.index(seat)
+        spoken = "、".join(f"{item}号" for item in order[:position]) or "无"
+        remaining = "、".join(f"{item}号" for item in order[position + 1:]) or "无"
+        lines.append(f"当前发言者：{seat}号（第{position + 1}/{len(order)}位）")
+        lines.append(f"已发言：{spoken}")
+        lines.append(f"尚未发言：{remaining}")
+        return "\n".join(lines)
 
     @staticmethod
     def _private_facts_block(view: dict) -> str:
@@ -404,10 +455,27 @@ class PromptBuilder:
                 + PromptBuilder._day_speech_rules(state, seat)
             )
         if context == "sheriff_campaign":
+            if not state.config.enable_sheriff:
+                badge_instruction = ""
+            elif state.sheriff_office.step == "pk":
+                badge_instruction = (
+                    "发言中如提及"
+                    "\u201c警上/警下\u201d，必须与上方权威名单一致；"
+                    "本轮是警长PK：只有上方PK发言顺序中的玩家发言，其余警上玩家本轮不发言；"
+                    "警下玩家只参与投票。"
+                )
+            else:
+                badge_instruction = (
+                    "发言中如提及"
+                    "\u201c警上/警下\u201d，必须与上方权威名单一致；本轮只有警上玩家发言，警下玩家只参与投票。"
+                )
             return (
                 "## 你的任务：警长竞选发言\n"
                 "调用 `speak` 函数提交5至200字中文竞选发言；不要直接输出普通文本。"
-                "说明你为什么适合当警长，或指出你认为的狼坑；不要编造未提供的查验或夜间结果。"
+                "说明你为什么适合当警长，或指出你认为的狼坑。"
+                + badge_instruction +
+                "【策略提示】你有权根据自己的身份与阵营利益自由决定发言策略：你可以选择公布自己的底牌与夜间信息，"
+                "也可以选择隐藏身份、伪装底牌、报出假信息试探或诈身份。所有发言策略只要服务于阵营获胜目标，均属合规博弈。"
             )
         if context == "last_words":
             return "## 你的任务：遗言\n调用 `last_words` 函数提交5至200字的中文遗言；不要直接输出普通文本。"
@@ -430,8 +498,9 @@ class PromptBuilder:
             return (
                 f"\n前面已有 {position - 1} 位玩家发言。你的发言必须满足："
                 "1）针对前面至少一位玩家的具体观点明确表态（支持、质疑或反驳）并给出理由；"
-                "2）点名你当前最怀疑的1至2名玩家；如果你的判断与前序玩家相同，"
-                "必须补充新的论据或视角，不得只重复已有结论；"
+                "2）结合动机与行为收益分析局势（思考：某玩家的发言和站边对哪个阵营最有利？是否存在悍跳或带节奏的可能？）；"
+                "3）点名你当前最怀疑的1至2名玩家；如果全场风向高度集中在某一人身上，请保持独立思考，防范跟风与从众；"
+                "如果你的判断与前序玩家相同，必须补充新的论据或视角，不得只重复已有结论；"
                 "如果暂无明确怀疑对象，需说明你的排除依据。"
                 "不必逐个点评所有发言，不要复述他人句式，不要展示内心推理步骤，"
                 "严禁因前序玩家态度强硬或率先表态就盲从其结论。"
@@ -499,7 +568,46 @@ class PromptBuilder:
             return ""
         office = state.sheriff_office
         if office.badge_destroyed or (state.sheriff_election_complete and state.sheriff is None):
-            return "- 警长职位：警徽已流失\n"
-        if state.sheriff is None:
-            return "- 警长职位：尚未产生\n"
-        return f"- 警长：{state.sheriff}号\n"
+            status = "- 警长职位：警徽已流失"
+        elif state.sheriff is None:
+            status = "- 警长职位：尚未产生"
+        else:
+            status = f"- 警长：{state.sheriff}号"
+        roster = PromptBuilder._format_badge_roster(state)
+        return f"{status}\n{roster}" if roster else f"{status}\n"
+
+    @staticmethod
+    def _format_badge_roster(state: GameState) -> str:
+        """Authoritative on-badge/off-badge rosters, or "" when both are unknown.
+
+        ``office.candidates`` is every seat that ever ran for sheriff and is kept
+        for the whole game, so this roster also grounds day-round claims about
+        who stood on badge. Before the first seat decides, the roster is unknown
+        and must not be invented.
+        """
+        if not state.config.enable_sheriff:
+            return ""
+        candidates = sorted(state.sheriff_office.candidates)
+        if not candidates:
+            return ""
+        on_badge = "、".join(f"{seat}号" for seat in candidates)
+        off_badge_text = "、".join(
+            f"{seat}号" for seat in off_badge_seats(state)
+        ) or "无"
+        return (
+            f"- 警上玩家（本局曾上警）：{on_badge}\n"
+            f"- 警下玩家（开选时存活且从未上警）：{off_badge_text}\n"
+        )
+
+    @staticmethod
+    def _badge_context_line(state: GameState) -> str:
+        """Grounding rule for badge claims; empty until a roster exists."""
+        if not PromptBuilder._format_badge_roster(state):
+            return ""
+        return (
+            "- 警上/警下是固定事实，以上方名单为唯一依据：警上=本局实际上警的座位，"
+            "警下=开选时存活且从未上警的座位。开选前已死亡的座位不在这两份名单里。"
+            "不得凭印象把警下玩家说成警上；"
+            "警下玩家本来就不在竞选发言名单里，不得因其未在竞选阶段发言而质疑其身份。\n"
+        )
+
