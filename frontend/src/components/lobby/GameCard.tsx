@@ -6,6 +6,7 @@ import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import type { ExecutionStatus } from '../../store/types';
+import { HAIRLINE } from '../../theme/tokens';
 
 interface Props {
   gameId: string;
@@ -61,6 +62,7 @@ export default function GameCard({
       variant="outlined"
       sx={{
         transition: 'background-color 0.2s, border-color 0.2s',
+        border: `1px solid ${HAIRLINE.strong}`,
         bgcolor: selected ? 'action.selected' : undefined,
         '&:hover': {
           bgcolor: selected ? 'action.selected' : 'action.hover',

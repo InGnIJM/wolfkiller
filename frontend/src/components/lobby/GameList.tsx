@@ -5,6 +5,8 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import GameCard from './GameCard';
+import PageBackground from '../shared/PageBackground';
+import { BACKDROP } from '../../theme/tokens';
 import FolderRail, { type FolderFilter } from './FolderRail';
 import BatchActionBar from './BatchActionBar';
 import {
@@ -222,9 +224,21 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     && deleteTarget.phase !== 'error';
 
   return (
-    <Container maxWidth="sm" sx={{ py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 } }}>
+    <Box sx={{ position: 'relative', flex: 1, minHeight: 0 }}>
+    <PageBackground variant="lobby" placement="contained" />
+    <Container maxWidth="sm" sx={{
+      position: 'relative', zIndex: 1,
+      py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
+    }}>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
+        <Box sx={{
+          bgcolor: BACKDROP.textPlate,
+          backdropFilter: 'blur(12px)',
+          borderRadius: 2,
+          px: 1.5,
+          py: 1,
+        }}>
           <Typography
             variant="caption"
             sx={{ display: 'block', mb: 0.3, fontWeight: 600, fontSize: '0.65rem', letterSpacing: 5, color: 'secondary.dark' }}
@@ -268,7 +282,12 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       )}
 
       {visibleGames.length === 0 && (
-        <Box sx={{ textAlign: 'center', py: 8 }}>
+        <Box sx={{
+          textAlign: 'center', py: 8,
+          bgcolor: BACKDROP.textPlate,
+          backdropFilter: 'blur(12px)',
+          borderRadius: 2,
+        }}>
           <Typography variant="h6" color="text.disabled" sx={{ fontWeight: 400, mb: 1 }}>
             暂无对局
           </Typography>
@@ -387,5 +406,6 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         </DialogActions>
       </Dialog>
     </Container>
+    </Box>
   );
 }
