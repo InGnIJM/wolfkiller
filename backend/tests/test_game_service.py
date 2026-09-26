@@ -1723,6 +1723,53 @@ class TestLobbyFoldersAndBatch:
         finally:
             repository.close()
 
+    @pytest.mark.asyncio
+    async def test_delete_game_removes_legacy_game_missing_from_repository(self, tmp_path):
+        from app.persistence.repository import GameRepository
+        repository = GameRepository(tmp_path)
+        service = self._service(tmp_path, repository)
+        try:
+            game_dir = tmp_path / "games" / "legacy"
+            game_dir.mkdir(parents=True)
+            (game_dir / "game.log").write_text("{}\n", encoding="utf-8")
+            state = MagicMock()
+            state.phase = GamePhase.GAME_OVER
+            state.game_id = "legacy"
+            service._games["legacy"] = state
+            service._manifest.add_game(
+                "legacy", {"role_counts": {"wolf-killer-villager": 3}}, name="遗留",
+            )
+            assert repository.get_game("legacy") is None
+
+            await service.delete_game("legacy")
+
+            assert "legacy" not in service.list_games()
+            assert service._manifest.get_entry("legacy") is None
+            assert not game_dir.exists()
+        finally:
+            repository.close()
+
+    @pytest.mark.asyncio
+    async def test_delete_game_still_rejects_repository_benchmark_game(self, tmp_path):
+        from app.persistence.repository import GameRepository, GameReferencedByBenchmark
+        repository = GameRepository(tmp_path)
+        service = self._service(tmp_path, repository)
+        try:
+            repository.create_game(
+                game_id="bench", name="b", config={}, execution_status="failed",
+                source="benchmark", benchmark_run_id="run", model_snapshot=[],
+            )
+            state = MagicMock()
+            state.phase = GamePhase.GAME_OVER
+            state.game_id = "bench"
+            service._games["bench"] = state
+
+            with pytest.raises(GameReferencedByBenchmark):
+                await service.delete_game("bench")
+            assert "bench" in service._games
+        finally:
+            repository.close()
+
     def test_batch_move_reports_unavailable_without_repository(self, tmp_path):
         service = self._service(tmp_path)
         service._games["game-1"] = MagicMock()
