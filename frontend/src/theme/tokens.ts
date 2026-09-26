@@ -2,7 +2,24 @@
 // 血月剧场（Crimson Gothic）设计令牌 · 唯一视觉来源
 // 风格提案：frontend/design-demos/01-crimson-gothic.html
 // 规则：组件禁止硬编码色值，一律引用本文件或 MUI 主题语义槽
+// 图片路径只在本文件登记
 // ============================================================
+
+import bgGame from '../assets/bg/bg-game.webp';
+import bgLobby from '../assets/bg/bg-lobby.webp';
+import bgMain from '../assets/bg/bg-main.webp';
+import cardBack from '../assets/roles/card-back.webp';
+import artGuard from '../assets/roles/role-guard.webp';
+import artHunter from '../assets/roles/role-hunter.webp';
+import artIdiot from '../assets/roles/role-idiot.webp';
+import artKnight from '../assets/roles/role-knight.webp';
+import artOldDrunkard from '../assets/roles/role-old_drunkard.webp';
+import artSeer from '../assets/roles/role-seer.webp';
+import artVillager from '../assets/roles/role-villager.webp';
+import artWerewolf from '../assets/roles/role-werewolf.webp';
+import artWerewolfKing from '../assets/roles/role-werewolf_king.webp';
+import artWitch from '../assets/roles/role-witch.webp';
+import artWolfBeauty from '../assets/roles/role-wolf_beauty.webp';
 
 /** 基础画布与表面 */
 export const CANVAS = {
@@ -55,6 +72,45 @@ export const ROLE_COLORS = {
 } as const;
 
 export type RoleColorKey = keyof typeof ROLE_COLORS;
+
+/** 全站页面背景。组件按 variant 取用，不直接写图片路径。 */
+export const BACKGROUNDS = {
+  main: bgMain,
+  lobby: bgLobby,
+  game: bgGame,
+} as const;
+
+export type BackgroundVariant = keyof typeof BACKGROUNDS;
+
+/** 背景压暗、渐变遮罩与文字承托。对比度不够时只调这里。 */
+export const BACKDROP = {
+  dim: 0.55,
+  saturate: 0.8,
+  scrimTop: 'rgba(11, 10, 15, 0.25)',
+  scrimBottom: 'rgba(11, 10, 15, 0.7)',
+  vignette: 'radial-gradient(ellipse at center, transparent 40%, rgba(11, 10, 15, 0.72) 100%)',
+  textPlate: 'rgba(23, 18, 33, 0.72)',
+  cardScrim: 'linear-gradient(transparent, rgba(11, 10, 15, 0.85))',
+  fadeMs: 300,
+} as const;
+
+/** 角色身份卡立绘，键与 ROLE_COLORS 一致。 */
+export const ROLE_ART: Record<RoleColorKey, string> = {
+  werewolf: artWerewolf,
+  witch: artWitch,
+  seer: artSeer,
+  hunter: artHunter,
+  villager: artVillager,
+  guard: artGuard,
+  idiot: artIdiot,
+  werewolf_king: artWerewolfKing,
+  knight: artKnight,
+  wolf_beauty: artWolfBeauty,
+  old_drunkard: artOldDrunkard,
+};
+
+/** 未揭晓身份 / 翻牌演出用的卡背。 */
+export const CARD_BACK = cardBack;
 
 /** 头像底色的深色宝石盘（保证浅墨文字 ≥4.5:1 对比度，按座位取色） */
 export const AVATAR_PALETTE = [
