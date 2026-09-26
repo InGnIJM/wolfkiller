@@ -52,6 +52,31 @@ def test_max_retries_honours_environment(monkeypatch):
     assert chat.call_args.kwargs["max_retries"] == 1
 
 
+def test_plain_profiles_send_no_default_headers():
+    with patch("app.agents.providers.anthropic_messages.ChatAnthropic") as chat:
+        AnthropicMessagesTransport().build(config(), profile(), CallPurpose.TEXT)
+    assert "default_headers" not in chat.call_args.kwargs
+
+
+def test_configured_headers_reach_chat_anthropic():
+    cfg = config(headers=(("x-relay-tenant", "wolfkiller"),))
+    with patch("app.agents.providers.anthropic_messages.ChatAnthropic") as chat:
+        AnthropicMessagesTransport().build(cfg, profile(), CallPurpose.TEXT)
+    assert chat.call_args.kwargs["default_headers"] == {
+        "x-relay-tenant": "wolfkiller",
+    }
+
+
+def test_a_session_profile_sends_its_generated_session_header():
+    session_profile = replace(profile(), session_header="x-opencode-session")
+    transport = AnthropicMessagesTransport()
+    with patch("app.agents.providers.anthropic_messages.ChatAnthropic") as chat:
+        transport.build(config(), session_profile, CallPurpose.TEXT)
+    assert chat.call_args.kwargs["default_headers"] == {
+        "x-opencode-session": transport.session_id,
+    }
+
+
 @pytest.mark.parametrize(
     "purpose", [CallPurpose.ACTION_JSON, CallPurpose.TOOLS, CallPurpose.ACTION_STRICT],
 )
