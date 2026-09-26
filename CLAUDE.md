@@ -68,7 +68,7 @@ npm run test:e2e                      # Playwright 浏览器验收
 - **发言后窗口**：全体存活玩家发言完毕、放逐投票前跑 `POST_SPEECH_ACTION`（`slot="post_speech"`，`_post_speech_action_enabled()` 门禁），骑士翻牌决斗在此发动；窗口跑完先 `_settle_and_publish()`（白天伤害立即生效）再 `_resolve_delayed_deaths()`（老酒鬼延迟死亡落地），最后才 `SPEECHES_COMPLETE`
 - **放逐反应**：引擎放逐玩家后，将合成的 PLAYER_DIED 提交注入 `DAWN_REACTION` 调度点的响应队列，让猎人、狼美人殉情等响应契约通过流水线反应；猎人 `_SHOOT_REASONS` 含 `self_explode`，但**不含** `charm`（被殉情带走的猎人不能开枪）
 - **白天发言/投票**：引擎内角色无关路径，经 `BaseRole`（`roles/base.py`）调用 LLM；投票通过纯校验器验证并以 `EffectApplier` 的 ACCEPT_ACTION 记录（唯一写入口）；投票资格读 `runtime.statuses`（`core/vote_service.py`：`no_vote` 不进选民、`exile_immune` 不进候选），狼队按 `camp == Camp.WEREWOLF` 识别
-- **断点续跑**：调度点、夜晚批次、死亡发布、阶段推进均有持久检查点，失败后精确续跑不重放
+- **断点续跑**：调度点、夜晚批次、死亡发布、阶段推进、遗言认领（`last_words_pending:`，在调用 LLM 之前落盘）均有持久检查点，失败后精确续跑不重放
 
 ### 白天阶段与规则
 

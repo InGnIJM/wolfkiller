@@ -216,3 +216,14 @@
   test on `_validate_last_words` directly: the engine-level tests inject
   `_mock_role` and never reach it, so 100% line coverage does not prove the
   phase branch was actually asserted.
+- Trigger: an engine step that mutates in-memory dedupe state and *then* makes a
+  slow LLM call. Action: checkpoint the claim between the two —
+  `give_last_words` now writes `last_words_pending:{round}:{seat}:{cause}`
+  right after `_last_words_given.add()` and before `speak()`, so a crash
+  mid-call loses the line on resume instead of replaying it into the timeline
+  (the better failure for an audience reading events in order). The label
+  deliberately does **not** start with `last_words:`, so
+  `GameService._checkpoint_domain_events` falls through to the generic
+  `STEP_COMMITTED` branch with empty visibility rather than re-emitting a
+  `SPEECH_MADE` for words that were never spoken — keep it that way when adding
+  checkpoints that only persist bookkeeping.
