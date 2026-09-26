@@ -970,7 +970,7 @@ def test_canonical_runtime_resources_override_legacy_even_when_zero(
                     initial_resources={"antidote": 0, "poison": 1, "future": 7})
     registry = RegistrySnapshot({"witch": spec}, "a" * 64)
     state.players = {4: state.players[4]}; state.players[4].has_antidote = True
-    initialize_role_resources(state, registry.specs, registry.digest)
+    initialize_role_resources(state, registry.specs, "a" * 64)
     state._pipeline_runtime.role_resources[4].pop("future")
     projected = ContextProjector().project(state, _request(registry, 4, "witch", revision=1), registry)
     assert projected.resources == {"antidote": 0, "poison": 1, "future": 7}
@@ -1649,3 +1649,77 @@ def test_role_private_data_view_boundaries_and_runtime_values() -> None:
     state._pipeline_runtime = corrupt
     with pytest.raises(EffectRejected, match="invalid pipeline runtime"):
         role_private_data_view(state, 1)
+
+
+def _label_fixture(
+    state: GameState, registry: RegistrySnapshot, namespaces: frozenset[str],
+) -> tuple[RegistrySnapshot, IssuedActionRequest, ActionContext]:
+    original = registry.require("seer")
+    declared = replace(
+        original.contracts[0], selected_target_fact_namespaces=namespaces,
+    )
+    selected_registry = RegistrySnapshot(
+        specs={**registry.specs, "seer": replace(original, contracts=(declared,))},
+        digest=registry.digest,
+    )
+    request = _request(selected_registry, 3, "seer")
+    context = ContextProjector().project(state, request, selected_registry)
+    return selected_registry, request, context
+
+
+def test_selected_target_projects_only_whitelisted_statuses_and_resources(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    from app.core.role_runtime import initialize_role_resources
+
+    initialize_role_resources(state, registry.specs, "a" * 64)
+    state._pipeline_runtime.statuses[1] = {
+        "poisoned", "wounded", "no_vote", "exile_immune",
+    }
+    state._pipeline_runtime.role_resources[1] = {
+        "charm_immune": 1, "gun": 1, "poison": 1,
+    }
+    selected_registry, request, context = _label_fixture(
+        state, registry, frozenset({"status_labels", "resource_labels"}),
+    )
+    projected = ContextProjector().project_selected_target(
+        state, request, context,
+        ActionCommand(action_type="act", target_seat=1, reasoning="charm"),
+        selected_registry,
+    )
+    selected = projected.facts["selected_target"]
+    assert selected["seat"] == 1
+    # Private statuses and private resources never leave the projector.
+    assert selected["status_labels"] == ("poisoned", "wounded")
+    assert selected["resource_labels"] == ("charm_immune",)
+    assert "camp_label" not in selected
+
+
+def test_selected_target_label_namespaces_tolerate_a_missing_runtime(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    selected_registry, request, context = _label_fixture(
+        state, registry, frozenset({"status_labels", "resource_labels"}),
+    )
+    state._pipeline_runtime = None
+    projected = ContextProjector().project_selected_target(
+        state, request, context,
+        ActionCommand(action_type="act", target_seat=1, reasoning="charm"),
+        selected_registry,
+    )
+    selected = projected.facts["selected_target"]
+    assert selected["status_labels"] == () and selected["resource_labels"] == ()
+
+
+def test_selected_target_rejects_an_unknown_label_namespace(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    selected_registry, request, context = _label_fixture(
+        state, registry, frozenset({"hidden_notes"}),
+    )
+    with pytest.raises(ValueError, match="unknown selected target fact namespace"):
+        ContextProjector().project_selected_target(
+            state, request, context,
+            ActionCommand(action_type="act", target_seat=1, reasoning="check"),
+            selected_registry,
+        )

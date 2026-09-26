@@ -177,3 +177,28 @@ class TestRuleEngine:
         ]
 
         assert RuleEngine().check_win(make_state(players)) is None
+
+
+def test_unknown_role_ids_carry_no_tags_and_never_count_as_gods():
+    """A role the registry does not know must not silently become a god or a
+    villager; only a declared tag decides."""
+    from app.core.rule_engine import _role_tags
+
+    assert _role_tags("x-not-a-registered-role") == frozenset()
+    assert _role_tags("wolf-killer-knight") == frozenset({"god"})
+    assert _role_tags("wolf-killer-old-drunkard") == frozenset({"villager"})
+
+    engine = RuleEngine()
+    state = make_state([
+        make_player(1, "wolf-killer-werewolf", "werewolf"),
+        make_player(2, "wolf-killer-seer", "good"),
+        make_player(3, "wolf-killer-villager", "good"),
+        make_player(4, "x-not-a-registered-role", "good"),
+    ])
+    # The unknown role is neither a god nor a villager, so it keeps neither side
+    # of the slaughter alive: the seer is the only god and the villager the only
+    # plain villager, so losing the seer ends the game even though seat 4 lives.
+    assert engine.check_win(state) is None
+    state.players[2].is_alive = False
+    result = engine.check_win(state)
+    assert (result.winning_camp, result.reason) == ("werewolf", "all_gods_dead")
