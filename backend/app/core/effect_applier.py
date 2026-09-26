@@ -395,12 +395,26 @@ class EffectApplier:
             if not simulated.pending_damage and not simulated.pending_protection: return None  # pragma: no branch
             if type(state.death_history) is not list: raise EffectRejected("invalid death history")  # pragma: no branch
             alive = {seat: player.is_alive for seat, player in state.players.items()}
-            try: deaths, resulting_alive = settle(simulated.pending_damage, simulated.pending_protection, set(state.players), alive, round_number)
+            try: deaths, resulting_alive, delayed = settle(simulated.pending_damage, simulated.pending_protection, set(state.players), alive, round_number, simulated.role_resources)
             except (TypeError, ValueError) as error: raise EffectRejected("invalid pending damage or protection") from error
             simulated.pending_damage = (); simulated.pending_protection = (); simulated.revision += 1
             events = tuple({"event_type": "PLAYER_DIED", "payload": death, "visibility": ("PUBLIC",)} for death in deaths)
+            # A seat the settlement spared because it is delayable keeps the
+            # marks that explain the pending death, so the engine can finalise it
+            # once the next day's speeches are over.
+            status_events: tuple[dict[str, object], ...] = ()
+            for seat in sorted(delayed):
+                held = frozenset(simulated.statuses.get(seat, ()))
+                if any(status in held for status in delayed[seat]):
+                    raise EffectRejected("delayed death status already present")
+                simulated.statuses[seat] = held | frozenset(delayed[seat])
+                status_events += tuple(
+                    {"event_type": "STATUS_ADDED", "payload": {"seat": seat, "status": status, "round_number": round_number}, "visibility": ("PUBLIC",)}
+                    for status in delayed[seat]
+                )
+            events += status_events
             simulated.events += tuple(_json(event, "event") for event in events)
-            ids = tuple(derive_effect_id(action_key, ordinal) for ordinal in range(len(deaths) + 1))
+            ids = tuple(derive_effect_id(action_key, ordinal) for ordinal in range(len(events) + 1))
             digest = _digest(state, simulated, resulting_alive)
             result = CommitResult(action_key, ids, simulated.revision, events, digest)
             simulated.commits[action_key] = result

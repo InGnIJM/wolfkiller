@@ -36,6 +36,7 @@ class SchedulePoint(str, Enum):
     DAWN_REACTION = "dawn_reaction"
     EXILE_VERDICT = "exile_verdict"
     DAY_ACTION = "day_action"
+    POST_SPEECH_ACTION = "post_speech_action"
     VOTE_ACTION = "vote_action"
     ROUND_END = "round_end"
     GAME_END = "game_end"
