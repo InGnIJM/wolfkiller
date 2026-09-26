@@ -9,6 +9,7 @@ import ModelStep from './ModelStep';
 import { createGame } from '../../api/client';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type { FieldConstraints, ModelAssignment, RoleCatalogItem } from '../../store/types';
+import { BACKDROP } from '../../theme/tokens';
 
 export default function CreateGameWizard() {
   const navigate = useNavigate();
@@ -81,8 +82,15 @@ export default function CreateGameWizard() {
   };
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
-      <Typography variant="h4" sx={{ fontWeight: 400, mb: 2 }}>创建游戏</Typography>
+    <Container maxWidth="md" sx={{
+      position: 'relative', zIndex: 1, py: 4,
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
+    }}>
+      <Typography variant="h4" sx={{
+        fontWeight: 400, mb: 2, display: 'inline-block',
+        bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
+        px: 1.5, py: 0.5, borderRadius: 2,
+      }}>创建游戏</Typography>
       <Stepper activeStep={step} sx={{ mb: 4 }}>
         <Step><StepLabel>人数身份配置</StepLabel></Step>
         <Step><StepLabel>Agent 模型配置</StepLabel></Step>
