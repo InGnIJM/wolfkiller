@@ -3,8 +3,10 @@ import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import Typography from '@mui/material/Typography';
 import Bloodtype from '@mui/icons-material/Bloodtype';
+import Bolt from '@mui/icons-material/Bolt';
 import Gavel from '@mui/icons-material/Gavel';
 import GpsFixed from '@mui/icons-material/GpsFixed';
+import HeartBroken from '@mui/icons-material/HeartBroken';
 import PersonOff from '@mui/icons-material/PersonOff';
 import Science from '@mui/icons-material/Science';
 import Whatshot from '@mui/icons-material/Whatshot';
@@ -22,6 +24,8 @@ const CAUSE_LABELS: Record<string, string> = {
   exile: '放逐',
   hunter_shot: '猎人带走',
   self_explode: '白狼王自爆',
+  knight_duel: '骑士决斗',
+  charm: '殉情',
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -44,6 +48,8 @@ const CAUSE_ICONS: Record<string, SvgIconComponent> = {
   hunter_shot: GpsFixed,
   exile: Gavel,
   self_explode: Whatshot,
+  knight_duel: Bolt,
+  charm: HeartBroken,
 };
 
 export default function DeathAnnouncement({ deaths, revealedRole }: Props) {

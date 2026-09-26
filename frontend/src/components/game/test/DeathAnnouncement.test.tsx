@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import DeathAnnouncement from '../DeathAnnouncement';
-import type { DeathRecord } from '../../../store/types';
+import type { DeathCause, DeathRecord } from '../../../store/types';
 
 afterEach(() => {
   cleanup();
@@ -16,6 +16,17 @@ const record = (cause: string): DeathRecord => ({
   cause: cause as DeathRecord['cause'],
   round_number: 2,
 });
+
+// Typed as DeathCause so a cause missing from the union fails `tsc`, not just the render.
+const CAUSE_CASES: Array<[DeathCause, string]> = [
+  ['wolf_kill', '夜间死亡'],
+  ['poison', '毒杀'],
+  ['exile', '放逐'],
+  ['hunter_shot', '猎人带走'],
+  ['self_explode', '白狼王自爆'],
+  ['knight_duel', '骑士决斗'],
+  ['charm', '殉情'],
+];
 
 describe('DeathAnnouncement', () => {
   it('renders nothing when there are no deaths', () => {
@@ -61,10 +72,7 @@ describe('DeathAnnouncement', () => {
     expect(screen.getByText(`身份：${label}`)).toBeInTheDocument();
   });
 
-  it.each([
-    ['poison', '毒杀'],
-    ['hunter_shot', '猎人带走'],
-  ])('maps cause "%s" to a Material icon announcement', (cause, label) => {
+  it.each(CAUSE_CASES)('maps cause "%s" to the %s announcement', (cause, label) => {
     render(<DeathAnnouncement deaths={[record(cause)]} />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(`${label} · 第2轮`)).toBeInTheDocument();

@@ -15,7 +15,14 @@ export type GamePhase =
   | 'game_over'
   | 'error';
 
-export type DeathCause = 'wolf_kill' | 'poison' | 'hunter_shot' | 'exile' | 'self_explode';
+export type DeathCause =
+  | 'wolf_kill'
+  | 'poison'
+  | 'hunter_shot'
+  | 'exile'
+  | 'self_explode'
+  | 'knight_duel'
+  | 'charm';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason = 'all_gods_dead' | 'all_villagers_dead' | 'all_wolves_dead';
 export type UtcTimestamp = `${string}Z`;
