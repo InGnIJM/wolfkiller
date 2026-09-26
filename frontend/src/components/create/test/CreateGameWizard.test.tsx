@@ -55,6 +55,7 @@ const MODEL = {
   model_id: 'deepseek-v4-pro', has_key: true, api_key_masked: 'sk-***1234',
   key_invalid: false, temperature: null, strict_base_url: null,
   provider_profile: 'auto' as const,
+  headers: {},
   created_at: '', updated_at: '',
 };
 

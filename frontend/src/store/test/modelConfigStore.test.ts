@@ -21,6 +21,7 @@ const sample = {
   temperature: null,
   strict_base_url: null,
   provider_profile: 'auto' as const,
+  headers: {},
   created_at: '',
   updated_at: '',
 };
@@ -95,5 +96,20 @@ describe('modelConfigStore', () => {
     vi.mocked(deleteModel).mockRejectedValue(new Error('x'));
     expect(await useModelConfigStore.getState().remove('a')).toBe(false);
     expect(useModelConfigStore.getState().error).toBe('x');
+  });
+
+  it('passes headers through create and update unchanged', async () => {
+    const withHeaders = { ...input, headers: { 'X-Extra': 'v' } };
+    const created = { ...sample, headers: { 'X-Extra': 'v' } };
+    vi.mocked(createModel).mockResolvedValue(created);
+    expect(await useModelConfigStore.getState().create(withHeaders)).toEqual(created);
+    expect(createModel).toHaveBeenCalledWith(withHeaders);
+
+    useModelConfigStore.setState({ configs: [created] });
+    const updated = { ...sample, headers: { 'X-Other': '2' } };
+    vi.mocked(updateModel).mockResolvedValue(updated);
+    await useModelConfigStore.getState().update('a', { ...input, headers: { 'X-Other': '2' } });
+    expect(updateModel).toHaveBeenCalledWith('a', { ...input, headers: { 'X-Other': '2' } });
+    expect(useModelConfigStore.getState().configs[0].headers).toEqual({ 'X-Other': '2' });
   });
 });
