@@ -1,3 +1,4 @@
+import Gavel from '@mui/icons-material/Gavel';
 import GpsFixed from '@mui/icons-material/GpsFixed';
 import Help from '@mui/icons-material/Help';
 import Mood from '@mui/icons-material/Mood';
@@ -6,6 +7,8 @@ import Person from '@mui/icons-material/Person';
 import Pets from '@mui/icons-material/Pets';
 import Science from '@mui/icons-material/Science';
 import Security from '@mui/icons-material/Security';
+import LocalBar from '@mui/icons-material/LocalBar';
+import Favorite from '@mui/icons-material/Favorite';
 import Visibility from '@mui/icons-material/Visibility';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { INK, ROLE_COLORS } from '../../theme/tokens';
@@ -24,6 +27,9 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-guard': { Icon: Security, label: '守卫', color: ROLE_COLORS.guard.color },
   'wolf-killer-idiot': { Icon: Mood, label: '白痴', color: ROLE_COLORS.idiot.color },
   'wolf-killer-werewolf-king': { Icon: WorkspacePremium, label: '白狼王', color: ROLE_COLORS.werewolf_king.color },
+  'wolf-killer-knight': { Icon: Gavel, label: '骑士', color: ROLE_COLORS.knight.color },
+  'wolf-killer-wolf-beauty': { Icon: Favorite, label: '狼美人', color: ROLE_COLORS.wolf_beauty.color },
+  'wolf-killer-old-drunkard': { Icon: LocalBar, label: '老酒鬼', color: ROLE_COLORS.old_drunkard.color },
 };
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标
