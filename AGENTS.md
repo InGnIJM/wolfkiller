@@ -65,10 +65,12 @@ npm run build
 - 白痴：被放逐时翻牌，公开身份、不死、失去投票权、不再能被放逐，仍可发言；夜刀/毒/枪/自爆带走时正常死亡。计入神职。
 - 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，双方无遗言，当日发言投票取消直接入夜；被毒/放逐/枪杀不能带人。被带走的猎人可开枪（`_SHOOT_REASONS` 含 `self_explode`）。
 - 神职含守卫、白痴。狼人胜：神职全灭 / 平民全灭 / 狼人数（含白狼王）大于好人数。先判狼（狼刀在先）。
-- 可选警长（`GameConfig.enable_sheriff`，默认关）。关局时提示词省略警长词、状态机不进入竞选；开局时由 `SheriffDirector` 硬编码竞选/交徽，Agent 只选当前工具，竞选决策提示注入本人身份、私有事实与警上发言摘录；`ConversationLog` 全程同一对象（新局清空记录、恢复时由编解码器替换记录），每轮警长投票后以 PUBLIC `phase=sheriff_ballot` 记录发布完整票型供后续决策使用。九人、十人预设建议关，十二人预设建议开。
+- 可选警长（`GameConfig.enable_sheriff`，默认关）。关局时提示词省略警长词、状态机不进入竞选；开局时由 `SheriffDirector` 硬编码竞选/交徽，Agent 只选当前工具，竞选决策提示注入本人身份、私有事实、已上警/未上警（警下）名单与警上发言摘录；竞选发言与白天发言、放逐投票、超时重试投票的权威状态都带警上/警下名单（警上=`office.candidates`，警下=`off_badge_seats`：开选时存活且从未上警，排除开选前死亡）与固定事实约束，竞选期另给竞选发言顺序与已发言/尚未发言名单，避免模型把警下玩家说成警上；`ConversationLog` 全程同一对象（新局清空记录、恢复时由编解码器替换记录），每轮警长投票后以 PUBLIC `phase=sheriff_ballot` 记录发布完整票型供后续决策使用。九人、十人预设建议关，十二人预设建议开。
 - 公开 DTO / 前端消费链不得出现 `role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等私有字段。
 - `prompt_builder.py` / `state_filter.py` 是委托外壳，源码不得出现内置角色名。
-- 提供方在 `agents/providers/`；`core/` 与 `roles/` 禁止直接 import providers。
+- 提供方在 `agents/providers/`；`core/` 与 `roles/` 禁止直接 import providers。OpenCode 的 Zen/Go 是同一域名下的两个 profile，只能按路径（`/zen/go` 先于 `/zen`）区分。
+- Base URL 路径以 `/responses` 结尾时走 OpenAI Responses 方言（`openai_responses`），并**关掉 strict**；该方言下同一域名打 `/chat/completions` 会 500。`strip_responses_suffix()` 会把尾部 `/responses` 去掉再交给 SDK，否则会 POST 到 `/responses/responses`。方言覆盖用 `replace()`，只换 dialect 与 strict，provider 自己的 headers 必须保留。
+- 自定义请求头走 `ModelConfig.headers` → `LLMClientConfig.headers`（tuple，保持可哈希）→ transport `default_headers`；校验入口只有 `base.py` 的 `header_error()`。headers 属于敏感面，禁止进 `_MODEL_PARAMETER_FIELDS`、model_snapshot 或 game.log。
 - 耐久事实源是 `backend/data/wolfkiller.sqlite3`，不是 JSONL。不要删除进行中的 `data/` 对局目录。
 - 大厅 `GET /api/games` 不含评测局；评测局从评测页进出。
 - 注册表新增角色会改变 `registry.digest`，处于 `interrupted` 的旧局无法续跑。
