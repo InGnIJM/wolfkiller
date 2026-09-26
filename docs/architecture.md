@@ -36,7 +36,7 @@ WolfKiller/
 │   │   ├── models/              # 游戏数据模型 + 冻结流水线核心类型（pipeline.py）
 │   │   ├── core/                # 引擎、调度器、效果应用、投影、校验、解析、事件总线、日志
 │   │   ├── agents/              # LLM 客户端、providers、提示渲染、输出解析、状态过滤
-│   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫/白痴/白狼王）
+│   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫/白痴/白狼王/骑士/狼美人/老酒鬼）
 │   │   ├── api/                 # REST 路由（routes/）+ WebSocket 处理（websocket/）
 │   │   ├── persistence/         # SQLite repository、检查点编解码、引擎恢复
 │   │   ├── services/            # 游戏/benchmark 服务、公开投影、派生任务
@@ -97,6 +97,8 @@ WolfKiller/
 白天生命周期为角色开放两个与角色无关的窗口，引擎只认 `DAY_INTERRUPTED / EXILE_PENDING / EXILE_CANCELLED / PLAYER_REVEALED` 这些通用事件，不出现任何角色名：
 
 - **`DAY_ACTION`**（每位发言者开口前，`slot=f"{vote_round}:{seat}"`）：角色可提交行动；若提交事件含 `DAY_INTERRUPTED`，引擎 `_resolve_day_interruption()` 结算 pending damage、按 `death_history` 去重发布死亡、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点，随后判胜负或以 `WEREWOLF_EXPLODED` 转入 NIGHT。续跑时 `_journaled_day_interruption()` 从 journal 识别已发生的中断并幂等重放。白狼王自爆是当前唯一实现。
+
+- **`POST_SPEECH_ACTION`**（全体存活玩家发言完毕、放逐投票前，`slot="post_speech"`）：与 `DAY_ACTION` 同构的第二个白天窗口，只在有角色声明该调度点时运行（`_post_speech_action_enabled()`）。骑士翻牌决斗是当前唯一实现：是狼人则提交 `DAY_INTERRUPTED`（`cause="knight_duel"`）走同一条中断路径；是好人则只提交自身伤害。窗口跑完引擎先 `_settle_and_publish()`（白天伤害立即生效、绝不带进夜里），再 `_resolve_delayed_deaths()`，最后才 `SPEECHES_COMPLETE`。`_journaled_day_interruption()` 按 slot 后缀匹配两个窗口的检查点，因此续跑时即使阶段已推进到 NIGHT 也能幂等重放。
 - **`EXILE_VERDICT`**（放逐前）：`_apply_exile(seat)` 先以 `EXILE_PENDING{target_seat, cause="exile"}` 跑该点；若提交事件含 `EXILE_CANCELLED`，则对随行 `PLAYER_REVEALED` 写 `revealed_role`、系统消息播报翻牌、`add_vote_result(..., cancelled_seat)` 记为无人出局并跳过遗言；否则走原 `mark_dead("exile")` 路径。白痴翻牌是当前唯一实现。
 
 ### 放逐反应
@@ -116,7 +118,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
                                                      └──────────→ NIGHT ←──────────────┘
 ```
 
-- 胜负判定（`core/rule_engine.py`）实现屠边规则与「狼刀在先」语义：神职含守卫与白痴；狼人数（含白狼王）大于好人数也算狼人胜
+- 胜负判定（`core/rule_engine.py`）实现屠边规则与「狼刀在先」语义：神职含守卫、白痴、骑士，老酒鬼是平民；狼人数（含白狼王、狼美人）大于好人数也算狼人胜。归属读 `RoleSpec.tags`（`god`/`villager`），不再按角色名子串匹配——子串匹配会漏掉骑士，导致「骑士是最后一名存活神职」时提前判狼胜
 
 ## LLM 交互层
 
@@ -151,7 +153,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 
 ### 公开事件同步
 
-公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）、白狼王自爆（`self_explode`）、警长当选（`sheriff_elected`）与交徽/撕徽（`sheriff_badge`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
+公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王/骑士/狼美人的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）、白狼王自爆（`self_explode`）、警长当选（`sheriff_elected`）与交徽/撕徽（`sheriff_badge`）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
 
 ## 前端架构
 
