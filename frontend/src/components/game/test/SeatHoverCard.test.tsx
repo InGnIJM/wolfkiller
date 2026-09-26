@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import SeatHoverCard from '../SeatHoverCard';
-import { ROLE_COLORS } from '../../../theme/tokens';
+import { CARD_BACK, ROLE_ART, ROLE_COLORS } from '../../../theme/tokens';
 
 afterEach(() => cleanup());
 
@@ -83,5 +83,38 @@ describe('SeatHoverCard', () => {
       />,
     );
     expect(screen.getByText('存活 · 弃权')).toBeInTheDocument();
+  });
+
+  it('shows the role portrait and keeps the copy on the card surface', () => {
+    const { container } = render(
+      <SeatHoverCard
+        seat={1}
+        roman="Ⅰ"
+        roleLabel="狼人"
+        camp="werewolf"
+        isAlive
+        isSheriff={false}
+        isCurrentSpeaker={false}
+        accent={ROLE_COLORS.werewolf.color}
+        art={ROLE_ART.werewolf}
+      />,
+    );
+    expect(container.querySelector('img')).toHaveAttribute('src', ROLE_ART.werewolf);
+    expect(screen.getByText('狼人 · 狼人阵营')).toBeInTheDocument();
+  });
+
+  it('shows the card back when the identity is still hidden', () => {
+    const { container } = render(
+      <SeatHoverCard
+        seat={4}
+        roman="Ⅳ"
+        isAlive
+        isSheriff={false}
+        isCurrentSpeaker={false}
+        accent={ROLE_COLORS.villager.color}
+        art={CARD_BACK}
+      />,
+    );
+    expect(container.querySelector('img')).toHaveAttribute('src', CARD_BACK);
   });
 });

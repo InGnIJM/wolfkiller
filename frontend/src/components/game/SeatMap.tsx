@@ -3,27 +3,14 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelSnapshotEntry, PublicPlayerState } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
-import { ROLE_COLORS, BLOOD_MOON } from '../../theme/tokens';
+import { ROLE_COLORS, BLOOD_MOON, CARD_BACK } from '../../theme/tokens';
+import { roleMetaFor } from '../shared/roleMeta';
 import SeatHoverCard from './SeatHoverCard';
 
 const speakerPulse = keyframes`
   0%, 100% { boxShadow: '0 0 0 2px rgba(229,72,77,0.55), 0 0 10px rgba(229,72,77,0.3)'; }
   50% { boxShadow: '0 0 0 6px rgba(229,72,77,0.28), 0 0 20px rgba(229,72,77,0.16)'; }
 `;
-
-const ROLE_BADGES: Record<string, { label: string; color: string; bg: string }> = {
-  'wolf-killer-werewolf': { label: '狼人', ...ROLE_COLORS.werewolf },
-  'wolf-killer-witch': { label: '女巫', ...ROLE_COLORS.witch },
-  'wolf-killer-seer': { label: '预言家', ...ROLE_COLORS.seer },
-  'wolf-killer-hunter': { label: '猎人', ...ROLE_COLORS.hunter },
-  'wolf-killer-villager': { label: '村民', ...ROLE_COLORS.villager },
-  'wolf-killer-guard': { label: '守卫', ...ROLE_COLORS.guard },
-  'wolf-killer-idiot': { label: '白痴', ...ROLE_COLORS.idiot },
-  'wolf-killer-werewolf-king': { label: '白狼王', ...ROLE_COLORS.werewolf_king },
-  'wolf-killer-knight': { label: '骑士', ...ROLE_COLORS.knight },
-  'wolf-killer-wolf-beauty': { label: '狼美人', ...ROLE_COLORS.wolf_beauty },
-  'wolf-killer-old-drunkard': { label: '老酒鬼', ...ROLE_COLORS.old_drunkard },
-};
 
 // 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字
 const ROMAN = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ', 'Ⅺ', 'Ⅻ'];
@@ -77,7 +64,7 @@ function PublicSeat({
   compact?: boolean;
   model?: SeatModelInfo;
 }) {
-  const badge = player.role ? ROLE_BADGES[player.role] : undefined;
+  const badge = roleMetaFor(player.role);
   const status = !player.is_alive ? '出局' : player.can_vote === false ? '存活·无投票权' : '存活';
   const accent = badge?.color ?? (
     player.camp === 'werewolf' ? '#E5484D'
@@ -116,6 +103,7 @@ function PublicSeat({
                 : BLOOD_MOON.gold
           )}
           model={model}
+          art={badge?.art ?? CARD_BACK}
         />
       )}
       placement="top"

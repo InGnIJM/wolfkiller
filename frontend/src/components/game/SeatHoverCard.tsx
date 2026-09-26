@@ -2,7 +2,7 @@ import { Box, Typography } from '@mui/material';
 
 import type { SeatModelInfo } from '../../store/seatModels';
 import { providerProfileLabel } from '../models/providerProfiles';
-import { BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
+import { BACKDROP, BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
 
 function campLabel(camp?: string): string | undefined {
   if (camp === 'werewolf') return '狼人阵营';
@@ -39,6 +39,7 @@ export default function SeatHoverCard({
   voteTarget,
   accent,
   model,
+  art,
 }: {
   seat: number;
   roman: string;
@@ -51,6 +52,7 @@ export default function SeatHoverCard({
   voteTarget?: number | null;
   accent: string;
   model?: SeatModelInfo;
+  art?: string;
 }) {
   const identity = [roleLabel, campLabel(camp)].filter(Boolean).join(' · ');
   return (
@@ -67,6 +69,17 @@ export default function SeatHoverCard({
         pointerEvents: 'none',
       }}
     >
+      {art ? (
+        <Box sx={{ position: 'relative', mx: -1.5, mt: -1.25, mb: 1, overflow: 'hidden' }}>
+          <Box
+            component="img"
+            alt=""
+            src={art}
+            sx={{ display: 'block', width: '100%', height: 108, objectFit: 'cover', objectPosition: 'center 15%' }}
+          />
+          <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 42, background: BACKDROP.cardScrim }} />
+        </Box>
+      ) : null}
       <Typography
         sx={{
           fontFamily: '"Cinzel","Noto Serif SC",serif',
