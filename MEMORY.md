@@ -198,3 +198,21 @@
   `charm`, and it degrades to the raw cause (`charm · 第2轮`) rather than
   failing. Typing the test table as `Array<[DeathCause, string]>` makes a
   missing cause break `tsc` as well as the render.
+- Trigger: one death cause shared by two players whose last-words rules differ
+  (the knight's duel — victim speaks, knight does not). Action:
+  `is_last_words_eligible` is a pure function of `(cause, round)` and cannot
+  tell them apart, and `_execute_last_words()` walks the **whole**
+  `death_history` with no round filter — so just adding `knight_duel` to the
+  eligible set makes the knight speak on the *next* day, and both gates read the
+  same function so neither can catch it. Pass an explicit `daytime` flag
+  instead: `_resolve_day_interruption()` calls
+  `give_last_words(..., daytime=True)` while the night path never does, and
+  `BaseRole._validate_last_words` derives the same flag from `state.phase`
+  (`_DAYTIME_PHASES`), which keeps `speak()`'s own gate in agreement without a
+  new public cause. The rule text decides it: the requirement document
+  (`docs/notes/2026-09-26-eval-prompt-DELIVER.md:52-57`) writes 「且无遗言」for
+  the knight only and leaves the victim unqualified, so the victim keeps the
+  official "every daytime death gets last words" rule. Guard the flag with a
+  test on `_validate_last_words` directly: the engine-level tests inject
+  `_mock_role` and never reach it, so 100% line coverage does not prove the
+  phase branch was actually asserted.
