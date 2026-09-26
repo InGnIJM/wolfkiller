@@ -53,9 +53,12 @@ def test_catalog_item_empty_display_falls_back_to_role_id():
 def test_role_catalog_covers_all_registered_roles():
     items = role_catalog(builtin_registry.freeze())
 
-    assert len(items) == 8
+    assert len(items) == 11
     ids = {item["role_id"] for item in items}
-    assert {"wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king"} <= ids
+    assert {
+        "wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king",
+        "wolf-killer-knight", "wolf-killer-wolf-beauty", "wolf-killer-old-drunkard",
+    } <= ids
     by_id = {item["role_id"]: item for item in items}
     assert by_id["wolf-killer-werewolf"]["name_zh"] == "狼人"
     assert by_id["wolf-killer-werewolf"]["camp"] == "werewolf"
@@ -64,10 +67,16 @@ def test_role_catalog_covers_all_registered_roles():
     assert by_id["wolf-killer-idiot"]["max_count"] == 1
     assert by_id["wolf-killer-werewolf-king"]["camp"] == "werewolf"
     assert by_id["wolf-killer-werewolf-king"]["max_count"] == 1
+    assert by_id["wolf-killer-knight"]["camp"] == "good"
+    assert by_id["wolf-killer-knight"]["max_count"] == 1
+    assert by_id["wolf-killer-wolf-beauty"]["camp"] == "werewolf"
+    assert by_id["wolf-killer-wolf-beauty"]["max_count"] == 1
+    assert by_id["wolf-killer-old-drunkard"]["camp"] == "good"
+    assert by_id["wolf-killer-old-drunkard"]["max_count"] == 1
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 4
+    assert len(STANDARD_PRESETS) == 6
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -84,6 +93,18 @@ def test_presets_cover_nine_ten_and_twelve_player_fields():
     assert ten["enable_sheriff"] is False
     assert idiot["enable_sheriff"] is True
     assert king["enable_sheriff"] is True
+    knight, beauty = by_id["twelve-player-knight"], by_id["twelve-player-wolf-beauty"]
+    assert sum(knight["role_counts"].values()) == 12
+    assert knight["role_counts"]["wolf-killer-werewolf"] == 4
+    assert knight["role_counts"]["wolf-killer-knight"] == 1
+    assert knight["role_counts"]["wolf-killer-villager"] == 4
+    assert knight["enable_sheriff"] is False
+    assert sum(beauty["role_counts"].values()) == 12
+    assert beauty["role_counts"]["wolf-killer-werewolf"] == 3
+    assert beauty["role_counts"]["wolf-killer-wolf-beauty"] == 1
+    assert beauty["role_counts"]["wolf-killer-old-drunkard"] == 1
+    assert beauty["role_counts"]["wolf-killer-guard"] == 1
+    assert beauty["enable_sheriff"] is True
 
 
 def test_field_constraints_defaults():
@@ -106,12 +127,12 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_list_roles_endpoint_returns_eight_roles():
+async def test_list_roles_endpoint_returns_every_registered_role():
     from app.api.routes import catalog_routes
 
     response = await catalog_routes.list_roles()
 
-    assert len(response.roles) == 8
+    assert len(response.roles) == 11
     assert response.roles[0].role_id
 
 
@@ -121,7 +142,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 4
+    assert len(response.presets) == 6
     assert response.presets[0].name == "九人标准场"
 
 

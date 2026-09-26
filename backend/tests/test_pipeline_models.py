@@ -86,6 +86,7 @@ def test_schedule_and_effect_enums_are_complete_and_stable() -> None:
         "dawn_reaction",
         "exile_verdict",
         "day_action",
+        "post_speech_action",
         "vote_action",
         "round_end",
         "game_end",
