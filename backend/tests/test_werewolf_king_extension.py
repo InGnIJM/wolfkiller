@@ -242,6 +242,9 @@ async def test_explode_interrupts_the_speech_round_and_lets_the_hunter_react(tmp
     assert interrupted is True
     assert engine.sm.get_state() is GamePhase.NIGHT
     assert [s.player_seat for s in engine.state.speeches] == [1, 2]
+    # The self-explosion takes both sides down without last words, even though
+    # it shares the interrupted-day path with the knight's duel.
+    assert [s for s in engine.state.speeches if s.phase == "last_words"] == []
     assert engine.state.current_speaker is None and engine.state.speaking_order == []
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [
         (1, "self_explode"), (3, "self_explode"), (4, "hunter_shot")]

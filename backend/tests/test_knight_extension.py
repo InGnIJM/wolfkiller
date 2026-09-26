@@ -261,8 +261,11 @@ async def test_duel_on_a_wolf_interrupts_the_day_after_every_speech(tmp_path) ->
     assert interrupted is True
     assert engine.sm.get_state() is GamePhase.NIGHT
     # Every living seat spoke before the duel: the window is post-speech, not
-    # per-speaker.
-    assert [s.player_seat for s in engine.state.speeches] == [1, 2, 3, 4, 5, 6, 7, 8]
+    # per-speaker. The victim's last words are appended after the round.
+    assert [
+        speech.player_seat for speech in engine.state.speeches
+        if speech.phase != "last_words"
+    ] == [1, 2, 3, 4, 5, 6, 7, 8]
     assert engine.state.current_speaker is None and engine.state.speaking_order == []
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [(5, "knight_duel")]
     assert [(d.player_seat, d.cause) for d in engine.published] == [(5, "knight_duel")]
@@ -273,6 +276,41 @@ async def test_duel_on_a_wolf_interrupts_the_day_after_every_speech(tmp_path) ->
     audience = [r["data"]["event_type"] for r in records if r["operation"] == "audience_action"]
     assert audience.count("KNIGHT_DUEL") == 1 and audience.count("DAY_INTERRUPTED") == 1
     assert audience.count("KNIGHT_REASONING") == 1
+
+
+@pytest.mark.asyncio
+async def test_duel_on_a_wolf_gives_the_victim_last_words(tmp_path) -> None:
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "knight_duel":
+            return command("duel", 5, "查杀 5 号")
+        return command("pass")
+
+    engine = _engine(tmp_path, provider, "knight-victim-words")
+
+    assert await engine._execute_speech_round() is True
+
+    # The duel victim dies during the day, and every daytime death gets last
+    # words: they are spoken before the day closes into the night.
+    assert [
+        (speech.player_seat, speech.phase)
+        for speech in engine.state.speeches if speech.phase == "last_words"
+    ] == [(5, "last_words")]
+
+
+@pytest.mark.asyncio
+async def test_duel_on_a_good_player_gives_the_knight_no_last_words(tmp_path) -> None:
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "knight_duel":
+            return command("duel", 2, "我怀疑 2 号")
+        return command("pass")
+
+    engine = _engine(tmp_path, provider, "knight-penance-words")
+
+    assert await engine._execute_speech_round() is False
+
+    # The knight dies in penance with no last words: both deaths share the
+    # ``knight_duel`` cause, so only the interrupted-day path may grant them.
+    assert [s for s in engine.state.speeches if s.phase == "last_words"] == []
 
 
 @pytest.mark.asyncio
@@ -312,6 +350,11 @@ async def test_resumed_speech_round_replays_the_post_speech_interruption(tmp_pat
     assert engine.state.death_history == deaths
     assert engine.state._pipeline_runtime.revision == revision
     assert role_resource_view(engine.state, 1) == {"duel": 0}
+    # The replayed interruption does not make the victim speak twice.
+    assert [
+        speech.player_seat for speech in engine.state.speeches
+        if speech.phase == "last_words"
+    ] == [5]
 
 
 def test_post_speech_window_is_skipped_without_a_day_action_role() -> None:

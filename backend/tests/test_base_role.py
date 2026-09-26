@@ -94,6 +94,20 @@ class TestBaseRoleSpeech:
     def test_last_words_eligibility_is_cause_specific(self, cause, round_number, expected):
         assert is_last_words_eligible(cause, round_number) is expected
 
+    @pytest.mark.parametrize(("cause", "expected"), [
+        ("knight_duel", True),
+        ("exile", True),
+        ("self_explode", False),
+        ("wolf_kill", False),
+        ("poison", False),
+        ("other", False),
+    ])
+    def test_daytime_last_words_are_limited_to_the_duel_victim(self, cause, expected):
+        # A daytime skill death only earns last words on the interrupted-day
+        # path; the night path never passes ``daytime``, which is what keeps
+        # the knight's own ``knight_duel`` death silent.
+        assert is_last_words_eligible(cause, 2, daytime=True) is expected
+
     @pytest.mark.asyncio
     async def test_day_speech_uses_one_context_specific_gateway_tool(self):
         class GatewayClient:
@@ -404,6 +418,29 @@ class TestBaseRoleProperties:
         state.death_history = [DeathReport(1, "wolf_kill", 2)]  # ineligible cause/round
         valid, reason = role._validate_last_words(state)
         assert valid is False and "不符合遗言条件" in reason
+
+    @pytest.mark.parametrize(("phase", "expected"), [
+        (GamePhase.SPEECH, True),
+        (GamePhase.VOTE_CASTING, True),
+        (GamePhase.VOTE_RESOLUTION, True),
+        (GamePhase.LAST_WORDS, False),
+        (GamePhase.NIGHT, False),
+    ])
+    def test_knight_duel_last_words_depend_on_the_daytime_phase(self, phase, expected):
+        # The duel victim and the knight die of the same cause, so the phase is
+        # what separates them: a daytime phase means a daytime death and grants
+        # the victim words, while LAST_WORDS only ever announces night deaths
+        # and therefore refuses the knight.
+        from app.models.actions import DeathReport
+
+        role = make_role()
+        state = make_state(phase=phase)
+        state.players = {1: PlayerState(1, "wolf-killer-villager", "good", is_alive=False)}
+        state.death_history = [DeathReport(1, "knight_duel", 2)]
+
+        valid, _reason = role._validate_last_words(state)
+
+        assert valid is expected
 
     def test_sheriff_campaign_validation_paths(self):
         role = make_role()
