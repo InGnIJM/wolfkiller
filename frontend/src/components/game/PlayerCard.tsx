@@ -1,6 +1,8 @@
 import { Box, Typography, keyframes } from '@mui/material';
 import Avatar from '../shared/Avatar';
+import { roleMetaFor } from '../shared/roleMeta';
 import type { PublicPlayerState } from '../../store/types';
+import { BACKDROP, CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 const highlightPulse = keyframes`
   0%, 100% { boxShadow: '0 0 0 0 rgba(229,72,77,0.4)'; }
@@ -25,6 +27,7 @@ export default function PlayerCard({
   seat, player, isCurrentSpeaker, isHighlighted, cardSize = 52, voteTarget,
 }: Props) {
   const status = player.is_alive ? '存活' : '出局';
+  const art = roleMetaFor(player.role)?.art ?? CARD_BACK;
 
   return (
     <Box
@@ -48,6 +51,18 @@ export default function PlayerCard({
             : {}),
       }}
     >
+      <Box sx={{
+        position: 'relative', width: cardSize, borderRadius: 1, overflow: 'hidden',
+        border: `1px solid ${HAIRLINE.strong}`,
+      }}>
+        <Box
+          component="img"
+          alt=""
+          src={art}
+          sx={{ display: 'block', width: '100%', height: cardSize * 1.2, objectFit: 'cover', objectPosition: 'center 15%' }}
+        />
+        <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '48%', background: BACKDROP.cardScrim }} />
+      </Box>
       <Box sx={{ position: 'relative' }}>
         <Avatar seat={seat} size={cardSize} isAlive={player.is_alive} />
         {!player.is_alive && (

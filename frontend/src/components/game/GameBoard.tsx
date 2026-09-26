@@ -13,6 +13,8 @@ import CenterDisplay from './CenterDisplay';
 import HistoryPanel from './HistoryPanel';
 import WinOverlay from './WinOverlay';
 import ActivityCard from './ActivityCard';
+import PageBackground from '../shared/PageBackground';
+import { BACKDROP } from '../../theme/tokens';
 
 interface Props {
   onBack: () => void;
@@ -186,25 +188,23 @@ export default function GameBoard({ onBack, gameId }: Props) {
     }
   }
 
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2 }}>
-        <CircularProgress size={28} />
-        <Typography variant="body2" color="text.secondary">加载对局记录中…</Typography>
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2 }}>
-        <Typography variant="body2" color="error">{error}</Typography>
-        <Button onClick={onBack} variant="outlined" size="small">返回</Button>
-      </Box>
-    );
-  }
-
-  return (
+  const stage = loading ? (
+    <Box sx={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2,
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
+    }}>
+      <CircularProgress size={28} />
+      <Typography variant="body2" color="text.secondary">加载对局记录中…</Typography>
+    </Box>
+  ) : error ? (
+    <Box sx={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2,
+      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
+    }}>
+      <Typography variant="body2" color="error">{error}</Typography>
+      <Button onClick={onBack} variant="outlined" size="small">返回</Button>
+    </Box>
+  ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {streamError && <Alert severity="warning">{streamError}</Alert>}
       <TimelineController />
@@ -215,7 +215,8 @@ export default function GameBoard({ onBack, gameId }: Props) {
         flexWrap: { xs: 'wrap', md: 'nowrap' },
         px: 2.5, py: 0.9, flexShrink: 0,
         borderBottom: '1px solid', borderColor: 'divider',
-        bgcolor: 'rgba(23,18,33,0.5)',
+        bgcolor: BACKDROP.textPlate,
+        backdropFilter: 'blur(12px)',
       }}>
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.6 }}>
           <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>存活</Typography>
@@ -281,6 +282,15 @@ export default function GameBoard({ onBack, gameId }: Props) {
       {showWinOverlay && winResult && (
         <WinOverlay winResult={winResult} revealOnDeath={revealOnDeath} />
       )}
+    </Box>
+  );
+
+  return (
+    <Box sx={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <PageBackground variant="game" placement="contained" />
+      <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        {stage}
+      </Box>
     </Box>
   );
 }

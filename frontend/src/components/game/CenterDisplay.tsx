@@ -1,6 +1,7 @@
 import { Box, Typography, keyframes } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent } from '../../store/types';
+import { BACKDROP } from '../../theme/tokens';
 
 const fadeIn = keyframes`
   from { opacity: 0; transform: translateY(4px); }
@@ -85,6 +86,9 @@ const panelSx = {
   py: 'clamp(6px, 2.2cqh, 16px)',
   px: 'clamp(10px, 3cqi, 24px)',
   animation: `${fadeIn} 0.25s ease-out`,
+  bgcolor: BACKDROP.textPlate,
+  backdropFilter: 'blur(12px)',
+  borderRadius: 2,
 };
 
 // —— 中文大写天数（第贰天 / 第拾天）——
@@ -437,7 +441,7 @@ export default function CenterDisplay() {
 
   if (isPaused && !entry) {
     return (
-      <Box sx={{ textAlign: 'center', py: 2 }}>
+      <Box sx={{ textAlign: 'center', py: 2, bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2 }}>
         <Typography variant="subtitle1" color="text.secondary">游戏已暂停</Typography>
         <Typography variant="caption" color="text.disabled" sx={{ mt: 0.5, display: 'block' }}>
           点击播放按钮继续
