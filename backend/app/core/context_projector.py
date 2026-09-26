@@ -53,6 +53,14 @@ _RESOURCE_ADAPTERS = {
     "poison": "has_poison", "has_poison": "has_poison",
     "gun": "has_gun", "has_gun": "has_gun",
 }
+# Selected-target namespaces a contract may request. Everything outside these
+# whitelists stays private: a role learns only the target facts the game rules
+# make observable, never another seat's private resources or hidden statuses.
+_SELECTED_TARGET_NAMESPACES = frozenset(
+    {"camp_label", "status_labels", "resource_labels"}
+)
+_PUBLIC_STATUSES = frozenset({"poisoned", "wounded"})
+_PUBLIC_RESOURCES = frozenset({"charm_immune"})
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
 
@@ -92,18 +100,52 @@ class ContextProjector:
         namespaces = request.contract.selected_target_fact_namespaces
         if not namespaces or command.target_seat is None:
             return context
-        if namespaces != frozenset({"camp_label"}):
+        if not namespaces <= _SELECTED_TARGET_NAMESPACES:
             raise ValueError("unknown selected target fact namespace")
         target = state.players.get(command.target_seat)
         if target is None or not target.is_alive:
             return context
-        camp = self._token(target.camp, "selected target camp", 128)
+        selected: dict[str, object] = {"seat": command.target_seat}
+        if "camp_label" in namespaces:
+            selected["camp_label"] = self._token(
+                target.camp, "selected target camp", 128
+            )
+        if "status_labels" in namespaces:
+            selected["status_labels"] = tuple(
+                sorted(
+                    status
+                    for status in self._target_statuses(state, command.target_seat)
+                    if status in _PUBLIC_STATUSES
+                )
+            )
+        if "resource_labels" in namespaces:
+            selected["resource_labels"] = tuple(
+                sorted(
+                    resource
+                    for resource, amount in self._target_resources(
+                        state, command.target_seat
+                    ).items()
+                    if resource in _PUBLIC_RESOURCES and amount > 0
+                )
+            )
         facts = dict(context.facts)
-        facts["selected_target"] = {"seat": command.target_seat, "camp_label": camp}
+        facts["selected_target"] = selected
         return ActionContext.from_mapping({
             field: getattr(context, field)
             for field in context.__dataclass_fields__
         } | {"facts": facts})
+
+    @staticmethod
+    def _target_statuses(state: GameState, seat: int) -> frozenset[str]:
+        """Read one seat's runtime statuses without exposing them wholesale."""
+        runtime = getattr(state, "_pipeline_runtime", None)
+        if runtime is None:
+            return frozenset()
+        return frozenset(runtime.statuses.get(seat, ()))
+
+    @staticmethod
+    def _target_resources(state: GameState, seat: int) -> Mapping[str, int]:
+        return role_resource_view(state, seat)
 
     def project(
         self,

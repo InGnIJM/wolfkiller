@@ -2,18 +2,32 @@ from app.models.game import GameState, Camp
 from app.models.actions import WinResult
 
 
+def _role_tags(role_id: str) -> frozenset[str]:
+    """Tags a role declares in its spec; unknown roles carry no tag."""
+    from app.roles.registry import builtin_registry
+
+    try:
+        spec = builtin_registry.require(role_id)
+    except ValueError:
+        return frozenset()
+    pipeline = builtin_registry.pipeline_spec(role_id)
+    return pipeline.tags if pipeline is not None else spec.tags
+
+
 class RuleEngine:
-    """Checks win conditions for all camps."""
+    """Checks win conditions for all camps.
+
+    God and plain-villager counts come from the ``god`` / ``villager`` tags each
+    role declares in its spec, never from its id: an id is free-form, so
+    matching on it silently drops any role whose name does not happen to contain
+    a magic substring, and a dropped god can trigger an early wolf win.
+    """
 
     def check_win(self, state: GameState) -> WinResult | None:
         alive_wolves = len(state.alive_by_camp(Camp.WEREWOLF))
-        alive_seers = len([p for p in state.alive_players().values() if "seer" in p.role])
-        alive_witches = len([p for p in state.alive_players().values() if "witch" in p.role])
-        alive_hunters = len([p for p in state.alive_players().values() if "hunter" in p.role])
-        alive_guards = len([p for p in state.alive_players().values() if "guard" in p.role])
-        alive_idiots = len([p for p in state.alive_players().values() if "idiot" in p.role])
-        alive_villagers = len([p for p in state.alive_players().values() if "villager" in p.role])
-        alive_gods = alive_seers + alive_witches + alive_hunters + alive_guards + alive_idiots
+        alive = state.alive_players().values()
+        alive_gods = len([p for p in alive if "god" in _role_tags(p.role)])
+        alive_villagers = len([p for p in alive if "villager" in _role_tags(p.role)])
 
         # 狼刀在先: check wolf win conditions first
         if alive_gods == 0:
