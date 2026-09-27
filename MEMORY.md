@@ -258,3 +258,24 @@
   equals that entry's: `phase`-based gating misses the entire first night, and
   the phase round number draws the previous night's ballots for the opening
   frame of every later night.
+- Trigger: a backend test passes locally but fails in CI on an attribute of a
+  hand-rolled engine fake — `AttributeError: 'types.SimpleNamespace' object has
+  no attribute ...` (the night announce hook was the case:
+  `test_provider_persists_sanitized_model_error_in_game_log` broke when
+  `b079699` added `engine.announce_actor_blocking()` for `_NIGHT_ACTOR_POINTS`;
+  the two tests written alongside the feature got the hook, the older fake did
+  not). Action: `GameService._command_provider` reaches the engine through a
+  duck-typed seam, so every hand-built fake has to grow with it — when adding an
+  `engine.<method>()` call, grep the tests for `SimpleNamespace(` and the
+  `_engines[` assignments and give each fake the new hook. A fake assembled from
+  `SimpleNamespace` compiles and passes on every path that never touches the new
+  method, so only the one test that reaches it goes red.
+- Trigger: local `pytest tests app -q` collects more tests than the CI job for
+  the same commit (3453 vs 3439), or a file that exists only locally keeps
+  failing or flaking. Action: don't suspect a stale checkout — read
+  `.git/info/exclude` first (a **local-only** exclude list, invisible to
+  `.gitignore` and to every other machine) together with `.gitignore`.
+  `backend/tests/test_purge_old_games.py` (14 tests, covering the ignored
+  `backend/scripts/purge_old_games.py`) is excluded that way, so CI never runs
+  it: its `test_purge_apply_deletes_and_backs_up` is order-dependent locally and
+  its failures there are local noise, not a regression.
