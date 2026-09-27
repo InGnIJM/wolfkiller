@@ -29,7 +29,7 @@ interface DerivedState {
   currentSpeaker: number | null;
   /** 竞选期「警上」：已上警且仍存活的座位（含后续退水者，与后端 ran 集合一致） */
   badgeCandidates: number[];
-  /** 竞选期「警下」：开选时存活且从未上警、当前仍存活的座位 */
+  /** 竞选期「警下」：上警环节走完后，开选时存活、从未上警且当前仍存活的座位 */
   offBadgeSeats: number[];
 }
 
@@ -149,6 +149,13 @@ function copyPlayers(players: Record<number, PublicPlayerState>) {
   return Object.fromEntries(
     Object.entries(players).map(([seat, player]) => [Number(seat), { ...player }]),
   ) as Record<number, PublicPlayerState>;
+}
+
+function aliveSeatNumbers(players: Record<number, PublicPlayerState>): number[] {
+  return Object.entries(players)
+    .filter(([, player]) => player.is_alive)
+    .map(([seat]) => Number(seat))
+    .sort((left, right) => left - right);
 }
 
 function buildInitialPlayers(players: Record<number, PublicPlayerState>) {
@@ -280,6 +287,11 @@ function deriveState(
   // 竞选期「警上」名单：sheriff_run 里 choice === 'run' 的座位。
   // 与后端 office.candidates 一致：退水者仍算警上（不恢复警长投票权）。
   const ranForSheriff = new Set<number>();
+  // 已表态（run 或 pass）的座位，用来判断上警环节是否走完
+  const decidedSeats = new Set<number>();
+  // 进入竞选时仍存活的座位：竞选的候选人池。还没轮到的座位不属于任何一组，
+  // 所以「警下」名单要等这个池子里的座位全部表态之后才成立。
+  let electionSeats: Set<number> | null = null;
 
   for (let index = 0; index <= upToIndex && index < timeline.length; index += 1) {
     const event = timeline[index];
@@ -363,6 +375,7 @@ function deriveState(
       case 'sheriff_run':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         if (event.payload.choice === 'run') ranForSheriff.add(event.payload.seat);
+        decidedSeats.add(event.payload.seat);
         break;
       case 'sheriff_withdraw':
       case 'sheriff_vote':
@@ -394,6 +407,10 @@ function deriveState(
         phase = event.payload.phase;
         roundNumber = event.payload.round_number;
         currentSpeaker = null;
+        if (event.payload.phase === 'sheriff_election') {
+          // 竞选开始的那一刻记下候选人池（此前的夜刀死者已经不在池子里）
+          electionSeats = new Set(aliveSeatNumbers(players));
+        }
         break;
       case 'winner':
         winResult = event.payload;
@@ -429,12 +446,15 @@ function deriveState(
   }
 
   // 竞选期的两组座位：出局座位不参与高亮（警上死于自爆、警下死于夜刀都不该继续挂标）
-  const aliveSeats = Object.entries(players)
-    .filter(([, player]) => player.is_alive)
-    .map(([seat]) => Number(seat))
-    .sort((left, right) => left - right);
+  const aliveSeats = aliveSeatNumbers(players);
   const badgeCandidates = aliveSeats.filter((seat) => ranForSheriff.has(seat));
-  const offBadgeSeats = aliveSeats.filter((seat) => !ranForSheriff.has(seat));
+  // 上警环节还没走完时，未表态的座位既不是警上也不是警下，一律不挂标；
+  // 只有候选人池里每个座位都表过态（含退水环节与警长投票），警下名单才成立
+  const runStepComplete = electionSeats !== null
+    && [...electionSeats].every((seat) => decidedSeats.has(seat));
+  const offBadgeSeats = runStepComplete
+    ? aliveSeats.filter((seat) => !ranForSheriff.has(seat))
+    : [];
 
   return {
     players,

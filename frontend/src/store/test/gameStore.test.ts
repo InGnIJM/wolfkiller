@@ -105,34 +105,70 @@ describe('public replay state', () => {
     const logs: GameLogs = {
       game_id: 'game-1',
       events: [
+        // 首夜死亡先落库，竞选阶段事件在其后（后端 _resume_pipeline_night 的顺序）
+        { ...replayEventMeta, event_type: 'death', payload: { player_seat: 4, cause: 'wolf_kill', round_number: 1 } },
         { ...replayEventMeta, event_type: 'phase', payload: { phase: 'sheriff_election', round_number: 1 } },
         { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 1, choice: 'run' } },
         { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'pass' } },
-        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 4, choice: 'run' } },
-        { ...replayEventMeta, event_type: 'sheriff_withdraw', payload: { round_number: 1, seat: 4, choice: 'withdraw' } },
-        { ...replayEventMeta, event_type: 'death', payload: { player_seat: 4, cause: 'self_explode', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 3, choice: 'run' } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 5, choice: 'pass' } },
+        { ...replayEventMeta, event_type: 'sheriff_withdraw', payload: { round_number: 1, seat: 3, choice: 'withdraw' } },
+        { ...replayEventMeta, event_type: 'death', payload: { player_seat: 3, cause: 'self_explode', round_number: 1 } },
       ],
     };
 
     useGameStore.getState().initPlayersFromDetail(players);
     useGameStore.getState().loadLogs(logs);
 
-    useGameStore.getState().seekTo(0);
-    expect(useGameStore.getState().badgeCandidates).toEqual([]);
-    expect(useGameStore.getState().offBadgeSeats).toEqual([1, 2, 3, 4, 5]);
-
     useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().badgeCandidates).toEqual([]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+
+    // 上警环节进行中：只有已上警的座位有名单，未表态的座位两组都不进
+    useGameStore.getState().seekTo(2);
     expect(useGameStore.getState().badgeCandidates).toEqual([1]);
-    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3, 4, 5]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+
+    useGameStore.getState().seekTo(4);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1, 3]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+
+    // 候选人池里每个座位都表过态后，警下名单成立（夜刀死者 4 号不在池子里）
+    useGameStore.getState().seekTo(5);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1, 3]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 5]);
 
     // 退水者仍是警上（后端 ran 集合不因退水回滚），出局后两组都不再挂标
-    useGameStore.getState().seekTo(4);
-    expect(useGameStore.getState().badgeCandidates).toEqual([1, 4]);
-    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3, 5]);
+    useGameStore.getState().seekTo(6);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1, 3]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 5]);
 
-    useGameStore.getState().seekTo(5);
+    useGameStore.getState().seekTo(7);
     expect(useGameStore.getState().badgeCandidates).toEqual([1]);
-    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3, 5]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 5]);
+  });
+
+  it('keeps the off-badge list empty when the campaign phase is unknown', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 1, choice: 'run' } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'pass' } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: 'tail', round_number: 2 } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(1);
+
+    // 没有 sheriff_election 阶段事件时无法判断候选人池，警下名单保持为空
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
   });
 
   it('clears the badge on lost elections, torn badges, and missing seats', () => {
