@@ -1258,7 +1258,6 @@ class GameEngine:
                 self.state.current_speaker = None
                 self.state.speaking_order = []
                 return True
-            self.state.current_speaker = seat
             speech_text = await self.speak(seat, "day_speech")
             if speech_text:
                 await self._publish_public_speech(
@@ -2027,21 +2026,33 @@ class GameEngine:
         if role is None:
             logger.warning(f"No role found for seat {seat} during speak() — skipping")
             return None
+        # Announce before the model call. The speech text is published only
+        # after this returns, which is too late for the seat that is talking.
+        self.state.current_speaker = seat
+        await self._durable_checkpoint(
+            f"speaking:{self.state.round_number}:{seat}:{context}"
+        )
+        await self.event_bus.publish(
+            BusEvent.SPEAKING, game_id=self.game_id, seat=seat,
+        )
         try:
-            result = await role.speak(self.state, self.conversation_log, context)
-        except Exception as e:
-            logger.error(f"Speech error (seat={seat}, context={context}): {e}", exc_info=True)
-            return self._emergency_speech(seat, context)
+            try:
+                result = await role.speak(self.state, self.conversation_log, context)
+            except Exception as e:
+                logger.error(f"Speech error (seat={seat}, context={context}): {e}", exc_info=True)
+                result = self._emergency_speech(seat, context)
 
-        if result is None:
-            return None
-        if not result:
-            logger.warning(
-                f"Seat {seat}: role.speak() returned empty/None for context={context}. "
-                f"Generating emergency fallback speech to prevent silent skip."
-            )
-            result = self._emergency_speech(seat, context)
-        return result
+            if result is None:
+                return None
+            if not result:
+                logger.warning(
+                    f"Seat {seat}: role.speak() returned empty/None for context={context}. "
+                    f"Generating emergency fallback speech to prevent silent skip."
+                )
+                result = self._emergency_speech(seat, context)
+            return result
+        finally:
+            self.state.current_speaker = None
 
     def _emergency_speech(self, seat: int, context: str) -> str:
         """Last-resort speech when the role's LLM completely fails.

@@ -81,3 +81,20 @@ def test_initialization_without_optional_players_or_config_remains_valid():
         "payload": {},
     }])
     assert projected[0]["payload"] == {}
+
+
+def test_speaking_projection_keeps_only_the_seat_and_round():
+    projected = AudienceProjector().project_events("game", [{
+        "event_id": "live",
+        "event_type": "SPEAKING",
+        "visibility": ["PUBLIC"],
+        "payload": {
+            "round_number": 2,
+            "seat": 4,
+            "context": "day_speech",
+            "role": "wolf-killer-werewolf",
+        },
+    }])
+
+    assert projected[0]["event_type"] == "speaking"
+    assert projected[0]["payload"] == {"round_number": 2, "seat": 4}

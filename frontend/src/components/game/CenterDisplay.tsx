@@ -311,6 +311,10 @@ function EventSummary({
   let tone = '#E8C887';
 
   switch (entry.event_type) {
+    case 'speaking':
+      text = `${entry.payload.seat}号正在发言`;
+      tone = '#E5484D';
+      break;
     case 'speech':
       text = entry.payload.phase === 'last_words'
         ? `${entry.payload.player_seat}号遗言`

@@ -276,6 +276,10 @@ function deriveState(
     const event = timeline[index];
 
     switch (event.event_type) {
+      case 'speaking':
+        currentSpeaker = event.payload.seat;
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
       case 'speech':
         speeches.push(event.payload);
         currentSpeaker = event.payload.player_seat;

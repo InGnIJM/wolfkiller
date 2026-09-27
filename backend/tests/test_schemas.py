@@ -76,6 +76,7 @@ PUBLIC_REPLAY_EVENTS = [
     {"event_type": "sheriff_side", "payload": {
         "round_number": 1, "seat": 2, "side": "sheriff_right",
     }},
+    {"event_type": "speaking", "payload": {"round_number": 1, "seat": 3}},
 ]
 
 

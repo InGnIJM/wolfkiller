@@ -329,6 +329,23 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     )[0]
     assert phase["payload"] == {"phase": "speech", "round_number": 2}
 
+    speaking = GameService._checkpoint_domain_events(
+        engine, "00000008:speaking:2:1:day_speech",
+    )[0]
+    assert speaking["event_type"] == "SPEAKING"
+    assert speaking["payload"] == {"round_number": 2, "seat": 1}
+    assert speaking["visibility"] == ["PUBLIC"]
+
+    missing = GameService._checkpoint_domain_events(
+        engine, "00000009:speaking:2",
+    )[0]
+    assert missing["event_type"] == "STEP_COMMITTED"
+
+    zero = GameService._checkpoint_domain_events(
+        engine, "00000010:speaking:2:0:day_speech",
+    )[0]
+    assert zero["event_type"] == "STEP_COMMITTED"
+
     state.votes = [VoteAction(1, None)]
     vote = GameService._checkpoint_domain_events(
         engine, "00000003:vote_result:2:1:none",

@@ -90,6 +90,7 @@ const EVENT_TAGS: Record<string, string> = {
   sheriff_withdraw: '退水',
   sheriff_vote: '警票',
   sheriff_side: '警序',
+  speaking: '开口',
   night_action: '夜间',
   narration: '旁白',
   wolf_chat_message: '狼聊',
@@ -110,7 +111,12 @@ const SHERIFF_SIDE_LABELS: Record<string, string> = {
 };
 
 function eventTone(event: PublicReplayEvent): string {
-  if (event.event_type === 'death' || event.event_type === 'wolf_chat_message' || event.event_type === 'self_explode') return '#F4B3B6';
+  if (
+    event.event_type === 'death'
+    || event.event_type === 'wolf_chat_message'
+    || event.event_type === 'self_explode'
+    || event.event_type === 'speaking'
+  ) return '#F4B3B6';
   if (event.event_type === 'narration') return '#7D7468';
   if (event.event_type.includes('vote')) return '#E8C887';
   if (event.event_type.includes('thought')) return '#C4B5FD';
@@ -267,6 +273,13 @@ function EventCard({
   let content: React.ReactNode;
 
   switch (event.event_type) {
+    case 'speaking':
+      content = (
+        <Typography variant="caption" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号正在发言 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
     case 'speech':
       content = (
         <>

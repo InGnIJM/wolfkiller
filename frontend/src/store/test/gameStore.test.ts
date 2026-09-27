@@ -166,6 +166,50 @@ describe('public replay state', () => {
     });
   });
 
+  it('lights the seat that is generating speech, then the finished line', () => {
+    useGameStore.getState().initPlayersFromDetail(currentPlayers);
+    useGameStore.getState().loadLogs({
+      game_id: 'game-1',
+      events: [
+        {
+          ...replayEventMeta,
+          event_type: 'phase',
+          payload: { phase: 'speech', round_number: 1 },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'speaking',
+          payload: { round_number: 1, seat: 1 },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'speech',
+          payload: {
+            round_number: 1,
+            phase: 'speech',
+            player_seat: 1,
+            text: '我是一号',
+          },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'speaking',
+          payload: { round_number: 1, seat: 2 },
+        },
+      ],
+    });
+
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().currentSpeaker).toBe(1);
+    expect(useGameStore.getState().phase).toBe('speech');
+
+    useGameStore.getState().seekTo(2);
+    expect(useGameStore.getState().currentSpeaker).toBe(1);
+
+    useGameStore.getState().seekTo(3);
+    expect(useGameStore.getState().currentSpeaker).toBe(2);
+  });
+
   it('shows the current sheriff snapshot at a game-over tail', () => {
     useGameStore.getState().initPlayersFromDetail(currentPlayers);
     useGameStore.getState().loadLogs({

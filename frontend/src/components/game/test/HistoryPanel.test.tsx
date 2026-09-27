@@ -174,6 +174,20 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText(/1号 → 2号/)).toBeVisible();
   });
 
+  it('shows who is generating a speech on the full timeline', () => {
+    const timeline: PublicReplayEvent[] = [
+      {
+        ...replayEventMeta,
+        event_type: 'speaking',
+        payload: { round_number: 2, seat: 3 },
+      },
+    ];
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText('3号正在发言 · 第2轮')).toBeVisible();
+  });
+
   it('files a flipped exile under 投票 and a self-destruct under 死亡', () => {
     const timeline: PublicReplayEvent[] = [
       {

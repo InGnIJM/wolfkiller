@@ -479,6 +479,7 @@ class GameService:
         self.event_bus.subscribe(BusEvent.PHASE_CHANGED, self._on_phase_changed)
         self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._on_player_died)
         self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._on_speech_made)
+        self.event_bus.subscribe(BusEvent.SPEAKING, self._on_speaking)
         self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
         self.event_bus.subscribe(BusEvent.NIGHT_SUBSTEP, self._on_night_substep)
@@ -1461,6 +1462,18 @@ class GameService:
                 "exiled_seat": exiled_seat,
                 "counts": dict(sorted(counts.items(), key=lambda item: int(item[0]))),
             }
+        elif label.startswith("speaking:"):
+            parts = label.split(":")
+            seat_token = parts[2] if len(parts) > 2 else ""
+            if seat_token.isdigit() and int(seat_token) > 0:
+                event_type = "SPEAKING"
+                payload = {
+                    "round_number": engine.state.round_number,
+                    "seat": int(seat_token),
+                }
+            else:
+                event_type = "STEP_COMMITTED"
+                payload = {"position": label}
         elif label.startswith("speech:") or label.startswith("last_words:") or label.startswith("sheriff_campaign:") or label.startswith("sheriff_pk:"):
             event_type = "SPEECH_MADE"
             speech = engine.state.speeches[-1] if engine.state.speeches else None
@@ -2544,6 +2557,18 @@ class GameService:
             return
         death_dict = death.to_dict() if hasattr(death, "to_dict") else death
         await self.ws_manager.broadcast(game_id, "player_died", death=death_dict)
+
+    async def _on_speaking(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
+        seat = kwargs.get("seat")
+        if (
+            game_id is None
+            or isinstance(seat, bool)
+            or not isinstance(seat, int)
+            or seat < 1
+        ):
+            return
+        await self.ws_manager.broadcast(game_id, "speaking", seat=seat)
 
     async def _on_speech_made(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)

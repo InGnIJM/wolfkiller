@@ -1277,6 +1277,39 @@ class TestGameService:
         )
 
     @pytest.mark.asyncio
+    async def test_speaking_broadcasts_only_the_seat(self):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_speaking(game_id="game-a", seat=3, context="day_speech")
+
+        ws_manager.broadcast.assert_awaited_once_with("game-a", "speaking", seat=3)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("game_id", "seat"),
+        [
+            (None, 3),
+            ("unknown", 3),
+            ("game-a", True),
+            ("game-a", "3"),
+            ("game-a", 0),
+            ("game-a", -1),
+        ],
+    )
+    async def test_speaking_drops_unknown_or_invalid_envelopes(self, game_id, seat):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_speaking(game_id=game_id, seat=seat)
+
+        ws_manager.broadcast.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_night_substep_broadcasts_exact_public_payload_only(self):
         ws_manager = WSManager()
         ws_manager.broadcast = AsyncMock()

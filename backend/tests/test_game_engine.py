@@ -1516,6 +1516,50 @@ class TestGameEngine:
         engine = GameEngine(game_id="speak-rejected", roles={1: role})
 
         assert await engine.speak(1, "last_words") is None
+        assert engine.state.current_speaker is None
+
+    @pytest.mark.asyncio
+    async def test_speak_announces_the_seat_before_the_model_returns(self):
+        role = MagicMock()
+
+        async def finish_after_the_announcement(*_args):
+            assert engine.state.current_speaker == 1
+            return "我是一号，先把话说完再亮座位。"
+
+        role.speak = finish_after_the_announcement
+        bus = EventBus()
+        announced: list[dict] = []
+
+        async def capture(**kwargs):
+            announced.append(kwargs)
+
+        bus.subscribe(BusEvent.SPEAKING, capture)
+        engine = GameEngine(game_id="speak-live", roles={1: role}, event_bus=bus)
+        labels: list[str] = []
+
+        async def remember(step_key: str) -> None:
+            labels.append(step_key)
+
+        engine._checkpoint_hook = remember
+
+        assert await engine.speak(1, "day_speech") == "我是一号，先把话说完再亮座位。"
+        assert labels == ["00000000:speaking:0:1:day_speech"]
+        assert announced == [{"game_id": "speak-live", "seat": 1}]
+        assert engine.state.current_speaker is None
+
+    @pytest.mark.asyncio
+    async def test_speak_without_a_role_does_not_announce(self):
+        bus = EventBus()
+        announced: list[dict] = []
+
+        async def capture(**kwargs):
+            announced.append(kwargs)
+
+        bus.subscribe(BusEvent.SPEAKING, capture)
+        engine = GameEngine(game_id="speak-missing", roles={}, event_bus=bus)
+
+        assert await engine.speak(1, "day_speech") is None
+        assert announced == []
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("outcome", ["", RuntimeError("provider unavailable")])

@@ -487,6 +487,23 @@ export default function ActivityCard() {
   }
 
   switch (entry.event_type) {
+    case 'speaking':
+      return (
+        <ActivityFrame tone="#E5484D">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <SeatAvatar seat={entry.payload.seat} />
+            <Box>
+              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                {entry.payload.seat}号
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
+                正在发言
+              </Typography>
+            </Box>
+            <LiveTag label="LIVE" />
+          </Box>
+        </ActivityFrame>
+      );
     case 'speech':
       return <SpeechView payload={entry.payload} timestamp={entry.timestamp} durationSec={durationSec} />;
     case 'witch_thought':

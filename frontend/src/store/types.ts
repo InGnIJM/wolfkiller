@@ -135,6 +135,12 @@ export interface SheriffSidePayload {
   side: SheriffSpeechSide;
 }
 
+/** Published when a seat starts generating speech, before the text exists. */
+export interface SpeakingPayload {
+  round_number: number;
+  seat: number;
+}
+
 export type NightActionType =
   | 'werewolf_kill'
   | 'witch_save'
@@ -250,6 +256,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'sheriff_withdraw', SheriffWithdrawPayload>
   | PublicReplayEnvelope<'sheriff_vote', SheriffVotePayload>
   | PublicReplayEnvelope<'sheriff_side', SheriffSidePayload>
+  | PublicReplayEnvelope<'speaking', SpeakingPayload>
   | PublicReplayEnvelope<'night_action', NightActionRecord>
   | PublicReplayEnvelope<'narration', NarrationPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>

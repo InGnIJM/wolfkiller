@@ -309,6 +309,12 @@ class PublicSheriffSideResponse(_PublicResponse):
     side: Literal["sheriff_left", "sheriff_right", "death_left", "death_right"]
 
 
+class PublicSpeakingResponse(_PublicResponse):
+    """The seat whose model is generating a speech. Not the finished line."""
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+
+
 class PublicSelfExplodeResponse(_PublicResponse):
     """A daytime self-destruct that took another seat along."""
     round_number: NonNegativePublicInt
@@ -437,6 +443,11 @@ class PublicSheriffSideReplayEvent(_PublicReplayEvent):
     payload: PublicSheriffSideResponse
 
 
+class PublicSpeakingReplayEvent(_PublicReplayEvent):
+    event_type: Literal["speaking"]
+    payload: PublicSpeakingResponse
+
+
 PublicReplayEvent = Annotated[
     Union[
         PublicExileCancelledReplayEvent,
@@ -447,6 +458,7 @@ PublicReplayEvent = Annotated[
         PublicSheriffWithdrawReplayEvent,
         PublicSheriffVoteReplayEvent,
         PublicSheriffSideReplayEvent,
+        PublicSpeakingReplayEvent,
         PublicPlayerRevealedReplayEvent,
         PublicSpeechReplayEvent,
         PublicDeathReplayEvent,
