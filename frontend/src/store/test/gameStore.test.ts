@@ -124,16 +124,19 @@ describe('public replay state', () => {
     expect(useGameStore.getState().badgeCandidates).toEqual([]);
     expect(useGameStore.getState().offBadgeSeats).toEqual([]);
 
-    // 上警环节进行中：只有已上警的座位有名单，未表态的座位两组都不进
+    // 上警环节进行中：已上警的进警上，已明确不上警的进警下，未表态的两组都不进
     useGameStore.getState().seekTo(2);
     expect(useGameStore.getState().badgeCandidates).toEqual([1]);
     expect(useGameStore.getState().offBadgeSeats).toEqual([]);
 
+    useGameStore.getState().seekTo(3);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2]);
+
     useGameStore.getState().seekTo(4);
     expect(useGameStore.getState().badgeCandidates).toEqual([1, 3]);
-    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2]);
 
-    // 候选人池里每个座位都表过态后，警下名单成立（夜刀死者 4 号不在池子里）
     useGameStore.getState().seekTo(5);
     expect(useGameStore.getState().badgeCandidates).toEqual([1, 3]);
     expect(useGameStore.getState().offBadgeSeats).toEqual([2, 5]);
@@ -148,7 +151,93 @@ describe('public replay state', () => {
     expect(useGameStore.getState().offBadgeSeats).toEqual([2, 5]);
   });
 
-  it('keeps the off-badge list empty when the campaign phase is unknown', () => {
+  it('opens the election window from the campaign events and drops the night actor', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+      3: { seat_number: 3, is_alive: true, is_sheriff: false },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'night_thought', payload: {
+          seat: 3, action_type: 'seer_reasoning', target_seat: 2, reasoning: '查一下', round_number: 1,
+        } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 1, choice: 'run' } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'pass' } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 3, choice: 'pass' } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: '请投我', round_number: 1, phase: 'sheriff_election' } },
+        { ...replayEventMeta, event_type: 'sheriff_elected', payload: { round_number: 1, seat: 1, reason: 'vote' } },
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'dawn', round_number: 1 } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().phase).toBe('night');
+    expect(useGameStore.getState().currentSpeaker).toBe(3);
+    expect(useGameStore.getState().badgeCandidates).toEqual([]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+
+    // 第一个上警记录就把窗口打开：阶段补成 sheriff_election，前一夜的行动者收掉
+    useGameStore.getState().seekTo(2);
+    expect(useGameStore.getState().phase).toBe('sheriff_election');
+    expect(useGameStore.getState().currentSpeaker).toBeNull();
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+
+    // 明确不上警的座位立刻算警下；还没轮到的不挂标
+    useGameStore.getState().seekTo(3);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2]);
+
+    useGameStore.getState().seekTo(4);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3]);
+
+    // 竞选发言者重新亮起
+    useGameStore.getState().seekTo(5);
+    expect(useGameStore.getState().currentSpeaker).toBe(1);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3]);
+
+    // 选出警长后窗口关闭，名单清空，阶段回落
+    useGameStore.getState().seekTo(6);
+    expect(useGameStore.getState().phase).toBe('night');
+    expect(useGameStore.getState().badgeCandidates).toEqual([]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+
+    useGameStore.getState().seekTo(7);
+    expect(useGameStore.getState().phase).toBe('dawn');
+  });
+
+  it('opens the election window from a campaign speech alone', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: '我上警', round_number: 1, phase: 'sheriff_election' } },
+        { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 2, target_seat: 1, kind: 'vote' } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(1);
+
+    // 只有竞选发言的旧档也要认得出竞选窗口（没有上警记录，警下名单不成立）
+    expect(useGameStore.getState().phase).toBe('sheriff_election');
+    expect(useGameStore.getState().currentSpeaker).toBe(1);
+    expect(useGameStore.getState().badgeCandidates).toEqual([]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([]);
+  });
+
+  it('keeps game_over when the game ends while the election window is open', () => {
     const players: Record<number, PublicPlayerState> = {
       1: { seat_number: 1, is_alive: true, is_sheriff: false },
       2: { seat_number: 2, is_alive: true, is_sheriff: false },
@@ -157,8 +246,7 @@ describe('public replay state', () => {
       game_id: 'game-1',
       events: [
         { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 1, choice: 'run' } },
-        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'pass' } },
-        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: 'tail', round_number: 2 } },
+        { ...replayEventMeta, event_type: 'winner', payload: { winning_camp: 'werewolf', reason: 'all_gods_dead' } },
       ],
     };
 
@@ -166,8 +254,29 @@ describe('public replay state', () => {
     useGameStore.getState().loadLogs(logs);
     useGameStore.getState().seekTo(1);
 
-    // 没有 sheriff_election 阶段事件时无法判断候选人池，警下名单保持为空
+    expect(useGameStore.getState().phase).toBe('game_over');
     expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+  });
+
+  it('keeps both seat lists empty for a game without a sheriff election', () => {    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'speech', payload: { player_seat: 1, text: '我先说', round_number: 1, phase: 'speech' } },
+        { ...replayEventMeta, event_type: 'vote', payload: { voter_seat: 2, target_seat: 1, round_number: 1 } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(2);
+
+    expect(useGameStore.getState().phase).toBe('speech');
+    expect(useGameStore.getState().badgeCandidates).toEqual([]);
     expect(useGameStore.getState().offBadgeSeats).toEqual([]);
   });
 

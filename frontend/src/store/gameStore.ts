@@ -287,11 +287,20 @@ function deriveState(
   // 竞选期「警上」名单：sheriff_run 里 choice === 'run' 的座位。
   // 与后端 office.candidates 一致：退水者仍算警上（不恢复警长投票权）。
   const ranForSheriff = new Set<number>();
-  // 已表态（run 或 pass）的座位，用来判断上警环节是否走完
-  const decidedSeats = new Set<number>();
-  // 进入竞选时仍存活的座位：竞选的候选人池。还没轮到的座位不属于任何一组，
-  // 所以「警下」名单要等这个池子里的座位全部表态之后才成立。
-  let electionSeats: Set<number> | null = null;
+  // 明确表态不上警（choice === 'pass'）的座位。表态即定论，可以立刻挂「警下」；
+  // 还没轮到的座位不属于任何一组，一个标都不挂。
+  const passedForSheriff = new Set<number>();
+  // 竞选窗口是否开着。**不能靠 phase 事件判断**：观众流里没有 sheriff_election
+  // 阶段事件（后端把夜→竞选那次转换用 night_complete: 标签落检查点，投影成
+  // 非公开的 STEP_COMMITTED 被丢掉），所以窗口改由竞选事件本身界定。
+  let electionActive = false;
+  const openElection = () => {
+    if (electionActive) return;
+    electionActive = true;
+    // 竞选期的表态不经过 acting 通告，上一夜最后那个「正在行动」必须在这里收掉，
+    // 否则竞选全程都会挂着前一夜的红色高亮
+    currentSpeaker = null;
+  };
 
   for (let index = 0; index <= upToIndex && index < timeline.length; index += 1) {
     const event = timeline[index];
@@ -303,6 +312,8 @@ function deriveState(
         break;
       case 'speech':
         speeches.push(event.payload);
+        // 竞选发言（含 PK）也属于竞选窗口；旧档可能只有发言没有上警记录
+        if (event.payload.phase === 'sheriff_election') openElection();
         currentSpeaker = event.payload.player_seat;
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
@@ -348,6 +359,8 @@ function deriveState(
         break;
       case 'sheriff_elected': {
         roundNumber = Math.max(roundNumber, event.payload.round_number);
+        // 竞选结束（含无人上警 / 全员退水 / 自爆中断）
+        electionActive = false;
         for (const [seat, player] of Object.entries(players)) {
           players[Number(seat)] = { ...player, is_sheriff: false };
         }
@@ -373,13 +386,19 @@ function deriveState(
         break;
       }
       case 'sheriff_run':
+        openElection();
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         if (event.payload.choice === 'run') ranForSheriff.add(event.payload.seat);
-        decidedSeats.add(event.payload.seat);
+        else passedForSheriff.add(event.payload.seat);
         break;
       case 'sheriff_withdraw':
       case 'sheriff_vote':
+        // 只在竞选里出现，可以据此开窗
+        openElection();
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
       case 'sheriff_side':
+        // 警长选发言方向，发生在竞选结束后的白天，**不能**用来开窗
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
       case 'narration':
@@ -407,10 +426,9 @@ function deriveState(
         phase = event.payload.phase;
         roundNumber = event.payload.round_number;
         currentSpeaker = null;
-        if (event.payload.phase === 'sheriff_election') {
-          // 竞选开始的那一刻记下候选人池（此前的夜刀死者已经不在池子里）
-          electionSeats = new Set(aliveSeatNumbers(players));
-        }
+        // 观众流通常没有竞选阶段事件，有就按它开关窗口；其它阶段一律关窗
+        if (event.payload.phase === 'sheriff_election') openElection();
+        else electionActive = false;
         break;
       case 'winner':
         winResult = event.payload;
@@ -445,16 +463,20 @@ function deriveState(
     applyCurrentSheriffSnapshot(players, currentPublicPlayers);
   }
 
-  // 竞选期的两组座位：出局座位不参与高亮（警上死于自爆、警下死于夜刀都不该继续挂标）
+  // 竞选期的两组座位：出局座位不参与高亮（警上死于自爆、警下死于夜刀都不该继续挂标）。
+  // 窗口关了（竞选结束）就不再对外提供名单，座位图此时看的是警徽。
   const aliveSeats = aliveSeatNumbers(players);
-  const badgeCandidates = aliveSeats.filter((seat) => ranForSheriff.has(seat));
-  // 上警环节还没走完时，未表态的座位既不是警上也不是警下，一律不挂标；
-  // 只有候选人池里每个座位都表过态（含退水环节与警长投票），警下名单才成立
-  const runStepComplete = electionSeats !== null
-    && [...electionSeats].every((seat) => decidedSeats.has(seat));
-  const offBadgeSeats = runStepComplete
-    ? aliveSeats.filter((seat) => !ranForSheriff.has(seat))
+  const badgeCandidates = electionActive
+    ? aliveSeats.filter((seat) => ranForSheriff.has(seat))
     : [];
+  // 已明确不上警的座位立刻算警下；还没轮到的座位不在任何一组里，不挂标
+  const offBadgeSeats = electionActive
+    ? aliveSeats.filter((seat) => passedForSheriff.has(seat))
+    : [];
+  // 竞选窗口开着时按后端真实状态机给出阶段：否则观众流里这一段会一直停在上一夜的
+  // 「night」（座位图的警上/警下、中央面板与活动卡都按 sheriff_election 取分支）。
+  // 对局结束时以 game_over 为准，不去覆盖它。
+  if (electionActive && winResult === null) phase = 'sheriff_election';
 
   return {
     players,

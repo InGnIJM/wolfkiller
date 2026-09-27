@@ -30,7 +30,8 @@ interface Props {
   currentSpeaker?: number | null;
   voteTargets?: Record<number, number | null>;
   modelSnapshot?: ModelSnapshotEntry[];
-  /** 当前阶段；只有 sheriff_election 期间才给座位挂警上/警下标 */
+  /** 当前阶段；只有 sheriff_election 期间才给座位挂警上/警下标。观众流里没有竞选
+   *  阶段事件，这个值由 store 按竞选事件窗口合成，不要改成读原始事件。 */
   phase?: GamePhase;
   /** 警上座位号（来自 store 的 badgeCandidates） */
   badgeCandidates?: number[];
