@@ -336,6 +336,13 @@ function EventSummary({
       text = '狼群密谋中';
       tone = '#F4B3B6';
       break;
+    case 'wolf_vote':
+      // 狼票走狼队频道的粉色，与白天投票/警票的金色摘要区分昼夜
+      text = entry.payload.target_seat === null
+        ? `${entry.payload.seat}号弃票`
+        : `${entry.payload.seat}号票给 ${entry.payload.target_seat}号`;
+      tone = '#F4B3B6';
+      break;
     case 'night_action':
       text = `${NIGHT_ACTION_LABELS[entry.payload.action_type] ?? '夜晚行动'} · 目标 ${entry.payload.target_seat}号`;
       tone = '#9DC8E8';

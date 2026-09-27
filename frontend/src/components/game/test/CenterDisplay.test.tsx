@@ -242,6 +242,39 @@ describe('CenterDisplay event summary', () => {
     expect(screen.getByText('狼人行动 · 目标 2号')).toBeInTheDocument();
   });
 
+  it('summarizes night wolf votes and keeps the acting-role night label', () => {
+    renderCenter({
+      phase: 'night',
+      roundNumber: 2,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_vote',
+          payload: { round_number: 2, seat: 1, target_seat: 2, reasoning: '像神' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('1号票给 2号')).toBeInTheDocument();
+    expect(screen.getByText('黑夜 · 狼人')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'night',
+      roundNumber: 2,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_vote',
+          payload: { round_number: 2, seat: 3, target_seat: null, reasoning: '没有合适目标' },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('3号弃票')).toBeInTheDocument();
+  });
+
   it('summarizes narration title and winner result', () => {
     renderCenter({
       timeline: [
