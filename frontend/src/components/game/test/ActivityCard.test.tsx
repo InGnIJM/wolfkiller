@@ -166,6 +166,48 @@ describe('ActivityCard', () => {
     expect(screen.getByText('tokens --')).toBeInTheDocument();
   });
 
+  it('renders night wolf votes with the kill target and reasoning', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_vote',
+        payload: { round_number: 2, seat: 6, target_seat: 2, reasoning: '像神' },
+      },
+    ]);
+    render(<ActivityCard />);
+
+    expect(screen.getByText('狼群投票')).toBeInTheDocument();
+    expect(screen.getByText(/票 → 2号：像神/)).toBeInTheDocument();
+    expect(screen.getByText(/第2轮 · 狼票/)).toBeInTheDocument();
+    expect(screen.getByText('tokens --')).toBeInTheDocument();
+  });
+
+  it('labels a wolf pass vote instead of showing a bare reasoning', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_vote',
+        payload: { round_number: 1, seat: 3, target_seat: null, reasoning: '没有合适目标' },
+      },
+    ]);
+    render(<ActivityCard />);
+
+    expect(screen.getByText(/弃票：没有合适目标/)).toBeInTheDocument();
+  });
+
+  it('falls back when a wolf vote carries no reasoning', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_vote',
+        payload: { round_number: 1, seat: 3, target_seat: 4, reasoning: '' },
+      },
+    ]);
+    render(<ActivityCard />);
+
+    expect(screen.getByText(/票 → 4号：（无理由）/)).toBeInTheDocument();
+  });
+
   it('renders the death announcement with cause', () => {
     setTimeline([
       {

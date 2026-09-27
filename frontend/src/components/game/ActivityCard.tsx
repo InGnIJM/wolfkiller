@@ -287,18 +287,25 @@ function ThoughtView({
   );
 }
 
+// 狼队频道卡：狼聊与狼票共用同一张脸，只有标题/眉标/元信息文案不同。
 function ChatView({
   seat,
   text,
   roundNumber,
   timestamp,
   durationSec,
+  label = '狼群密谋',
+  tag = 'WOLF CHAT',
+  metaKind = '狼聊',
 }: {
   seat: number;
   text: string;
   roundNumber: number;
   timestamp: string;
   durationSec: number | null;
+  label?: string;
+  tag?: string;
+  metaKind?: string;
 }) {
   return (
     <ActivityFrame tone="#F4B3B6">
@@ -309,10 +316,10 @@ function ChatView({
             {seat}号
           </Typography>
           <Typography variant="caption" sx={{ color: '#F4B3B6', letterSpacing: 2, fontWeight: 700 }}>
-            狼群密谋
+            {label}
           </Typography>
         </Box>
-        <LiveTag label="WOLF CHAT" />
+        <LiveTag label={tag} />
       </Box>
       <Typography
         variant="body2"
@@ -328,7 +335,7 @@ function ChatView({
       </Typography>
       <MetaRow
         roundNumber={roundNumber}
-        kind="狼聊"
+        kind={metaKind}
         timestamp={timestamp}
         durationSec={durationSec}
       />
@@ -541,6 +548,21 @@ export default function ActivityCard() {
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}
+        />
+      );
+    case 'wolf_vote':
+      return (
+        <ChatView
+          seat={entry.payload.seat}
+          text={entry.payload.target_seat === null
+            ? `弃票：${entry.payload.reasoning || '（无理由）'}`
+            : `票 → ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`}
+          roundNumber={entry.payload.round_number}
+          timestamp={entry.timestamp}
+          durationSec={durationSec}
+          label="狼群投票"
+          tag="WOLF VOTE"
+          metaKind="狼票"
         />
       );
     case 'death':
