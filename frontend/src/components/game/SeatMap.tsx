@@ -3,13 +3,15 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelSnapshotEntry, PublicPlayerState } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
-import { ROLE_COLORS, BLOOD_MOON, CARD_BACK } from '../../theme/tokens';
+import { ROLE_COLORS, BLOOD_MOON, CANVAS, CARD_BACK, HAIRLINE } from '../../theme/tokens';
 import { roleMetaFor } from '../shared/roleMeta';
 import SeatHoverCard from './SeatHoverCard';
 
+// 模板字符串里的属性必须是 CSS 写法。写成 boxShadow 时浏览器会丢掉这条声明，
+// 呼吸光就不会出现，座位上只剩罗马数字变色。
 const speakerPulse = keyframes`
-  0%, 100% { boxShadow: '0 0 0 2px rgba(229,72,77,0.55), 0 0 10px rgba(229,72,77,0.3)'; }
-  50% { boxShadow: '0 0 0 6px rgba(229,72,77,0.28), 0 0 20px rgba(229,72,77,0.16)'; }
+  0%, 100% { box-shadow: 0 0 0 2px rgba(229,72,77,0.95), 0 0 16px 3px rgba(229,72,77,0.72); }
+  50% { box-shadow: 0 0 0 3px rgba(244,179,182,1), 0 0 28px 8px rgba(229,72,77,0.95); }
 `;
 
 // 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字
@@ -71,12 +73,11 @@ function PublicSeat({
       : player.camp === 'good' ? '#93B58C'
         : 'divider'
   );
-  // 字号与字距随卡片尺寸缩放，避免小卡片文字溢出
-  const numeralSize = clampValue(cardSize * 0.21, 12, 15);
-  const numeralSpacing = clampValue(cardSize * 0.035, 1, 2);
-  const roleSize = clampValue(cardSize * 0.16, 9.5, 11.5);
-  const roleSpacing = clampValue(cardSize * 0.045, 1.5, 3);
-  const metaSize = clampValue(cardSize * 0.13, 8.5, 9.6);
+  // 字号随卡片尺寸缩放；竖栏很窄，长身份靠字号而不是换行
+  const numeralSize = clampValue(cardSize * 0.21, 11, 13);
+  const roleSize = clampValue(cardSize * 0.16, 9.5, 11);
+  const metaSize = clampValue(cardSize * 0.13, 8, 9);
+  const railWidth = compact ? 18 : 22;
   const label = [
     `${seat}号`,
     badge?.label,
@@ -128,23 +129,17 @@ function PublicSeat({
         position: 'relative',
         display: 'flex',
         width: cardSize + 10,
+        height: compact ? 72 : SEAT_HALF_H * 2,
         flexShrink: 0,
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: compact ? 0.25 : 0.5,
-        px: compact ? 0.5 : 1,
-        py: compact ? 0.6 : 1.1,
+        overflow: 'visible',
         border: '2px solid',
         borderColor: isCurrentSpeaker ? '#E5484D' : (
           player.is_alive ? accent : 'rgba(212,168,83,0.18)'
         ),
         borderRadius: 2,
-        bgcolor: player.is_alive ? 'rgba(23,18,33,0.85)' : 'rgba(23,18,33,0.5)',
-        backgroundImage: player.is_alive
-          ? 'linear-gradient(180deg, rgba(29,23,41,0.92), rgba(18,14,24,0.92))'
-          : 'none',
+        bgcolor: CANVAS.surface,
         boxShadow: isCurrentSpeaker
-          ? undefined
+          ? '0 0 0 2px rgba(229,72,77,0.95), 0 0 22px 6px rgba(229,72,77,0.8)'
           : player.is_alive
             ? `0 0 14px ${accent}44, 0 10px 26px rgba(0,0,0,0.45)`
             : '0 10px 26px rgba(0,0,0,0.45)',
@@ -199,58 +194,106 @@ function PublicSeat({
           <CloseIcon sx={{ fontSize: 13 }} />
         </Box>
       )}
-      <Typography
-        variant="caption"
+      <Box
         sx={{
-          fontWeight: 800,
-          fontSize: numeralSize,
-          lineHeight: 1.1,
-          letterSpacing: numeralSpacing,
-          fontFamily: '"Cinzel","Noto Serif SC",serif',
-          color: isCurrentSpeaker ? '#F4B3B6' : 'text.primary',
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          borderRadius: '6px',
         }}
       >
-        {toRoman(seat)}
-      </Typography>
-      {badge && (
-        <Typography
-          component="span"
-          sx={{
-            fontWeight: 700,
-            fontSize: roleSize,
-            lineHeight: 1.3,
-            letterSpacing: roleSpacing,
-            textIndent: roleSpacing,
-            whiteSpace: 'nowrap',
-            color: badge.color,
-            ...(player.is_alive ? {} : { textDecoration: 'line-through', textDecorationColor: 'rgba(229,72,77,0.7)' }),
-          }}
-        >
-          {badge.label}
-        </Typography>
-      )}
-      <Typography
-        variant="caption"
-        sx={{
-          fontSize: metaSize,
-          letterSpacing: 1.5,
-          color: player.is_alive ? '#7D7468' : 'text.disabled',
-        }}
-      >
-        {status}
-      </Typography>
-      {voteTarget !== undefined && (
-        <Typography
-          variant="caption"
-          sx={{
-            fontSize: metaSize,
-            fontWeight: 600,
-            color: voteTarget === null ? 'text.disabled' : 'warning.light',
-          }}
-        >
-          {voteTarget === null ? '弃权' : `→ ${voteTarget}号`}
-        </Typography>
-      )}
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <Box sx={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <Box
+              component="img"
+              alt=""
+              src={badge?.art ?? CARD_BACK}
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                objectPosition: 'center 14%',
+              }}
+            />
+            {isCurrentSpeaker && (
+              <Box
+                aria-hidden="true"
+                sx={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  background: 'linear-gradient(180deg, rgba(229,72,77,0.28), rgba(229,72,77,0.08) 42%, rgba(229,72,77,0.34))',
+                  boxShadow: 'inset 0 0 16px rgba(229,72,77,0.65)',
+                }}
+              />
+            )}
+          </Box>
+          <Box
+            sx={{
+              width: railWidth,
+              flexShrink: 0,
+              bgcolor: CANVAS.surface,
+              borderLeft: `1px solid ${HAIRLINE.strong}`,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              pt: player.is_alive ? 0.5 : 1.75,
+              pb: 0.4,
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 800,
+                fontSize: numeralSize,
+                lineHeight: 1,
+                fontFamily: '"Cinzel","Noto Serif SC",serif',
+                color: isCurrentSpeaker ? '#F4B3B6' : 'text.primary',
+              }}
+            >
+              {toRoman(seat)}
+            </Typography>
+            {badge && (
+              <Typography
+                component="span"
+                sx={{
+                  writingMode: 'vertical-rl',
+                  fontWeight: 700,
+                  fontSize: roleSize,
+                  lineHeight: 1.15,
+                  letterSpacing: compact ? '0.02em' : '0.08em',
+                  color: badge.color,
+                  ...(player.is_alive ? {} : { textDecoration: 'line-through', textDecorationColor: 'rgba(229,72,77,0.7)' }),
+                }}
+              >
+                {badge.label}
+              </Typography>
+            )}
+          </Box>
+        </Box>
+        {voteTarget !== undefined && (
+          <Typography
+            variant="caption"
+            sx={{
+              flexShrink: 0,
+              bgcolor: CANVAS.surface,
+              borderTop: `1px solid ${HAIRLINE.soft}`,
+              fontSize: metaSize,
+              fontWeight: 700,
+              lineHeight: 1.3,
+              textAlign: 'center',
+              color: voteTarget === null ? 'text.disabled' : 'warning.light',
+            }}
+          >
+            {voteTarget === null ? '弃权' : `→ ${voteTarget}号`}
+          </Typography>
+        )}
+      </Box>
     </Box>
     </Tooltip>
   );

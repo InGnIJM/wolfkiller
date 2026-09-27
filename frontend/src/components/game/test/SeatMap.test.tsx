@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModelSnapshotEntry, PublicPlayerState } from '../../../store/types';
+import { CARD_BACK, ROLE_ART } from '../../../theme/tokens';
 import SeatMap from '../SeatMap';
 
 class MockResizeObserver {
@@ -163,6 +164,37 @@ describe('SeatMap role badges', () => {
     expect(screen.queryByText(/wolf-killer-unknown/)).not.toBeInTheDocument();
     expect(screen.queryAllByText(/狼人|女巫|预言家|猎人|村民|守卫/)).toHaveLength(0);
     expect(screen.getByLabelText('1号 存活')).toBeInTheDocument();
+  });
+
+  it('paints the role portrait in the seat and the card back when the role is hidden', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'wolf-killer-werewolf', camp: 'werewolf' },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+    };
+
+    render(<SeatMap players={players} />);
+    fireResize(800, 600);
+
+    const wolf = screen.getByLabelText('1号 狼人 存活');
+    const hidden = screen.getByLabelText('2号 存活');
+    expect(wolf.querySelector('img')).toHaveAttribute('src', ROLE_ART.werewolf);
+    expect(hidden.querySelector('img')).toHaveAttribute('src', CARD_BACK);
+    expect(wolf).not.toHaveTextContent('存活');
+    expect(wolf).toHaveTextContent('狼人');
+  });
+
+  it('keeps the vote line on the seat nameplate', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'wolf-killer-wolf-beauty', camp: 'werewolf' },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false, role: 'wolf-killer-villager', camp: 'good' },
+    };
+
+    render(<SeatMap players={players} voteTargets={{ 1: 5, 2: null }} />);
+    fireResize(800, 600);
+
+    expect(screen.getByText('→ 5号')).toBeInTheDocument();
+    expect(screen.getByText('弃权')).toBeInTheDocument();
+    expect(screen.getByText('狼美人')).toBeInTheDocument();
   });
 });
 

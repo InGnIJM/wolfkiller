@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>座位卡立绘 · 三种方案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Noto+Serif+SC:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0a0f;
+  --bg-2:#120e18;
+  --surface:#171221;
+  --ink:#f2e9dc;
+  --dim:#b3a89a;
+  --faint:#7d7468;
+  --gold:#d4a853;
+  --crimson:#e5484d;
+  --serif:"Noto Serif SC","Songti SC",serif;
+  --latin:"Cinzel",var(--serif);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--serif);
+  color:var(--ink);
+  background:
+    linear-gradient(180deg, rgba(11,10,15,.72), rgba(11,10,15,.88)),
+    url("../src/assets/bg/bg-game.webp") center/cover fixed;
+  min-height:100vh;
+  padding:36px 28px 72px;
+}
+.wrap{max-width:1180px;margin:0 auto}
+.kicker{font-family:var(--latin);font-size:11px;letter-spacing:.42em;color:var(--gold);text-align:center}
+h1{text-align:center;font-weight:900;font-size:32px;letter-spacing:.12em;margin-top:8px}
+.lead{max-width:720px;margin:12px auto 0;text-align:center;color:var(--dim);font-size:14px;line-height:1.8}
+.scheme{margin-top:42px;padding:22px 22px 26px;border:1px solid rgba(212,168,83,.22);border-radius:16px;background:rgba(23,18,33,.72);backdrop-filter:blur(10px)}
+.scheme h2{font-size:22px;letter-spacing:.08em}
+.scheme h2 span{color:var(--gold);font-family:var(--latin);font-size:13px;letter-spacing:.28em;margin-right:10px}
+.note{margin-top:8px;color:var(--dim);font-size:13px;line-height:1.75;max-width:760px}
+.size-label{margin:18px 0 8px;font-size:12px;letter-spacing:.22em;color:var(--faint);font-weight:700}
+.row{display:flex;flex-wrap:wrap;gap:18px 16px;align-items:flex-end}
+.slot{display:flex;flex-direction:column;align-items:center;gap:8px}
+.slot figcaption{font-size:11px;color:var(--faint);letter-spacing:.08em}
+
+.seat{position:relative;flex-shrink:0;border-radius:10px;overflow:visible}
+.seat .frame{position:relative;width:100%;height:100%;border-radius:10px;overflow:hidden;border:2px solid var(--accent, rgba(212,168,83,.35));background:#120e18;box-shadow:0 10px 26px rgba(0,0,0,.45)}
+.seat.speaking .frame{border-color:var(--crimson);animation:pulse 1.2s ease-in-out infinite}
+.seat.dead{opacity:.55}
+.seat.dead .art{filter:grayscale(.7)}
+.art{width:100%;height:100%;object-fit:cover;object-position:center 14%;display:block}
+.cross{position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--crimson);color:#171221;display:grid;place-items:center;font-size:13px;font-weight:700;box-shadow:0 0 10px rgba(229,72,77,.6);z-index:3}
+.sheriff{position:absolute;top:-10px;left:50%;transform:translateX(-50%);z-index:3;background:var(--gold);color:#171221;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:800;letter-spacing:.12em;white-space:nowrap;line-height:1.4}
+.vote{position:absolute;left:4px;right:4px;bottom:2px;z-index:3;text-align:center;font-size:9px;font-weight:700;color:#e8c887;letter-spacing:.04em}
+
+.ellipse{width:78px;height:88px}
+.compact{width:52px;height:72px}
+
+/* 甲 · 底栏铭牌：字在实色条上，不压脸 */
+.plate .art{position:absolute;inset:0;height:100%}
+.plate .nameplate{position:absolute;left:0;right:0;bottom:0;z-index:2;background:#171221;border-top:1px solid rgba(212,168,83,.22);text-align:center;padding:3px 2px 4px}
+.plate .roman{font-family:var(--latin);font-size:11px;font-weight:700;line-height:1.1;color:var(--ink)}
+.plate .name{font-size:11px;font-weight:700;line-height:1.25;color:var(--accent);white-space:nowrap}
+.plate .vote{position:static;display:block;margin-top:1px}
+.compact.plate .roman{font-size:10px}
+.compact.plate .name{font-size:10px}
+
+/* 乙 · 下沿一字：编号在角，身份贴底边 */
+.chip .num{position:absolute;top:4px;left:4px;z-index:2;min-width:18px;text-align:center;padding:1px 4px;border-radius:99px;background:rgba(11,10,15,.78);border:1px solid rgba(212,168,83,.55);color:var(--gold);font-family:var(--latin);font-size:10px;font-weight:700;line-height:1.3}
+.chip .name{position:absolute;left:3px;right:3px;bottom:3px;z-index:2;text-align:center;padding:2px 2px 1px;border-radius:4px;background:rgba(23,18,33,.9);color:var(--accent);font-size:11px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden}
+.chip .vote{position:static;display:block;margin-top:1px}
+.compact.chip .name{font-size:9px;letter-spacing:-.02em}
+.compact.chip .num{font-size:9px;padding:0 3px}
+
+/* 丙 · 侧栏铭牌：脸在左，字在右竖栏 */
+.rail .frame{display:flex}
+.rail .art{width:auto;flex:1;min-width:0;height:100%}
+.rail .side{width:22px;flex-shrink:0;background:#171221;border-left:1px solid rgba(212,168,83,.22);display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:5px 0 4px}
+.rail .roman{font-family:var(--latin);font-size:11px;font-weight:700;color:var(--ink);line-height:1}
+.rail .name{writing-mode:vertical-rl;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);line-height:1.15}
+.rail .vote{position:static;writing-mode:horizontal-tb;font-size:8px;line-height:1.1;color:#e8c887}
+.compact.rail .side{width:18px;padding-top:3px}
+.rail.dead .side{padding-top:14px}
+.compact.rail .roman{font-size:9px}
+.compact.rail .name{font-size:10px;letter-spacing:.02em}
+
+.stage-wrap{margin-top:8px}
+.stage{position:relative;height:430px;margin-top:8px;border-radius:16px;border:1px dashed rgba(212,168,83,.22);background:rgba(11,10,15,.35)}
+.stage .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:220px;text-align:center;color:var(--faint);font-size:12px;letter-spacing:.2em;border:1px solid rgba(212,168,83,.12);border-radius:12px;padding:18px 8px}
+.stage .seat{position:absolute;transform:translate(-50%,-50%)}
+
+@keyframes pulse{
+  0%,100%{box-shadow:0 0 0 2px rgba(229,72,77,.55), 0 0 10px rgba(229,72,77,.3)}
+  50%{box-shadow:0 0 0 6px rgba(229,72,77,.28), 0 0 20px rgba(229,72,77,.16)}
+}
+@media (prefers-reduced-motion:reduce){.seat.speaking .frame{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">WOLF KILLER · SEAT PORTRAITS</div>
+  <h1>座位卡立绘 · 三种方案</h1>
+  <p class="lead">上帝视角要同时看见脸、罗马编号和中文身份。字都避开立绘中央。椭圆卡 78×88，窄屏双列卡 52×72。未公开身份用卡背，只留编号。这一页只供选择，还没有改座位布局。</p>
+  <div id="schemes"></div>
+</div>
+<script>
+const ART = '../src/assets/roles/';
+const SAMPLES = [
+  { key: 'alive', roman: 'Ⅰ', name: '守卫', file: 'role-guard.webp', accent: '#74aba3', caption: '存活' },
+  { key: 'speaking', roman: 'Ⅱ', name: '狼人', file: 'role-werewolf.webp', accent: '#e5484d', caption: '发言中' },
+  { key: 'sheriff', roman: 'Ⅲ', name: '白狼王', file: 'role-werewolf_king.webp', accent: '#f0f0f0', caption: '警长 · 长名' },
+  { key: 'vote', roman: 'Ⅳ', name: '狼美人', file: 'role-wolf_beauty.webp', accent: '#d96a9a', caption: '投票 · 长名' },
+  { key: 'hidden', roman: 'Ⅴ', name: '', file: 'card-back.webp', accent: '#d4a853', caption: '未揭晓' },
+  { key: 'dead', roman: 'Ⅵ', name: '预言家', file: 'role-seer.webp', accent: '#7fb4d9', caption: '出局' },
+];
+const RING = [
+  ['守卫', 'role-guard.webp', '#74aba3'],
+  ['女巫', 'role-witch.webp', '#b08be0'],
+  ['预言家', 'role-seer.webp', '#7fb4d9'],
+  ['猎人', 'role-hunter.webp', '#d9a441'],
+  ['村民', 'role-villager.webp', '#93b58c'],
+  ['狼人', 'role-werewolf.webp', '#e5484d'],
+  ['白狼王', 'role-werewolf_king.webp', '#f0f0f0'],
+  ['狼美人', 'role-wolf_beauty.webp', '#d96a9a'],
+  ['骑士', 'role-knight.webp', '#8fa8d9'],
+  ['老酒鬼', 'role-old_drunkard.webp', '#b99a6b'],
+];
+const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ'];
+
+const SCHEMES = [
+  { id: 'plate', title: '甲 · 底栏铭牌', en: 'PLATE', note: '立绘铺满卡片，底部一条实色铭牌分两行写编号和中文身份。字完全不压在画面上。同样高度里，脸大约只剩上半截。' },
+  { id: 'chip', title: '乙 · 下沿一字', en: 'CHIP', note: '编号是左上角小金标，中文身份贴在底边一行。脸留得最多。52px 宽时「白狼王」「狼美人」仍是一行，字号收到 9px，左右贴边，没有换行，也没有溢出。' },
+  { id: 'rail', title: '丙 · 侧栏铭牌', en: 'RAIL', note: '左侧是立绘，右侧窄竖栏上面是编号、下面竖排中文。脸不在字下面。窄卡的竖栏会再吃掉一截宽度，用来看脸还认不认得出。' },
+];
+
+function flags(sample) {
+  return {
+    speaking: sample.key === 'speaking',
+    dead: sample.key === 'dead',
+    sheriff: sample.key === 'sheriff',
+    vote: sample.key === 'vote',
+  };
+}
+
+function card(scheme, sample, size) {
+  const state = flags(sample);
+  const seat = document.createElement('figure');
+  seat.className = `seat ${scheme} ${size}${state.speaking ? ' speaking' : ''}${state.dead ? ' dead' : ''}`;
+  seat.style.setProperty('--accent', sample.accent);
+  const frame = document.createElement('div');
+  frame.className = 'frame';
+  const img = document.createElement('img');
+  img.className = 'art';
+  img.alt = '';
+  img.src = ART + sample.file;
+  frame.appendChild(img);
+  if (scheme === 'plate') {
+    const plate = document.createElement('div');
+    plate.className = 'nameplate';
+    plate.innerHTML = `<div class="roman">${sample.roman}</div>${sample.name ? `<div class="name">${sample.name}</div>` : ''}`;
+    if (state.vote) plate.insertAdjacentHTML('beforeend', '<div class="vote">→ 5号</div>');
+    frame.appendChild(plate);
+  } else if (scheme === 'chip') {
+    frame.insertAdjacentHTML('beforeend', `<div class="num">${sample.roman}</div>`);
+    if (sample.name) {
+      frame.insertAdjacentHTML('beforeend', `<div class="name">${sample.name}${state.vote ? '<span class="vote">→ 5号</span>' : ''}</div>`);
+    }
+  } else {
+    const side = document.createElement('div');
+    side.className = 'side';
+    side.innerHTML = `<div class="roman">${sample.roman}</div>${sample.name ? `<div class="name">${sample.name}</div>` : '<div></div>'}`;
+    if (state.vote) side.insertAdjacentHTML('beforeend', '<div class="vote">→5</div>');
+    frame.appendChild(side);
+  }
+  if (state.dead) frame.insertAdjacentHTML('beforeend', '<div class="cross">×</div>');
+  seat.appendChild(frame);
+  if (state.sheriff) seat.insertAdjacentHTML('beforeend', '<div class="sheriff">警长</div>');
+  return seat;
+}
+
+function row(scheme, size) {
+  const wrap = document.createElement('div');
+  wrap.className = 'row';
+  for (const sample of SAMPLES) {
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.appendChild(card(scheme, sample, size));
+    const cap = document.createElement('figcaption');
+    cap.textContent = sample.caption;
+    slot.appendChild(cap);
+    wrap.appendChild(slot);
+  }
+  return wrap;
+}
+
+function ring(scheme) {
+  const stage = document.createElement('div');
+  stage.className = 'stage';
+  const center = document.createElement('div');
+  center.className = 'center';
+  center.textContent = '中央面板';
+  stage.appendChild(center);
+  const total = RING.length;
+  const rx = 250;
+  const ry = 150;
+  RING.forEach(([name, file, accent], index) => {
+    const angle = (index / total) * Math.PI * 2 - Math.PI / 2;
+    const node = card(scheme, {
+      key: index === 1 ? 'speaking' : index === 5 ? 'dead' : 'alive',
+      roman: ROMAN[index],
+      name, file, accent,
+    }, 'ellipse');
+    node.style.left = `calc(50% + ${Math.round(rx * Math.cos(angle))}px)`;
+    node.style.top = `calc(50% + ${Math.round(ry * Math.sin(angle))}px)`;
+    stage.appendChild(node);
+  });
+  return stage;
+}
+
+const root = document.getElementById('schemes');
+for (const scheme of SCHEMES) {
+  const section = document.createElement('section');
+  section.className = 'scheme';
+  section.innerHTML = `<h2><span>${scheme.en}</span>${scheme.title}</h2><p class="note">${scheme.note}</p>`;
+  section.insertAdjacentHTML('beforeend', '<div class="size-label">椭圆 · 78×88</div>');
+  section.appendChild(row(scheme.id, 'ellipse'));
+  section.insertAdjacentHTML('beforeend', '<div class="size-label">窄屏双列 · 52×72</div>');
+  section.appendChild(row(scheme.id, 'compact'));
+  section.insertAdjacentHTML('beforeend', '<div class="size-label stage-wrap">十人环 · 椭圆尺寸</div>');
+  section.appendChild(ring(scheme.id));
+  root.appendChild(section);
+}
+</script>
+</body>
+</html>
