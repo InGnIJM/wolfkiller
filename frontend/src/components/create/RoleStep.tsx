@@ -7,7 +7,7 @@ import RemoveIcon from '@mui/icons-material/Remove';
 import { fetchConstraints, fetchPresets, fetchRoleCatalog } from '../../api/client';
 import type { FieldConstraints, GamePreset, RoleCatalogItem } from '../../store/types';
 import { roleMetaFor } from '../shared/roleMeta';
-import { BACKDROP, CARD_BACK, HAIRLINE } from '../../theme/tokens';
+import { CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 const CUSTOM_PRESET_ID = 'custom';
 
@@ -134,21 +134,26 @@ export default function RoleStep({
                 borderRadius: 2,
               }}
             >
-              <Box sx={{ position: 'relative', width: 92, flexShrink: 0 }}>
+              <Box sx={{ position: 'relative', width: 72, flexShrink: 0 }}>
                 <Box
                   component="img"
                   alt=""
                   src={roleMetaFor(role.role_id)?.art ?? CARD_BACK}
-                  sx={{ display: 'block', width: '100%', height: '100%', minHeight: 112, objectFit: 'cover', objectPosition: 'center 15%' }}
+                  sx={{
+                    position: 'absolute', inset: 0, width: '100%', height: '100%',
+                    objectFit: 'cover', objectPosition: 'center 16%',
+                  }}
                 />
-                <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%', background: BACKDROP.cardScrim }} />
               </Box>
-              <Box sx={{ flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, p: 1.5 }}>
-              <Box>
-                <Typography variant="body1">{role.name_zh}</Typography>
-                <Typography variant="body2" color="text.secondary">{role.description}</Typography>
+              <Box sx={{
+                flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
+                justifyContent: 'space-between', gap: 1.5, px: 1.5, py: 1,
+              }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>{role.name_zh}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.4 }}>{role.description}</Typography>
               </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
                 <Chip
                   size="small"
                   variant="outlined"
