@@ -16,9 +16,12 @@ function statusLine(options: {
   isSheriff: boolean;
   isCurrentSpeaker: boolean;
   voteTarget?: number | null;
+  badgeSide?: 'on' | 'off';
 }): string {
   const parts = [options.isAlive ? '存活' : '出局'];
   if (options.isAlive && options.canVote === false) parts.push('无投票权');
+  if (options.badgeSide === 'on') parts.push('警上');
+  if (options.badgeSide === 'off') parts.push('警下');
   if (options.isSheriff) parts.push('警长');
   if (options.isCurrentSpeaker) parts.push('发言中');
   if (options.voteTarget !== undefined) {
@@ -37,6 +40,7 @@ export default function SeatHoverCard({
   isSheriff,
   isCurrentSpeaker,
   voteTarget,
+  badgeSide,
   accent,
   model,
   art,
@@ -50,6 +54,7 @@ export default function SeatHoverCard({
   isSheriff: boolean;
   isCurrentSpeaker: boolean;
   voteTarget?: number | null;
+  badgeSide?: 'on' | 'off';
   accent: string;
   model?: SeatModelInfo;
   art?: string;
@@ -106,7 +111,7 @@ export default function SeatHoverCard({
       ) : null}
       <Box sx={{ my: 1, height: 1, bgcolor: HAIRLINE.soft }} />
       <HoverRow label="状态" value={statusLine({
-        isAlive, canVote, isSheriff, isCurrentSpeaker, voteTarget,
+        isAlive, canVote, isSheriff, isCurrentSpeaker, voteTarget, badgeSide,
       })} />
       <HoverRow label="模型" value={model?.name ?? '未知'} emphasize />
       {model ? (

@@ -1,7 +1,7 @@
 import { Box, Tooltip, Typography, keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ModelSnapshotEntry, PublicPlayerState } from '../../store/types';
+import type { GamePhase, ModelSnapshotEntry, PublicPlayerState } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
 import { ROLE_COLORS, BLOOD_MOON, CANVAS, CARD_BACK, HAIRLINE } from '../../theme/tokens';
 import { roleMetaFor } from '../shared/roleMeta';
@@ -20,11 +20,22 @@ function toRoman(seat: number): string {
   return ROMAN[(seat - 1) % ROMAN.length] ?? String(seat);
 }
 
+/** 竞选期座位归属：警上（已上警）/ 警下（未上警、握有警长投票权） */
+type BadgeSide = 'on' | 'off';
+
+const BADGE_SIDE_LABEL: Record<BadgeSide, string> = { on: '警上', off: '警下' };
+
 interface Props {
   players: Record<number, PublicPlayerState>;
   currentSpeaker?: number | null;
   voteTargets?: Record<number, number | null>;
   modelSnapshot?: ModelSnapshotEntry[];
+  /** 当前阶段；只有 sheriff_election 期间才给座位挂警上/警下标 */
+  phase?: GamePhase;
+  /** 警上座位号（来自 store 的 badgeCandidates） */
+  badgeCandidates?: number[];
+  /** 警下座位号（来自 store 的 offBadgeSeats） */
+  offBadgeSeats?: number[];
   children?: React.ReactNode;
 }
 
@@ -57,6 +68,7 @@ function PublicSeat({
   cardSize,
   compact = false,
   model,
+  badgeSide,
 }: {
   seat: number;
   player: PublicPlayerState;
@@ -65,6 +77,7 @@ function PublicSeat({
   cardSize: number;
   compact?: boolean;
   model?: SeatModelInfo;
+  badgeSide?: BadgeSide;
 }) {
   const badge = roleMetaFor(player.role);
   const status = !player.is_alive ? '出局' : player.can_vote === false ? '存活·无投票权' : '存活';
@@ -78,10 +91,18 @@ function PublicSeat({
   const roleSize = clampValue(cardSize * 0.16, 9.5, 11);
   const metaSize = clampValue(cardSize * 0.13, 8, 9);
   const railWidth = compact ? 18 : 22;
+  const onBadge = badgeSide === 'on';
+  const offBadge = badgeSide === 'off';
+  // 竞选期用金色边框标出警上、暗金虚线标出警下；此时发言者改用红色脉冲光环，
+  // 两组信号同时可见（发言者一定是警上，红脉冲只加在光环上，不再抢边框）
+  const defaultBorder = isCurrentSpeaker
+    ? BLOOD_MOON.crimson
+    : player.is_alive ? accent : 'rgba(212,168,83,0.18)';
   const label = [
     `${seat}号`,
     badge?.label,
     status,
+    badgeSide ? BADGE_SIDE_LABEL[badgeSide] : '',
     player.is_sheriff ? '警长' : '',
   ].filter(Boolean).join(' ');
 
@@ -98,6 +119,7 @@ function PublicSeat({
           isSheriff={player.is_sheriff}
           isCurrentSpeaker={isCurrentSpeaker}
           voteTarget={voteTarget}
+          badgeSide={badgeSide}
           accent={badge?.color ?? (
             player.camp === 'werewolf' ? ROLE_COLORS.werewolf.color
               : player.camp === 'good' ? ROLE_COLORS.villager.color
@@ -133,16 +155,19 @@ function PublicSeat({
         flexShrink: 0,
         overflow: 'visible',
         border: '2px solid',
-        borderColor: isCurrentSpeaker ? '#E5484D' : (
-          player.is_alive ? accent : 'rgba(212,168,83,0.18)'
-        ),
+        borderColor: onBadge
+          ? BLOOD_MOON.gold
+          : offBadge ? BLOOD_MOON.goldDark : defaultBorder,
+        borderStyle: offBadge ? 'dashed' : 'solid',
         borderRadius: 2,
         bgcolor: CANVAS.surface,
         boxShadow: isCurrentSpeaker
           ? '0 0 0 2px rgba(229,72,77,0.95), 0 0 22px 6px rgba(229,72,77,0.8)'
-          : player.is_alive
-            ? `0 0 14px ${accent}44, 0 10px 26px rgba(0,0,0,0.45)`
-            : '0 10px 26px rgba(0,0,0,0.45)',
+          : onBadge
+            ? `0 0 0 2px ${BLOOD_MOON.gold}55, 0 0 20px 6px ${BLOOD_MOON.gold}66, 0 10px 26px rgba(0,0,0,0.45)`
+            : player.is_alive
+              ? `0 0 14px ${accent}44, 0 10px 26px rgba(0,0,0,0.45)`
+              : '0 10px 26px rgba(0,0,0,0.45)',
         opacity: player.is_alive ? 1 : 0.5,
         filter: player.is_alive ? 'none' : 'grayscale(0.7)',
         transition: 'transform 0.2s ease, border-color 0.2s ease',
@@ -231,6 +256,34 @@ function PublicSeat({
                 }}
               />
             )}
+            {badgeSide && (
+              <Typography
+                variant="caption"
+                sx={{
+                  position: 'absolute',
+                  top: 3,
+                  left: 3,
+                  zIndex: 1,
+                  px: 0.55,
+                  py: 0.05,
+                  borderRadius: 0.75,
+                  fontSize: '0.55rem',
+                  fontWeight: 800,
+                  lineHeight: 1.5,
+                  letterSpacing: 0.5,
+                  whiteSpace: 'nowrap',
+                  ...(onBadge
+                    ? { bgcolor: BLOOD_MOON.gold, color: CANVAS.bg }
+                    : {
+                        bgcolor: CANVAS.surfaceRaised,
+                        color: BLOOD_MOON.goldLight,
+                        border: `1px dashed ${BLOOD_MOON.goldDark}`,
+                      }),
+                }}
+              >
+                {BADGE_SIDE_LABEL[badgeSide]}
+              </Typography>
+            )}
           </Box>
           <Box
             sx={{
@@ -305,12 +358,14 @@ function SeatColumn({
   voteTargets,
   cardSize,
   models,
+  badgeSides,
 }: {
   seats: Array<{ seat: number; player: PublicPlayerState }>;
   currentSpeaker?: number | null;
   voteTargets?: Record<number, number | null>;
   cardSize: number;
   models: Record<number, SeatModelInfo>;
+  badgeSides?: Map<number, BadgeSide>;
 }) {
   return (
     <Box
@@ -336,6 +391,7 @@ function SeatColumn({
           cardSize={cardSize}
           compact
           model={models[seat]}
+          badgeSide={badgeSides?.get(seat)}
         />
       ))}
     </Box>
@@ -344,10 +400,23 @@ function SeatColumn({
 
 export default function SeatMap({
   players, currentSpeaker, voteTargets, modelSnapshot, children,
+  phase, badgeCandidates, offBadgeSeats,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const models = useMemo(() => seatModelLookup(modelSnapshot), [modelSnapshot]);
+  // 只在竞选期挂标，且出局座位不挂（警上自爆、警下被夜刀后都不该继续显示归属）
+  const badgeSides = useMemo(() => {
+    if (phase !== 'sheriff_election') return undefined;
+    const sides = new Map<number, BadgeSide>();
+    for (const seat of badgeCandidates ?? []) {
+      if (players[seat]?.is_alive) sides.set(seat, 'on');
+    }
+    for (const seat of offBadgeSeats ?? []) {
+      if (players[seat]?.is_alive) sides.set(seat, 'off');
+    }
+    return sides;
+  }, [badgeCandidates, offBadgeSeats, phase, players]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -450,6 +519,7 @@ export default function SeatMap({
                   voteTarget={voteTargets?.[seat]}
                   cardSize={cardSize}
                   model={models[seat]}
+                  badgeSide={badgeSides?.get(seat)}
                 />
               </Box>
             );
@@ -476,6 +546,7 @@ export default function SeatMap({
             voteTargets={voteTargets}
             cardSize={compactCardSize}
             models={models}
+            badgeSides={badgeSides}
           />
           <Box
             sx={{
@@ -498,6 +569,7 @@ export default function SeatMap({
             voteTargets={voteTargets}
             cardSize={compactCardSize}
             models={models}
+            badgeSides={badgeSides}
           />
         </Box>
       )}

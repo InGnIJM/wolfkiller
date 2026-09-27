@@ -198,6 +198,58 @@ describe('SeatMap role badges', () => {
   });
 });
 
+describe('SeatMap sheriff election sides', () => {
+  const players: Record<number, PublicPlayerState> = {
+    1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'wolf-killer-seer', camp: 'good' },
+    2: { seat_number: 2, is_alive: true, is_sheriff: false, role: 'wolf-killer-werewolf', camp: 'werewolf' },
+    3: { seat_number: 3, is_alive: false, is_sheriff: false, role: 'wolf-killer-villager', camp: 'good' },
+  };
+
+  it('marks the on-badge and off-badge seats during the election', async () => {
+    const user = userEvent.setup();
+    render(
+      <SeatMap
+        players={players}
+        phase="sheriff_election"
+        badgeCandidates={[1]}
+        offBadgeSeats={[2]}
+      />,
+    );
+    fireResize(800, 600);
+
+    expect(screen.getByLabelText('1号 预言家 存活 警上')).toBeInTheDocument();
+    expect(screen.getByLabelText('2号 狼人 存活 警下')).toBeInTheDocument();
+    expect(screen.getByText('警上')).toBeInTheDocument();
+    expect(screen.getByText('警下')).toBeInTheDocument();
+
+    await user.hover(screen.getByLabelText('1号 预言家 存活 警上'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('存活 · 警上');
+  });
+
+  it('keeps the sides off the seats outside the election phase', () => {
+    render(
+      <SeatMap players={players} phase="night" badgeCandidates={[1]} offBadgeSeats={[2]} />,
+    );
+    fireResize(800, 600);
+
+    expect(screen.queryByText('警上')).not.toBeInTheDocument();
+    expect(screen.queryByText('警下')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('1号 预言家 存活')).toBeInTheDocument();
+    expect(screen.getByLabelText('2号 狼人 存活')).toBeInTheDocument();
+  });
+
+  it('drops the side mark for a seat that died during the election', () => {
+    render(
+      <SeatMap players={players} phase="sheriff_election" badgeCandidates={[3]} offBadgeSeats={[1]} />,
+    );
+    fireResize(800, 600);
+
+    expect(screen.getByLabelText('3号 村民 出局')).toBeInTheDocument();
+    expect(screen.getByText('警下')).toBeInTheDocument();
+    expect(screen.queryByText('警上')).not.toBeInTheDocument();
+  });
+});
+
 describe('SeatMap hover card', () => {
   const snapshot: ModelSnapshotEntry[] = [{
     config_id: 'model-a',
