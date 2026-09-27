@@ -97,6 +97,8 @@ const completedLogs: GameLogs = {
   ],
 };
 
+const electionLogs = (events: GameLogs['events']): GameLogs => ({ game_id: 'game-1', events });
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -420,6 +422,64 @@ describe('GameBoard public replay', () => {
     expect(screen.getByTestId('history-panel')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '返回' }));
     expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  // 竞选期观众流里没有阶段事件，phase 由 store 合成成 sheriff_election；
+  // 座位图的警票票标必须跟着这个窗口走，且首轮票与 PK 票共用同一个 round_number。
+  it('leaves the seat map vote badges empty while the election has no ballots yet', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'run' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(useGameStore.getState().phase).toBe('sheriff_election');
+    expect(seatMap).toHaveAttribute('data-vote-targets', '{}');
+  });
+
+  it('shows sheriff ballots including abstentions on the seat map', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'run' } },
+      { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 3, target_seat: 2, kind: 'vote' } },
+      { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 4, target_seat: null, kind: 'vote' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(seatMap).toHaveAttribute('data-vote-targets', JSON.stringify({ 3: 2, 4: null }));
+  });
+
+  it('replaces first-round sheriff ballots with the PK round on the seat map', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'run' } },
+      { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 3, target_seat: 2, kind: 'vote' } },
+      { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 4, target_seat: null, kind: 'vote' } },
+      { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 3, target_seat: 5, kind: 'pk' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(seatMap).toHaveAttribute('data-vote-targets', JSON.stringify({ 3: 5 }));
+  });
+
+  it('clears sheriff ballots from the seat map once the election closes', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'run' } },
+      { ...replayEventMeta, event_type: 'sheriff_vote', payload: { round_number: 1, voter_seat: 3, target_seat: 2, kind: 'vote' } },
+      { ...replayEventMeta, event_type: 'sheriff_elected', payload: { round_number: 1, seat: 2, reason: 'vote' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(seatMap).toHaveAttribute('data-vote-targets', '{}');
   });
 
   it('polls public logs while the game is in progress and ignores poll failures', async () => {

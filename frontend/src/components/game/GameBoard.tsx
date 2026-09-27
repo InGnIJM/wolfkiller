@@ -7,6 +7,7 @@ import {
   fetchGameLogs, fetchGameDetail, GameNotFoundError,
 } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
+import type { PublicReplayEvent } from '../../store/types';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
@@ -33,6 +34,23 @@ async function fetchAudienceHistory(gameId: string, throughSeq: number) {
     if (page.caught_up) break;
   }
   return events;
+}
+
+// 竞选期观众流里没有阶段事件，phase 由 store 合成成 sheriff_election。
+// 警票首轮（kind='vote'）与 PK 轮（kind='pk'）共用同一个 round_number，
+// 不能按轮次过滤，只能按 kind 分桶：PK 票一旦出现就整体替换首轮票标。
+function sheriffVoteTargets(
+  timeline: PublicReplayEvent[],
+  timelineIndex: number,
+): Record<number, number | null> {
+  const firstRound: Record<number, number | null> = {};
+  const pkRound: Record<number, number | null> = {};
+  for (const event of timeline.slice(0, timelineIndex + 1)) {
+    if (event.event_type !== 'sheriff_vote') continue;
+    const bucket = event.payload.kind === 'pk' ? pkRound : firstRound;
+    bucket[event.payload.voter_seat] = event.payload.target_seat;
+  }
+  return Object.keys(pkRound).length > 0 ? pkRound : firstRound;
 }
 
 export default function GameBoard({ onBack, gameId }: Props) {
@@ -181,7 +199,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
   const totalPlayers = Object.keys(players).length;
 
   const voteTargets: Record<number, number | null> = {};
-  if (phase === 'vote_casting' || phase === 'vote_resolution') {
+  if (phase === 'sheriff_election') {
+    Object.assign(voteTargets, sheriffVoteTargets(timeline, timelineIndex));
+  } else if (phase === 'vote_casting' || phase === 'vote_resolution') {
     for (const event of timeline.slice(0, timelineIndex + 1)) {
       if (event.event_type === 'vote' && event.payload.round_number === roundNumber) {
         voteTargets[event.payload.voter_seat] = event.payload.target_seat;
