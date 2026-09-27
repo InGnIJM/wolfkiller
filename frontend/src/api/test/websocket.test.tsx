@@ -211,6 +211,36 @@ describe('useWebSocket', () => {
     expect(setNightSubstep).not.toHaveBeenCalled();
   });
 
+  it('lights the live seat that is taking a night action', () => {
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1'));
+    const socket = MockWebSocket.instances[0];
+
+    act(() => {
+      socket.emit({ type: 'acting', seat: 4 });
+    });
+    expect(useGameStore.getState().currentSpeaker).toBe(4);
+
+    act(() => {
+      useGameStore.setState({ isFollowingLive: false, currentSpeaker: null });
+      socket.emit({ type: 'acting', seat: 5 });
+    });
+    expect(useGameStore.getState().currentSpeaker).toBeNull();
+
+    act(() => {
+      useGameStore.setState({ isFollowingLive: true });
+      [
+        { type: 'acting' },
+        { type: 'acting', seat: 1, role: 'seer' },
+        { type: 'idle', seat: 2 },
+        { type: 'acting', seat: '3' },
+        { type: 'acting', seat: 1.5 },
+        { type: 'acting', seat: 0 },
+      ].forEach((message) => socket.emit(message));
+    });
+    expect(useGameStore.getState().currentSpeaker).toBeNull();
+  });
+
   it('ignores replay, state, malformed, unknown, and private websocket events', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useWebSocket());

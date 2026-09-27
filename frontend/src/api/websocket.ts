@@ -28,6 +28,14 @@ function isPausedState(value: unknown): value is { type: 'paused_state'; paused:
     && typeof value.paused === 'boolean';
 }
 
+function isActing(value: unknown): value is { type: 'acting'; seat: number } {
+  return hasExactKeys(value, ['type', 'seat'])
+    && value.type === 'acting'
+    && typeof value.seat === 'number'
+    && Number.isInteger(value.seat)
+    && value.seat > 0;
+}
+
 function isNightSubstep(value: unknown): value is {
   type: 'night_substep';
   phase: 'night';
@@ -114,6 +122,8 @@ export function useWebSocket() {
         }
         if (isPausedState(msg)) {
           useGameStore.getState().setPaused(msg.paused);
+        } else if (isActing(msg) && useGameStore.getState().isFollowingLive) {
+          useGameStore.getState().setCurrentSpeaker(msg.seat);
         } else if (isNightSubstep(msg)) {
           useGameStore.getState().setNightSubstep({
             substep: msg.substep,

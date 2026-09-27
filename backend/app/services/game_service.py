@@ -88,6 +88,12 @@ PUBLIC_NIGHT_SUBSTEPS = frozenset({
     "seer_close",
 })
 
+_NIGHT_ACTOR_POINTS = frozenset({
+    SchedulePoint.NIGHT_ACTION,
+    SchedulePoint.NIGHT_WITCH_ACTION,
+    SchedulePoint.NIGHT_SEER_ACTION,
+})
+
 
 def _model_failure_code(error: Exception, status_code: int | None) -> str:
     cause: BaseException | None = error
@@ -480,6 +486,7 @@ class GameService:
         self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._on_player_died)
         self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._on_speech_made)
         self.event_bus.subscribe(BusEvent.SPEAKING, self._on_speaking)
+        self.event_bus.subscribe(BusEvent.ACTING, self._on_acting)
         self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
         self.event_bus.subscribe(BusEvent.NIGHT_SUBSTEP, self._on_night_substep)
@@ -2126,6 +2133,11 @@ class GameService:
                 SystemMessage(content=_SYSTEM_PROMPT),
                 HumanMessage(content=prompt),
             ]
+            if (
+                engine is not None
+                and request.contract.schedule_point in _NIGHT_ACTOR_POINTS
+            ):
+                engine.announce_actor_blocking(request.actor_seat)
             llm_client = None
             command = None
             failure: Exception | None = None
@@ -2569,6 +2581,19 @@ class GameService:
         ):
             return
         await self.ws_manager.broadcast(game_id, "speaking", seat=seat)
+
+    async def _on_acting(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
+        seat = kwargs.get("seat")
+        if (
+            game_id is None
+            or isinstance(seat, bool)
+            or not isinstance(seat, int)
+            or seat < 1
+        ):
+            return
+        self.ws_manager.queue_v2_notice(game_id, "acting", seat=seat)
+        await self.ws_manager.broadcast(game_id, "acting", seat=seat)
 
     async def _on_speech_made(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)

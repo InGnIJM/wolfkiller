@@ -1548,6 +1548,56 @@ class TestGameEngine:
         assert engine.state.current_speaker is None
 
     @pytest.mark.asyncio
+    async def test_announce_actor_publishes_before_a_blocking_night_call(self, monkeypatch):
+        bus = EventBus()
+        announced: list[int] = []
+
+        async def capture(**kwargs):
+            announced.append(kwargs["seat"])
+
+        bus.subscribe(BusEvent.ACTING, capture)
+        engine = GameEngine(game_id="night-actor", event_bus=bus)
+
+        engine.announce_actor_blocking(2)
+        assert announced == []
+
+        idle = asyncio.new_event_loop()
+        engine._actor_loop = idle
+        engine.announce_actor_blocking(2)
+        idle.close()
+        assert announced == []
+
+        engine._actor_loop = asyncio.get_running_loop()
+        scheduled: list[asyncio.Task] = []
+        real_create = engine._actor_loop.create_task
+
+        def tracking(coro, *args, **kwargs):
+            task = real_create(coro, *args, **kwargs)
+            scheduled.append(task)
+            return task
+
+        monkeypatch.setattr(engine._actor_loop, "create_task", tracking)
+        engine.announce_actor_blocking(4)
+        assert scheduled
+        await scheduled[0]
+        assert announced == [4]
+
+        await asyncio.to_thread(engine.announce_actor_blocking, 6)
+        assert announced == [4, 6]
+
+    @pytest.mark.asyncio
+    async def test_announce_actor_keeps_the_night_call_when_publish_fails(self, monkeypatch):
+        engine = GameEngine(game_id="night-actor-fail")
+        engine._actor_loop = asyncio.get_running_loop()
+
+        def broken(coro, _loop):
+            coro.close()
+            raise RuntimeError("viewer unavailable")
+
+        monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", broken)
+        await asyncio.to_thread(engine.announce_actor_blocking, 7)
+
+    @pytest.mark.asyncio
     async def test_speak_without_a_role_does_not_announce(self):
         bus = EventBus()
         announced: list[dict] = []

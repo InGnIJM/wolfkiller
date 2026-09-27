@@ -12,6 +12,7 @@ class GameEvent(str, Enum):
     PLAYER_DIED = "player_died"
     SPEECH_MADE = "speech_made"
     SPEAKING = "speaking"
+    ACTING = "acting"
     VOTE_CAST = "vote_cast"
     NIGHT_ACTION_SUBMITTED = "night_action_submitted"
     NIGHT_SUBSTEP = "night_substep"

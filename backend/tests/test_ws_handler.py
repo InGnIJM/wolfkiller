@@ -512,6 +512,26 @@ class TestV2FailureAndCleanup:
         assert not wakeup.is_set()
 
     @pytest.mark.asyncio
+    async def test_sender_delivers_a_queued_actor_notice(self):
+        from fastapi import WebSocketDisconnect
+
+        handler, ws = self.handler(), self.socket()
+        wakeup = await handler.ws_manager.connect_v2("g", ws)
+        handler.ws_manager.queue_v2_notice("g", "acting", seat=4)
+        handler.ws_manager.queue_v2_notice("missing", "acting", seat=1)
+        audience = MagicMock()
+        audience.get_events.side_effect = WebSocketDisconnect()
+        handler._audience_service = lambda: audience
+        initial = {"events": [], "next_seq": 0, "high_watermark": 0, "has_more": False}
+
+        with pytest.raises(WebSocketDisconnect):
+            await handler._v2_sender(ws, "g", 0, initial, wakeup)
+
+        sent = [json.loads(call.args[0]) for call in ws.send_text.await_args_list]
+        assert sent[0] == {"type": "acting", "seat": 4}
+        assert handler.ws_manager.drain_v2_notices("g", ws) == []
+
+    @pytest.mark.asyncio
     async def test_receiver_rejects_bad_messages_and_routes_valid_controls(self):
         handler, ws = self.handler(), self.socket()
         async def messages():

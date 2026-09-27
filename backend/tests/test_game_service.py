@@ -1310,6 +1310,42 @@ class TestGameService:
         ws_manager.broadcast.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_acting_queues_the_seat_for_live_viewers(self):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        ws_manager.queue_v2_notice = MagicMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_acting(game_id="game-a", seat=4)
+
+        ws_manager.queue_v2_notice.assert_called_once_with("game-a", "acting", seat=4)
+        ws_manager.broadcast.assert_awaited_once_with("game-a", "acting", seat=4)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("game_id", "seat"),
+        [
+            (None, 4),
+            ("unknown", 4),
+            ("game-a", True),
+            ("game-a", "4"),
+            ("game-a", 0),
+        ],
+    )
+    async def test_acting_drops_unknown_or_invalid_seats(self, game_id, seat):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        ws_manager.queue_v2_notice = MagicMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_acting(game_id=game_id, seat=seat)
+
+        ws_manager.queue_v2_notice.assert_not_called()
+        ws_manager.broadcast.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_night_substep_broadcasts_exact_public_payload_only(self):
         ws_manager = WSManager()
         ws_manager.broadcast = AsyncMock()
@@ -1963,6 +1999,41 @@ class TestCommandProvider:
         command = provider(self._request("wolf-killer-seer"), context, 0)
         assert command.action_type == "check"
         assert command.target_seat == 2
+
+    def test_provider_announces_the_seat_before_a_night_skill(self):
+        service = GameService(WSManager(), EventBus())
+        provider, _ = self._provider(
+            service, '{"action_type":"check","target_seat":2,"reasoning":"x"}'
+        )
+        engine = GameEngine(game_id="g")
+        engine.announce_actor_blocking = MagicMock()
+        service._engines["g"] = engine
+        context = MagicMock(game_id="g")
+
+        provider(self._request("wolf-killer-seer"), context, 0)
+
+        engine.announce_actor_blocking.assert_called_once_with(1)
+
+    def test_provider_does_not_announce_daytime_skills(self):
+        from app.models.pipeline import IssuedActionRequest
+
+        service = GameService(WSManager(), EventBus())
+        provider, _ = self._provider(
+            service, '{"action_type":"pass","target_seat":null,"reasoning":"x"}'
+        )
+        engine = GameEngine(game_id="g")
+        engine.announce_actor_blocking = MagicMock()
+        service._engines["g"] = engine
+        snapshot = builtin_registry.freeze()
+        contract = next(
+            item for item in snapshot.require("wolf-killer-werewolf-king").contracts
+            if item.schedule_point.value == "day_action"
+        )
+        request = IssuedActionRequest(1, "wolf-killer-werewolf-king", contract, 0, 1, "speech", "w", "k")
+
+        provider(request, MagicMock(game_id="g"), 0)
+
+        engine.announce_actor_blocking.assert_not_called()
 
     def test_provider_routes_action_through_model_gateway(self):
         from types import SimpleNamespace

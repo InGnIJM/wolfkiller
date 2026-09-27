@@ -30,6 +30,7 @@ class WSManager:
         self._connections: dict[str, list[WebSocket]] = {}  # game_id -> [ws]
         self._v2_connections: dict[str, list[WebSocket]] = {}
         self._v2_wakeups: dict[str, dict[int, asyncio.Event]] = {}
+        self._v2_notices: dict[str, dict[int, list[dict[str, object]]]] = {}
 
     async def connect(self, game_id: str, ws: WebSocket) -> None:
         await ws.accept()
@@ -47,12 +48,16 @@ class WSManager:
             ]
         if game_id in self._v2_wakeups:
             self._v2_wakeups[game_id].pop(id(ws), None)
+        notices = self._v2_notices.get(game_id)
+        if notices is not None:
+            notices.pop(id(ws), None)
 
     async def connect_v2(self, game_id: str, ws: WebSocket) -> asyncio.Event:
         await ws.accept()
         self._v2_connections.setdefault(game_id, []).append(ws)
         wakeup = asyncio.Event()
         self._v2_wakeups.setdefault(game_id, {})[id(ws)] = wakeup
+        self._v2_notices.setdefault(game_id, {})[id(ws)] = []
         logger.info(
             "WS V2 connected: game=%s, total_connections=%s",
             game_id, len(self._v2_connections[game_id]),
@@ -77,10 +82,30 @@ class WSManager:
         for ws in dead:
             await self.disconnect(game_id, ws)
 
+    def queue_v2_notice(self, game_id: str, msg_type: str, **payload: object) -> None:
+        """Queue a live hint for protocol-2 viewers without a durable checkpoint."""
+        queues = self._v2_notices.get(game_id)
+        if not queues:
+            return
+        notice = {"type": msg_type, **payload}
+        for queue in queues.values():
+            queue.append(notice)
+        for wakeup in self._v2_wakeups.get(game_id, {}).values():
+            wakeup.set()
+
+    def drain_v2_notices(self, game_id: str, ws: WebSocket) -> list[dict[str, object]]:
+        queue = self._v2_notices.get(game_id, {}).get(id(ws))
+        if not queue:
+            return []
+        notices = list(queue)
+        queue.clear()
+        return notices
+
     async def close_game(self, game_id: str) -> None:
         connections = list(self._connections.pop(game_id, []))
         connections.extend(self._v2_connections.pop(game_id, []))
         self._v2_wakeups.pop(game_id, None)
+        self._v2_notices.pop(game_id, None)
         for ws in connections:
             try:
                 await ws.close()
@@ -239,6 +264,11 @@ class WSHandler:
         page = initial_page
         caught_up_at: int | None = None
         while True:
+            for notice in self.ws_manager.drain_v2_notices(game_id, ws):
+                payload = {
+                    key: value for key, value in notice.items() if key != "type"
+                }
+                await self._send_v2(ws, str(notice["type"]), **payload)
             events = page.get("events", [])
             if not isinstance(events, list):
                 raise RuntimeError("audience service returned invalid events")

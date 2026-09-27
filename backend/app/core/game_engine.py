@@ -258,6 +258,7 @@ class GameEngine:
         self._fault_injector = fault_injector
         self._checkpoint_counter = 0
         self._checkpoint_lock = asyncio.Lock()
+        self._actor_loop: asyncio.AbstractEventLoop | None = None
 
     @staticmethod
     def _public_state_digest(state: GameState) -> str:
@@ -408,6 +409,7 @@ class GameEngine:
     # =================================================================
 
     async def _game_loop(self) -> None:
+        self._actor_loop = asyncio.get_running_loop()
         while self._running and not self.sm.is_terminal():
             await self._wait_if_paused()
             phase = self.sm.get_state()
@@ -542,6 +544,7 @@ class GameEngine:
                 while len(history) < max_turns:
                     seat = wolves[len(history) % len(wolves)]
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    await self.announce_actor(seat)
                     result = await asyncio.to_thread(
                         director.wolf_discussion_turn, state, seat, tuple(history), briefing,
                         pending.wolf_random_hint,
@@ -588,6 +591,7 @@ class GameEngine:
                 votes = list(pending.wolf_votes)
                 for seat in remaining:
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    await self.announce_actor(seat)
                     result = await asyncio.to_thread(
                         director.wolf_vote_turn, state, seat, discussion, tuple(votes), briefing,
                         pending.wolf_random_hint,
@@ -2012,6 +2016,39 @@ class GameEngine:
     # =================================================================
     # Day Operation Functions
     # =================================================================
+
+    async def announce_actor(self, seat: int) -> None:
+        """Tell viewers which seat is generating a night action."""
+        await self.event_bus.publish(
+            BusEvent.ACTING, game_id=self.game_id, seat=seat,
+        )
+
+    def announce_actor_blocking(self, seat: int) -> None:
+        """Publish the acting seat from the pipeline thread before the model call.
+
+        The night point holds the state lock across the model call, so this
+        must not checkpoint. A loop-thread caller only schedules the publish;
+        waiting here would deadlock the loop.
+        """
+        loop = self._actor_loop
+        if loop is None or not loop.is_running():
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            loop.create_task(self.announce_actor(seat))
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.announce_actor(seat), loop,
+            ).result(timeout=5)
+        except Exception:
+            logger.warning(
+                "Failed to announce night actor seat=%s game=%s",
+                seat, self.game_id, exc_info=True,
+            )
 
     async def speak(self, seat: int, context: str) -> Optional[str]:
         """Generate speech for a player. Returns the speech text or None.

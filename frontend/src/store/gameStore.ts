@@ -366,6 +366,7 @@ function deriveState(
       case 'witch_thought':
       case 'seer_thought':
       case 'night_thought':
+        currentSpeaker = event.payload.seat;
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
       case 'death': {

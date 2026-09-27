@@ -660,6 +660,7 @@ describe('public replay state', () => {
 
     expect(useGameStore.getState().roundNumber).toBe(2);
     expect(useGameStore.getState().phase).toBe('night');
+    expect(useGameStore.getState().currentSpeaker).toBe(1);
   });
 
   it('keeps night phase and round across staged night events', () => {
@@ -678,7 +679,7 @@ describe('public replay state', () => {
     useGameStore.getState().seekTo(logs.events.length - 1);
     expect(useGameStore.getState().phase).toBe('night');
     expect(useGameStore.getState().roundNumber).toBe(1);
-    expect(useGameStore.getState().currentSpeaker).toBeNull();
+    expect(useGameStore.getState().currentSpeaker).toBe(6);
   });
 
   it('keeps viewer role and camp on initial players', () => {
