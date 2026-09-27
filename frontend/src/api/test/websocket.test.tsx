@@ -34,21 +34,7 @@ class MockWebSocket {
   }
 }
 
-const PUBLIC_NIGHT_SUBSTEPS = [
-  'werewolf_open',
-  'werewolf_vote',
-  'werewolf_target',
-  'werewolf_close',
-  'witch_open',
-  'witch_action',
-  'witch_close',
-  'seer_open',
-  'seer_check',
-  'seer_close',
-] as const;
-
 const originalSetConnected = useGameStore.getState().setConnected;
-const originalSetNightSubstep = useGameStore.getState().setNightSubstep;
 const originalSetPaused = useGameStore.getState().setPaused;
 
 beforeEach(() => {
@@ -60,7 +46,6 @@ beforeEach(() => {
   );
   useGameStore.setState({
     setConnected: originalSetConnected,
-    setNightSubstep: originalSetNightSubstep,
     setPaused: originalSetPaused,
   });
   useGameStore.getState().reset();
@@ -70,7 +55,6 @@ afterEach(() => {
   cleanup();
   useGameStore.setState({
     setConnected: originalSetConnected,
-    setNightSubstep: originalSetNightSubstep,
     setPaused: originalSetPaused,
   });
   useGameStore.getState().reset();
@@ -102,9 +86,8 @@ describe('useWebSocket', () => {
 
   it('replaces the prior socket and ignores every late callback from it', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const setNightSubstep = vi.fn();
     const setPaused = vi.fn();
-    useGameStore.setState({ setNightSubstep, setPaused });
+    useGameStore.setState({ setPaused });
     const { result } = renderHook(() => useWebSocket());
 
     act(() => result.current.connect('game-1'));
@@ -137,20 +120,11 @@ describe('useWebSocket', () => {
       staleHandlers.message?.({
         data: JSON.stringify({ type: 'paused_state', paused: true }),
       });
-      staleHandlers.message?.({
-        data: JSON.stringify({
-          type: 'night_substep',
-          phase: 'night',
-          substep: 'witch_open',
-          round_number: 2,
-        }),
-      });
       staleHandlers.error?.(new Event('error'));
       staleHandlers.close?.();
     });
     expect(useGameStore.getState().connected).toBe(true);
     expect(setPaused).not.toHaveBeenCalled();
-    expect(setNightSubstep).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
 
     const currentError = new Event('error');
@@ -160,10 +134,9 @@ describe('useWebSocket', () => {
     expect(useGameStore.getState().connected).toBe(false);
   });
 
-  it('accepts only exact paused and public night-substep messages at runtime', () => {
-    const setNightSubstep = vi.fn();
+  it('accepts only exact paused messages at runtime', () => {
     const setPaused = vi.fn();
-    useGameStore.setState({ setNightSubstep, setPaused });
+    useGameStore.setState({ setPaused });
     const { result } = renderHook(() => useWebSocket());
     act(() => result.current.connect('game-1'));
     const socket = MockWebSocket.instances[0];
@@ -171,26 +144,14 @@ describe('useWebSocket', () => {
     act(() => {
       socket.emit({ type: 'paused_state', paused: true });
       socket.emit({ type: 'paused_state', paused: false });
-      PUBLIC_NIGHT_SUBSTEPS.forEach((substep, index) => {
-        socket.emit({
-          type: 'night_substep',
-          phase: 'night',
-          substep,
-          round_number: index + 1,
-        });
-      });
     });
 
     expect(setPaused.mock.calls).toEqual([[true], [false]]);
-    expect(setNightSubstep.mock.calls.map(([value]) => value)).toEqual(
-      PUBLIC_NIGHT_SUBSTEPS.map((substep, index) => ({
-        substep,
-        roundNumber: index + 1,
-      })),
-    );
 
     setPaused.mockClear();
-    setNightSubstep.mockClear();
+    // hasExactKeys 的长度分支与数组分支必须由这些用例守住：
+    // 前者是 {type:'paused_state', paused:true, role:'werewolf'}，
+    // 后者是 []。删掉任一条都会让 websocket.ts 的分支覆盖掉下来。
     const invalidMessages: unknown[] = [
       null,
       [],
@@ -198,17 +159,10 @@ describe('useWebSocket', () => {
       { type: 'paused_state' },
       { type: 'paused_state', paused: 1 },
       { type: 'paused_state', paused: true, role: 'werewolf' },
-      { type: 'night_substep', phase: 'day', substep: 'witch_open', round_number: 1 },
-      { type: 'night_substep', phase: 'night', substep: 'resolve', round_number: 1 },
-      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: 0 },
-      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: -1 },
-      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: 1.5 },
-      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: '1' },
-      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: 1, thought: 'secret' },
+      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: 1 },
     ];
     act(() => invalidMessages.forEach((message) => socket.emit(message)));
     expect(setPaused).not.toHaveBeenCalled();
-    expect(setNightSubstep).not.toHaveBeenCalled();
   });
 
   it('lights the live seat that is taking a night action', () => {

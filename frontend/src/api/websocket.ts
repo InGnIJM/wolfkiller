@@ -3,19 +3,6 @@ import { useGameStore } from '../store/gameStore';
 import { getWsUrl } from '../api/client';
 import type { AudienceEvent } from '../store/types';
 
-const PUBLIC_NIGHT_SUBSTEPS = new Set([
-  'werewolf_open',
-  'werewolf_vote',
-  'werewolf_target',
-  'werewolf_close',
-  'witch_open',
-  'witch_action',
-  'witch_close',
-  'seer_open',
-  'seer_check',
-  'seer_close',
-]);
-
 function hasExactKeys(value: unknown, keys: string[]): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const actualKeys = Object.keys(value);
@@ -34,22 +21,6 @@ function isActing(value: unknown): value is { type: 'acting'; seat: number } {
     && typeof value.seat === 'number'
     && Number.isInteger(value.seat)
     && value.seat > 0;
-}
-
-function isNightSubstep(value: unknown): value is {
-  type: 'night_substep';
-  phase: 'night';
-  substep: string;
-  round_number: number;
-} {
-  return hasExactKeys(value, ['type', 'phase', 'substep', 'round_number'])
-    && value.type === 'night_substep'
-    && value.phase === 'night'
-    && typeof value.substep === 'string'
-    && PUBLIC_NIGHT_SUBSTEPS.has(value.substep)
-    && typeof value.round_number === 'number'
-    && Number.isInteger(value.round_number)
-    && value.round_number > 0;
 }
 
 function isAudienceEvent(value: unknown): value is AudienceEvent {
@@ -124,11 +95,6 @@ export function useWebSocket() {
           useGameStore.getState().setPaused(msg.paused);
         } else if (isActing(msg) && useGameStore.getState().isFollowingLive) {
           useGameStore.getState().setCurrentSpeaker(msg.seat);
-        } else if (isNightSubstep(msg)) {
-          useGameStore.getState().setNightSubstep({
-            substep: msg.substep,
-            roundNumber: msg.round_number,
-          });
         } else {
           const events = audienceEventsFromMessage(msg);
           if (events.length > 0) {
