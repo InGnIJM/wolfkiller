@@ -507,6 +507,7 @@ class GameService:
     def _load_native_games(self) -> None:
         if self.repository is None:
             return
+        stale_registry_games: list[str] = []
         for record in self.repository.list_games():
             game_id = str(record["game_id"])
             try:
@@ -520,7 +521,12 @@ class GameService:
                 continue
             try:
                 state, _ = self._checkpoint_codec.decode(checkpoint["checkpoint"])
-            except Exception:
+            except Exception as error:
+                if isinstance(error, CheckpointError) and "mismatch" in str(error):
+                    stale_registry_games.append(game_id)
+                    if record["execution_status"] in {"paused", "interrupted", "failed"}:
+                        self._mark_recovery_blocked(game_id, "checkpoint_corrupt")
+                    continue
                 logger.exception("Cannot decode checkpoint for game %s", game_id)
                 if record["execution_status"] in {"paused", "interrupted", "failed"}:
                     self._mark_recovery_blocked(game_id, "checkpoint_corrupt")
@@ -534,6 +540,13 @@ class GameService:
                 "storage_revision": int(checkpoint["storage_revision"]),
                 "execution_generation": int(record["execution_generation"]),
             }
+        if stale_registry_games:
+            sample = ", ".join(stale_registry_games[:5])
+            logger.warning(
+                "Skipped %d game(s) frozen under a previous role registry; "
+                "they cannot resume (e.g. %s)",
+                len(stale_registry_games), sample,
+            )
 
     def get_execution_info(self, game_id: str) -> dict[str, object]:
         if self.repository is None:
