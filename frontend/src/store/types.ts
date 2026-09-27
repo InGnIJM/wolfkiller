@@ -368,12 +368,6 @@ export type WSMessage =
   | { type: 'vote_cast'; vote: VoteRecord }
   | { type: 'player_died'; death: DeathRecord }
   | { type: 'game_over'; win_result: WinResult; state: PublicGameState }
-  | {
-      type: 'night_substep';
-      phase: 'night';
-      substep: string;
-      round_number: number;
-    }
   | { type: 'paused_state'; paused: boolean };
 
 // ── Model config & game creation catalog ──────────────────────

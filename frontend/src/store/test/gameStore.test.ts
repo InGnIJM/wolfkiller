@@ -918,7 +918,6 @@ describe('public replay state', () => {
     useGameStore.getState().addDeath({ player_seat: 1, cause: 'poison', round_number: 3 });
     useGameStore.getState().addDeath({ player_seat: 99, cause: 'hunter_shot', round_number: 3 });
     useGameStore.getState().setConnected(true);
-    useGameStore.getState().setNightSubstep({ substep: 'resolve', roundNumber: 4 });
     useGameStore.getState().setCurrentSpeaker(2);
     useGameStore.getState().setWinResult({
       winning_camp: 'good',
@@ -935,7 +934,7 @@ describe('public replay state', () => {
     expect(result.votes).toHaveLength(1);
     expect(result.deathHistory).toHaveLength(3);
     expect(result.connected).toBe(true);
-    expect(result.roundNumber).toBe(4);
+    expect(result.roundNumber).toBe(3);
     expect(result.currentSpeaker).toBe(2);
     expect(result.phase).toBe('game_over');
     expect(result.showHistory).toBe(true);

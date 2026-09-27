@@ -65,7 +65,6 @@ interface GameStore extends DerivedState {
   addDeath: (death: DeathRecord) => void;
   setWinResult: (result: WinResult) => void;
   setConnected: (connected: boolean) => void;
-  setNightSubstep: (data: { substep: string; roundNumber: number }) => void;
   setPaused: (paused: boolean) => void;
   setCurrentSpeaker: (seat: number | null) => void;
 
@@ -554,11 +553,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setWinResult: (result) => set({ winResult: result, phase: 'game_over', showWinOverlay: true }),
   setConnected: (connected) => set({ connected }),
-  setNightSubstep: ({ roundNumber }) => set({
-    phase: 'night',
-    roundNumber,
-    currentSpeaker: null,
-  }),
   setPaused: (paused) => set({ isPaused: paused }),
   setCurrentSpeaker: (seat) => set({ currentSpeaker: seat }),
 
