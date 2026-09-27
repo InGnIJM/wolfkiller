@@ -237,3 +237,24 @@
   sheriff first-round (`kind='vote'`) and PK (`kind='pk'`) ballots share one
   `round_number`, so split them by `kind` and let the PK bucket replace the
   first round wholesale instead of filtering by round number.
+- Trigger: a night audience event renders nowhere on the live stage while its
+  neighbours do (night wolf ballots were the case: `wolf_chat_message` had a
+  card in `ActivityCard` and a chip in `CenterDisplay`, `wolf_vote` had neither
+  — its `case` was dropped in the commit that moved the detail card out of
+  `CenterDisplay`, and only `HistoryPanel` kept rendering it). Action: when a
+  render surface is refactored, diff the **event-type switch**, not the file
+  list — a card that moves house keeps compiling while its `case` disappears.
+  Cover every new branch with a component test: neither `ActivityCard.tsx` nor
+  `CenterDisplay.tsx` is inside the `vite.config.ts` coverage gate, so nothing
+  else catches a missing `case`.
+- Trigger: gating night seat-map ballots on `phase === 'night'`, or on the
+  `phase: night` event's round number. Action: don't — the audience stream
+  carries **no** `phase: night` for the first night (the store's derived phase
+  stays `waiting`, because `deriveState` only reads `phase` events), and the
+  `phase: night` event that opens night N+1 carries round number **N** while
+  that night's own events (`night_thought` / `night_action` /
+  `wolf_chat_message` / `wolf_vote`) carry **N+1**. Gate on the current timeline
+  entry being a night event instead, and take the ballots whose `round_number`
+  equals that entry's: `phase`-based gating misses the entire first night, and
+  the phase round number draws the previous night's ballots for the opening
+  frame of every later night.
