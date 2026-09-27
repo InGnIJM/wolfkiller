@@ -227,3 +227,13 @@
   `STEP_COMMITTED` branch with empty visibility rather than re-emitting a
   `SPEECH_MADE` for words that were never spoken — keep it that way when adding
   checkpoints that only persist bookkeeping.
+- Trigger: an audience event that renders in `ActivityCard` / `CenterDisplay` /
+  `HistoryPanel` but never shows up on the seat map (sheriff ballots were the
+  case: `SHERIFF_VOTE` had three render branches and zero seat badges).
+  Action: the seat map derives its own `voteTargets` in `GameBoard` behind
+  **two** gates — a phase gate and an event-type gate — so a new vote kind has
+  to pass both. The election window is `phase === 'sheriff_election'`, a
+  *synthesized* phase (the audience stream carries no election phase event), and
+  sheriff first-round (`kind='vote'`) and PK (`kind='pk'`) ballots share one
+  `round_number`, so split them by `kind` and let the PK bucket replace the
+  first round wholesale instead of filtering by round number.
