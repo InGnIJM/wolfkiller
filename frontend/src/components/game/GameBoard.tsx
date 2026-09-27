@@ -40,6 +40,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
   const {
     players, phase, roundNumber, winResult, showWinOverlay, revealOnDeath,
     showHistory, currentSpeaker, modelSnapshot,
+    badgeCandidates, offBadgeSeats,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
     loadAudienceSnapshot, loadAudienceHistory, mergeAudienceEvents, reset,
     syncMode, streamError, executionStatus,
@@ -269,6 +270,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
               currentSpeaker={currentSpeaker}
               voteTargets={voteTargets}
               modelSnapshot={modelSnapshot}
+              phase={phase}
+              badgeCandidates={badgeCandidates}
+              offBadgeSeats={offBadgeSeats}
             >
               <CenterDisplay />
             </SeatMap>
