@@ -53,6 +53,40 @@ function sheriffVoteTargets(
   return Object.keys(pkRound).length > 0 ? pkRound : firstRound;
 }
 
+// 夜间狼票不能用 phase 判定：观众流里首夜没有 `phase: night` 事件（store 的
+// phase 停在 waiting），而 `phase: night` 携带的又是**上一轮**的 round_number
+// （该夜的事件是 N+1）——按 phase 会漏掉首夜，按 phase 的轮次会画出上一夜的票。
+// 所以窗口由「当前事件是不是夜间事件」界定，票只取与该事件同轮的那些。
+function nightRoundOf(event: PublicReplayEvent): number | null {
+  switch (event.event_type) {
+    case 'wolf_vote':
+    case 'wolf_chat_message':
+    case 'night_thought':
+    case 'night_action':
+      return event.payload.round_number;
+    default:
+      return null;
+  }
+}
+
+function nightWolfVoteTargets(
+  timeline: PublicReplayEvent[],
+  timelineIndex: number,
+): Record<number, number | null> {
+  const current = timelineIndex >= 0 && timelineIndex < timeline.length
+    ? timeline[timelineIndex]
+    : null;
+  const nightRound = current === null ? null : nightRoundOf(current);
+  if (nightRound === null) return {};
+  const targets: Record<number, number | null> = {};
+  for (const event of timeline.slice(0, timelineIndex + 1)) {
+    if (event.event_type !== 'wolf_vote') continue;
+    if (event.payload.round_number !== nightRound) continue;
+    targets[event.payload.seat] = event.payload.target_seat;
+  }
+  return targets;
+}
+
 export default function GameBoard({ onBack, gameId }: Props) {
   const { connect, disconnect } = useWebSocket();
   const {
@@ -207,6 +241,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
         voteTargets[event.payload.voter_seat] = event.payload.target_seat;
       }
     }
+  } else {
+    // 其余阶段（含首夜停在 waiting 的情况）由夜间事件本身决定是否出票
+    Object.assign(voteTargets, nightWolfVoteTargets(timeline, timelineIndex));
   }
 
   const stage = loading ? (

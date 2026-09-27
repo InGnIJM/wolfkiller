@@ -482,6 +482,76 @@ describe('GameBoard public replay', () => {
     expect(seatMap).toHaveAttribute('data-vote-targets', '{}');
   });
 
+  // 夜间狼票的显示窗口由「当前事件是不是夜间事件」界定，不看 phase：
+  // 观众流里首夜没有 phase: night 事件（store 的 phase 停在 waiting），
+  // 而 phase: night 携带的是上一轮的 round_number（该夜事件是 N+1）。
+  it('derives the first night wolf ballots without any phase event', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'night_thought', payload: { round_number: 1, seat: 2, action_type: 'guard_reasoning', target_seat: null, reasoning: '首夜空守' } },
+      { ...replayEventMeta, event_type: 'wolf_chat_message', payload: { round_number: 1, seat: 6, text: '刀2号' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 1, seat: 6, target_seat: 2, reasoning: '像神' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 1, seat: 7, target_seat: null, reasoning: '没有合适目标' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(useGameStore.getState().phase).toBe('waiting');
+    expect(seatMap).toHaveAttribute('data-vote-targets', JSON.stringify({ 6: 2, 7: null }));
+  });
+
+  it('keeps the previous night ballots off the seat map when the next night opens', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'night_thought', payload: { round_number: 1, seat: 2, action_type: 'guard_reasoning', target_seat: null, reasoning: '首夜空守' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 1, seat: 6, target_seat: 2, reasoning: '像神' } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'last_words', round_number: 1 } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'vote_casting', round_number: 1 } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'vote_resolution', round_number: 1 } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(useGameStore.getState().phase).toBe('night');
+    expect(seatMap).toHaveAttribute('data-vote-targets', '{}');
+  });
+
+  it('shows only the current night ballots on the seat map', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'night_thought', payload: { round_number: 1, seat: 2, action_type: 'guard_reasoning', target_seat: null, reasoning: '首夜空守' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 1, seat: 6, target_seat: 2, reasoning: '像神' } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'last_words', round_number: 2 } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 2 } },
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 2 } },
+      { ...replayEventMeta, event_type: 'night_thought', payload: { round_number: 3, seat: 2, action_type: 'guard_reasoning', target_seat: null, reasoning: '继续空守' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 3, seat: 6, target_seat: 5, reasoning: '像女巫' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 3, seat: 7, target_seat: 5, reasoning: '跟票' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(seatMap).toHaveAttribute('data-vote-targets', JSON.stringify({ 6: 5, 7: 5 }));
+  });
+
+  it('keeps night ballots out of the daytime vote branch', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'vote_casting', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'phase', payload: { phase: 'vote_casting', round_number: 1 } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 1, seat: 6, target_seat: 2, reasoning: '像神' } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(seatMap).toHaveAttribute('data-vote-targets', '{}');
+  });
+
   it('polls public logs while the game is in progress and ignores poll failures', async () => {
     vi.useFakeTimers();
     const activeLogs: GameLogs = {
