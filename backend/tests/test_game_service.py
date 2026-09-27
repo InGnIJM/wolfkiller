@@ -2262,6 +2262,9 @@ class TestCommandProvider:
             conversation_log=MagicMock(),
             game_logger=GameLogger(data_dir=str(tmp_path)),
             _rng=random.Random(7),
+            # The provider announces the acting seat before a night skill, so a
+            # hand-rolled engine fake has to carry that method too.
+            announce_actor_blocking=MagicMock(),
         )
         engine.conversation_log.get_conversations_for_role.return_value = []
         service._engines = {"g": engine}
