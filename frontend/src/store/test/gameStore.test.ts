@@ -94,6 +94,47 @@ describe('public replay state', () => {
     expect(useGameStore.getState().players[3].is_sheriff).toBe(false);
   });
 
+  it('derives the on-badge and off-badge seats from the campaign events', () => {
+    const players: Record<number, PublicPlayerState> = {
+      1: { seat_number: 1, is_alive: true, is_sheriff: false },
+      2: { seat_number: 2, is_alive: true, is_sheriff: false },
+      3: { seat_number: 3, is_alive: true, is_sheriff: false },
+      4: { seat_number: 4, is_alive: true, is_sheriff: false },
+      5: { seat_number: 5, is_alive: true, is_sheriff: false },
+    };
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'sheriff_election', round_number: 1 } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 1, choice: 'run' } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 2, choice: 'pass' } },
+        { ...replayEventMeta, event_type: 'sheriff_run', payload: { round_number: 1, seat: 4, choice: 'run' } },
+        { ...replayEventMeta, event_type: 'sheriff_withdraw', payload: { round_number: 1, seat: 4, choice: 'withdraw' } },
+        { ...replayEventMeta, event_type: 'death', payload: { player_seat: 4, cause: 'self_explode', round_number: 1 } },
+      ],
+    };
+
+    useGameStore.getState().initPlayersFromDetail(players);
+    useGameStore.getState().loadLogs(logs);
+
+    useGameStore.getState().seekTo(0);
+    expect(useGameStore.getState().badgeCandidates).toEqual([]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([1, 2, 3, 4, 5]);
+
+    useGameStore.getState().seekTo(1);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3, 4, 5]);
+
+    // 退水者仍是警上（后端 ran 集合不因退水回滚），出局后两组都不再挂标
+    useGameStore.getState().seekTo(4);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1, 4]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3, 5]);
+
+    useGameStore.getState().seekTo(5);
+    expect(useGameStore.getState().badgeCandidates).toEqual([1]);
+    expect(useGameStore.getState().offBadgeSeats).toEqual([2, 3, 5]);
+  });
+
   it('clears the badge on lost elections, torn badges, and missing seats', () => {
     const players: Record<number, PublicPlayerState> = {
       1: { seat_number: 1, is_alive: true, is_sheriff: false },

@@ -27,6 +27,10 @@ interface DerivedState {
   roundNumber: number;
   winResult: WinResult | null;
   currentSpeaker: number | null;
+  /** 竞选期「警上」：已上警且仍存活的座位（含后续退水者，与后端 ran 集合一致） */
+  badgeCandidates: number[];
+  /** 竞选期「警下」：开选时存活且从未上警、当前仍存活的座位 */
+  offBadgeSeats: number[];
 }
 
 interface GameStore extends DerivedState {
@@ -97,6 +101,8 @@ const emptyDerivedState: DerivedState = {
   roundNumber: 0,
   winResult: null,
   currentSpeaker: null,
+  badgeCandidates: [],
+  offBadgeSeats: [],
 };
 
 const initialState = {
@@ -271,6 +277,9 @@ function deriveState(
   let roundNumber = 0;
   let winResult: WinResult | null = null;
   let currentSpeaker: number | null = null;
+  // 竞选期「警上」名单：sheriff_run 里 choice === 'run' 的座位。
+  // 与后端 office.candidates 一致：退水者仍算警上（不恢复警长投票权）。
+  const ranForSheriff = new Set<number>();
 
   for (let index = 0; index <= upToIndex && index < timeline.length; index += 1) {
     const event = timeline[index];
@@ -352,6 +361,9 @@ function deriveState(
         break;
       }
       case 'sheriff_run':
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        if (event.payload.choice === 'run') ranForSheriff.add(event.payload.seat);
+        break;
       case 'sheriff_withdraw':
       case 'sheriff_vote':
       case 'sheriff_side':
@@ -416,7 +428,27 @@ function deriveState(
     applyCurrentSheriffSnapshot(players, currentPublicPlayers);
   }
 
-  return { players, speeches, votes, deathHistory, nightActions, phase, roundNumber, winResult, currentSpeaker };
+  // 竞选期的两组座位：出局座位不参与高亮（警上死于自爆、警下死于夜刀都不该继续挂标）
+  const aliveSeats = Object.entries(players)
+    .filter(([, player]) => player.is_alive)
+    .map(([seat]) => Number(seat))
+    .sort((left, right) => left - right);
+  const badgeCandidates = aliveSeats.filter((seat) => ranForSheriff.has(seat));
+  const offBadgeSeats = aliveSeats.filter((seat) => !ranForSheriff.has(seat));
+
+  return {
+    players,
+    speeches,
+    votes,
+    deathHistory,
+    nightActions,
+    phase,
+    roundNumber,
+    winResult,
+    currentSpeaker,
+    badgeCandidates,
+    offBadgeSeats,
+  };
 }
 
 function startTimer(get: () => GameStore) {
@@ -450,6 +482,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       nightActions: [],
       winResult: state.win_result,
       currentSpeaker: null,
+      // 快照不带竞选名单，等观众事件按 sheriff_run 重建
+      badgeCandidates: [],
+      offBadgeSeats: [],
       executionStatus: state.execution_status ?? null,
       recoverable: state.recoverable ?? false,
       recoveryBlockCode: state.recovery_block_code ?? null,
@@ -564,6 +599,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       nightActions: [],
       winResult: state.win_result,
       currentSpeaker: null,
+      // 快照不带竞选名单，等观众事件按 sheriff_run 重建
+      badgeCandidates: [],
+      offBadgeSeats: [],
       syncMode: 'incremental',
       audienceCursor: 0,
       audienceHighWatermark: snapshot.seq,
