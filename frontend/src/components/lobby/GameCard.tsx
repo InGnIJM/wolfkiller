@@ -6,6 +6,7 @@ import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import type { ExecutionStatus } from '../../store/types';
+import { recoveryBlockLabel } from './recoveryLabels';
 import { HAIRLINE } from '../../theme/tokens';
 
 interface Props {
@@ -99,7 +100,7 @@ export default function GameCard({
                     size="small"
                     color={executionStatus === 'failed' || executionStatus === 'recovery_blocked' ? 'error' : 'default'}
                     variant="outlined"
-                    title={recoveryBlockCode ?? undefined}
+                    title={recoveryBlockLabel(recoveryBlockCode) ?? undefined}
                   />
                 )}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -143,13 +144,16 @@ export default function GameCard({
                 <PlayCircleIcon fontSize="small" sx={{ mr: 1 }} />继续执行
               </MenuItem>
             )}
-            {(executionStatus === 'interrupted' || executionStatus === 'recovery_blocked') && onRecover && (
+            {(executionStatus === 'interrupted'
+              || executionStatus === 'failed'
+              || executionStatus === 'recovery_blocked') && onRecover && (
               <MenuItem
                 disabled={controlBusy || !recoverable}
-                title={!recoverable ? recoveryBlockCode ?? '此对局无法恢复' : undefined}
+                title={!recoverable ? recoveryBlockLabel(recoveryBlockCode) ?? '此对局无法恢复' : undefined}
                 onClick={() => { setMenuEl(null); onRecover(); }}
               >
-                <RestartAltIcon fontSize="small" sx={{ mr: 1 }} />恢复对局
+                <RestartAltIcon fontSize="small" sx={{ mr: 1 }} />
+                {executionStatus === 'recovery_blocked' ? '重试恢复' : '恢复对局'}
               </MenuItem>
             )}
             <MenuItem onClick={() => { setMenuEl(null); onRename(); }}>重命名</MenuItem>
