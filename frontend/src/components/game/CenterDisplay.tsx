@@ -33,6 +33,12 @@ const CAUSE_LABELS: Record<string, string> = {
   charm: '殉情',
 };
 
+const PLAYER_STATUS_LABELS: Record<string, string> = {
+  poisoned: '中毒未死',
+  wounded: '中枪未死',
+  delayed_death: '延迟结算',
+};
+
 const THOUGHT_LABELS: Record<string, string> = {
   witch_reasoning: '女巫',
   seer_reasoning: '预言家',
@@ -366,6 +372,13 @@ function EventSummary({
     case 'technical_abstain':
       text = `${entry.payload.voter_seat}号 系统代投弃权`;
       tone = '#F4B3B6';
+      break;
+    case 'player_status':
+      // 结算给一个座位留下的标记：中毒/中枪但被延迟结算，或延迟死亡本身。
+      text = `${entry.payload.player_seat}号 ${
+        PLAYER_STATUS_LABELS[entry.payload.status] ?? entry.payload.status
+      }`;
+      tone = '#E8C887';
       break;
     case 'exile_cancelled':
       text = `${entry.payload.target_seat}号翻牌免于出局`;

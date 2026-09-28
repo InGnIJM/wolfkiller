@@ -407,6 +407,7 @@ function deriveState(
       case 'knight_duel':
       case 'wolf_beauty_charm':
       case 'wolf_beauty_revenge':
+      case 'player_status':
         // 技能事件自带轮次，但不代表某个座位「正在发言」，所以只推进轮次。
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;

@@ -298,6 +298,7 @@ function ChatView({
   roundNumber,
   timestamp,
   durationSec,
+  dayPlan = '',
   label = '狼群密谋',
   tag = 'WOLF CHAT',
   metaKind = '狼聊',
@@ -307,6 +308,7 @@ function ChatView({
   roundNumber: number;
   timestamp: string;
   durationSec: number | null;
+  dayPlan?: string;
   label?: string;
   tag?: string;
   metaKind?: string;
@@ -337,6 +339,20 @@ function ChatView({
       >
         {text}
       </Typography>
+      {dayPlan ? (
+        <Typography
+          variant="caption"
+          sx={{
+            display: 'block',
+            mt: 1,
+            color: '#F4B3B6',
+            fontWeight: 600,
+            letterSpacing: 0.5,
+          }}
+        >
+          次日计划：{dayPlan}
+        </Typography>
+      ) : null}
       <MetaRow
         roundNumber={roundNumber}
         kind={metaKind}
@@ -549,6 +565,7 @@ export default function ActivityCard() {
         <ChatView
           seat={entry.payload.seat}
           text={entry.payload.text}
+          dayPlan={entry.payload.day_plan ?? ''}
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}
