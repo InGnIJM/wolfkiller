@@ -1,12 +1,33 @@
 """Audience projection must emit the documented public payload keys."""
 
-from app.services.audience_projector import AudienceProjector
+from app.services.audience_projector import AudienceProjector, _EVENTS
 
 
 def _event(event_type: str, payload: dict, visibility=("PUBLIC",)) -> dict:
     return {
         "event_id": "evt", "event_type": event_type,
         "payload": payload, "visibility": list(visibility),
+    }
+
+
+def test_public_event_catalogue_is_frozen() -> None:
+    """The public event types are a contract the frontend renders.
+
+    Adding one without a matching render branch is exactly how an event
+    disappears from the stage, so the set is frozen here: update it, then add
+    the render case and a row in
+    ``frontend/src/components/game/test/eventCoverage.test.tsx``.
+    """
+    public_types = {definition[0] for definition in _EVENTS.values()}
+    assert public_types == {
+        "game_initialized", "player_revealed", "execution_state", "phase",
+        "speech", "speaking", "death", "vote", "vote_result", "winner",
+        "night_action", "night_thought", "technical_abstain",
+        "exile_cancelled", "self_explode",
+        "knight_duel", "wolf_beauty_charm", "wolf_beauty_revenge",
+        "wolf_chat_message", "wolf_vote",
+        "sheriff_elected", "sheriff_badge", "sheriff_run",
+        "sheriff_withdraw", "sheriff_vote", "sheriff_side",
     }
 
 
