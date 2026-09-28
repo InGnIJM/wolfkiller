@@ -510,7 +510,23 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.getAllByText('第2天').length).toBeGreaterThan(0);
   });
 
-  it('renders the charm card in the night chronicle', () => {
+  it('renders the charm card with the charmed seat in the night chronicle', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_charm',
+          payload: { seat: 6, target_seat: 2, round_number: 3 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/6号魅惑2号 · 第3轮/)).toBeVisible();
+    expect(screen.getAllByText('第3夜').length).toBeGreaterThan(0);
+  });
+
+  it('marks an archived charm entry as missing its target', () => {
     useGameStore.setState({
       timeline: [
         {
@@ -522,8 +538,7 @@ describe('HistoryPanel role-skill event cards', () => {
     });
     render(<HistoryPanel onClose={vi.fn()} />);
 
-    expect(screen.getByText(/6号发动魅惑/)).toBeVisible();
-    expect(screen.getAllByText('第3夜').length).toBeGreaterThan(0);
+    expect(screen.getByText(/6号发动魅惑 · 第3轮 · 目标未记录/)).toBeVisible();
   });
 
   it('files the revenge under the phase that triggered the exit', () => {

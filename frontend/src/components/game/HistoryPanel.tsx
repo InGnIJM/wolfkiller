@@ -347,7 +347,9 @@ function EventCard({
     case 'wolf_beauty_charm':
       content = (
         <Typography variant="caption" sx={{ color: 'secondary.main', fontWeight: 500 }}>
-          {event.payload.seat}号发动魅惑 · 第{event.payload.round_number}轮
+          {event.payload.target_seat == null
+            ? `${event.payload.seat}号发动魅惑 · 第${event.payload.round_number}轮 · 目标未记录`
+            : `${event.payload.seat}号魅惑${event.payload.target_seat}号 · 第${event.payload.round_number}轮`}
         </Typography>
       );
       break;
