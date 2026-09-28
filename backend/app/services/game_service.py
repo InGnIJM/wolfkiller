@@ -1744,14 +1744,21 @@ class GameService:
             last = history[-1] if history else ""
             if last.startswith(prefix) and not last.endswith("（跳过）"):
                 text = last[len(prefix):]
-                plan = text.rfind("（次日计划：")
-                if plan >= 0:
-                    text = text[:plan]
+                # The engine appends the turn's next-day plan to the line it
+                # keeps in the channel; the god view gets it as its own field
+                # instead of a parenthesis glued to the chat text.
+                day_plan = ""
+                marker = text.rfind("（次日计划：")
+                if marker >= 0 and text.endswith("）"):
+                    day_plan = text[marker + len("（次日计划："):-1]
+                    text = text[:marker]
                 event_type = "WOLF_CHAT_MESSAGE"
                 payload = {
                     "seat": seat, "text": text,
                     "round_number": engine.state.round_number,
                 }
+                if day_plan:
+                    payload["day_plan"] = day_plan
             else:
                 event_type = "STEP_COMMITTED"
                 payload = {"position": label}
