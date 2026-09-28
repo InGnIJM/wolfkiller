@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 import sys
 
+from app.core.action_resolver import ActionResolver
+from app.core.action_validator import ActionValidator
+from app.core.context_projector import ContextProjector
+from app.core.effect_applier import EffectApplier
 from app.core.game_engine import GameEngine
+from app.core.scheduler import Scheduler
 from app.core.state_machine import GameEvent
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+from app.models.pipeline import SchedulePoint
 from app.persistence.checkpoint_codec import CheckpointCodec
 from app.persistence.repository import GameRepository
-from app.roles.registry import builtin_registry
+from app.roles.registry import RegistrySnapshot, builtin_registry
 from app.services.audience_projector import AudienceProjector
 from app.services.durable_step_coordinator import DurableStepCoordinator
 from app.services.model_invocation_service import ModelInvocationService
@@ -208,6 +215,105 @@ def _finish_child(process: subprocess.Popen[str]) -> subprocess.CompletedProcess
 
 def _run_child(*arguments: object) -> subprocess.CompletedProcess[str]:
     return _finish_child(_start_child(*arguments))
+
+
+def test_a_drifted_registry_neither_replays_commits_nor_recalls_models(
+    tmp_path,
+) -> None:
+    """A resume under moved-on code must be a no-op, not a replay.
+
+    The durable identities (step key, request token) are stamped with the digest
+    the game was frozen under, so retrying a step after an unrelated role was
+    added has to hit the same commit and the same persisted model result. This is
+    the failure mode the whole frozen-identity design exists to prevent: a
+    re-keyed step would replay deaths and speeches, and a re-keyed request would
+    pay for the same completion twice.
+    """
+    live = builtin_registry.freeze()
+    drifted = RegistrySnapshot(
+        {
+            **live.specs,
+            "wolf-killer-newcomer": replace(
+                live.require("wolf-killer-villager"), role_id="wolf-killer-newcomer",
+            ),
+        },
+        "c" * 64,
+    )
+    repository = GameRepository(tmp_path)
+    try:
+        _create_game(repository)
+        state = GameState(
+            game_id="game", phase=GamePhase.NIGHT, round_number=2,
+            config=GameConfig(role_counts={
+                "wolf-killer-guard": 1, "wolf-killer-villager": 1,
+            }),
+            players={
+                1: PlayerState(1, "wolf-killer-guard", "good"),
+                2: PlayerState(2, "wolf-killer-villager", "good"),
+            },
+            registry_digest=live.digest, pipeline_version="v2",
+            effect_schema_version=1,
+        )
+        engine = GameEngine(
+            "game", config=state.config, data_dir=str(tmp_path / "logs"),
+        )
+        engine.state = state
+        values = {
+            "expected_storage_revision": 0, "execution_generation": 1,
+            "step_key": "round:2:night", "input_facts": {"step_key": "round:2:night"},
+            "result_facts": {"phase": "night"}, "domain_events": [],
+        }
+        _coordinator(repository).commit(
+            state=state, orchestration=engine.export_orchestration(CheckpointCodec(live)),
+            **values,
+        )
+        committed = _semantic_view(repository)
+
+        # The code moved on: the game decodes, keeps its own identity, and the
+        # retry of the same step is recognised as the commit it already made.
+        recovered, orchestration = CheckpointCodec(drifted).decode(
+            repository.load_checkpoint("game")["checkpoint"],
+        )
+        assert recovered.registry_digest == live.digest
+        receipt = _coordinator(repository).commit(
+            state=recovered, orchestration=orchestration, **values,
+        )
+        assert receipt.replayed is True
+        assert _semantic_view(repository) == committed
+
+        # The same point issues the same request token, so the persisted model
+        # result is reused instead of being bought again.
+        scheduler = Scheduler(
+            drifted, ContextProjector(), ActionValidator(), ActionResolver(),
+            EffectApplier(), lambda *_: None,
+        )
+        issued = scheduler.issue(recovered, SchedulePoint.NIGHT_ACTION, drifted)
+        assert [request.role_id for request in issued] == ["wolf-killer-guard"]
+        calls: list[str] = []
+
+        def provider():
+            calls.append("call")
+            return {"text": "persisted"}, {
+                "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
+            }
+
+        service = ModelInvocationService(repository)
+        results = [
+            service.invoke_sync(
+                game_id="game", request_id=issued[0].action_key, actor_seat=1,
+                action_position="night:2:1", frozen_request={"prompt": "fixed"},
+                provider_profile="test", model_id="fake", execution_generation=1,
+                provider_call=provider,
+            )
+            for _ in range(2)
+        ]
+        assert [result.normalized_result["text"] for result in results] == [
+            "persisted", "persisted",
+        ]
+        assert [result.reused for result in results] == [False, True]
+        assert calls == ["call"]
+    finally:
+        repository.close()
 
 
 def test_subprocess_crash_recovers_to_uninterrupted_commit_without_duplicates(
