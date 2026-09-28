@@ -29,9 +29,10 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "SHERIFF_VOTE": ("sheriff_vote", frozenset({"voter_seat", "target_seat", "kind", "round_number"})),
     "SHERIFF_SIDE": ("sheriff_side", frozenset({"seat", "side", "round_number"})),
     # The judge announces the duel verdict publicly, so the audience sees the
-    # challenged camp; the charm deliberately omits its target seat.
+    # challenged camp; the charm publishes its target seat because this stream
+    # is the god view (the players' own view never receives either event).
     "KNIGHT_DUEL": ("knight_duel", frozenset({"seat", "target_seat", "camp", "round_number"})),
-    "WOLF_BEAUTY_CHARM": ("wolf_beauty_charm", frozenset({"seat", "round_number"})),
+    "WOLF_BEAUTY_CHARM": ("wolf_beauty_charm", frozenset({"seat", "target_seat", "round_number"})),
     "WOLF_BEAUTY_REVENGE": ("wolf_beauty_revenge", frozenset({"seat", "target_seat", "cause", "round_number"})),
 }
 

@@ -111,3 +111,21 @@ def test_technical_abstain_already_using_voter_seat_is_preserved() -> None:
     assert projected[0]["payload"] == {
         "voter_seat": 6, "round_number": 1, "failure_code": "parse_error",
     }
+
+
+def test_charm_target_reaches_the_god_view() -> None:
+    """The audience stream is the god view, so the charmed seat is published.
+
+    Wolf Beauty's charm hides its target from the *players* (the relation stays
+    unprojected); the spectator timeline still gets it. Only whitelisted keys
+    pass, so a private field a role adds later cannot ride along.
+    """
+    projected = AudienceProjector().project_events("game", [
+        _event("WOLF_BEAUTY_CHARM", {
+            "seat": 6, "target_seat": 2, "round_number": 3, "last_charmed": 2,
+        }),
+    ])
+
+    assert projected[0]["payload"] == {
+        "seat": 6, "target_seat": 2, "round_number": 3,
+    }
