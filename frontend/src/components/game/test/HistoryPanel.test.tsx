@@ -492,3 +492,65 @@ describe('HistoryPanel memory detail', () => {
     await act(async () => pending.reject(new Error('late failure')));
   });
 });
+
+describe('HistoryPanel role-skill event cards', () => {
+  it('renders the knight duel card in the daytime chronicle', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'knight_duel',
+          payload: { seat: 4, target_seat: 9, camp: 'werewolf', round_number: 2 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/4号骑士翻牌决斗9号/)).toBeVisible();
+    expect(screen.getAllByText('第2天').length).toBeGreaterThan(0);
+  });
+
+  it('renders the charm card in the night chronicle', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_charm',
+          payload: { seat: 6, round_number: 3 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/6号发动魅惑/)).toBeVisible();
+    expect(screen.getAllByText('第3夜').length).toBeGreaterThan(0);
+  });
+
+  it('files the revenge under the phase that triggered the exit', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_revenge',
+          payload: { seat: 6, target_seat: 2, cause: 'wolf_kill', round_number: 2 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+    expect(screen.getByText(/6号出局，2号殉情/)).toBeVisible();
+    expect(screen.getAllByText('第2夜').length).toBeGreaterThan(0);
+    cleanup();
+
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_revenge',
+          payload: { seat: 6, target_seat: 2, cause: 'exile', round_number: 4 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+    expect(screen.getAllByText('第4天').length).toBeGreaterThan(0);
+  });
+});

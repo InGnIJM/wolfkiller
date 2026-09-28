@@ -116,6 +116,9 @@ function eventTone(event: PublicReplayEvent): string {
     || event.event_type === 'wolf_chat_message'
     || event.event_type === 'self_explode'
     || event.event_type === 'speaking'
+    || event.event_type === 'knight_duel'
+    || event.event_type === 'wolf_beauty_charm'
+    || event.event_type === 'wolf_beauty_revenge'
   ) return '#F4B3B6';
   if (event.event_type === 'narration') return '#7D7468';
   if (event.event_type.includes('vote')) return '#E8C887';
@@ -127,12 +130,22 @@ function eventTone(event: PublicReplayEvent): string {
 // —— 编年史日分组：夜行动 → 第N夜，其余 → 第N天 ——
 const NIGHT_TYPES = new Set([
   'night_action', 'wolf_vote', 'witch_thought', 'seer_thought',
-  'night_thought', 'wolf_chat_message', 'narration',
+  'night_thought', 'wolf_chat_message', 'narration', 'wolf_beauty_charm',
 ]);
+
+// A revenge lands in the phase of the exit that triggered it: an exile or a
+// duel is settled in daylight, every other cause is settled during the night.
+const DAYTIME_REVENGE_CAUSES: ReadonlySet<string> = new Set(['exile', 'knight_duel']);
+
+function isNightEvent(event: PublicReplayEvent): boolean {
+  if (NIGHT_TYPES.has(event.event_type)) return true;
+  return event.event_type === 'wolf_beauty_revenge'
+    && !DAYTIME_REVENGE_CAUSES.has(event.payload.cause);
+}
 
 function dayLabel(event: PublicReplayEvent): string {
   const round = (event.payload as { round_number?: number }).round_number;
-  return `第${round ?? '?'}${NIGHT_TYPES.has(event.event_type) ? '夜' : '天'}`;
+  return `第${round ?? '?'}${isNightEvent(event) ? '夜' : '天'}`;
 }
 
 function buildDayGroups(events: { event: PublicReplayEvent; index: number }[]) {
@@ -321,6 +334,27 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.target_seat}号翻牌免于出局，失去投票权 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'knight_duel':
+      content = (
+        <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号骑士翻牌决斗{event.payload.target_seat}号 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'wolf_beauty_charm':
+      content = (
+        <Typography variant="caption" sx={{ color: 'secondary.main', fontWeight: 500 }}>
+          {event.payload.seat}号发动魅惑 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'wolf_beauty_revenge':
+      content = (
+        <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号出局，{event.payload.target_seat}号殉情 · 第{event.payload.round_number}轮
         </Typography>
       );
       break;
