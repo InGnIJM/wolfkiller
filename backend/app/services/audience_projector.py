@@ -13,6 +13,10 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "EXECUTION_STATE": ("execution_state", frozenset({"execution_status", "recoverable", "recovery_block_code"})),
     "PHASE_CHANGED": ("phase", frozenset({"phase", "round_number"})),
     "NARRATION": ("narration", frozenset({"round_number", "title", "text"})),
+    # A settlement that spares a delayable seat leaves the marks that explain
+    # the pending death; without this type the god view saw the seat survive a
+    # poison or a shot with no reason given.
+    "STATUS_ADDED": ("player_status", frozenset({"player_seat", "seat", "status", "round_number"})),
     "SPEECH_MADE": ("speech", frozenset({"player_seat", "text", "round_number", "phase"})),
     "SPEAKING": ("speaking", frozenset({"seat", "round_number"})),
     "PLAYER_DIED": ("death", frozenset({"player_seat", "seat", "target_seat", "cause", "round_number"})),
@@ -64,7 +68,7 @@ for _domain_type in _PUBLIC_ROLE_ACTIONS:
         frozenset({"target_seat", "round_number", "vote_counts", "result"}),
     )
 _EVENTS["WOLF_CHAT_MESSAGE"] = (
-    "wolf_chat_message", frozenset({"seat", "text", "round_number"}),
+    "wolf_chat_message", frozenset({"seat", "text", "day_plan", "round_number"}),
 )
 _EVENTS["WOLF_VOTE"] = (
     "wolf_vote", frozenset({"seat", "target_seat", "reasoning", "round_number"}),
@@ -107,6 +111,16 @@ class AudienceProjector:
                 if seat is None:
                     seat = public_payload.get("target_seat")
                 for key in ("player_seat", "seat", "target_seat"):
+                    public_payload.pop(key, None)
+                if seat is not None:
+                    public_payload["player_seat"] = seat
+            if event_type == "STATUS_ADDED":
+                # The settlement names the seat ``seat``; the public contract
+                # keeps the same ``player_seat`` shape a death uses.
+                seat = public_payload.get("player_seat")
+                if seat is None:
+                    seat = public_payload.get("seat")
+                for key in ("player_seat", "seat"):
                     public_payload.pop(key, None)
                 if seat is not None:
                     public_payload["player_seat"] = seat

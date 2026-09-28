@@ -28,7 +28,7 @@ def test_public_event_catalogue_is_frozen() -> None:
         "wolf_chat_message", "wolf_vote",
         "sheriff_elected", "sheriff_badge", "sheriff_run",
         "sheriff_withdraw", "sheriff_vote", "sheriff_side",
-        "narration",
+        "narration", "player_status",
     }
 
 
@@ -146,3 +146,50 @@ def test_a_narration_keeps_only_its_public_keys() -> None:
         "schema_version": 1,
         "payload": {"round_number": 2, "title": "天黑请闭眼", "text": "狼人请睁眼"},
     }]
+
+
+def test_a_delayed_death_status_names_its_player_seat() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("STATUS_ADDED", {
+            "seat": 5, "status": "delayed_death", "round_number": 2,
+            "cause": "poison",
+        }),
+    ])
+
+    assert projected == [{
+        "event_id": "evt:audience",
+        "event_type": "player_status",
+        "schema_version": 1,
+        "payload": {"player_seat": 5, "status": "delayed_death", "round_number": 2},
+    }]
+
+
+def test_a_status_without_a_seat_is_projected_without_one() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("STATUS_ADDED", {"status": "poisoned", "round_number": 1}),
+    ])
+
+    assert projected[0]["payload"] == {"status": "poisoned", "round_number": 1}
+
+
+def test_a_wolf_chat_message_keeps_the_day_plan() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("WOLF_CHAT_MESSAGE", {
+            "seat": 4, "text": "今晚刀预言家", "day_plan": "明天推3号",
+            "round_number": 1, "channel": "private",
+        }),
+    ])
+
+    assert projected[0]["payload"] == {
+        "seat": 4, "text": "今晚刀预言家", "day_plan": "明天推3号", "round_number": 1,
+    }
+
+
+def test_a_status_already_using_player_seat_is_preserved() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("STATUS_ADDED", {"player_seat": 3, "status": "wounded", "round_number": 1}),
+    ])
+
+    assert projected[0]["payload"] == {
+        "player_seat": 3, "status": "wounded", "round_number": 1,
+    }
