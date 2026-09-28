@@ -404,6 +404,12 @@ function deriveState(
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         currentSpeaker = null;
         break;
+      case 'knight_duel':
+      case 'wolf_beauty_charm':
+      case 'wolf_beauty_revenge':
+        // 技能事件自带轮次，但不代表某个座位「正在发言」，所以只推进轮次。
+        roundNumber = Math.max(roundNumber, event.payload.round_number);
+        break;
       case 'wolf_chat_message':
       case 'wolf_vote':
       case 'witch_thought':

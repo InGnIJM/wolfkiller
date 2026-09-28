@@ -868,6 +868,36 @@ describe('public replay state', () => {
     expect(useGameStore.getState().currentSpeaker).toBe(6);
   });
 
+  it('advances the round for the role-skill events without claiming the speaker', () => {
+    const logs: GameLogs = {
+      game_id: 'game-1',
+      events: [
+        { ...replayEventMeta, event_type: 'phase', payload: { phase: 'night', round_number: 1 } },
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_charm',
+          payload: { round_number: 2, seat: 6 },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_revenge',
+          payload: { round_number: 3, seat: 6, target_seat: 2, cause: 'wolf_kill' },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'knight_duel',
+          payload: { round_number: 4, seat: 4, target_seat: 9, camp: 'werewolf' },
+        },
+      ],
+    };
+
+    useGameStore.getState().loadLogs(logs);
+    useGameStore.getState().seekTo(3);
+
+    expect(useGameStore.getState().roundNumber).toBe(4);
+    expect(useGameStore.getState().currentSpeaker).toBeNull();
+  });
+
   it('keeps viewer role and camp on initial players', () => {
     useGameStore.getState().initPlayersFromDetail({
       1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'wolf-killer-werewolf', camp: 'werewolf' },
