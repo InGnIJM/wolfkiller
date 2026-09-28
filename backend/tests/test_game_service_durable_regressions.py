@@ -583,7 +583,7 @@ async def test_recovery_role_factory_lookup_failure_is_a_registry_block(durable,
     config = env_default_client_config()
     monkeypatch.setattr(service, "_resolve_recovery_model_configs", lambda *_: {1: config, 2: config})
     monkeypatch.setattr(module.builtin_registry, "require", MagicMock(side_effect=KeyError("removed role")))
-    with pytest.raises(ValueError, match="registry_mismatch"):
+    with pytest.raises(ValueError, match="registry_incompatible"):
         service._build_recovered_engine(state, {}, {})
 
 

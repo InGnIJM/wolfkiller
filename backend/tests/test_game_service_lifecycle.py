@@ -298,6 +298,39 @@ async def test_manual_recovery_uses_checkpoint_without_new_game_reset(
         repository.close()
 
 
+@pytest.mark.asyncio
+async def test_recovery_refuses_states_the_caller_did_not_accept(tmp_path) -> None:
+    """The default accepts a blocked game; an explicit narrower tuple still wins."""
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="paused", name="paused", config={},
+        execution_status="paused", source="native", model_snapshot=[],
+    )
+    repository.create_game(
+        game_id="blocked", name="blocked", config={},
+        execution_status="interrupted", source="native", model_snapshot=[],
+    )
+    repository.transition_execution(
+        "blocked", expected=("interrupted",), target="recovery_blocked",
+        recovery_block_code="checkpoint_corrupt",
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    try:
+        with pytest.raises(InvalidExecutionTransition):
+            await service.recover_game("paused")
+        with pytest.raises(ValueError, match="checkpoint_corrupt"):
+            await service.recover_game("blocked", expected_statuses=("interrupted",))
+        # A block is retryable by default, so the same game is re-examined and
+        # reports the missing checkpoint instead of the stale block code.
+        with pytest.raises(ValueError, match="checkpoint_missing"):
+            await service.recover_game("blocked")
+    finally:
+        await service.aclose()
+        repository.close()
+
+
 def _state_with_players(game_id: str = "game") -> GameState:
     state = GameState(game_id=game_id, config=GameConfig(
         role_counts={"wolf-killer-villager": 2}, reveal_on_death=True,
@@ -695,8 +728,11 @@ async def test_execution_controls_reject_missing_managed_and_invalid_games(tmp_p
             await service.pause_game("failed")
         with pytest.raises(InvalidExecutionTransition):
             await service.resume_game("failed")
-        with pytest.raises(InvalidExecutionTransition):
+        # ``failed`` is recoverable now, so this reports the missing checkpoint
+        # instead of refusing the transition outright.
+        with pytest.raises(ValueError, match="checkpoint_missing"):
             await service.recover_game("failed")
+        assert repository.get_game("failed")["recovery_block_code"] == "checkpoint_missing"
         assert (await service.pause_benchmark_game("managed"))["execution_status"] == "paused"
         assert (await service.resume_benchmark_game("managed"))["execution_status"] == "running"
         assert (await service.recover_benchmark_game("managed"))["execution_status"] == "running"
@@ -837,8 +873,6 @@ def test_recovery_model_config_validation_matrix(tmp_path, monkeypatch) -> None:
             ({"config": None}, "model_config_missing"),
             ({"config": {**document(), "engine_recovery_version": 2}},
              "checkpoint_version_unsupported"),
-            ({"config": {**document(), "prompt_digest": "old"}},
-             "prompt_version_mismatch"),
             ({"config": {**document(), "model_runtime_version": 2}},
              "model_config_missing"),
             ({"config": {**document(), "model_runtime": {}}},
@@ -869,11 +903,19 @@ def test_recovery_model_config_validation_matrix(tmp_path, monkeypatch) -> None:
 
         changed = dict(parameters)
         changed["model_id"] = f"{parameters['model_id']}-changed"
-        with pytest.raises(ValueError, match="model_config_changed"):
-            service._resolve_recovery_model_configs(state, {"config": document({
-                "config_id": None, "seats": [1, 2], "parameters": changed,
-                "parameters_digest": service_module._parameter_digest(changed),
-            })})
+        # Prompt and parameter drift are recorded rather than enforced: refusing
+        # them made a resume impossible after any prompt wording change or a
+        # model parameter tweak. The game keeps its frozen parameters.
+        assert set(service._resolve_recovery_model_configs(
+            state, {"config": {**document(), "prompt_digest": "old"}},
+        )) == {1, 2}
+        assert service._recovery_warnings["game"] == ["prompt_drift"]
+        resolved_changed = service._resolve_recovery_model_configs(state, {"config": document({
+            "config_id": None, "seats": [1, 2], "parameters": changed,
+            "parameters_digest": service_module._parameter_digest(changed),
+        })})
+        assert resolved_changed[1].model_id == changed["model_id"]
+        assert service._recovery_warnings["game"] == ["prompt_drift", "model_drift"]
 
         saved = document()
         saved["model_runtime"][0]["config_id"] = "saved"
@@ -998,7 +1040,10 @@ async def test_recovery_maps_checkpoint_and_engine_validation_failures(
     )
     cases = [
         ("unsupported checkpoint version 99", "checkpoint_version_unsupported"),
-        ("registry digest mismatch", "registry_mismatch"),
+        # A document whose identity disagrees with itself is corrupt: a role
+        # registry that merely moved on is judged by recovery_compat instead.
+        ("registry identity mismatch", "checkpoint_corrupt"),
+        ("journal registry mismatch", "checkpoint_corrupt"),
         ("malformed state", "checkpoint_corrupt"),
     ]
     try:
@@ -1021,13 +1066,14 @@ async def test_recovery_maps_checkpoint_and_engine_validation_failures(
                 await service.recover_game(game_id)
 
         state = _state_with_players("build")
+        state.registry_digest = service._registry_snapshot.digest
         monkeypatch.setattr(
             service._checkpoint_codec, "decode", lambda _doc: (state, {}),
         )
         for index, source_code in enumerate((
-            "model_config_missing", "model_config_changed", "model_key_unavailable",
-            "prompt_version_mismatch", "checkpoint_version_unsupported",
-            "registry_mismatch", "checkpoint_corrupt", "unexpected detail",
+            "model_config_missing", "model_key_unavailable",
+            "checkpoint_version_unsupported", "registry_incompatible",
+            "checkpoint_corrupt", "unexpected detail",
         )):
             game_id = f"build-{index}"
             state.game_id = game_id
@@ -1195,12 +1241,10 @@ def test_build_recovered_engine_maps_registry_client_and_role_failures(
 ) -> None:
     service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
     state = _state_with_players()
+    # The engine no longer compares the frozen digest with the live one: a role
+    # declaration that moved on is judged by recovery_compat before this point.
     state.registry_digest = "wrong"
     try:
-        with pytest.raises(ValueError, match="registry_mismatch"):
-            service._build_recovered_engine(state, {}, {"config": {}})
-
-        state.registry_digest = service._registry_snapshot.digest
         config = env_default_client_config()
         monkeypatch.setattr(
             service, "_resolve_recovery_model_configs",
@@ -1241,7 +1285,7 @@ def test_build_recovered_engine_maps_registry_client_and_role_failures(
             lambda *_args: {1: config, 2: config},
         )
         state.players[1].role = "unknown-role"
-        with pytest.raises(ValueError, match="registry_mismatch"):
+        with pytest.raises(ValueError, match="registry_incompatible"):
             service._build_recovered_engine(state, {}, {"config": {}})
     finally:
         asyncio.run(service.aclose())

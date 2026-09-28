@@ -33,6 +33,9 @@ from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier
 from app.core.night_flow import NightDirector
+from app.core.role_runtime import (
+    adopt_resource_declaration, resource_declaration_marker,
+)
 from app.core.scheduler import Scheduler
 from app.models.pipeline import ActionCommand as PipelineActionCommand, SchedulePoint
 from app.models.contracts import AcceptedAction, ActionCommand as ContractActionCommand
@@ -42,6 +45,7 @@ from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest, default_game_name
 from app.services.game_summary import build_and_write_summary
 from app.persistence.checkpoint_codec import CheckpointCodec, CheckpointError
+from app.persistence import recovery_compat
 from app.persistence.repository import (
     GameReferencedByBenchmark, GameRepository, InvalidExecutionTransition,
 )
@@ -52,6 +56,25 @@ from app.services.model_invocation_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# A game in one of these states has a durable checkpoint that may still be
+# resumable; ``recovery_blocked`` is included because a block is a diagnosis,
+# not a verdict — the user can fix the cause and retry.
+_RECOVERABLE_STATUSES = frozenset({"paused", "interrupted", "failed", "recovery_blocked"})
+
+# Refusals the recovery path itself may produce once the checkpoint decoded and
+# the registry verdict was resumable. Anything else is reported as corruption.
+_RECOVERY_FAILURE_CODES = frozenset({
+    "model_config_missing", "model_key_unavailable", "registry_incompatible",
+    "checkpoint_version_unsupported", "checkpoint_corrupt",
+})
+
+
+def _decode_failure_code(message: str) -> str:
+    """Map a codec refusal onto a stable, readable block code."""
+    if "unsupported checkpoint version" in message:
+        return "checkpoint_version_unsupported"
+    return "checkpoint_corrupt"
 
 
 def _shuffle_model_assignments(values: list[int]) -> None:
@@ -512,6 +535,7 @@ class GameService:
             None if repository is None else ModelInvocationService(repository)
         )
         self._durable_contexts: dict[str, dict[str, int]] = {}
+        self._recovery_warnings: dict[str, list[str]] = {}
         self._clock_tasks: dict[str, asyncio.Task] = {}
         self._clock_state: dict[str, dict[str, int | float | None]] = {}
 
@@ -544,7 +568,6 @@ class GameService:
     def _load_native_games(self) -> None:
         if self.repository is None:
             return
-        stale_registry_games: list[str] = []
         for record in self.repository.list_games():
             game_id = str(record["game_id"])
             try:
@@ -558,12 +581,17 @@ class GameService:
                 continue
             try:
                 state, _ = self._checkpoint_codec.decode(checkpoint["checkpoint"])
-            except Exception as error:
-                if isinstance(error, CheckpointError) and "mismatch" in str(error):
-                    stale_registry_games.append(game_id)
-                    if record["execution_status"] in {"paused", "interrupted", "failed"}:
-                        self._mark_recovery_blocked(game_id, "checkpoint_corrupt")
-                    continue
+            except CheckpointError as error:
+                # The codec only checks the document's internal consistency, so
+                # this is genuine corruption — a checkpoint written under an
+                # older role registry decodes and stays resumable.
+                logger.exception("Cannot decode checkpoint for game %s", game_id)
+                if record["execution_status"] in {"paused", "interrupted", "failed"}:
+                    self._mark_recovery_blocked(
+                        game_id, _decode_failure_code(str(error)),
+                    )
+                continue
+            except Exception:
                 logger.exception("Cannot decode checkpoint for game %s", game_id)
                 if record["execution_status"] in {"paused", "interrupted", "failed"}:
                     self._mark_recovery_blocked(game_id, "checkpoint_corrupt")
@@ -577,13 +605,6 @@ class GameService:
                 "storage_revision": int(checkpoint["storage_revision"]),
                 "execution_generation": int(record["execution_generation"]),
             }
-        if stale_registry_games:
-            sample = ", ".join(stale_registry_games[:5])
-            logger.warning(
-                "Skipped %d game(s) frozen under a previous role registry; "
-                "they cannot resume (e.g. %s)",
-                len(stale_registry_games), sample,
-            )
 
     def get_execution_info(self, game_id: str) -> dict[str, object]:
         if self.repository is None:
@@ -603,11 +624,71 @@ class GameService:
         block = record["recovery_block_code"]
         return {
             "execution_status": status,
-            "recoverable": status in {"paused", "interrupted"} and block is None,
+            "recoverable": status in _RECOVERABLE_STATUSES,
             "recovery_block_code": block,
             "interruption_count": int(record["interruption_count"]),
             "benchmark_run_id": record["benchmark_run_id"],
         }
+
+    def _note_recovery_warning(self, game_id: str, code: str) -> None:
+        """Record a drift the resumed game continues through.
+
+        Buffered until the engine exists so it can be written to the game's own
+        log next to the recovery verdict, and never as a public event: the
+        audience timeline must not gain a line for a backend version detail.
+        """
+        logger.warning("Recovery drift for game %s: %s", game_id, code)
+        self._recovery_warnings.setdefault(game_id, []).append(code)
+
+    def _write_recovery_audit(
+        self, engine: GameEngine, state: GameState,
+        verdict: recovery_compat.RecoveryAssessment, *, force: bool,
+        from_status: str, execution_generation: int,
+    ) -> None:
+        warnings = tuple(self._recovery_warnings.pop(state.game_id, ()))
+        phase = state.phase.value if hasattr(state.phase, "value") else str(state.phase)
+        engine.game_logger.log_operation(
+            state.game_id, "recovery", state.round_number, phase,
+            data={
+                "level": verdict.level,
+                "code": verdict.code,
+                "reasons": list(verdict.reasons),
+                "forced": bool(force),
+                "warnings": list(warnings),
+                "from_status": from_status,
+                "execution_generation": execution_generation,
+                "frozen_registry_digest": state.registry_digest,
+                "live_registry_digest": self._registry_snapshot.digest,
+            },
+        )
+
+    def _adopt_recovered_resources(
+        self, state: GameState, verdict: recovery_compat.RecoveryAssessment,
+    ) -> None:
+        """Re-point the resource setup marker at the code now running.
+
+        Only reached once a resume has been accepted. This is a metadata write,
+        never a resource effect: the seats keep the values they already have, so
+        a spent potion stays spent and a declaration that grew does not hand out
+        the difference. Without it the next scheduling point would reject the
+        game with ``role resource configuration changed`` — the game would look
+        resumable and then die on its first night.
+
+        When the game never set up resources (no seated role declared any) there
+        is nothing to preserve, so the marker is left alone and the next
+        scheduling point runs the setup under the current declaration.
+        """
+        identity = state.registry_digest
+        if not identity or verdict.level != recovery_compat.DRIFT:
+            return
+        marker = resource_declaration_marker(
+            state, self._registry_snapshot.specs, identity,
+        )
+        runtime = getattr(state, "_pipeline_runtime", None)
+        stored = getattr(runtime, "resource_setup_digest", None)
+        if marker is None or stored is None or stored == marker:
+            return
+        adopt_resource_declaration(state, marker)
 
     def _mark_recovery_blocked(self, game_id: str, code: str) -> None:
         if self.repository is None:
@@ -756,14 +837,14 @@ class GameService:
             raise
         return self.get_execution_info(game_id)
 
-    async def resume_game(self, game_id: str) -> dict[str, object]:
-        return await self._resume_game(game_id, allow_benchmark=False)
+    async def resume_game(self, game_id: str, *, force: bool = False) -> dict[str, object]:
+        return await self._resume_game(game_id, allow_benchmark=False, force=force)
 
-    async def resume_benchmark_game(self, game_id: str) -> dict[str, object]:
-        return await self._resume_game(game_id, allow_benchmark=True)
+    async def resume_benchmark_game(self, game_id: str, *, force: bool = False) -> dict[str, object]:
+        return await self._resume_game(game_id, allow_benchmark=True, force=force)
 
     async def _resume_game(
-        self, game_id: str, *, allow_benchmark: bool,
+        self, game_id: str, *, allow_benchmark: bool, force: bool = False,
     ) -> dict[str, object]:
         if self.repository is None:
             engine = self._engines.get(game_id)
@@ -794,7 +875,7 @@ class GameService:
         if status == "paused":
             return await self._recover_game(
                 game_id, expected_statuses=("paused",),
-                allow_benchmark=allow_benchmark,
+                allow_benchmark=allow_benchmark, force=force,
             )
         raise InvalidExecutionTransition(
             f"cannot transition game from {status} to running"
@@ -802,25 +883,27 @@ class GameService:
 
     async def recover_game(
         self, game_id: str, *,
-        expected_statuses: tuple[str, ...] = ("interrupted",),
+        expected_statuses: tuple[str, ...] = ("interrupted", "failed", "recovery_blocked"),
+        force: bool = False,
     ) -> dict[str, object]:
         return await self._recover_game(
             game_id, expected_statuses=expected_statuses,
-            allow_benchmark=False,
+            allow_benchmark=False, force=force,
         )
 
     async def recover_benchmark_game(
         self, game_id: str, *,
-        expected_statuses: tuple[str, ...] = ("interrupted",),
+        expected_statuses: tuple[str, ...] = ("interrupted", "failed", "recovery_blocked"),
+        force: bool = False,
     ) -> dict[str, object]:
         return await self._recover_game(
             game_id, expected_statuses=expected_statuses,
-            allow_benchmark=True,
+            allow_benchmark=True, force=force,
         )
 
     async def _recover_game(
         self, game_id: str, *, expected_statuses: tuple[str, ...],
-        allow_benchmark: bool,
+        allow_benchmark: bool, force: bool = False,
     ) -> dict[str, object]:
         if self.repository is None:
             raise ValueError("legacy_archive")
@@ -843,18 +926,26 @@ class GameService:
         if checkpoint is None:
             self._mark_recovery_blocked(game_id, "checkpoint_missing")
             raise ValueError("checkpoint_missing")
+        document = checkpoint["checkpoint"]
         try:
-            state, orchestration = self._checkpoint_codec.decode(checkpoint["checkpoint"])
+            state, orchestration = self._checkpoint_codec.decode(document)
         except CheckpointError as error:
-            message = str(error)
-            if "unsupported checkpoint version" in message:
-                code = "checkpoint_version_unsupported"
-            elif "registry" in message or "contract" in message:
-                code = "registry_mismatch"
-            else:
-                code = "checkpoint_corrupt"
+            code = _decode_failure_code(str(error))
             self._mark_recovery_blocked(game_id, code)
             raise ValueError(code) from error
+
+        # Judge the archive against the running code once, here: the checkpoint
+        # codec deliberately only checks the document's internal consistency, so
+        # a role-declaration change reaches this point instead of being refused
+        # as "corrupt". Incompatible games stay refused; drift is resumable but
+        # asks for confirmation, because the game continues under new rules.
+        verdict = recovery_compat.assess(document, state, self._registry_snapshot)
+        if not verdict.resumable:
+            self._mark_recovery_blocked(game_id, str(verdict.code))
+            raise ValueError(str(verdict.code))
+        if verdict.needs_confirmation and not force:
+            raise ValueError(str(verdict.code))
+        self._adopt_recovered_resources(state, verdict)
 
         try:
             engine, clients = self._build_recovered_engine(
@@ -862,12 +953,7 @@ class GameService:
             )
         except ValueError as error:
             code = str(error)
-            if code not in {
-                "model_config_missing", "model_config_changed",
-                "model_key_unavailable", "prompt_version_mismatch",
-                "checkpoint_version_unsupported", "registry_mismatch",
-                "checkpoint_corrupt",
-            }:
+            if code not in _RECOVERY_FAILURE_CODES:
                 code = "checkpoint_corrupt"
             self._mark_recovery_blocked(game_id, code)
             raise ValueError(code) from error
@@ -875,6 +961,10 @@ class GameService:
         updated = self.repository.transition_execution(
             game_id, expected=expected_statuses, target="running",
             increment_generation=True,
+        )
+        self._write_recovery_audit(
+            engine, state, verdict, force=force, from_status=status,
+            execution_generation=int(updated["execution_generation"]),
         )
         context = self._durable_contexts.setdefault(game_id, {})
         context["storage_revision"] = int(checkpoint["storage_revision"])
@@ -1795,8 +1885,13 @@ class GameService:
             raise ValueError("model_config_missing")
         if config_doc.get("engine_recovery_version") != 1:
             raise ValueError("checkpoint_version_unsupported")
+        # Prompt and parameter drift are recorded, not enforced: refusing them
+        # made a resumed game impossible after any prompt wording change or a
+        # temperature tweak, and neither can corrupt a committed state. What the
+        # game already committed stays authoritative; the rest of the game runs
+        # under the current prompt and model settings.
         if config_doc.get("prompt_digest") != _prompt_digest():
-            raise ValueError("prompt_version_mismatch")
+            self._note_recovery_warning(state.game_id, "prompt_drift")
         runtime = config_doc.get("model_runtime")
         if config_doc.get("model_runtime_version") != 1 or not isinstance(runtime, list):
             raise ValueError("model_config_missing")
@@ -1827,7 +1922,10 @@ class GameService:
                     raise ValueError("model_key_unavailable") from error
             current_parameters = _model_parameters(current)
             if current_parameters != dict(parameters):
-                raise ValueError("model_config_changed")
+                # The game keeps the model parameters it was created with (only
+                # ``api_key`` and ``headers`` are read live, because they cannot
+                # be stored); the difference is recorded, not enforced.
+                self._note_recovery_warning(state.game_id, "model_drift")
             try:
                 frozen = LLMClientConfig(
                     api_key=current.api_key,
@@ -1991,8 +2089,9 @@ class GameService:
         self, state: GameState, orchestration: Mapping[str, object],
         record: Mapping[str, object],
     ) -> tuple[GameEngine, dict[int, LLMClient]]:
-        if state.registry_digest != self._registry_snapshot.digest:
-            raise ValueError("registry_mismatch")
+        # Registry compatibility is settled once in ``_recover_game`` (see
+        # recovery_compat); a role-declaration change must not stop the resume
+        # here, because the engine binds the live specs for the remaining game.
         seat_configs = self._resolve_recovery_model_configs(state, record)
         clients: dict[int, LLMClient] = {}
         try:
@@ -2027,9 +2126,11 @@ class GameService:
             except ValueError as error:
                 if str(error) == "checkpoint_corrupt":
                     raise
-                raise ValueError("registry_mismatch") from error
+                # A backstop: recovery_compat already refuses a game whose role
+                # the registry lost, so this only fires if it is bypassed.
+                raise ValueError("registry_incompatible") from error
             except KeyError as error:
-                raise ValueError("registry_mismatch") from error
+                raise ValueError("registry_incompatible") from error
         self._instrument_roles(state.game_id, roles)
 
         snapshot = self._registry_snapshot
