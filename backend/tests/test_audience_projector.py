@@ -28,6 +28,7 @@ def test_public_event_catalogue_is_frozen() -> None:
         "wolf_chat_message", "wolf_vote",
         "sheriff_elected", "sheriff_badge", "sheriff_run",
         "sheriff_withdraw", "sheriff_vote", "sheriff_side",
+        "narration",
     }
 
 
@@ -129,3 +130,19 @@ def test_charm_target_reaches_the_god_view() -> None:
     assert projected[0]["payload"] == {
         "seat": 6, "target_seat": 2, "round_number": 3,
     }
+
+
+def test_a_narration_keeps_only_its_public_keys() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("NARRATION", {
+            "round_number": 2, "title": "天黑请闭眼", "text": "狼人请睁眼",
+            "phase": "night", "internal": "x",
+        }),
+    ])
+
+    assert projected == [{
+        "event_id": "evt:audience",
+        "event_type": "narration",
+        "schema_version": 1,
+        "payload": {"round_number": 2, "title": "天黑请闭眼", "text": "狼人请睁眼"},
+    }]

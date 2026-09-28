@@ -12,6 +12,7 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "PLAYER_REVEALED": ("player_revealed", frozenset({"seat_number", "role", "camp"})),
     "EXECUTION_STATE": ("execution_state", frozenset({"execution_status", "recoverable", "recovery_block_code"})),
     "PHASE_CHANGED": ("phase", frozenset({"phase", "round_number"})),
+    "NARRATION": ("narration", frozenset({"round_number", "title", "text"})),
     "SPEECH_MADE": ("speech", frozenset({"player_seat", "text", "round_number", "phase"})),
     "SPEAKING": ("speaking", frozenset({"seat", "round_number"})),
     "PLAYER_DIED": ("death", frozenset({"player_seat", "seat", "target_seat", "cause", "round_number"})),
