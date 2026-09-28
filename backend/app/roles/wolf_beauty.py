@@ -214,6 +214,11 @@ WOLF_BEAUTY_SPEC = RoleSpec(
         WOLF_BEAUTY_REVENGE_CONTRACT,
     ),
     initial_private_data={"last_charmed": None},
+    # Wolf Beauty may never be the wolf team's own kill target. The kill
+    # contract is shared byte-identically with the whole camp, so the rule
+    # travels as a declared resource and ``validate_werewolf_action`` rejects
+    # the self-vote for whoever declares it.
+    initial_resources={"self_kill_forbidden": 1},
     allowed_effects=frozenset(
         {EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.ADD_RELATION,
          EffectKind.EMIT_EVENT}

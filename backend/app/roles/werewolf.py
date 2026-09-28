@@ -14,9 +14,26 @@ def werewolf_applicable(context: ActionContext) -> bool:
     return context.actor_alive
 
 
+# Declared by roles that may never be the wolf team's own kill target (Wolf
+# Beauty). The kill contract is shared byte-identically across the camp, so the
+# difference cannot live in the declaration — it travels as a resource and is
+# enforced here for whoever declares it.
+SELF_KILL_FORBIDDEN = "self_kill_forbidden"
+
+
 def validate_werewolf_action(
     context: ActionContext, command: ActionCommand,
 ) -> tuple[RuleViolation, ...]:
+    if (
+        command.action_type == "kill"
+        and command.target_seat is not None
+        and command.target_seat == context.actor_seat
+        and bool(context.resources.get(SELF_KILL_FORBIDDEN))
+    ):
+        return (RuleViolation(
+            SELF_KILL_FORBIDDEN,
+            "this role can never be the wolf team's own kill target",
+        ),)
     return ()
 
 

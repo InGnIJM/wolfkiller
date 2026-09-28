@@ -19,7 +19,9 @@ from app.core.scheduler import Scheduler
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
 from app.roles.registry import builtin_registry
-from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC
+from app.roles.werewolf import (
+    WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC, validate_werewolf_action,
+)
 from app.roles.wolf_beauty import (
     WOLF_BEAUTY_CHARM_CONTRACT, WOLF_BEAUTY_REVENGE_CONTRACT, WOLF_BEAUTY_SPEC,
     WolfBeauty, react_wolf_beauty_revenge, resolve_wolf_beauty_action,
@@ -142,6 +144,43 @@ def test_validate_rejects_self_wolves_consecutive_and_immune_targets() -> None:
 def test_validate_tolerates_a_context_without_target_facts() -> None:
     assert validate_wolf_beauty_action(
         context(with_fact=False), command("charm", 3)) == ()
+
+
+def kill_context(
+    *, actor: int = 1, role_id: str = BEAUTY, forced: bool = True,
+) -> ActionContext:
+    """A shared wolf-kill vote; ``forced`` mirrors the role's spec declaration."""
+    contract = WEREWOLF_KILL_CONTRACT
+    resources: dict[str, object] = {"kill": 1}
+    if forced:
+        resources["self_kill_forbidden"] = 1
+    return ActionContext(
+        "g", 8, {"alive_seats": (1, 2, 3)},
+        config_version="a" * 64, contract_id=contract.contract_id,
+        contract_version=contract.schema_version, contract_digest=contract.stable_digest(),
+        round_number=1, phase="night", window_id="wolf",
+        schedule_point=contract.schedule_point, actor_seat=actor,
+        actor_role_id=role_id, actor_alive=True, resources=resources,
+        action_key="wolf:1",
+    )
+
+
+def test_validate_rejects_the_wolf_beauty_voting_for_itself() -> None:
+    violation = validate_werewolf_action(kill_context(actor=1), command("kill", 1))
+    assert [v.code for v in violation] == ["self_kill_forbidden"]
+
+
+def test_validate_lets_the_wolf_beauty_cut_a_teammate_or_pass() -> None:
+    context_ = kill_context(actor=1)
+    assert validate_werewolf_action(context_, command("kill", 2)) == ()
+    assert validate_werewolf_action(context_, command("pass")) == ()
+    assert validate_werewolf_action(context_, command("kill")) == ()
+
+
+def test_validate_lets_every_other_wolf_vote_for_itself() -> None:
+    for role_id in (WOLF, "wolf-killer-werewolf-king"):
+        plain = kill_context(actor=1, role_id=role_id, forced=False)
+        assert validate_werewolf_action(plain, command("kill", 1)) == ()
 
 
 def test_charm_records_the_target_privately_and_hides_it_from_the_log() -> None:
