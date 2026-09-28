@@ -1608,18 +1608,18 @@ class GameEngine:
                 )
                 vote = await self.vote(seat)
                 received_at = time.monotonic()
-                terminal_seats = {
-                    receipt.voter_seat
-                    for receipt in self._vote_service.receipts(window.window_id)
-                }
-                if seat not in terminal_seats:
+                receipt = next((
+                    item for item in self._vote_service.receipts(window.window_id)
+                    if item.voter_seat == seat
+                ), None)
+                if receipt is None:
                     if vote is None:
-                        self._vote_service.technical_abstain(
+                        receipt = self._vote_service.technical_abstain(
                             window.window_id, seat,
                             failure_code="missing_vote_result",
                         )
                     else:
-                        self._vote_service.submit(
+                        receipt = self._vote_service.submit(
                             window.window_id, seat,
                             CastVoteArgs(
                                 action_type=(
@@ -1630,9 +1630,23 @@ class GameEngine:
                             ),
                             received_at=received_at,
                         )
-                await self._durable_checkpoint(
-                    f"vote_received:{self.state.round_number}:{self.state.vote_round}:{seat}"
-                )
+                if receipt.status is VoteStatus.TECHNICAL_ABSTAIN:
+                    # A ballot the system cast for a seat is announced as such.
+                    # The recorded vote has no target, so the plain vote step
+                    # would show the god view a silent abstention with no reason
+                    # while the failure code stayed in the private ledger. The
+                    # two labels are mutually exclusive: a seat commits exactly
+                    # one step, so no ballot is ever published twice. A technical
+                    # abstain always carries its failure code.
+                    await self._durable_checkpoint(
+                        f"vote_technical_abstain:{self.state.round_number}"
+                        f":{self.state.vote_round}:{seat}:{receipt.failure_code}"
+                    )
+                else:
+                    await self._durable_checkpoint(
+                        f"vote_received:{self.state.round_number}"
+                        f":{self.state.vote_round}:{seat}"
+                    )
 
         window = self._vote_service.arm_window(
             window.window_id,
@@ -1667,7 +1681,7 @@ class GameEngine:
                 vote_round=self.state.vote_round,
             )
             for seat in missing_seats:
-                self._vote_service.technical_abstain(
+                receipt = self._vote_service.technical_abstain(
                     window.window_id, seat, failure_code="request_timeout",
                     timeout_type="phase_deadline",
                 )
@@ -1675,6 +1689,12 @@ class GameEngine:
                     self.game_id, self.state.round_number, seat,
                     failure_code="request_timeout", timeout_type="phase_deadline",
                     window_id=window.window_id, vote_round=self.state.vote_round,
+                )
+                # These seats never reached their own vote step, so the timeout
+                # is the only place that can announce what the system cast.
+                await self._durable_checkpoint(
+                    f"vote_technical_abstain:{self.state.round_number}"
+                    f":{self.state.vote_round}:{seat}:{receipt.failure_code}"
                 )
         # Concurrent completions race for the ledger; the seat order of
         # recorded votes is a deterministic invariant, so restore it after

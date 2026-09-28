@@ -1613,6 +1613,18 @@ class GameService:
             payload = ({
                 **votes[-1].to_dict(), "round_number": engine.state.round_number,
             } if votes else {})
+        elif label.startswith("vote_technical_abstain:"):
+            # ``<label>:<round>:<vote_round>:<seat>:<failure_code>``: the ballot
+            # the system cast for a seat whose model failed. The recorded vote
+            # carries no target, so this step is the only place the god view can
+            # learn the seat was not silent by choice.
+            parts = label.split(":")
+            event_type = "TECHNICAL_ABSTAIN"
+            payload = {
+                "round_number": engine.state.round_number,
+                "voter_seat": int(parts[-2]),
+                "failure_code": parts[-1],
+            }
         elif label.startswith("night_death:"):
             event_type = "PLAYER_DIED"
             seat = int(label.split(":")[-1])
