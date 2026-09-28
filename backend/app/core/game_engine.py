@@ -46,6 +46,7 @@ from app.core.sheriff_flow import (
     speech_sides,
 )
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
+from app.core.registry_identity import frozen_registry_digest
 from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult, Scheduler
 from app.models.pipeline import SchedulePoint
@@ -1967,7 +1968,8 @@ class GameEngine:
             raise ValueError("pipeline scheduler is required")
         key = PointKey(
             self.state.game_id, self.state.round_number,
-            Scheduler.point_phase(self.state, slot), point, scheduler.registry.digest,
+            Scheduler.point_phase(self.state, slot), point,
+            frozen_registry_digest(self.state, scheduler.registry),
         )
         journal = point_journal(self.state)
         if journal.get(key) is None:

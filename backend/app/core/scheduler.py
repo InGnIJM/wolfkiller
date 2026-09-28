@@ -21,6 +21,7 @@ from app.core.effect_applier import (
     CommitResult, EffectApplier, EffectPermission, initialize_role_resources,
 )
 from app.core.night_settlement import settlement_key
+from app.core.registry_identity import frozen_registry_digest
 from app.core.state_transaction import state_transaction_lock
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
@@ -294,7 +295,8 @@ class Scheduler:
 
     def _issue_locked(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot, slot: str = "") -> tuple[IssuedActionRequest, ...]:
         for player in state.players.values(): registry.require(player.role)
-        initialize_role_resources(state, registry.specs, registry.digest)
+        identity = frozen_registry_digest(state, registry)
+        initialize_role_resources(state, registry.specs, identity)
         revision = self._revision(state); phase = state.phase.value if hasattr(state.phase, "value") else state.phase
         slot_parts = (slot,) if slot else ()
         requests = []
@@ -307,7 +309,7 @@ class Scheduler:
                 ))
                 prepared = []
                 for seat, player in candidates:
-                    token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, registry.digest, *slot_parts)
+                    token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, identity, *slot_parts)
                     request = IssuedActionRequest(seat, role_id, contract, revision, state.round_number, phase, token, token)
                     context = self.projector.project(state, request, registry)
                     prepared.append((request, context))
@@ -496,7 +498,8 @@ class Scheduler:
         slot = self._slot(slot)
         with _execution_lock(state):
             with state_transaction_lock(state):
-                key = PointKey(state.game_id, state.round_number, self.point_phase(state, slot), point, self.registry.digest)
+                key = PointKey(state.game_id, state.round_number, self.point_phase(state, slot), point,
+                               frozen_registry_digest(state, self.registry))
                 journal = point_journal(state); saved = journal.get(key)
             faults = list(saved.faults) if saved is not None else []
             token = self._faults.set(faults)

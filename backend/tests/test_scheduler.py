@@ -303,6 +303,35 @@ def test_point_journal_key_isolates_round_and_registry() -> None:
     assert len(calls) == 3
 
 
+def test_stamped_digest_keeps_the_journal_hit_when_live_code_changed() -> None:
+    """A role-declaration change must not re-key work the game already committed.
+
+    The live registry digest moves with any declaration, so the journal key (and
+    every request token) is keyed by the digest the game was frozen under. A
+    resumed game therefore still hits its own journal entry instead of replaying
+    the point.
+    """
+    calls = []
+    first_registry = snapshot(spec("r", contract("c")))
+    changed_registry = RegistrySnapshot(first_registry.specs, "b" * 64)
+    game = state("r"); game.registry_digest = "a" * 64
+    provider = lambda *args: (calls.append(args), ActionCommand(action_type="act", target_seat=None, reasoning="ok"))[1]
+    first = scheduler(first_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    second = scheduler(changed_registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+    assert len(calls) == 1
+    assert first == second and len(second.commits) == 1
+
+
+def test_stamped_digest_keeps_request_tokens_stable_when_live_code_changed() -> None:
+    first_registry = snapshot(spec("r", contract("c")))
+    changed_registry = RegistrySnapshot(first_registry.specs, "b" * 64)
+    game = state("r"); game.registry_digest = "a" * 64
+    before = scheduler(first_registry).issue(game, SchedulePoint.NIGHT_ACTION, first_registry)
+    after = scheduler(changed_registry).issue(game, SchedulePoint.NIGHT_ACTION, changed_registry)
+    assert [request.action_key for request in before] == [request.action_key for request in after]
+    assert [request.window_id for request in before] == [request.window_id for request in after]
+
+
 def test_response_journal_resumes_after_committed_event_domain_failure(monkeypatch) -> None:
     response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
     object.__setattr__(response, "react", react_event)
