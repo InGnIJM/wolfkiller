@@ -88,6 +88,17 @@ PUBLIC_NIGHT_SUBSTEPS = frozenset({
     "seer_close",
 })
 
+# Domain event types a daytime pipeline window may emit that are already
+# published through a dedicated checkpoint: deaths through the
+# ``night_death:`` / ``day_interrupted:`` / ``day_reaction:`` /
+# ``exile_reaction:`` / ``delayed_death:`` steps, the card flip through
+# ``exile_cancelled:`` (which synthesises ``EXILE_CANCELLED`` and
+# ``PLAYER_REVEALED`` from state). Replaying them with the window would
+# publish every one of them twice.
+_DAY_POINT_SKIPPED_EVENTS = frozenset({
+    "PLAYER_DIED", "EXILE_CANCELLED", "PLAYER_REVEALED",
+})
+
 _NIGHT_ACTOR_POINTS = frozenset({
     SchedulePoint.NIGHT_ACTION,
     SchedulePoint.NIGHT_WITCH_ACTION,
@@ -1443,6 +1454,22 @@ class GameService:
                     events.append(row)
                 if events:
                     return events
+        if label.startswith("day_point:"):
+            events = []
+            for index, (event_type, payload) in enumerate(engine._pending_point_events):
+                if event_type in _DAY_POINT_SKIPPED_EVENTS:
+                    continue
+                row_payload = _plain_json(payload)
+                row_payload.setdefault("round_number", engine.state.round_number)
+                events.append({
+                    "event_id": f"domain:{event_id}:{index}",
+                    "event_type": event_type,
+                    "payload": row_payload,
+                    "visibility": ["PUBLIC"],
+                    "schema_version": 1,
+                })
+            if events:
+                return events
         payload: dict[str, object]
         event_type: str
         if label == "game_initialized":

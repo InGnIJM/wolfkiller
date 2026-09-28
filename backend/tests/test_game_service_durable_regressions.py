@@ -464,6 +464,70 @@ def test_night_checkpoint_without_public_batch_emits_only_step_marker():
     assert events[0]["visibility"] == []
 
 
+def test_daytime_window_checkpoint_publishes_the_events_it_carries():
+    state = GameState(game_id="game")
+    state.round_number = 3
+    engine = SimpleNamespace(
+        game_id="game", state=state,
+        _pending_point_events=(
+            ("SELF_EXPLODE", {"seat": 4, "target_seat": 10}),
+            ("WEREWOLF_KING_REASONING", {
+                "seat": 4, "action_type": "explode", "target_seat": 10,
+                "reasoning": "4号决定自爆带走10号", "round_number": 3,
+            }),
+        ),
+    )
+    events = GameService._checkpoint_domain_events(
+        engine, "00000042:day_point:day_action:1:4",
+    )
+    assert [event["event_type"] for event in events] == [
+        "SELF_EXPLODE", "WEREWOLF_KING_REASONING",
+    ]
+    # The window payloads carry no round number of their own, so the step fills
+    # it in exactly like the night batch does.
+    assert events[0]["payload"] == {"seat": 4, "target_seat": 10, "round_number": 3}
+    assert [event["visibility"] for event in events] == [["PUBLIC"], ["PUBLIC"]]
+    assert [event["schema_version"] for event in events] == [1, 1]
+    assert events[0]["event_id"] != events[1]["event_id"]
+    assert all(event["event_id"].startswith("domain:") for event in events)
+    assert events[1]["payload"]["reasoning"] == "4号决定自爆带走10号"
+
+
+@pytest.mark.parametrize(
+    ("carried", "published"),
+    [
+        # Deaths keep their own night_death: / day_* announcements.
+        (("PLAYER_DIED", {"player_seat": 6, "cause": "knight_duel"}), []),
+        # A surviving card flip is synthesised by the exile_cancelled: step.
+        (("EXILE_CANCELLED", {"target_seat": 3, "round_number": 2}), []),
+        (("PLAYER_REVEALED", {"seat_number": 3, "role": "x", "camp": "good"}), []),
+        # Everything else the window emitted still reaches the stream.
+        (("KNIGHT_DUEL", {"seat": 2, "target_seat": 6, "camp": "werewolf"}), ["KNIGHT_DUEL"]),
+    ],
+)
+def test_daytime_window_skips_the_events_other_steps_already_publish(carried, published):
+    state = GameState(game_id="game")
+    state.round_number = 2
+    engine = SimpleNamespace(
+        game_id="game", state=state, _pending_point_events=(carried,),
+    )
+    events = GameService._checkpoint_domain_events(
+        engine, "00000043:day_point:post_speech_action:post_speech",
+    )
+    assert [event["event_type"] for event in events] == (published or ["STEP_COMMITTED"])
+
+
+def test_daytime_window_checkpoint_without_events_emits_only_step_marker():
+    engine = SimpleNamespace(
+        game_id="game", state=GameState(game_id="game"), _pending_point_events=(),
+    )
+    events = GameService._checkpoint_domain_events(
+        engine, "00000044:day_point:dawn_reaction:1:4",
+    )
+    assert events[0]["event_type"] == "STEP_COMMITTED"
+    assert events[0]["visibility"] == []
+
+
 @pytest.mark.asyncio
 async def test_recovery_rejects_non_numeric_frozen_runtime_parameter(durable, monkeypatch):
     from tests.test_game_service_lifecycle import _state_with_players

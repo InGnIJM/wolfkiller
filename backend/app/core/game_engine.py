@@ -252,6 +252,13 @@ class GameEngine:
         )
         self._pending_night_completion: _PendingNightCompletion | None = None
         self._pending_night_batch: _PendingNightBatch | None = None
+        # Public events of the daytime pipeline window that just ran, handed to
+        # the very next durable step: the day windows have no ``night_point:``
+        # style checkpoint of their own, and without this channel their events
+        # reach the JSONL log but never the spectator stream. Deliberately *not*
+        # part of the engine checkpoint codec (its field set is exact), because
+        # it is always written immediately before its own commit.
+        self._pending_point_events: tuple[tuple[str, Mapping[str, object]], ...] = ()
         self._night_task: asyncio.Task | None = None
         self._rng = random.Random()
         self._checkpoint_hook = checkpoint_hook
@@ -315,6 +322,7 @@ class GameEngine:
         self.conversation_log.records.clear()
         self._pending_night_completion = None
         self._pending_night_batch = None
+        self._pending_point_events = ()
         self._checkpoint_counter = 0
 
         self.sm.transition(SM_Event.START)
@@ -1487,6 +1495,13 @@ class GameEngine:
             observation.state_digest, observation.public_events, PipelineMode.V2,
         )
         self._log_audience_events(result, self.state.phase.value)
+        # Hand the window's public events to the next durable step. Windows that
+        # produced nothing write no step at all, and a stale tuple can never be
+        # published because a ``day_point:`` commit only happens right after
+        # this assignment.
+        self._pending_point_events = self._pipeline_audience_events(result)
+        if self._pending_point_events:
+            await self._durable_checkpoint(f"day_point:{point.value}:{slot}")
         return result
 
     def _rotate_speech_order(
