@@ -427,6 +427,7 @@ function EventSummary({
 
   return (
     <Box
+      className="wk-event-summary"
       sx={{
         mt: 1,
         display: 'inline-flex',

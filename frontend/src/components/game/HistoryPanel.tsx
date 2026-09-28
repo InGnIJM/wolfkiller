@@ -498,6 +498,10 @@ function EventCard({
         </Typography>
       );
       break;
+    default:
+      // 只驱动 store、没有可见内容的类型（开局座位、翻牌、执行状态）不占位，
+      // 否则编年史里会出现没有正文的空卡片。
+      return null;
   }
 
   const tag = EVENT_TAGS[event.event_type] ?? '事件';
@@ -505,6 +509,7 @@ function EventCard({
 
   return (
     <Box
+      className="wk-chronicle-entry"
       onClick={onClick}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
