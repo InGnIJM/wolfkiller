@@ -1,4 +1,15 @@
-"""Explicit, versioned JSON codec for resumable game checkpoints."""
+"""Explicit, versioned JSON codec for resumable game checkpoints.
+
+The document's ``registry_digest`` is the identity the game was frozen under
+(``GameState.registry_digest``), **not** the live registry's digest: it is what
+the journal keys and idempotency tokens inside the document were derived from.
+Decoding therefore only checks the document's *internal* consistency — the root
+identity must agree with the state's and with every journal key — and never
+compares it against the running code. Whether the live registry is still
+compatible with that frozen identity is decided once, at the recovery entry
+point (``app.persistence.recovery_compat``), because rejecting the document here
+made a resume impossible after any role-declaration change.
+"""
 
 from __future__ import annotations
 
@@ -246,7 +257,7 @@ class CheckpointCodec:
             })
         return _plain({
             "checkpoint_version": CHECKPOINT_VERSION,
-            "registry_digest": self._registry.digest,
+            "registry_digest": state.registry_digest,
             "state": state_doc,
             "pipeline_runtime": runtime_doc,
             "point_journal": journal_doc,
@@ -288,15 +299,22 @@ class CheckpointCodec:
         }, "checkpoint")
         if root["checkpoint_version"] != CHECKPOINT_VERSION:
             raise CheckpointError("unsupported checkpoint version")
-        if root["registry_digest"] != self._registry.digest:
-            raise CheckpointError("registry mismatch")
+        raw_identity = _string(root["registry_digest"], "registry_digest")
         raw_state = dict(_mapping(root["state"], "state"))
         raw_state.setdefault("sheriff_office", dict(_DEFAULT_SHERIFF_OFFICE))
         state_row = _exact(raw_state, _STATE_FIELDS, "state")
         state = self._decode_state(state_row)
+        identity: str | None = None
+        if raw_identity:
+            if state.registry_digest != raw_identity:
+                raise CheckpointError("registry identity mismatch")
+            identity = raw_identity
         runtime = self._decode_runtime(root["pipeline_runtime"])
         setattr(state, "_pipeline_runtime", runtime)
-        entries = tuple(self._decode_journal_entry(item) for item in _array(root["point_journal"], "point_journal"))
+        entries = tuple(
+            self._decode_journal_entry(item, identity)
+            for item in _array(root["point_journal"], "point_journal")
+        )
         point_journal(state).restore_entries(entries)
         orchestration = _mapping(root["orchestration"], "orchestration")
         return state, _plain(orchestration)  # type: ignore[return-value]
@@ -428,6 +446,12 @@ class CheckpointCodec:
     def _decode_request(self, value: object) -> IssuedActionRequest:
         names = {"actor_seat", "role_id", "contract_id", "contract_version", "contract_digest", "context_revision", "round_number", "phase", "window_id", "action_key", "schema_version"}
         row = _exact(value, names, "issued request")
+        # The stored contract version/digest record what the request was issued
+        # under; they are validated for shape only. A moved digest is drift and a
+        # moved schema version is incompatible — both are adjudicated against the
+        # live registry by recovery_compat, not by refusing to decode here.
+        _integer(row["contract_version"], "contract_version", minimum=1)
+        _string(row["contract_digest"], "contract_digest")
         role_id = _string(row["role_id"], "role_id")
         try:
             spec = self._registry.require(role_id)
@@ -438,9 +462,6 @@ class CheckpointCodec:
         if len(matches) != 1:
             raise CheckpointError("unknown request contract")
         contract = matches[0]
-        if (row["contract_version"] != contract.schema_version or
-                row["contract_digest"] != contract.stable_digest()):
-            raise CheckpointError("request contract mismatch")
         try:
             return IssuedActionRequest(
                 _integer(row["actor_seat"], "actor_seat", minimum=1), role_id, contract,
@@ -453,10 +474,10 @@ class CheckpointCodec:
         except (TypeError, ValueError) as error:
             raise CheckpointError(f"invalid issued request: {error}") from error
 
-    def _decode_journal_entry(self, value: object) -> tuple[PointKey, PointCheckpoint]:
+    def _decode_journal_entry(self, value: object, identity: str | None = None) -> tuple[PointKey, PointCheckpoint]:
         row = _exact(value, {"key", "checkpoint"}, "journal entry")
         key_row = _exact(row["key"], {"game_id", "round_number", "phase", "point", "registry_digest"}, "journal key")
-        if key_row["registry_digest"] != self._registry.digest:
+        if identity is not None and key_row["registry_digest"] != identity:
             raise CheckpointError("journal registry mismatch")
         try:
             key = PointKey(

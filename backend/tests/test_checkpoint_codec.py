@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import fields
+from dataclasses import fields, replace
 
 import pytest
 
@@ -17,7 +17,7 @@ from app.models.game import GameConfig, GamePhase, GameState, PlayerState
 from app.models.pipeline import ActionCommand, IssuedActionRequest, SchedulePoint
 from app.persistence.checkpoint_codec import CHECKPOINT_VERSION, CheckpointCodec, CheckpointError
 import app.persistence.checkpoint_codec as checkpoint_codec_module
-from app.roles.registry import builtin_registry
+from app.roles.registry import RegistrySnapshot, builtin_registry
 
 
 def _rich_state() -> GameState:
@@ -244,6 +244,56 @@ def test_checkpoint_rejects_unregistered_contract_reference() -> None:
         codec.decode(document)
 
 
+def _drifted_registry(registry, *, digest: str = "b" * 64):
+    """The same roles, but the seated role's contract digest moved (code changed)."""
+    spec = registry.require("wolf-killer-werewolf")
+    contract = spec.contracts[0]
+    changed = replace(spec, contracts=(replace(contract, order=contract.order + 1), *spec.contracts[1:]))
+    specs = dict(registry.specs)
+    specs[spec.role_id] = changed
+    return RegistrySnapshot(specs, digest)
+
+
+def test_checkpoint_decodes_when_the_live_registry_moved_on() -> None:
+    """A resume must survive a role-declaration change: compatibility is judged
+    once at the recovery entry point, not by rejecting the document here."""
+    registry = builtin_registry.freeze()
+    document = CheckpointCodec(registry).encode(_rich_state(), orchestration={})
+    drifted = _drifted_registry(registry)
+    assert drifted.digest != registry.digest
+    assert drifted.require("wolf-killer-werewolf").contracts[0].stable_digest() != \
+        registry.require("wolf-killer-werewolf").contracts[0].stable_digest()
+
+    restored, _ = CheckpointCodec(drifted).decode(document)
+    assert restored.registry_digest == registry.digest
+    key, checkpoint = point_journal(restored).entries()[0]
+    assert key.registry_digest == registry.digest
+    # The live contract is bound for the resumed run, so the pipeline keeps
+    # validating and resolving against the code that is actually running.
+    assert checkpoint.issued[0].contract is drifted.require("wolf-killer-werewolf").contracts[0]
+
+
+def test_checkpoint_tolerates_a_document_without_a_registry_identity() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    state = _rich_state()
+    state.registry_digest = ""
+    document = codec.encode(state, orchestration={})
+    assert document["registry_digest"] == ""
+    restored, _ = codec.decode(document)
+    assert restored.registry_digest == ""
+    assert point_journal(restored).entries()[0][0].registry_digest == registry.digest
+
+
+def test_checkpoint_rejects_an_identity_that_disagrees_with_its_own_state() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(_rich_state(), orchestration={})
+    document["registry_digest"] = "c" * 64
+    with pytest.raises(CheckpointError, match="registry identity mismatch"):
+        codec.decode(document)
+
+
 def test_codec_public_helpers_validate_types_and_round_trip_values(monkeypatch) -> None:
     registry = builtin_registry.freeze()
     codec = CheckpointCodec(registry)
@@ -293,7 +343,7 @@ def _mutate_nested(document: dict, *path_and_value) -> None:
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        (lambda doc: doc.update(registry_digest="wrong"), "registry mismatch"),
+        (lambda doc: doc.update(registry_digest="wrong"), "registry identity mismatch"),
         (lambda doc: _mutate_nested(doc, "state", "config", "role_counts", {"role": -1}), "role_counts"),
         (lambda doc: _mutate_nested(doc, "state", "config", "reveal_on_death", 1), "reveal_on_death"),
         (lambda doc: _mutate_nested(doc, "state", "config", "enable_sheriff", 1), "enable_sheriff"),
@@ -316,7 +366,8 @@ def _mutate_nested(document: dict, *path_and_value) -> None:
         (lambda doc: _mutate_nested(doc, "pipeline_runtime", "action_counts", {"window": {}}), "pipeline runtime"),
         (lambda doc: _mutate_nested(doc, "pipeline_runtime", "commits", "action-a", "action_key", ""), "invalid commit"),
         (lambda doc: _mutate_nested(doc, "point_journal", 0, "checkpoint", "issued", 0, "role_id", "missing"), "unknown request role"),
-        (lambda doc: _mutate_nested(doc, "point_journal", 0, "checkpoint", "issued", 0, "contract_digest", "wrong"), "contract mismatch"),
+        (lambda doc: _mutate_nested(doc, "point_journal", 0, "checkpoint", "issued", 0, "contract_digest", None), "contract_digest"),
+        (lambda doc: _mutate_nested(doc, "point_journal", 0, "checkpoint", "issued", 0, "contract_version", 0), "contract_version"),
         (lambda doc: _mutate_nested(doc, "point_journal", 0, "checkpoint", "issued", 0, "schema_version", 2), "invalid issued request"),
         (lambda doc: _mutate_nested(doc, "point_journal", 0, "key", "point", "missing"), "invalid point checkpoint"),
         (lambda doc: _mutate_nested(doc, "point_journal", 0, "checkpoint", "issued", 0, "actor_seat", 0), "actor_seat"),
