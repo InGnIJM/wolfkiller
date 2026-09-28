@@ -236,6 +236,15 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'ignore', center: 'render', history: 'render' },
   },
   {
+    what: '结算给座位留下的标记（中毒/中枪未死、延迟死亡）',
+    event: {
+      ...at,
+      event_type: 'player_status',
+      payload: { player_seat: 5, status: 'poisoned', round_number: 2 },
+    },
+    expected: { activity: 'ignore', center: 'render', history: 'render' },
+  },
+  {
     what: '胜负',
     event: { ...at, event_type: 'winner', payload: { winning_camp: 'werewolf', reason: 'all_gods_dead' } },
     expected: { activity: 'ignore', center: 'render', history: 'render' },
@@ -280,7 +289,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(29);
+    expect(listed).toHaveLength(30);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];
