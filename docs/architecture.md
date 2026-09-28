@@ -153,7 +153,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 
 ### 公开事件同步
 
-公开视图由领域事件白名单投影。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王/骑士/狼美人的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）、白狼王自爆（`self_explode`）、警长当选（`sheriff_elected`）与交徽/撕徽（`sheriff_badge`）、座位开始生成发言（`speaking`，早于发言文本）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
+公开视图由领域事件白名单投影。**观众流是上帝视角**（快照直接给每个座位的身份与阵营），所以角色的隐藏信息照常投影：狼美人魅惑（`wolf_beauty_charm`）带 `target_seat`，老酒鬼的 `charm_immune` 也随 `selected_target.resource_labels` 对狼美人可见。对**玩家**保密靠另外三层，不靠剪观众字段——`ContextProjector._public_facts` 只给发言/投票/角色规则，`RELATION` 命名空间不投影（`charmed_by` 只落库），`ConversationLog.visible_to` 按座位过滤。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王/骑士/狼美人的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）、白狼王自爆（`self_explode`）、警长当选（`sheriff_elected`）与交徽/撕徽（`sheriff_badge`）、座位开始生成发言（`speaking`，早于发言文本）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
 
 ## 前端架构
 
