@@ -520,4 +520,49 @@ describe('CenterDisplay event summary', () => {
     });
     expect(screen.getByText('黑夜')).toBeInTheDocument();
   });
+
+  it('summarizes the knight duel with the challenged camp', () => {
+    renderCenter({
+      phase: 'vote_resolution',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'knight_duel',
+          payload: { seat: 4, target_seat: 9, camp: 'werewolf', round_number: 2 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('4号决斗9号（狼人）')).toBeInTheDocument();
+  });
+
+  it('summarizes the charm without naming the charmed seat', () => {
+    renderCenter({
+      phase: 'night',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_charm',
+          payload: { seat: 6, round_number: 3 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('6号发动魅惑')).toBeInTheDocument();
+  });
+
+  it('summarizes the revenge with the dragged seat', () => {
+    renderCenter({
+      phase: 'night',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_revenge',
+          payload: { seat: 6, target_seat: 2, cause: 'wolf_kill', round_number: 3 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('6号出局，2号殉情')).toBeInTheDocument();
+  });
 });

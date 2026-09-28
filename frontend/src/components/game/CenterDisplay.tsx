@@ -62,6 +62,10 @@ const SHERIFF_SIDE_LABELS: Record<string, string> = {
   death_right: '死右',
 };
 
+function campLabel(camp: string): string {
+  return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp;
+}
+
 function deathCauseLabel(
   event: Extract<PublicReplayEvent, { event_type: 'death' }>,
   phase: string,
@@ -365,6 +369,18 @@ function EventSummary({
       break;
     case 'exile_cancelled':
       text = `${entry.payload.target_seat}号翻牌免于出局`;
+      break;
+    case 'knight_duel':
+      text = `${entry.payload.seat}号决斗${entry.payload.target_seat}号（${campLabel(entry.payload.camp)}）`;
+      tone = '#E5484D';
+      break;
+    case 'wolf_beauty_charm':
+      text = `${entry.payload.seat}号发动魅惑`;
+      tone = '#F4B3B6';
+      break;
+    case 'wolf_beauty_revenge':
+      text = `${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`;
+      tone = '#F4B3B6';
       break;
     case 'self_explode':
       text = `${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`;
