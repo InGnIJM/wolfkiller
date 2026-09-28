@@ -1625,6 +1625,13 @@ class GameService:
                 "voter_seat": int(parts[-2]),
                 "failure_code": parts[-1],
             }
+        elif label.startswith("narration:"):
+            # The narration text lives only in the engine's pending slot: it is
+            # written immediately before this step, exactly like the daytime
+            # window batch.
+            pending = getattr(engine, "_pending_narration", None)
+            event_type = "NARRATION"
+            payload = dict(pending) if isinstance(pending, Mapping) else {}
         elif label.startswith("night_death:"):
             event_type = "PLAYER_DIED"
             seat = int(label.split(":")[-1])

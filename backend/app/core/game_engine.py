@@ -259,6 +259,9 @@ class GameEngine:
         # part of the engine checkpoint codec (its field set is exact), because
         # it is always written immediately before its own commit.
         self._pending_point_events: tuple[tuple[str, Mapping[str, object]], ...] = ()
+        # The narration the last ``_narrate`` wrote, for the same reason: the
+        # step that publishes it commits immediately after this assignment.
+        self._pending_narration: dict[str, object] | None = None
         self._night_task: asyncio.Task | None = None
         self._rng = random.Random()
         self._checkpoint_hook = checkpoint_hook
@@ -323,6 +326,7 @@ class GameEngine:
         self._pending_night_completion = None
         self._pending_night_batch = None
         self._pending_point_events = ()
+        self._pending_narration = None
         self._checkpoint_counter = 0
 
         self.sm.transition(SM_Event.START)
@@ -493,6 +497,13 @@ class GameEngine:
 
     async def _narrate(self, title: str, text: str, phase: str = "night") -> None:
         self.game_logger.log_narration(self.game_id, self.state.round_number, phase, title, text)
+        # A narration is a public beat of the timeline, but it is not a pipeline
+        # event: without a step of its own the god view skipped straight from the
+        # night to the speeches while the text stayed in the log.
+        self._pending_narration = {
+            "round_number": self.state.round_number, "title": title, "text": text,
+        }
+        await self._durable_checkpoint(f"narration:{self.state.round_number}")
 
     async def _log_stage_audience(self, result: PointResult) -> None:
         observation = RolePipeline.observe_v2(result)
