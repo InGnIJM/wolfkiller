@@ -163,10 +163,19 @@ export interface NarrationPayload {
   text: string;
 }
 
+export interface PlayerStatusPayload {
+  round_number: number;
+  player_seat: number;
+  /** 结算留下的标记：poisoned / wounded / delayed_death 等，未知值原样显示。 */
+  status: string;
+}
+
 export interface WolfChatMessagePayload {
   round_number: number;
   seat: number;
   text: string;
+  /** 该次狼队发言里给出的次日计划，没有计划时不带这个字段。 */
+  day_plan?: string;
 }
 
 export interface WolfVotePayload {
@@ -291,6 +300,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'speaking', SpeakingPayload>
   | PublicReplayEnvelope<'night_action', NightActionRecord>
   | PublicReplayEnvelope<'narration', NarrationPayload>
+  | PublicReplayEnvelope<'player_status', PlayerStatusPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>
   | PublicReplayEnvelope<'wolf_vote', WolfVotePayload>
   | PublicReplayEnvelope<'witch_thought' | 'seer_thought', ThoughtPayload>

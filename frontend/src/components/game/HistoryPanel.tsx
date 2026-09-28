@@ -93,6 +93,7 @@ const EVENT_TAGS: Record<string, string> = {
   speaking: '开口',
   night_action: '夜间',
   narration: '旁白',
+  player_status: '状态',
   wolf_chat_message: '狼聊',
   wolf_vote: '狼票',
   witch_thought: '思考',
@@ -101,6 +102,12 @@ const EVENT_TAGS: Record<string, string> = {
   death: '死亡',
   phase: '阶段',
   winner: '结局',
+};
+
+const PLAYER_STATUS_LABELS: Record<string, string> = {
+  poisoned: '中毒未死',
+  wounded: '中枪未死',
+  delayed_death: '延迟结算',
 };
 
 const SHERIFF_SIDE_LABELS: Record<string, string> = {
@@ -442,6 +449,9 @@ function EventCard({
       content = (
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
           {event.payload.seat}号：{event.payload.text}
+          {event.payload.day_plan
+            ? `（次日计划：${event.payload.day_plan}）`
+            : ''}
         </Typography>
       );
       break;
@@ -449,6 +459,15 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.seat}号 → {event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`}（{event.payload.reasoning}）
+        </Typography>
+      );
+      break;
+    case 'player_status':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {`${event.payload.player_seat}号 ${
+            PLAYER_STATUS_LABELS[event.payload.status] ?? event.payload.status
+          } · 第${event.payload.round_number}轮`}
         </Typography>
       );
       break;
