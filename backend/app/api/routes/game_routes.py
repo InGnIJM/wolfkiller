@@ -13,6 +13,7 @@ from app.api.schemas import (
     AudienceEventPageResponse, AudienceSnapshotResponse, GameExecutionResponse,
 )
 from app.models.game import Camp
+from app.persistence import recovery_compat
 from app.persistence.repository import GameReferencedByBenchmark, InvalidExecutionTransition
 from app.services.audience_event_service import (
     AudienceCursorAheadError,
@@ -34,6 +35,14 @@ _PUBLIC_GAME_PHASES = frozenset({
     "waiting", "role_deal", "night", "dawn", "last_words",
     "sheriff_election", "speech", "vote_casting", "vote_resolution",
     "game_over", "error",
+})
+
+# Resumable refusals that need the user to answer first: the game would continue
+# under declarations that moved since it started.
+_CONFIRMATION_CODES = frozenset({
+    recovery_compat.ROLE_DECLARATION_DRIFT,
+    recovery_compat.CONTRACT_DIGEST_DRIFT,
+    recovery_compat.REGISTRY_IDENTITY_UNKNOWN,
 })
 _PUBLIC_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot", "exile", "self_explode"})
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
@@ -293,13 +302,18 @@ def _error(status_code: int, code: str, message: str, **details: object) -> HTTP
     )
 
 
-async def _control_game(game_id: str, action: str) -> GameExecutionResponse:
+async def _control_game(
+    game_id: str, action: str, *, force: bool = False,
+) -> GameExecutionResponse:
     service = get_service()
     method = getattr(service, f"{action}_game", None)
     if not callable(method):
         raise _error(409, "recovery_unavailable", "Game recovery is unavailable")
     try:
-        result = await method(game_id)
+        if action == "pause":
+            result = await method(game_id)
+        else:
+            result = await method(game_id, force=force)
     except KeyError:
         raise _error(404, "game_not_found", "Game not found") from None
     except InvalidExecutionTransition as error:
@@ -314,6 +328,10 @@ async def _control_game(game_id: str, action: str) -> GameExecutionResponse:
             info = getter(game_id) if callable(getter) else None
             if isinstance(info, Mapping) and info.get("benchmark_run_id") is not None:
                 details["benchmark_run_id"] = info["benchmark_run_id"]
+        if code in _CONFIRMATION_CODES:
+            # Resumable, but the game would continue under declarations that
+            # changed since it started: the client must ask before forcing it.
+            details["confirmation_required"] = True
         raise _error(409, code, str(error), **details) from None
 
     if not isinstance(result, Mapping):
@@ -337,13 +355,13 @@ async def pause_game(game_id: str):
 
 
 @router.post("/{game_id}/resume", response_model=GameExecutionResponse)
-async def resume_game(game_id: str):
-    return await _control_game(game_id, "resume")
+async def resume_game(game_id: str, force: Annotated[bool, Query()] = False):
+    return await _control_game(game_id, "resume", force=force)
 
 
 @router.post("/{game_id}/recover", response_model=GameExecutionResponse)
-async def recover_game(game_id: str):
-    return await _control_game(game_id, "recover")
+async def recover_game(game_id: str, force: Annotated[bool, Query()] = False):
+    return await _control_game(game_id, "recover", force=force)
 
 
 @router.get("/{game_id}/snapshot", response_model=AudienceSnapshotResponse)

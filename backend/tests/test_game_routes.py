@@ -1687,6 +1687,46 @@ async def test_recovery_blocks_preserve_stable_codes_and_benchmark_ownership(mon
 
 
 @pytest.mark.asyncio
+async def test_control_forwards_the_force_flag_only_where_it_is_meaningful(monkeypatch):
+    service = SimpleNamespace(
+        recover_game=AsyncMock(return_value={"execution_status": "running"}),
+        resume_game=AsyncMock(return_value={"execution_status": "running"}),
+        pause_game=AsyncMock(return_value={"execution_status": "paused"}),
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    await game_routes.recover_game("g", force=True)
+    await game_routes.resume_game("g", force=True)
+    await game_routes.pause_game("g")
+
+    service.recover_game.assert_awaited_once_with("g", force=True)
+    service.resume_game.assert_awaited_once_with("g", force=True)
+    service.pause_game.assert_awaited_once_with("g")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,confirmation", [
+    ("role_declaration_drift", True),
+    ("contract_digest_drift", True),
+    ("registry_identity_unknown", True),
+    ("registry_incompatible", False),
+    ("checkpoint_corrupt", False),
+])
+async def test_only_resumable_drift_asks_the_user_to_confirm(
+    monkeypatch, code, confirmation,
+):
+    service = SimpleNamespace(recover_game=AsyncMock(side_effect=ValueError(code)))
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+    with pytest.raises(HTTPException) as caught:
+        await game_routes.recover_game("g")
+    assert caught.value.detail["code"] == code
+    if confirmation:
+        assert caught.value.detail["confirmation_required"] is True
+    else:
+        assert "confirmation_required" not in caught.value.detail
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state,status", [(None, 404), (SimpleNamespace(phase=SimpleNamespace(value="game_over")), 200)])
 async def test_control_without_response_uses_game_state_or_reports_disappearance(monkeypatch, state, status):
     service = SimpleNamespace(recover_game=AsyncMock(return_value=None), get_game_state=lambda _g: state)
