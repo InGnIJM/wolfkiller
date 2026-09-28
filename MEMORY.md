@@ -102,7 +102,8 @@
   receipts stay authoritative); never re-submit or mutate receipts afterward.
 
 ## Frontend verification under WSL (/mnt/e)
-- Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond". After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.
+- Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond", and a plain `npx vitest run` can fail outright with `Cannot find module '@rolldown/binding-linux-x64-gnu'` (the optional native binary npm skipped on the mount). After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.
+- Trigger: a test file's `vi.mock('.../api/client', ...)` factory returns only the exports the component used *before* this change, and the component now does `instanceof GameControlError` (or imports any new export). Action: spread the real module inside the factory — `vi.mock(path, async (importOriginal) => ({ ...(await importOriginal<typeof import(path)>()), ... }))` — otherwise the mocked module lacks the new export and the access throws `Cannot access 'X' on the mocked module` at render time, which reads like a component bug.
 - Trigger: a live game looks frozen while the timeline speed is already 8x.
   Action: treat this as waiting on the in-flight model call. Timeline 0.5x–8x
   only advances events already persisted; daytime speech is serial and each
@@ -447,3 +448,47 @@
   a published field with no render surface is still invisible, which is why the
   chat card and the chronicle both print the plan (and the absent case is
   asserted too).
+
+## 持久化身份里不要放「当前代码」的 digest
+- Trigger: any durable key or idempotency token (journal key, request
+  `window_id`/`action_key`, a resource-setup marker) is derived from something
+  that changes when the code changes — here the **live** `registry.digest`.
+  Action: key it by the identity the game was **frozen** under
+  (`state.registry_digest` via `core/registry_identity.py`). A live digest in a
+  durable key re-keys committed work on the next deploy: the journal lookup
+  misses, the schedule point replays (duplicate deaths and speeches), the model
+  request is bought a second time, and the checkpoint refuses to decode at all —
+  which is how 6 games ended up permanently `recovery_blocked` because one commit
+  added `initial_resources` to a role spec. The rule generalises: **a durable
+  identity must be a function of the game, never of the binary.**
+- Trigger: "the code changed, can this game still continue?" Action: decide it
+  **once**, at the recovery entry point (`persistence/recovery_compat.assess`),
+  and grade the answer (`exact` / `compatible` / `drift` / `incompatible`)
+  instead of letting a decode-time equality check turn every difference into
+  corruption. Corollary: a refusal that the user can answer must **not** write a
+  terminal status — `drift` leaves the game `interrupted` so `force=true` can
+  retry it; only `incompatible` earns `recovery_block_code`.
+- Trigger: `drift` recovery adopts a new resource declaration. Action: rewrite
+  the setup marker only, never re-run `initialize_role_resources` — replaying it
+  hands back spent potions. And when the game never declared resources
+  (`resource_setup_digest is None`), leave the marker alone so the next schedule
+  point sets it up; adopting unconditionally raises
+  `EffectRejected("pipeline runtime is missing")`.
+- Trigger: you are about to trust a "no replay" claim because the keys are now
+  version-stable. Action: prove it end to end, as
+  `test_crash_recovery_subprocess.py::test_a_drifted_registry_neither_replays_commits_nor_recalls_models`
+  does — commit under registry A, decode under a drifted registry B, recommit the
+  same step key and assert `replayed is True` plus an identical semantic view,
+  then re-invoke the same request token and assert the provider ran once
+  (`reused is True` on the second call).
+
+## WAL 让文件大小的断言变成竞态
+- Trigger: `tests/test_purge_old_games.py::test_purge_apply_deletes_and_backs_up`
+  fails **only in a full-suite run** with `assert summary["size_before"] == before`
+  (`192512 == 4096`), and passes when the file runs alone. Action: this is not a
+  purge bug — the test reads `os.path.getsize` after `repository.close()` while
+  the committed rows still sit in `-wal`, and `purge_data_dir` measures the file
+  *after* opening the repository and listing games, which folds the WAL back in.
+  Checkpoint first (`PRAGMA wal_checkpoint(TRUNCATE)`) so both numbers describe
+  the same file. Same reason the runtime backup docs say to use SQLite `.backup`
+  rather than copying the main `.sqlite3` file.
