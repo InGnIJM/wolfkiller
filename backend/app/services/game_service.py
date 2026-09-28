@@ -106,6 +106,32 @@ _NIGHT_ACTOR_POINTS = frozenset({
 })
 
 
+def _pending_window_rows(engine: GameEngine, event_id: str) -> list[dict[str, object]]:
+    """Rows for the events the engine handed to the step being committed.
+
+    The engine fills its slot right before the commit — a daytime window batch
+    or a settlement's own events — so the step is the only place they can be
+    published from. Deaths are skipped: the same step announces them from the
+    ledger by seat, and a settlement's deaths are already in the label.
+    """
+    rows: list[dict[str, object]] = []
+    for index, (event_type, payload) in enumerate(
+        getattr(engine, "_pending_point_events", ()),
+    ):
+        if event_type in _DAY_POINT_SKIPPED_EVENTS:
+            continue
+        row_payload = _plain_json(payload)
+        row_payload.setdefault("round_number", engine.state.round_number)
+        rows.append({
+            "event_id": f"domain:{event_id}:{index}",
+            "event_type": event_type,
+            "payload": row_payload,
+            "visibility": ["PUBLIC"],
+            "schema_version": 1,
+        })
+    return rows
+
+
 def _model_failure_code(error: Exception, status_code: int | None) -> str:
     cause: BaseException | None = error
     seen: set[int] = set()
@@ -1455,19 +1481,7 @@ class GameService:
                 if events:
                     return events
         if label.startswith("day_point:"):
-            events = []
-            for index, (event_type, payload) in enumerate(engine._pending_point_events):
-                if event_type in _DAY_POINT_SKIPPED_EVENTS:
-                    continue
-                row_payload = _plain_json(payload)
-                row_payload.setdefault("round_number", engine.state.round_number)
-                events.append({
-                    "event_id": f"domain:{event_id}:{index}",
-                    "event_type": event_type,
-                    "payload": row_payload,
-                    "visibility": ["PUBLIC"],
-                    "schema_version": 1,
-                })
+            events = _pending_window_rows(engine, event_id)
             if events:
                 return events
         payload: dict[str, object]
@@ -1658,17 +1672,19 @@ class GameService:
                 if item.round_number == engine.state.round_number
                 and item.player_seat in seats
             ]
-            if deaths:
-                return [
-                    {
-                        "event_id": f"domain:{event_id}:{index}",
-                        "event_type": "PLAYER_DIED",
-                        "payload": death.to_dict(),
-                        "visibility": ["PUBLIC"],
-                        "schema_version": 1,
-                    }
-                    for index, death in enumerate(deaths)
-                ]
+            # The response window settles its damage through the applier, so the
+            # step also carries whatever marks the settlement left on a spared
+            # seat (a delayable role keeps the poison mark for the next day).
+            events = _pending_window_rows(engine, event_id)
+            events.extend({
+                "event_id": f"domain:{event_id}:{len(events) + index}",
+                "event_type": "PLAYER_DIED",
+                "payload": death.to_dict(),
+                "visibility": ["PUBLIC"],
+                "schema_version": 1,
+            } for index, death in enumerate(deaths))
+            if events:
+                return events
             event_type = "STEP_COMMITTED"
             payload = {"position": label}
         elif label.startswith("day_interrupted:") or label.startswith("day_reaction:"):
@@ -1680,17 +1696,16 @@ class GameService:
                 if item.round_number == engine.state.round_number
                 and item.player_seat in seats
             ]
-            if deaths:
-                return [
-                    {
-                        "event_id": f"domain:{event_id}:{index}",
-                        "event_type": "PLAYER_DIED",
-                        "payload": death.to_dict(),
-                        "visibility": ["PUBLIC"],
-                        "schema_version": 1,
-                    }
-                    for index, death in enumerate(deaths)
-                ]
+            events = _pending_window_rows(engine, event_id)
+            events.extend({
+                "event_id": f"domain:{event_id}:{len(events) + index}",
+                "event_type": "PLAYER_DIED",
+                "payload": death.to_dict(),
+                "visibility": ["PUBLIC"],
+                "schema_version": 1,
+            } for index, death in enumerate(deaths))
+            if events:
+                return events
             event_type = "STEP_COMMITTED"
             payload = {"position": label}
         elif label.startswith("exile_cancelled:"):

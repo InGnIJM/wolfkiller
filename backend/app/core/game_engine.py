@@ -7,7 +7,7 @@ import random
 import re
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Optional
 
@@ -745,11 +745,17 @@ class GameEngine:
             raise PipelinePaused("invalid pipeline night event") from None
         return tuple(deaths)
 
-    def _pipeline_audience_events(self, result: PipelineResult) -> tuple[tuple[str, object], ...]:
-        """Collect validated non-death PUBLIC pipeline events for the audience log."""
+    def _audience_events_from(
+        self, raw_events: Iterable[Mapping[str, object]],
+    ) -> tuple[tuple[str, object], ...]:
+        """Validate PUBLIC pipeline-shaped events, dropping the deaths.
+
+        A death never travels this way: every step announces the deaths of its
+        own window from the ledger, by seat.
+        """
         events = []
         try:
-            for event in result.public_events:
+            for event in raw_events:
                 if not isinstance(event, Mapping) or set(event) != {"event_type", "payload", "visibility"}:
                     raise ValueError
                 event_type, payload, visibility = event["event_type"], event["payload"], event["visibility"]
@@ -763,8 +769,12 @@ class GameEngine:
             raise PipelinePaused("invalid pipeline audience event") from None
         return tuple(events)
 
-    def _log_audience_events(self, result: PipelineResult, phase: str) -> None:
-        for event_type, payload in self._pipeline_audience_events(result):
+    def _pipeline_audience_events(self, result: PipelineResult) -> tuple[tuple[str, object], ...]:
+        """Collect validated non-death PUBLIC pipeline events for the audience log."""
+        return self._audience_events_from(result.public_events)
+
+    def _log_audience_pairs(self, events: tuple[tuple[str, object], ...], phase: str) -> None:
+        for event_type, payload in events:
             self.game_logger.log_audience_action(
                 self.game_id, self.state.round_number, phase, event_type, payload,
             )
@@ -781,6 +791,22 @@ class GameEngine:
                 self.conversation_log.add_werewolf_channel(
                     channel, self.state.round_number,
                 )
+
+    def _log_audience_events(self, result: PipelineResult, phase: str) -> None:
+        self._log_audience_pairs(self._pipeline_audience_events(result), phase)
+
+    def _announce_settlement(self, settlement: CommitResult) -> None:
+        """Log a settlement's public events and hand them to the next step.
+
+        Every settlement site commits a step right after this call, and that step
+        publishes whatever is left in the slot. Deaths stay out of it (the same
+        step announces them from the ledger by seat). The slot is always
+        *overwritten*, never appended to, so the window events a ``day_point:``
+        step already published can never be published a second time.
+        """
+        events = self._audience_events_from(settlement.events)
+        self._log_audience_pairs(events, self.state.phase.value)
+        self._pending_point_events = events
 
     def get_night_deaths(self) -> list[DeathReport]:
         """Get all deaths from the current round."""
@@ -1310,10 +1336,11 @@ class GameEngine:
         # the vote, never letting it linger into the night.
         if self._pipeline_scheduler is not None:
             post_speech = await self._settle_and_publish()
-            if post_speech:
+            if post_speech or self._pending_point_events:
                 # Deaths reach the spectator only through a step that announces
                 # them; this window has no dedicated one, so it borrows the
                 # daytime-reaction label shape ``<round>:<vote_round>:<actor>``.
+                # The same step publishes the marks a spared seat picked up.
                 await self._durable_checkpoint(
                     f"day_reaction:{self.state.round_number}"
                     f":{self.state.vote_round}:0:{self._seat_list(post_speech)}"
@@ -1445,6 +1472,7 @@ class GameEngine:
         scheduler = self._pipeline_scheduler
         settlement = scheduler.settle_pending(self.state)
         if settlement is not None:
+            self._announce_settlement(settlement)
             deaths = self._settlement_deaths(settlement)
             await self._publish_deaths(deaths)
             dead = "、".join(f"{death.player_seat}号" for death in deaths) or "无人"
@@ -1456,7 +1484,10 @@ class GameEngine:
             # Resumed from a checkpoint taken after the settlement (and its
             # announcements) already landed: recover the same deaths from the
             # ledger by the causes the interruption declared, without
-            # publishing them a second time.
+            # publishing them a second time. The window's own events already
+            # went out through their ``day_point:`` step, so the slot is cleared
+            # rather than handed on.
+            self._pending_point_events = ()
             causes = {
                 payload.get("cause") for payload in interruptions
                 if type(payload.get("cause")) is str
@@ -2001,7 +2032,11 @@ class GameEngine:
         next night) and announce the resulting deaths."""
         settlement = self._pipeline_scheduler.settle_pending(self.state)
         if settlement is None:
+            # Nothing settled: the window's own events already went out through
+            # their ``day_point:`` step, and the slot must not repeat them.
+            self._pending_point_events = ()
             return ()
+        self._announce_settlement(settlement)
         deaths = self._settlement_deaths(settlement)
         await self._publish_deaths(deaths)
         return deaths
