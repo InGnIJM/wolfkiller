@@ -90,6 +90,7 @@ npm run build
 - 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`、`tests/test_knight_extension.py`、`tests/test_wolf_beauty_extension.py`、`tests/test_old_drunkard_extension.py`；`tests/test_catalog_routes.py` 断言 11 角色 6 预设
 - 共享狼刀契约的角色差异：改 `roles/werewolf.py` 的 `validate_werewolf_action()` 或 `core/night_flow.py` 的 `_self_kill_clause()` 后，更新 `tests/test_wolf_beauty_extension.py`（自刀被拒 / 队友可切 / 其他狼不受限）与 `tests/test_night_flow.py`（三态提示词 + 常量与角色侧声明一致）
 - 观众事件类型：`app/services/audience_projector.py` 的 `_EVENTS` 增删类型后，同步 `tests/test_audience_projector.py` 的类型全集快照与前端 `components/game/test/eventCoverage.test.tsx` 的期望表
+- 观众事件必须有一步耐久提交：audience 表只由 `GameService._checkpoint_domain_events` 的 label 分支写入，只发射领域事件而没有对应 step label 的事件会静默丢掉（白天窗口用 `day_point:`、旁白用 `narration:`、系统代投用 `vote_technical_abstain:`）。死亡按 label 里的座位集合宣布，别再用死因白名单（`charm` 会被过滤掉）。引擎里只为提交一次的临时槽位（`_pending_point_events` / `_pending_narration`）不进编排状态编解码器——它的字段集是精确匹配的，加字段会让旧检查点无法续跑；同理不要改调度点的 slot 形状，`PointKey` 变了对局就不能续跑
 
 **不要**再改 `test_guard_extension.py` 里已经不存在的 `CORE_BLOBS_BEFORE_GUARD`。
 

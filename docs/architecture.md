@@ -149,11 +149,13 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **WAL**：连接使用 SQLite WAL，`synchronous=FULL`，并设置 5 秒 busy timeout。WAL 提升并发读取能力，但 `-wal` 不是独立备份；运行时只复制主 `.sqlite3` 文件可能漏掉尚未 checkpoint 的已提交事务。
 - **兼容数据**：`GameLogger` 的 JSONL 日志、`GameManifest` 的 `games/index.json`、对话日志和逐座位记忆仍服务于旧格式/审计链。新运行时的恢复判断以 SQLite 检查点及其 SHA-256 digest 为准，不能用旧 JSON 文件覆盖数据库事实。
 - **启动恢复**：进程启动会把原先 `running` 的执行标为 `interrupted`，把 `in_flight` 模型尝试标为 `unknown`；不会假定外部模型请求未执行。只有可恢复且版本兼容的对局/benchmark 才能通过显式 resume 继续，恢复重试也受持久化次数约束。
-- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器或 digest 不匹配时拒绝恢复。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。
+- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器或 digest 不匹配时拒绝恢复。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。**编排状态的字段集是精确匹配的**（`persistence/engine_checkpoint.py` 会拒绝字段集不符的检查点），所以只为提交一次而存在的临时槽位（白天窗口事件 `_pending_point_events`、旁白 `_pending_narration`）刻意不进编排状态：它们在写入后立刻由紧随其后的那一步提交，崩溃时最坏丢掉这一步。
 
 ### 公开事件同步
 
 公开视图由领域事件白名单投影。**观众流是上帝视角**（快照直接给每个座位的身份与阵营），所以角色的隐藏信息照常投影：狼美人魅惑（`wolf_beauty_charm`）带 `target_seat`，老酒鬼的 `charm_immune` 也随 `selected_target.resource_labels` 对狼美人可见。对**玩家**保密靠另外三层，不靠剪观众字段——`ContextProjector._public_facts` 只给发言/投票/角色规则，`RELATION` 命名空间不投影（`charmed_by` 只落库），`ConversationLog.visible_to` 按座位过滤。观众可见的夜晚思考（`night_thought`：守卫/女巫/预言家/猎人/白狼王/骑士/狼美人的 `reasoning`）、狼人队内发言（`wolf_chat_message`）、狼票（`wolf_vote`）、白痴翻牌（`exile_cancelled`）、白狼王自爆（`self_explode`）、警长当选（`sheriff_elected`）与交徽/撕徽（`sheriff_badge`）、座位开始生成发言（`speaking`，早于发言文本）会进入 audience 表；私有 `thought` 模板、夜间情报与身份资源字段仍被剥离。状态快照带其 `seq` 和 `projection_version`；增量页使用 `after_seq`（排他游标）、`next_seq`、`high_watermark` 和 `has_more`。客户端先取得快照，从该 `seq` 之后分页追到一个固定的 `high_watermark`；下一轮再取新的 watermark。`through_seq` 可把一次追赶固定在同一上界，避免持续写入导致永远翻不完。WebSocket 只用于低延迟提示，断线重连始终用耐久游标补齐；游标大于服务端 watermark 会明确报错，客户端应重新取快照，而不是静默跳过事件。
+
+**观众事件必须先有一步耐久提交**。audience 表只由 `GameService._checkpoint_domain_events(engine, step_key)` 的映射写入，所以一个领域事件要进观众流，必须有一个带分支的 step label；缺任何一环都会静默丢事件。四层失败模式分别是：**A** 发射端 payload 缺字段；**B** 事件进了耐久流但 `AudienceProjector._EVENTS` 白名单没有该类型；**C** 事件根本没进耐久流（没有 label 分支，白天的 `DAY_ACTION` / `POST_SPEECH_ACTION` / `EXILE_VERDICT` 窗口、放逐反应、延迟死亡、技术性弃权、旁白都曾属于这一类）；**D** 前端三个渲染面没有 case。承载观众的 step label 现有：`night_point:`（夜间流水线批次）、`day_point:`（白天窗口批次，跳过已由死亡/翻牌步骤宣布的 `PLAYER_DIED` / `EXILE_CANCELLED` / `PLAYER_REVEALED`）、`narration:`（旁白，槽位 `_pending_narration`）、`vote_received:` 与 `vote_technical_abstain:`（互斥：同一座位只落一步，系统代投带 `failure_code`）、`night_death:` / `delayed_death:` / `day_interrupted:` / `day_reaction:` / `exile_reaction:`（死亡按 label 里的座位集合宣布，不按死因白名单，否则 `charm` 这类死因会被过滤掉）、`exile_cancelled:`、`sheriff_*`、`wolf_discussion:`、`night_complete:`。新增领域事件时先问：**哪一步把它送进耐久流？**
 
 ## 前端架构
 
