@@ -536,7 +536,22 @@ describe('CenterDisplay event summary', () => {
     expect(screen.getByText('4号决斗9号（狼人）')).toBeInTheDocument();
   });
 
-  it('summarizes the charm without naming the charmed seat', () => {
+  it('summarizes the charm with the charmed seat', () => {
+    renderCenter({
+      phase: 'night',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_beauty_charm',
+          payload: { seat: 6, target_seat: 2, round_number: 3 },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('6号魅惑2号')).toBeInTheDocument();
+  });
+
+  it('keeps the plain charm summary for an archive without the target', () => {
     renderCenter({
       phase: 'night',
       timeline: [

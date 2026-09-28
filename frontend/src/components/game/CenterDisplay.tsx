@@ -375,7 +375,11 @@ function EventSummary({
       tone = '#E5484D';
       break;
     case 'wolf_beauty_charm':
-      text = `${entry.payload.seat}号发动魅惑`;
+      // God view: name the charmed seat when the event carries it (archives
+      // recorded before the field existed do not).
+      text = entry.payload.target_seat == null
+        ? `${entry.payload.seat}号发动魅惑`
+        : `${entry.payload.seat}号魅惑${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
     case 'wolf_beauty_revenge':
