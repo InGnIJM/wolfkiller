@@ -279,3 +279,25 @@
   `backend/scripts/purge_old_games.py`) is excluded that way, so CI never runs
   it: its `test_purge_apply_deletes_and_backs_up` is order-dependent locally and
   its failures there are local noise, not a regression.
+
+## 观众流是上帝视角，对玩家保密在另外三层
+- Trigger: a domain event or an audience whitelist drops a payload field "to keep
+  it secret" (the wolf-beauty charm shipped without `target_seat` for exactly
+  that reason, and the frontend card printed 目标保密). Action: first pin down
+  **who** the secret is kept from. There is no player UI — the timeline is the
+  god view (`AudienceProjector.snapshot` hands out every seat's `role`/`camp`,
+  and `night_thought` already publishes the charm target via
+  `WOLF_BEAUTY_REASONING`), so trimming an audience field buys nothing and only
+  splits the story: the charm card hid the seat while the neighbouring thought
+  entry printed 目标2号. Player-facing secrecy lives elsewhere and must stay
+  there: `ContextProjector._public_facts` exposes only speeches/votes/role
+  rules, the `RELATION` namespace is a deliberate no-op (`charmed_by` reaches no
+  context), and `ConversationLog.visible_to` filters per seat. Fixing the charm
+  meant only the emitter payload plus the `_EVENTS` whitelist; the player side
+  needed no change.
+- Trigger: adding a field to a published event to fix a god-view gap. Action:
+  the new field is optional in the frontend type (`target_seat?: number | null`)
+  and every render surface needs both branches — the already-recorded archives
+  keep the old payload forever, so they must render "目标未记录" instead of
+  crashing or silently implying secrecy. `HistoryPanel.tsx` is inside the
+  coverage gate, so its fallback branch needs its own test.
