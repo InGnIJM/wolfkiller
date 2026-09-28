@@ -280,6 +280,59 @@
   it: its `test_purge_apply_deletes_and_backs_up` is order-dependent locally and
   its failures there are local noise, not a regression.
 
+## Backend dev server on Windows (`--reload` zombie port)
+- Trigger: the lobby lists no games and the create wizard shows an empty role
+  list, while the backend terminal looks alive. Action: suspect a **zombie
+  uvicorn reload parent holding port 8000**, not a broken catalog or a corrupt
+  DB. `python -m uvicorn ... --reload` binds the listening socket in the
+  parent, so when the app child dies the parent keeps the port and accepts
+  every connection without ever answering: `curl` connects, sends the request,
+  gets 0 bytes and times out (health check hangs too), and `netstat -ano`
+  shows every ESTABLISHED/CLOSE_WAIT on `:8000` owned by the childless parent.
+  On Windows `SO_REUSEADDR` lets a second instance bind the same address, but
+  the *older* bound socket keeps receiving the connections, so a freshly
+  started healthy instance is invisible until the zombie is killed. Diagnose
+  with `netstat.exe -ano | grep :8000`, `Get-CimInstance Win32_Process` for the
+  parent/child pair, and `py-spy.exe dump --pid <child>` (present in
+  `E:\Anaconda\Scripts`) to prove the live child is idle in uvicorn's
+  `asyncio select`; then `taskkill /PID <parent> /T /F`. Note a stray
+  `__pycache__` write (e.g. importing `app.catalog` from another process) makes
+  the zombie reloader respawn a child that then dies on `ProcessLockError`.
+  Before starting a new instance, confirm `netstat -ano | grep :8000` is
+  empty — otherwise the old lock-holder keeps the DB and `ProcessLock`.
+
+## A shared kill contract cannot express a per-role ban
+- Trigger: the docs said Wolf Beauty may never kill itself while the code had no
+  check at all — and the wolf prompts actively encouraged "a target among your
+  teammates, including yourself". Action: the wolf-kill contract is shared
+  byte-identically by the whole camp (`registry.digest` hashes the spec), so the
+  difference cannot live in the declaration: the role declares
+  `initial_resources={"self_kill_forbidden": 1}` and `validate_werewolf_action`
+  rejects the self-vote, while `NightDirector._self_kill_clause()` reads the same
+  marker to warn the model. A rejected vote silently becomes `pass`, so a role
+  that is never told the rule just loses its ballot. `core/` must not import a
+  role module: the marker name is duplicated as
+  `night_flow.SELF_KILL_FORBIDDEN_RESOURCE` and a test pins it to the role-side
+  constant. Teammate cutting and other wolves' self-knife tactics stay legal.
+
+## An audience event type needs three render surfaces, not one
+- Trigger: a role emits a new public event and it never shows up in the app. The
+  knight duel and the wolf-beauty charm/revenge events reached the audience
+  stream (present in `_EVENTS` and in the frontend `PublicReplayEvent` union) but
+  three surfaces dropped them: `ActivityCard` and `CenterDisplay` fell through to
+  `default: return null`, and `HistoryPanel` ran off the end of its `switch`, so
+  `content` stayed undefined and it rendered an **empty chronicle card**. Action:
+  every public type needs an explicit branch in `ActivityCard`, `CenterDisplay`
+  and `HistoryPanel` (give `HistoryPanel` a `default: return null`), plus a
+  `roundNumber` clause in `gameStore.applyEvent` for events that carry their own
+  `round_number` without making anyone the current speaker. `eventCoverage.test.tsx`
+  now walks all 29 types (26 projected + `narration` + the legacy
+  `witch_thought` / `seer_thought`) against the three surfaces, and
+  `tests/test_audience_projector.py` freezes the projected set — add a type and
+  the build stays red until you answer for it. Centre panel and chronicle are
+  whole panels, so their "did it render" probe is the `.wk-event-summary` /
+  `.wk-chronicle-entry` anchor, not an empty container.
+
 ## 观众流是上帝视角，对玩家保密在另外三层
 - Trigger: a domain event or an audience whitelist drops a payload field "to keep
   it secret" (the wolf-beauty charm shipped without `target_seat` for exactly
@@ -301,3 +354,59 @@
   keep the old payload forever, so they must render "目标未记录" instead of
   crashing or silently implying secrecy. `HistoryPanel.tsx` is inside the
   coverage gate, so its fallback branch needs its own test.
+
+## 观众事件死在第四层：没有耐久提交
+- Trigger: an event is in the log (and in the frontend type union, and in the
+  `_EVENTS` whitelist) yet never appears in the timeline. Action: the audience
+  table is written **only** by `GameService._checkpoint_domain_events(engine,
+  step_key)`, so an event needs a step label with a branch. Four layers can drop
+  it — A the emitter payload lacks the field, B the projector whitelist has no
+  type, C no step label carries it, D no render surface has a case — and C is the
+  silent one: the daytime windows (`DAY_ACTION` / `POST_SPEECH_ACTION` /
+  `EXILE_VERDICT`), the exile reaction, the delayed death, the technical abstain
+  and the narration all emitted events that reached the JSONL log and nothing
+  else. Prove a C-layer loss from the durable side, not from the log: pick a game
+  where `game.log` has the event and show that `audience_events` has no row of
+  that type (a knight duel under step `...:day_interrupted:1:1:0:6` had no
+  `knight_duel` row anywhere). The fix shape is one step per source: daytime
+  windows hand their batch to `day_point:<point>:<slot>` (skipping the types the
+  death/card-flip steps already announce), `_narrate` writes `narration:<round>`,
+  and the vote step writes `vote_received:` **or**
+  `vote_technical_abstain:<round>:<vote_round>:<seat>:<failure_code>` — never
+  both, because a seat commits exactly one step and a second label would publish
+  the same ballot twice.
+- Trigger: announcing a death from a checkpoint label. Action: read the **seats**
+  off the label (`exile_reaction:<round>:<exiled>:<seat-seat...>`) and select
+  `death_history` by seat, never by cause: the old
+  `cause in {"exile", "hunter_shot"}` filter silently dropped the wolf-beauty
+  `charm` death, and the exile reaction must name the exiled seat itself too
+  because that seat is marked dead directly instead of through a settlement.
+  Deaths settled by `EffectApplier.settle_pending` are already in
+  `death_history` when `_settle_and_publish()` returns, so the label can be
+  written right after it.
+- Trigger: a system-cast ballot (a model failure) showing up as a silent
+  abstention in the god view. Action: the recorded vote of a failed seat has
+  `target_seat=None`, so `vote_received:` published a vote with no target while
+  the failure code stayed in the private `vote_receipts` ledger. Read the seat's
+  terminal `VoteReceipt` (status `TECHNICAL_ABSTAIN`) instead of a
+  `terminal_seats` set, and let the timeout branch write the same label for the
+  seats it finishes — those never reach their own vote step.
+
+## 引擎编排状态是精确字段集，临时槽位不要塞进去
+- Trigger: an audience fix needs the engine to hand a value to the next durable
+  step (the daytime window batch, the narration text). Action: keep it in an
+  in-memory slot (`_pending_point_events`, `_pending_narration`) and commit it
+  immediately, rather than adding it to the engine orchestration state:
+  `persistence/engine_checkpoint.py` requires the orchestration key set to be
+  **exactly** `{execution_position, checkpoint_counter, pending_night_batch,
+  pending_night_completion, last_words_given, active_vote_window_id,
+  vote_service, conversation_records, role_state, model_assignments,
+  random_state}`, so an extra key makes every existing checkpoint unrestorable.
+  The trade-off is explicit: a crash between the slot write and its step loses
+  that one beat, and the slot is reset in `start()` for a fresh game.
+- Trigger: changing what a pipeline slot looks like (e.g. to make a daytime
+  window label unique). Action: don't — the slot feeds `PointKey` /
+  `Scheduler.point_phase`, so a different slot shape misses every journalled
+  point and the interrupted game can no longer resume. The unique step key comes
+  from the `checkpoint_counter` prefix (`f"{counter:08d}:{label}"`), which is
+  already enough for two `narration:<round>` steps in the same round.
