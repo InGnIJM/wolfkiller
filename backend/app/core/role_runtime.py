@@ -64,9 +64,17 @@ def record_accepted_action(
         counts[scope][key] = current + 1
 
 
-def initialize_role_resources(state: GameState, specs: Mapping[str, RoleSpec],
-                              config_version: str):
-    from app.core.effect_applier import EffectApplier, EffectPermission, EffectRejected, derive_effect_id
+def _declared_resources(state: GameState, specs: Mapping[str, RoleSpec],
+                        config_version: str) -> tuple[list[tuple[int, str, int]], str | None]:
+    """Validate inputs and return the declared resources plus their marker.
+
+    The marker covers the game's frozen registry identity and the resources the
+    seated roles declare — deliberately **not** their full declaration digests:
+    a resumed game's resources are already set up, so folding tags, instructions
+    or contract digests in would reject the resume over changes that cannot
+    affect a single resource value.
+    """
+    from app.core.effect_applier import EffectRejected
     if type(state) is not GameState: raise TypeError("state must be GameState")
     if not isinstance(specs, Mapping) or any(type(spec) is not RoleSpec for spec in specs.values()):
         raise TypeError("specs must map role ids to exact RoleSpec values")
@@ -74,21 +82,55 @@ def initialize_role_resources(state: GameState, specs: Mapping[str, RoleSpec],
         raise ValueError("spec key must match role id")
     if type(config_version) is not str or len(config_version) != 64 or any(char not in "0123456789abcdef" for char in config_version):
         raise ValueError("invalid config_version")
+    declared: list[tuple[int, str, int]] = []
+    for seat, player in sorted(state.players.items()):
+        try: spec = specs[player.role]
+        except KeyError: raise ValueError(f"unknown role: {player.role}") from None
+        for name, raw in sorted(spec.initial_resources.items()):
+            value = int(raw) if type(raw) is bool else raw
+            if type(value) is not int or not 0 <= value <= _INT32:
+                raise EffectRejected("invalid initial resource")
+            declared.append((seat, name, value))
+    if not declared:
+        return declared, None
+    marker = hashlib.sha256(json.dumps(
+        [config_version, declared], separators=(",", ":"),
+    ).encode()).hexdigest()
+    return declared, marker
+
+
+def resource_declaration_marker(state: GameState, specs: Mapping[str, RoleSpec],
+                                config_version: str) -> str | None:
+    """The setup marker the current declarations would produce (None if none)."""
+    return _declared_resources(state, specs, config_version)[1]
+
+
+def adopt_resource_declaration(state: GameState, marker: str) -> None:
+    """Accept a resource declaration that changed since the game started.
+
+    Recovery calls this after a forced resume: the marker is metadata about how
+    the game's resources were set up, not game state, so adopting it replays no
+    effect — a spent potion stays spent and a newly declared marker resource is
+    *not* granted retroactively. Callers record the drift in the audit trail.
+    """
+    from app.core.effect_applier import EffectRejected
+    if type(state) is not GameState: raise TypeError("state must be GameState")
+    if type(marker) is not str or len(marker) != 64 or any(char not in "0123456789abcdef" for char in marker):
+        raise ValueError("invalid marker")
     with state_transaction_lock(state):
-        declared = []
-        assignments = []
-        for seat, player in sorted(state.players.items()):
-            try: spec = specs[player.role]
-            except KeyError: raise ValueError(f"unknown role: {player.role}") from None
-            assignments.append((seat, player.role, spec.stable_digest()))
-            for name, raw in sorted(spec.initial_resources.items()):
-                value = int(raw) if type(raw) is bool else raw
-                if type(value) is not int or not 0 <= value <= _INT32:
-                    raise EffectRejected("invalid initial resource")
-                declared.append((seat, name, value))
-        if not declared:
+        runtime = getattr(state, "_pipeline_runtime", None)
+        if getattr(runtime, "resource_setup_digest", None) is None:
+            raise EffectRejected("pipeline runtime is missing")
+        runtime.resource_setup_digest = marker
+
+
+def initialize_role_resources(state: GameState, specs: Mapping[str, RoleSpec],
+                              config_version: str):
+    from app.core.effect_applier import EffectApplier, EffectPermission, EffectRejected, derive_effect_id
+    with state_transaction_lock(state):
+        declared, marker = _declared_resources(state, specs, config_version)
+        if marker is None:
             return None
-        marker = hashlib.sha256(json.dumps([config_version, assignments], separators=(",", ":")).encode()).hexdigest()
         runtime = getattr(state, "_pipeline_runtime", None)
         existing = getattr(runtime, "resource_setup_digest", None) if runtime is not None else None
         if existing is not None:
