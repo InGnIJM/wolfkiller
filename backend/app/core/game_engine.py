@@ -1298,7 +1298,15 @@ class GameEngine:
         # immediate: settle and announce it before the delayed deaths and before
         # the vote, never letting it linger into the night.
         if self._pipeline_scheduler is not None:
-            await self._settle_and_publish()
+            post_speech = await self._settle_and_publish()
+            if post_speech:
+                # Deaths reach the spectator only through a step that announces
+                # them; this window has no dedicated one, so it borrows the
+                # daytime-reaction label shape ``<round>:<vote_round>:<actor>``.
+                await self._durable_checkpoint(
+                    f"day_reaction:{self.state.round_number}"
+                    f":{self.state.vote_round}:0:{self._seat_list(post_speech)}"
+                )
         # Then finalise any death the settlement delayed: the rules put it right
         # after the speeches and before the exile vote.
         await self._resolve_delayed_deaths()
@@ -1943,6 +1951,11 @@ class GameEngine:
         runtime.revision += 1
         self.state.death_history.extend(reports)
         await self._publish_deaths(reports)
+        # A delayed death is announced by no other step, so it names its own.
+        for death in reports:
+            await self._durable_checkpoint(
+                f"delayed_death:{death.round_number}:{death.player_seat}"
+            )
         return reports
 
     async def _publish_deaths(self, deaths: tuple[DeathReport, ...]) -> None:
@@ -1966,11 +1979,16 @@ class GameEngine:
     def _seat_list(deaths: tuple[DeathReport, ...]) -> str:
         return "-".join(str(death.player_seat) for death in deaths)
 
-    async def _run_exile_reaction(self, exiled_seat: int) -> None:
+    async def _run_exile_reaction(self, exiled_seat: int) -> tuple[DeathReport, ...]:
+        """Run the exile's response window; returns the deaths it settled.
+
+        The exiled seat itself is not among them (it is marked dead directly),
+        which is why the caller names it in the announcing step as well.
+        """
         await self._run_response_point(
             SchedulePoint.DAWN_REACTION, self._exile_commit(exiled_seat),
         )
-        await self._settle_and_publish()
+        return await self._settle_and_publish()
 
     def _reveal_from_verdict(self, seat: int) -> None:
         """A role publicly flipped its card to survive the vote."""
@@ -2020,9 +2038,17 @@ class GameEngine:
                 round_number=self.state.round_number,
             ))
         self._reveal_on_death(exiled_seat)
-        await self._run_exile_reaction(exiled_seat)
+        reaction = await self._run_exile_reaction(exiled_seat)
+        # The step names every seat this window killed, so the announcement is
+        # cause-agnostic: a charmed victim dragged along by a wolf beauty dies
+        # with cause ``charm`` and would be filtered out by a cause whitelist.
+        killed = "-".join(
+            str(seat) for seat in sorted(
+                {exiled_seat, *(death.player_seat for death in reaction)}
+            )
+        )
         await self._durable_checkpoint(
-            f"exile_reaction:{self.state.round_number}:{exiled_seat}"
+            f"exile_reaction:{self.state.round_number}:{exiled_seat}:{killed}"
         )
         await self._maybe_reassign_badge()
         await self.give_last_words(exiled_seat, "exile", self.state.round_number)

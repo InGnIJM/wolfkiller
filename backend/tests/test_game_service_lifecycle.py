@@ -454,18 +454,47 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     assert empty_explode[1]["payload"]["reason"] == "explode"
 
     fallback = GameService._checkpoint_domain_events(
-        engine, "00000010:exile_reaction:2:1",
+        engine, "00000010:exile_reaction:2:1:9",
     )[0]
     assert fallback["event_type"] == "STEP_COMMITTED"
     assert fallback["visibility"] == []
+    # Every seat the window names is announced whatever its cause: the label,
+    # not a cause whitelist, decides who died here.
+    named = GameService._checkpoint_domain_events(
+        engine, "00000010b:exile_reaction:2:1:1",
+    )[0]
+    assert named["event_type"] == "PLAYER_DIED"
+    assert named["payload"]["cause"] == "wolf_kill"
     state.death_history.extend([
         DeathReport(1, "exile", 2), DeathReport(2, "hunter_shot", 2),
         DeathReport(2, "exile", 1),
     ])
     deaths = GameService._checkpoint_domain_events(
-        engine, "00000011:exile_reaction:2:1",
+        engine, "00000011:exile_reaction:2:1:1-2",
     )
-    assert [item["payload"]["cause"] for item in deaths] == ["exile", "hunter_shot"]
+    assert [item["payload"]["cause"] for item in deaths] == [
+        "wolf_kill", "exile", "hunter_shot",
+    ]
+    # The seats come off the label, so a charmed victim dragged along by a wolf
+    # beauty is announced even though its cause is neither exile nor a shot.
+    state.death_history.append(DeathReport(3, "charm", 2))
+    charmed = GameService._checkpoint_domain_events(
+        engine, "00000011b:exile_reaction:2:1:1-2-3",
+    )
+    assert [item["payload"]["cause"] for item in charmed] == [
+        "wolf_kill", "exile", "hunter_shot", "charm",
+    ]
+
+    state.death_history.append(DeathReport(1, "poison", 2))
+    delayed = GameService._checkpoint_domain_events(
+        engine, "00000011c:delayed_death:2:1",
+    )[0]
+    assert delayed["event_type"] == "PLAYER_DIED"
+    assert delayed["payload"]["cause"] == "poison"
+    # A seat the round never killed leaves the step as a bare marker.
+    assert GameService._checkpoint_domain_events(
+        engine, "00000011d:delayed_death:2:9",
+    )[0]["payload"] == {}
 
     state.win_result = {"winning_camp": "good", "reason": "done"}
     assert GameService._checkpoint_domain_events(

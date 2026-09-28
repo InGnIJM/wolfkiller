@@ -1618,11 +1618,26 @@ class GameService:
             seat = int(label.split(":")[-1])
             deaths = [item for item in engine.state.death_history if item.player_seat == seat]
             payload = deaths[-1].to_dict() if deaths else {}
+        elif label.startswith("delayed_death:"):
+            event_type = "PLAYER_DIED"
+            seat = int(label.split(":")[-1])
+            deaths = [
+                item for item in engine.state.death_history
+                if item.player_seat == seat
+                and item.round_number == engine.state.round_number
+            ]
+            payload = deaths[-1].to_dict() if deaths else {}
         elif label.startswith("exile_reaction:"):
+            # ``<label>:<round>:<exiled seat>:<seat-seat...>`` names every seat
+            # this window killed: the exiled seat itself plus whoever the
+            # response window settled (a hunter's victim, a charmed victim).
+            # Reading the seats off the label keeps the announcement
+            # cause-agnostic instead of whitelisting causes.
+            seats = [int(part) for part in label.split(":")[-1].split("-") if part]
             deaths = [
                 item for item in engine.state.death_history
                 if item.round_number == engine.state.round_number
-                and item.cause in {"exile", "hunter_shot"}
+                and item.player_seat in seats
             ]
             if deaths:
                 return [
