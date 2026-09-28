@@ -410,3 +410,40 @@
   point and the interrupted game can no longer resume. The unique step key comes
   from the `checkpoint_counter` prefix (`f"{counter:08d}:{label}"`), which is
   already enough for two `narration:<round>` steps in the same round.
+
+## 白天结算跑在流水线之外，没有自己的步骤
+- Trigger: an event is produced by a settlement the engine runs by hand
+  (`_settle_and_publish` after a post-speech window or an exile reaction,
+  `_resolve_day_interruption` after an explosion) and never shows up in the god
+  view. Action: those settlements call `applier.settle_pending` directly, so their
+  events are not part of any pipeline result and reach neither the log nor a step
+  — the deaths still arrive because the reaction step announces them from the
+  ledger, but everything else in the settlement (a delayable seat's
+  `STATUS_ADDED` marks) is dropped. `_announce_settlement` logs the settlement's
+  public events and leaves them in the engine's slot for the step that follows;
+  the slot must be **overwritten, never appended to**, and cleared when nothing
+  settled, because the window's own events already went out through their
+  `day_point:` step and a second publication would mint fresh `event_id`s for
+  rows the audience already has. The step that carries the marks is the same one
+  that announces the deaths, and an empty seat list in its label is legal
+  (`day_reaction:2:1:0:`) — the parser splits on `-` and skips empty parts.
+- Trigger: a public domain event names its seat `seat` while the audience
+  contract says `player_seat`. Action: rename it in `AudienceProjector` the way
+  `PLAYER_DIED` does (accept both keys, pop both, write `player_seat`), and keep
+  the old key in the whitelist so an emitter that switches spelling does not
+  silently lose the field. The catalogue test plus the coverage table then force
+  a decision on all three render surfaces for the new type.
+
+## 观众要看到一个字段，得先问它现在被谁丢掉
+- Trigger: "the audience should see X" when X already exists somewhere in the
+  pipeline (the wolves' next-day plan was already appended to the wolf channel
+  line as `（次日计划：…）`). Action: find the layer that drops it before writing
+  any emitter change — here the mapping cut the parenthesis off and threw it
+  away, so the fix is a parse in `_checkpoint_domain_events` plus a whitelist
+  entry, with no engine change at all. Adding the key to the **JSONL** payload
+  instead would have been a trap: `game_routes._AUDIENCE_ACTION_SCHEMAS` compares
+  the payload key set for **exact** equality, so one extra key makes the legacy
+  replay path drop the whole record. The same question applies to the frontend:
+  a published field with no render surface is still invisible, which is why the
+  chat card and the chronicle both print the plan (and the absent case is
+  asserted too).
