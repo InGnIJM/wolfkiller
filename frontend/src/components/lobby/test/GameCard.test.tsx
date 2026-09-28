@@ -147,9 +147,9 @@ describe('GameCard', () => {
     });
     expect(screen.getByText('恢复受阻')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
-    const item = screen.getByRole('menuitem', { name: /恢复对局/ });
+    const item = screen.getByRole('menuitem', { name: /重试恢复/ });
     expect(item).toHaveAttribute('aria-disabled', 'true');
-    expect(item).toHaveAttribute('title', 'checkpoint_missing');
+    expect(item).toHaveAttribute('title', '找不到检查点');
     fireEvent.click(item);
     expect(onRecover).not.toHaveBeenCalled();
 
@@ -162,6 +162,25 @@ describe('GameCard', () => {
     cleanup();
     renderCard({ executionStatus: 'failed' });
     expect(screen.getByText('执行失败')).toBeInTheDocument();
+  });
+
+  it('offers recovery for a failed or blocked game once it is recoverable', () => {
+    const onRecover = vi.fn();
+    renderCard({ executionStatus: 'failed', recoverable: true, onRecover });
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /恢复对局/ }));
+    expect(onRecover).toHaveBeenCalledOnce();
+
+    cleanup();
+    renderCard({
+      executionStatus: 'recovery_blocked', recoverable: true,
+      recoveryBlockCode: 'checkpoint_corrupt', onRecover,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    const item = screen.getByRole('menuitem', { name: /重试恢复/ });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+    expect(onRecover).toHaveBeenCalledTimes(2);
   });
 
   it('toggles selection and moves without entering the game', () => {

@@ -5,10 +5,11 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { deleteGame, listFolders, listGames, renameGame } from '../../../api/client';
+import { controlGame, deleteGame, listFolders, listGames, renameGame } from '../../../api/client';
 import GameList from '../GameList';
 
-vi.mock('../../../api/client', () => ({
+vi.mock('../../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/client')>()),
   listGames: vi.fn(),
   renameGame: vi.fn(),
   deleteGame: vi.fn(),
@@ -50,11 +51,15 @@ describe('GameList dormant dialog guards', () => {
 
     screen.getAllByRole('button', { name: '确定' }).forEach((button) => fireEvent.click(button));
     screen.getAllByRole('button', { name: '删除' }).forEach((button) => fireEvent.click(button));
+    screen.getAllByRole('button', { name: '继续对局' }).forEach((button) => {
+      fireEvent.click(button);
+    });
     screen.getAllByRole('button', { name: 'force-dialog-close' }).forEach((button) => {
       fireEvent.click(button);
     });
 
     expect(renameGame).not.toHaveBeenCalled();
     expect(deleteGame).not.toHaveBeenCalled();
+    expect(controlGame).not.toHaveBeenCalled();
   });
 });
