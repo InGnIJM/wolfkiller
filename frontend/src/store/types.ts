@@ -185,10 +185,15 @@ export interface KnightDuelPayload {
   camp: string;
 }
 
-/** The charmed seat stays private: this payload carries only the caster. */
+/**
+ * Wolf Beauty's charm. The audience is the god view, so the charmed seat is
+ * published; it stays optional because archives recorded before the field
+ * existed carry only the caster (and the players never receive this event).
+ */
 export interface WolfBeautyCharmPayload {
   round_number: number;
   seat: number;
+  target_seat?: number | null;
 }
 
 export interface WolfBeautyRevengePayload {

@@ -426,7 +426,20 @@ describe('ActivityCard', () => {
     expect(screen.getByText('狼人 · 第2轮')).toBeInTheDocument();
   });
 
-  it('renders the charm card without revealing the charmed seat', () => {
+  it('names the charmed seat on the charm card', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_beauty_charm',
+        payload: { seat: 6, target_seat: 2, round_number: 3 },
+      },
+    ]);
+    render(<ActivityCard />);
+    expect(screen.getByText('6号魅惑2号')).toBeInTheDocument();
+    expect(screen.getByText('第3轮')).toBeInTheDocument();
+  });
+
+  it('marks the target as unrecorded on an archived charm card', () => {
     setTimeline([
       {
         ...replayEventMeta,
@@ -436,7 +449,7 @@ describe('ActivityCard', () => {
     ]);
     render(<ActivityCard />);
     expect(screen.getByText('6号发动魅惑')).toBeInTheDocument();
-    expect(screen.getByText('第3轮 · 目标保密')).toBeInTheDocument();
+    expect(screen.getByText('第3轮 · 目标未记录')).toBeInTheDocument();
   });
 
   it('renders the revenge card with the dragged seat and the cause', () => {

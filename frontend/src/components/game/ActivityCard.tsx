@@ -593,22 +593,30 @@ export default function ActivityCard() {
           tag="DUEL"
         />
       );
-    case 'wolf_beauty_charm':
+    case 'wolf_beauty_charm': {
+      // The audience is the god view, so the charmed seat is shown. Archives
+      // recorded before the field existed only carry the caster.
+      const charmed = entry.payload.target_seat;
       return (
         <ActivityFrame tone="#F4B3B6">
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
               <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-                {entry.payload.seat}号发动魅惑
+                {charmed == null
+                  ? `${entry.payload.seat}号发动魅惑`
+                  : `${entry.payload.seat}号魅惑${charmed}号`}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-                第{entry.payload.round_number}轮 · 目标保密
+                {charmed == null
+                  ? `第${entry.payload.round_number}轮 · 目标未记录`
+                  : `第${entry.payload.round_number}轮`}
               </Typography>
             </Box>
           </Box>
         </ActivityFrame>
       );
+    }
     case 'wolf_beauty_revenge':
       return (
         <DayVerdictView
