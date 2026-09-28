@@ -78,7 +78,9 @@ npm run build
 - 自定义请求头走 `ModelConfig.headers` → `LLMClientConfig.headers`（tuple，保持可哈希）→ transport `default_headers`；校验入口只有 `base.py` 的 `header_error()`。headers 属于敏感面，禁止进 `_MODEL_PARAMETER_FIELDS`、model_snapshot 或 game.log。
 - 耐久事实源是 `backend/data/wolfkiller.sqlite3`，不是 JSONL。不要删除进行中的 `data/` 对局目录。
 - 大厅 `GET /api/games` 不含评测局；评测局从评测页进出。
-- 注册表新增角色会改变 `registry.digest`，处于 `interrupted` 的旧局无法续跑。
+- `registry.digest` 是**对局的冻结身份**：journal 键、请求 token（`window_id`/`action_key`）与角色资源 setup marker 都用建局时的 digest 盖章（`core/registry_identity.py`），所以新增/改角色**不会**让 `interrupted` 的旧局无法续跑。兼容性由 `persistence/recovery_compat.py` 在恢复入口一次性裁决：`exact` / `compatible`（本局没用到的东西变了）/ `drift`（本局用到的契约 digest 或资源声明变了 → 需要 `force=true` 显式确认）/ `incompatible`（角色或契约消失、schema 版本变动 → 永久拒绝）。**角色 id 永不删除**，改名要保留别名，否则旧局只能判 `incompatible`（Hook 是代码，无法从旧档恢复）。
+- 改已落座角色的 `initial_resources` 会让旧局判 `drift`：`force` 续跑只改写 setup marker，**不重放任何资源效果**（药已用掉就还是用掉、新声明的资源不补发）；只改 tags/instructions 判不出来（落 `compatible`），因为检查点只记 `spec_versions`，不记角色声明 digest。
+- `paused / interrupted / failed / recovery_blocked` 都可 `recover`（`recovery_blocked` 是诊断结论、可重试）；`POST /api/games/{id}/recover|resume?force=true` 才能跨 `drift` 续跑，前端收到 409 `confirmation_required` 时弹二次确认。prompt digest 与模型参数变化只记告警（`games/<id>/game.log` 的 `recovery` 审计行），不再拒绝续跑。
 
 ## 改这些文件后必须同步测试
 

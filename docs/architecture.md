@@ -38,7 +38,7 @@ WolfKiller/
 │   │   ├── agents/              # LLM 客户端、providers、提示渲染、输出解析、状态过滤
 │   │   ├── roles/               # 角色声明式 spec + 纯 Hook（狼人/女巫/预言家/猎人/平民/守卫/白痴/白狼王/骑士/狼美人/老酒鬼）
 │   │   ├── api/                 # REST 路由（routes/）+ WebSocket 处理（websocket/）
-│   │   ├── persistence/         # SQLite repository、检查点编解码、引擎恢复
+│   │   ├── persistence/         # SQLite repository、检查点编解码、恢复兼容性判定、引擎恢复
 │   │   ├── services/            # 游戏/benchmark 服务、公开投影、派生任务
 │   │   └── stores/              # 模型配置持久化 + API Key 加密存储
 │   └── tests/                   # pytest 测试（statement/branch 100% 覆盖门禁）
@@ -70,7 +70,7 @@ WolfKiller/
 | `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
 | `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
-| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点 |
+| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点，journal 键与请求 token 都用**对局冻结的** `registry_digest` 盖章（`core/registry_identity.py`），所以新增/修改角色不会让已完成的调度点被重放、也不会重复发起同一次模型请求 |
 | `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
 | `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
@@ -149,7 +149,15 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **WAL**：连接使用 SQLite WAL，`synchronous=FULL`，并设置 5 秒 busy timeout。WAL 提升并发读取能力，但 `-wal` 不是独立备份；运行时只复制主 `.sqlite3` 文件可能漏掉尚未 checkpoint 的已提交事务。
 - **兼容数据**：`GameLogger` 的 JSONL 日志、`GameManifest` 的 `games/index.json`、对话日志和逐座位记忆仍服务于旧格式/审计链。新运行时的恢复判断以 SQLite 检查点及其 SHA-256 digest 为准，不能用旧 JSON 文件覆盖数据库事实。
 - **启动恢复**：进程启动会把原先 `running` 的执行标为 `interrupted`，把 `in_flight` 模型尝试标为 `unknown`；不会假定外部模型请求未执行。只有可恢复且版本兼容的对局/benchmark 才能通过显式 resume 继续，恢复重试也受持久化次数约束。
-- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器或 digest 不匹配时拒绝恢复。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。**编排状态的字段集是精确匹配的**（`persistence/engine_checkpoint.py` 会拒绝字段集不符的检查点），所以只为提交一次而存在的临时槽位（白天窗口事件 `_pending_point_events`、旁白 `_pending_narration`）刻意不进编排状态：它们在写入后立刻由紧随其后的那一步提交，崩溃时最坏丢掉这一步。
+- **恢复兼容性**（`persistence/recovery_compat.py`）：检查点里的 `registry_digest` 是**冻结身份**，不是"当前代码"的副本——journal 键（`PointKey`）、请求 token（`window_id` / `action_key`）与角色资源 setup marker 都用建局时的 digest 盖章（`core/registry_identity.py` 的 `frozen_registry_digest()`），所以之后新增或修改角色**不会**把已提交的工作重新编号。编解码器因此只校验文档**自洽**（根 digest 与 `state.registry_digest` 一致、每个 journal 键与根 digest 一致；不一致才是真损坏），"代码变了还算不算同一局"交给恢复入口一次性裁决 `assess(document, state, registry)`，四个等级：
+  - `exact`：注册表与建局时一致。
+  - `compatible`：注册表变了，但这局用到的东西没变（例如新增了本局没用到的角色）。直接续跑。
+  - `drift`：这局用到的东西变了——已发出的契约 digest 变了，或座位资源声明变了。**可续跑但必须显式确认**：`POST /api/games/{id}/recover|resume?force=true`（409 响应带 `confirmation_required`，前端弹二次确认）。确认后只改写 setup marker，**不重放任何资源效果**：药已经用掉就还是用掉，声明新增的资源不补发；若本局从未建立过资源（marker 为空）则不动 marker，交给下一个调度点按当前声明建立。
+  - `incompatible`：角色或契约已消失，或 `RoleSpec.schema_version` / 契约 `schema_version` 在这局之下变动。永久拒绝（`registry_incompatible` / `contract_incompatible`），写进 `games.recovery_block_code`。
+- **可恢复状态**：`paused / interrupted / failed / recovery_blocked` 都算"还能救"（`get_execution_info.recoverable`）。`recovery_blocked` 是**诊断结论**而不是终审：修好原因后直接再 `recover` 即可（默认接受这三种状态，更窄的 `expected_statuses` 仍可显式传入）。成功续跑在 `games/<id>/game.log` 写一行 `recovery` 审计（等级、代码、原因、是否 `force`、`from_status`、`execution_generation`、告警、冻结与当前 digest）；该 operation 不在 `_public_operation_events` 白名单里，所以不进观众时间线。
+- **降级为告警的门禁**：prompt digest 变化与模型参数变化只记告警（进上面的 `recovery` 审计行），不再拒绝续跑——它们改不了已提交的状态，而 `api_key` / `headers` 本来就从活配置读取。真正拒绝的只剩：缺模型配置、密钥不可用、检查点版本不受支持、检查点损坏。
+- **已知边界（有意为之）**：检查点记录每个角色的 `spec_versions`，但**不记录角色声明 digest**，所以只改**已落座角色**的 tags / instructions 判不出来，会落在 `compatible`；能判出来的是资源声明与已用契约 digest——本仓库历史上真正发生的两类变更（`WOLF_BEAUTY_SPEC.initial_resources`、`witch_action.allowed_effects`）。因此编码约定是**角色 id 永不删除、改名保留别名**：Hook 是代码，删掉的角色无法从旧档恢复，只能判 `incompatible`。
+- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器时拒绝恢复。注册表 digest 只与**文档自身**比对（见上一条），不再要求与运行中的注册表全等。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。**编排状态的字段集是精确匹配的**（`persistence/engine_checkpoint.py` 会拒绝字段集不符的检查点），所以只为提交一次而存在的临时槽位（白天窗口事件 `_pending_point_events`、旁白 `_pending_narration`）刻意不进编排状态：它们在写入后立刻由紧随其后的那一步提交，崩溃时最坏丢掉这一步。
 
 ### 公开事件同步
 
