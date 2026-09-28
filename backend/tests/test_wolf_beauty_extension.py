@@ -183,7 +183,7 @@ def test_validate_lets_every_other_wolf_vote_for_itself() -> None:
         assert validate_werewolf_action(plain, command("kill", 1)) == ()
 
 
-def test_charm_records_the_target_privately_and_hides_it_from_the_log() -> None:
+def test_charm_records_the_target_privately_and_publishes_it_to_the_audience() -> None:
     effects = resolve_wolf_beauty_action(context(), command("charm", 3, "带走强神"))
     assert [effect.kind for effect in effects] == [
         EffectKind.SET_PRIVATE_DATA, EffectKind.ADD_RELATION, EffectKind.EMIT_EVENT,
@@ -198,10 +198,11 @@ def test_charm_records_the_target_privately_and_hides_it_from_the_log() -> None:
         "target": 3, "relation": "charmed_by", "other_seat": 1}
     assert effects[2].payload == {
         "event_type": "WOLF_BEAUTY_CHARM",
-        "payload": {"seat": 1, "round_number": 2},
+        "payload": {"seat": 1, "target_seat": 3, "round_number": 2},
     }
-    # The charmed seat must not leak into the public event.
-    assert "target_seat" not in effects[2].payload["payload"]
+    # The audience is the god view: the charm event carries the charmed seat.
+    # The players' own view still never sees it — the relation above stays
+    # unprojected and the reach of this event is the audience stream only.
     assert effects[2].visibility == ("PUBLIC",)
     assert effects[3].payload["event_type"] == "WOLF_BEAUTY_REASONING"
     assert effects[3].payload["payload"]["thought"] == "决定魅惑 3 号玩家：带走强神"
@@ -292,6 +293,9 @@ def test_charm_window_runs_after_the_wolf_vote_and_spends_nothing() -> None:
         "WOLF_BEAUTY_CHARM", "WOLF_BEAUTY_REASONING"]
     assert game._pipeline_runtime.private_data[1]["last_charmed"] == 3
     assert game._pipeline_runtime.relations[3] == frozenset({("charmed_by", 1)})
+    assert charm.events[0]["payload"] == {
+        "seat": 1, "target_seat": 3, "round_number": 1,
+    }
 
 
 def test_charm_window_can_still_charm_on_a_no_kill_night() -> None:
@@ -329,9 +333,7 @@ def test_charm_rejects_a_target_that_is_immune() -> None:
     assert game._pipeline_runtime.private_data.get(1, {}).get("last_charmed") is None
     assert 3 not in game._pipeline_runtime.relations
     assert all(
-        event.get("event_type") != "WOLF_BEAUTY_CHARM"
-        or "target_seat" not in event.get("payload", {})
-        for event in charm.events
+        event.get("event_type") != "WOLF_BEAUTY_CHARM" for event in charm.events
     )
 
 

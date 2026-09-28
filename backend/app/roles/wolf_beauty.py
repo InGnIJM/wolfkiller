@@ -108,9 +108,15 @@ def resolve_wolf_beauty_action(
             context.action_key,
             payload={
                 "event_type": "WOLF_BEAUTY_CHARM",
-                # The charmed seat stays private: the public log only records
-                # that a charm happened this night.
-                "payload": {"seat": actor, "round_number": context.round_number},
+                # The charmed seat is published for the god-view audience stream
+                # (the spectator timeline shows every role anyway). The players
+                # never see it: the relation below stays unprojected, and no
+                # player prompt reads the pipeline event stream.
+                "payload": {
+                    "seat": actor,
+                    "target_seat": target,
+                    "round_number": context.round_number,
+                },
             },
             visibility=("PUBLIC",), sort_key=(3,), **common,
         ),
