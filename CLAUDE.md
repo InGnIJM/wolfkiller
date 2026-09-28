@@ -147,8 +147,10 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - 白痴：被放逐时翻牌，公开身份、不死、失去投票权、不再能被放逐，仍可发言；夜刀/毒/枪/自爆带走时正常死亡；计入神职
 - 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，两人均无遗言，当日发言与投票取消直接入夜；被毒/放逐/枪杀时不能带人
 - 骑士：全体发言结束后、放逐投票前（`POST_SPEECH_ACTION`）翻牌决斗一人；狼人则立即死亡、**在进入夜晚前发表遗言**并直接入夜，好人则骑士以死谢罪、无遗言、投票照常；一局一次。两种死亡共用死因 `knight_duel`，遗言只发给被裁决者（中断路径传 `daytime=True`，夜间遗言路径不传）
-- 狼美人：与狼队共享狼刀；狼刀投票后可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）；出局时被魅惑者殉情（死因 `charm`），不能自爆与自刀；被魅惑带走的猎人不能开枪
+- 狼美人：与狼队共享狼刀；狼刀投票后可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）；出局时被魅惑者殉情（死因 `charm`），不能自爆；自刀由 `WOLF_BEAUTY_SPEC` 声明的 `self_kill_forbidden` 资源 + `validate_werewolf_action()` 拒绝（狼刀契约按阵营共享、必须字节一致，能力差异只能走资源标记，禁止在核心模块写角色名），狼队讨论/投票提示词对声明该标记的座位改写成「不能投自己」（`NightDirector._self_kill_clause()`），否则模型会白丢一票；被魅惑带走的猎人不能开枪
 - 老酒鬼：好人平民（非神职），免疫魅惑；被毒或枪杀不当天死亡，落 `poisoned`/`wounded` 后于次日发言结束后、投票前死亡；夜刀/放逐/自爆当夜即死
 - 注册表新增角色会改变 `registry.digest`，处于 `interrupted` 的旧局无法续跑；上线前先结束进行中的对局
 - `ROLE_PIPELINE_V2` 环境变量不改变对局：`GameEngine` 固定 `PipelineMode.V2`
 - 修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新源码门禁测试（注意：不是 `test_guard_extension.py` 的 blob 清单）：`tests/test_game_engine.py` 的引擎禁词测试、`tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 的角色名禁词测试、`tests/test_prompt_renderer.py` 的渲染器禁词测试
+- 改 `roles/werewolf.py` 的 `validate_werewolf_action()` 或 `core/night_flow.py` 的 `_self_kill_clause()` 后更新 `tests/test_wolf_beauty_extension.py`（自刀被拒 / 队友可切 / 其他狼不受限）与 `tests/test_night_flow.py`（提示词三态 + 常量与角色侧声明一致）；改 `audience_projector.py` 的 `_EVENTS` 后同步 `tests/test_audience_projector.py` 的类型全集快照与前端 `components/game/test/eventCoverage.test.tsx` 的期望表
+- 前端覆盖率只卡 `vite.config.ts` 列出的 9 个文件；渲染面的事件覆盖由 `components/game/test/eventCoverage.test.tsx` 兜底（三个渲染面 × 全部观众事件类型逐项表态，漏 case 即红），新增观众事件必须回来补一行
