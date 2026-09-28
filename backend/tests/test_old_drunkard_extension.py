@@ -191,6 +191,16 @@ async def test_poison_is_delayed_and_lands_after_the_next_speech_round(tmp_path)
         {POISONED_STATUS, DELAYED_DEATH_STATUS})
     assert [e["event_type"] for e in settlement.events] == ["STATUS_ADDED", "STATUS_ADDED"]
 
+    # The delayed death needs a step of its own: no other announcement carries a
+    # death that lands only after the speeches, so without it the god view would
+    # show the seat dying with no cause at all.
+    from app.services.game_service import GameService
+
+    mapped: dict[str, list[dict]] = {}
+    engine._checkpoint_hook = lambda step_key: mapped.__setitem__(
+        step_key, GameService._checkpoint_domain_events(engine, step_key),
+    )
+
     interrupted = await engine._execute_speech_round()
 
     # The whole day is spoken, then the pending death lands before the vote.
@@ -201,6 +211,16 @@ async def test_poison_is_delayed_and_lands_after_the_next_speech_round(tmp_path)
     assert [(d.player_seat, d.cause) for d in engine.published] == [(1, "poison")]
     assert engine.state.players[1].is_alive is False
     assert engine.state._pipeline_runtime.statuses[1] == frozenset()
+
+    delayed = next(key for key in mapped if ":delayed_death:2:1" in key)
+    assert len(mapped[delayed]) == 1
+    death = mapped[delayed][0]
+    assert death["event_type"] == "PLAYER_DIED"
+    assert death["payload"] == {
+        "player_seat": 1, "cause": "poison", "round_number": 2,
+    }
+    assert death["visibility"] == ["PUBLIC"]
+    assert death["event_id"].startswith("domain:")
 
 
 @pytest.mark.asyncio

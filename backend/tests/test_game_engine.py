@@ -1685,7 +1685,7 @@ class TestGameEngine:
         engine.state.players[1].mark_dead("exile")
         engine.state.death_history.append(DeathReport(1, "exile", engine.state.round_number))
         engine.state.votes = [VoteAction(voter_seat=seat, target_seat=1) for seat in range(2, 10)]
-        engine._run_exile_reaction = AsyncMock()
+        engine._run_exile_reaction = AsyncMock(return_value=())
         engine.give_last_words = AsyncMock(return_value=None)
         engine.sm.set_state(GamePhase.VOTE_RESOLUTION)
 
@@ -1709,7 +1709,7 @@ class TestGameEngine:
         engine.state.supplemental_speakers = set(alive)
         engine.state.voted_seats = set(alive)
         engine.resolve_votes = MagicMock(return_value=1)
-        engine._run_exile_reaction = AsyncMock()
+        engine._run_exile_reaction = AsyncMock(return_value=())
         engine.give_last_words = AsyncMock(return_value=None)
         engine._check_game_over = AsyncMock(return_value=True)
 
@@ -1796,7 +1796,7 @@ class TestGameEngine:
             if not failed[0]:
                 failed[0] = True
                 raise PipelinePaused("retry after exile")
-            await original(seat)
+            return await original(seat)
 
         monkeypatch.setattr(engine, "_run_exile_reaction", interrupted)
         with pytest.raises(PipelinePaused, match="retry after exile"):

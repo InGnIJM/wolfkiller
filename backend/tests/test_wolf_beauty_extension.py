@@ -392,6 +392,16 @@ async def test_an_exiled_wolf_beauty_drags_the_charmed_player_along(tmp_path) ->
 
     published.clear()
     engine.state.round_number = 2
+    # The announcing step is what the spectator reads: it must name the exiled
+    # seat *and* the charmed victim, whose cause (``charm``) no cause whitelist
+    # would have let through.
+    from app.services.audience_projector import AudienceProjector
+    from app.services.game_service import GameService
+
+    mapped: dict[str, list[dict]] = {}
+    engine._checkpoint_hook = lambda step_key: mapped.__setitem__(
+        step_key, GameService._checkpoint_domain_events(engine, step_key),
+    )
     assert await engine._apply_exile(1) is False
 
     # Exiling the Wolf Beauty drags the charmed hunter along. The exiled seat
@@ -399,6 +409,16 @@ async def test_an_exiled_wolf_beauty_drags_the_charmed_player_along(tmp_path) ->
     # may not shoot on a charm death, so the charm death is the only fresh
     # announcement.
     assert published == [(4, "charm")]
+    reaction = next(key for key in mapped if ":exile_reaction:2:1" in key)
+    assert reaction.endswith(":exile_reaction:2:1:1-4")
+    assert [
+        (event["event_type"], event["payload"]["cause"])
+        for event in mapped[reaction]
+    ] == [("PLAYER_DIED", "exile"), ("PLAYER_DIED", "charm")]
+    projected = AudienceProjector().project_events("beauty-exile", mapped[reaction])
+    assert [
+        (row["event_type"], row["payload"]["cause"]) for row in projected
+    ] == [("death", "exile"), ("death", "charm")]
     assert engine.state.players[4].is_alive is False
     assert engine.state.players[6].is_alive is True
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [
