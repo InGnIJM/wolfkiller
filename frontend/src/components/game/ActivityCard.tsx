@@ -40,6 +40,10 @@ const SHERIFF_SIDE_LABELS: Record<string, string> = {
   death_right: '死右',
 };
 
+function campLabel(camp: string): string {
+  return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp;
+}
+
 function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
@@ -577,6 +581,42 @@ export default function ActivityCard() {
           subtitle={`失去投票权，之后不再能被放逐 · 第${entry.payload.round_number}轮`}
           tone="#E8C887"
           tag="FLIPPED"
+        />
+      );
+    case 'knight_duel':
+      return (
+        <DayVerdictView
+          seat={entry.payload.target_seat}
+          title={`${entry.payload.seat}号骑士翻牌决斗${entry.payload.target_seat}号`}
+          subtitle={`${campLabel(entry.payload.camp)} · 第${entry.payload.round_number}轮`}
+          tone="#E5484D"
+          tag="DUEL"
+        />
+      );
+    case 'wolf_beauty_charm':
+      return (
+        <ActivityFrame tone="#F4B3B6">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <SeatAvatar seat={entry.payload.seat} />
+            <Box>
+              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                {entry.payload.seat}号发动魅惑
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+                第{entry.payload.round_number}轮 · 目标保密
+              </Typography>
+            </Box>
+          </Box>
+        </ActivityFrame>
+      );
+    case 'wolf_beauty_revenge':
+      return (
+        <DayVerdictView
+          seat={entry.payload.target_seat}
+          title={`${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`}
+          subtitle={`${CAUSE_LABELS[entry.payload.cause] ?? entry.payload.cause} · 第${entry.payload.round_number}轮`}
+          tone="#F4B3B6"
+          tag="REVENGE"
         />
       );
     case 'self_explode':

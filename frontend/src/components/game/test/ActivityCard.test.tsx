@@ -412,4 +412,43 @@ describe('ActivityCard', () => {
     render(<ActivityCard />);
     expect(screen.getByText(/竞选自爆 · 第2轮/)).toBeInTheDocument();
   });
+
+  it('renders the knight duel card with the challenged camp', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'knight_duel',
+        payload: { seat: 4, target_seat: 9, camp: 'werewolf', round_number: 2 },
+      },
+    ]);
+    render(<ActivityCard />);
+    expect(screen.getByText('4号骑士翻牌决斗9号')).toBeInTheDocument();
+    expect(screen.getByText('狼人 · 第2轮')).toBeInTheDocument();
+  });
+
+  it('renders the charm card without revealing the charmed seat', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_beauty_charm',
+        payload: { seat: 6, round_number: 3 },
+      },
+    ]);
+    render(<ActivityCard />);
+    expect(screen.getByText('6号发动魅惑')).toBeInTheDocument();
+    expect(screen.getByText('第3轮 · 目标保密')).toBeInTheDocument();
+  });
+
+  it('renders the revenge card with the dragged seat and the cause', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_beauty_revenge',
+        payload: { seat: 6, target_seat: 2, cause: 'exile', round_number: 3 },
+      },
+    ]);
+    render(<ActivityCard />);
+    expect(screen.getByText('6号出局，2号殉情')).toBeInTheDocument();
+    expect(screen.getByText('被放逐 · 第3轮')).toBeInTheDocument();
+  });
 });

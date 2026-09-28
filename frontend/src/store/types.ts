@@ -176,6 +176,28 @@ export interface WolfVotePayload {
   reasoning: string;
 }
 
+/** Published when the knight flips and duels one seat after the speeches. */
+export interface KnightDuelPayload {
+  round_number: number;
+  seat: number;
+  target_seat: number;
+  /** Camp of the challenged seat; the judge announces the verdict publicly. */
+  camp: string;
+}
+
+/** The charmed seat stays private: this payload carries only the caster. */
+export interface WolfBeautyCharmPayload {
+  round_number: number;
+  seat: number;
+}
+
+export interface WolfBeautyRevengePayload {
+  round_number: number;
+  seat: number;
+  target_seat: number;
+  cause: DeathCause;
+}
+
 export interface ThoughtPayload {
   round_number: number;
   seat: number;
@@ -190,7 +212,9 @@ export interface NightThoughtPayload {
     | 'witch_reasoning'
     | 'seer_reasoning'
     | 'guard_reasoning'
-    | 'werewolf_king_reasoning';
+    | 'werewolf_king_reasoning'
+    | 'knight_reasoning'
+    | 'wolf_beauty_reasoning';
   target_seat: number | null;
   reasoning: string;
 }
@@ -250,6 +274,9 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'technical_abstain', TechnicalAbstainPayload>
   | PublicReplayEnvelope<'exile_cancelled', ExileCancelledPayload>
   | PublicReplayEnvelope<'self_explode', SelfExplodePayload>
+  | PublicReplayEnvelope<'knight_duel', KnightDuelPayload>
+  | PublicReplayEnvelope<'wolf_beauty_charm', WolfBeautyCharmPayload>
+  | PublicReplayEnvelope<'wolf_beauty_revenge', WolfBeautyRevengePayload>
   | PublicReplayEnvelope<'sheriff_elected', SheriffElectedPayload>
   | PublicReplayEnvelope<'sheriff_badge', SheriffBadgePayload>
   | PublicReplayEnvelope<'sheriff_run', SheriffRunPayload>
