@@ -171,8 +171,12 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
-    what: '狼美人魅惑（目标保密）',
-    event: { ...at, event_type: 'wolf_beauty_charm', payload: { seat: 6, round_number: 2 } },
+    what: '狼美人魅惑（上帝视角带目标）',
+    event: {
+      ...at,
+      event_type: 'wolf_beauty_charm',
+      payload: { seat: 6, target_seat: 2, round_number: 2 },
+    },
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
