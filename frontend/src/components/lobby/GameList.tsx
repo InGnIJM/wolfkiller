@@ -11,7 +11,7 @@ import FolderRail, { type FolderFilter } from './FolderRail';
 import BatchActionBar from './BatchActionBar';
 import {
   assignGameFolder, batchDeleteGames, batchMoveGames, controlGame, createFolder,
-  deleteGame, listFolders, listGames, renameGame,
+  deleteGame, GameControlError, listFolders, listGames, renameGame,
 } from '../../api/client';
 import type { GameFolder, GameListItem } from '../../store/types';
 
@@ -58,6 +58,9 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
   const [moveError, setMoveError] = useState('');
   const [controlError, setControlError] = useState('');
   const [controlBusyId, setControlBusyId] = useState<string | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<
+    { gameId: string; action: 'pause' | 'resume' | 'recover'; code: string } | null
+  >(null);
 
   const refresh = useCallback(async () => {
     const [gamesRes, foldersRes] = await Promise.all([listGames(), listFolders()]);
@@ -95,11 +98,13 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
   const runControl = async (
     gameId: string,
     action: 'pause' | 'resume' | 'recover',
+    options: { force?: boolean } = {},
   ) => {
     setControlBusyId(gameId);
     setControlError('');
     try {
-      const updated = await controlGame(gameId, action);
+      const updated = await controlGame(gameId, action, options);
+      setConfirmTarget(null);
       if (Object.keys(updated).length > 0) {
         setGames((current) => current.map((game) => (
           game.game_id === gameId ? { ...game, ...updated } : game
@@ -108,10 +113,21 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         await refresh();
       }
     } catch (error) {
-      setControlError(error instanceof Error ? error.message : String(error));
+      // A game that was interrupted under older role declarations is resumable,
+      // but continuing changes the rules it plays by — so ask, never assume.
+      if (error instanceof GameControlError && error.confirmationRequired) {
+        setConfirmTarget({ gameId, action, code: error.code });
+      } else {
+        setControlError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
       setControlBusyId(null);
     }
+  };
+
+  const submitConfirm = async () => {
+    if (confirmTarget === null) return;
+    await runControl(confirmTarget.gameId, confirmTarget.action, { force: true });
   };
 
   const openRename = (g: GameListItem) => {
@@ -379,6 +395,23 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         <DialogActions>
           <Button onClick={() => setBatchDeleteOpen(false)}>取消</Button>
           <Button color="error" onClick={() => void submitBatchDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmTarget !== null} onClose={() => setConfirmTarget(null)}>
+        <DialogTitle>角色声明已变更</DialogTitle>
+        <DialogContent>
+          <Typography>
+            这局是在旧的角色声明下中断的，直接续跑会按当前代码继续。
+            已经结算的行动与资源不会被重放，新声明的资源也不会补发。
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            原因代码：{confirmTarget?.code}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmTarget(null)}>取消</Button>
+          <Button onClick={() => void submitConfirm()}>继续对局</Button>
         </DialogActions>
       </Dialog>
 

@@ -6,12 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   assignGameFolder, batchDeleteGames, batchMoveGames, controlGame, createFolder,
-  deleteGame, listFolders, listGames, renameGame,
+  deleteGame, GameControlError, listFolders, listGames, renameGame,
 } from '../../../api/client';
 import type { GameListItem } from '../../../store/types';
 import GameList from '../GameList';
 
-vi.mock('../../../api/client', () => ({
+vi.mock('../../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/client')>()),
   listGames: vi.fn(),
   renameGame: vi.fn(),
   deleteGame: vi.fn(),
@@ -184,9 +185,9 @@ describe('GameList management', () => {
     await act(async () => Promise.resolve());
 
     fireEvent.click(screen.getByTestId('pause-game-1'));
-    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-1', 'pause'));
+    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-1', 'pause', {}));
     fireEvent.click(screen.getByTestId('resume-game-2'));
-    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-2', 'resume'));
+    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-2', 'resume', {}));
 
     expect(listGames).toHaveBeenCalledOnce();
     expect(screen.getByTestId('game-game-1')).toBeInTheDocument();
@@ -216,8 +217,53 @@ describe('GameList management', () => {
     await act(async () => Promise.resolve());
 
     fireEvent.click(screen.getByTestId('recover-game-1'));
-    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-1', 'recover'));
+    await waitFor(() => expect(controlGame).toHaveBeenCalledWith('game-1', 'recover', {}));
     await waitFor(() => expect(listGames).toHaveBeenCalledTimes(2));
+  });
+
+  it('asks before resuming a game whose declarations moved on', async () => {
+    const drift = new GameControlError(409, 'role_declaration_drift', true);
+    vi.mocked(listGames)
+      .mockResolvedValueOnce({
+        games: [{ ...game('game-1'), execution_status: 'interrupted', recoverable: true }],
+      })
+      .mockResolvedValueOnce({
+        games: [{ ...game('game-1'), execution_status: 'running' }],
+      });
+    vi.mocked(controlGame)
+      .mockRejectedValueOnce(drift)
+      .mockRejectedValueOnce(drift)
+      .mockResolvedValueOnce({ execution_status: 'running' });
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByTestId('recover-game-1'));
+    expect(await screen.findByText('角色声明已变更')).toBeVisible();
+    expect(controlGame).toHaveBeenCalledWith('game-1', 'recover', {});
+    // Declining leaves the game untouched, so nothing is forced.
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByText('角色声明已变更')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('recover-game-1'));
+    fireEvent.click(await screen.findByRole('button', { name: '继续对局' }));
+    await waitFor(() => expect(controlGame)
+      .toHaveBeenLastCalledWith('game-1', 'recover', { force: true }));
+    await waitFor(() => expect(screen.queryByText('角色声明已变更')).not.toBeInTheDocument());
+  });
+
+  it('reports a hard recovery refusal without asking', async () => {
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: [{ ...game('game-1'), execution_status: 'interrupted', recoverable: true }],
+    });
+    vi.mocked(controlGame).mockRejectedValueOnce(
+      new GameControlError(409, 'registry_incompatible', false),
+    );
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    fireEvent.click(screen.getByTestId('recover-game-1'));
+    expect(await screen.findByText('registry_incompatible: 409')).toBeVisible();
+    expect(screen.queryByText('角色声明已变更')).not.toBeInTheDocument();
   });
 
   it('renames a game from the dialog and updates the card title', async () => {

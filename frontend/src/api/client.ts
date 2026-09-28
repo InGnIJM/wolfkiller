@@ -223,12 +223,43 @@ export async function fetchAudienceEvents(
   };
 }
 
+export class GameControlError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly confirmationRequired: boolean;
+
+  constructor(status: number, code: string, confirmationRequired: boolean) {
+    super(`${code}: ${status}`);
+    this.name = 'GameControlError';
+    this.status = status;
+    this.code = code;
+    this.confirmationRequired = confirmationRequired;
+  }
+}
+
+/** A refusal the user can answer: the game would resume under changed declarations. */
+async function controlError(res: Response, action: string): Promise<GameControlError> {
+  if (res.status === 404) throw new GameNotFoundError();
+  const body = await res.json().catch(() => null) as
+    { detail?: { code?: unknown; confirmation_required?: unknown } } | null;
+  const code = typeof body?.detail?.code === 'string'
+    ? body.detail.code
+    : `${action} game failed`;
+  return new GameControlError(
+    res.status, code, body?.detail?.confirmation_required === true,
+  );
+}
+
 export async function controlGame(
   gameId: string,
   action: 'pause' | 'resume' | 'recover',
+  options: { force?: boolean } = {},
 ): Promise<Partial<GameListItem>> {
-  const res = await fetch(`${getApiBase()}/api/games/${gameId}/${action}`, { method: 'POST' });
-  if (!res.ok) throwHttpError(res, `${action} game failed`);
+  const query = options.force ? '?force=true' : '';
+  const res = await fetch(
+    `${getApiBase()}/api/games/${gameId}/${action}${query}`, { method: 'POST' },
+  );
+  if (!res.ok) throw await controlError(res, action);
   if (res.status === 204) return {};
   return res.json();
 }
