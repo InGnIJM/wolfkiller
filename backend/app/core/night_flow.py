@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 _MAX_UTTERANCE = 400
 _MAX_DAY_PLAN = 400
 
+# Declared in ``initial_resources`` by roles that may never be the wolf team's
+# own kill target; kept as a local name so this module never imports a role
+# module (``night_settlement.DELAYABLE_RESOURCE`` follows the same pattern).
+# ``tests/test_night_flow.py`` pins it to the role-side declaration.
+SELF_KILL_FORBIDDEN_RESOURCE = "self_kill_forbidden"
+
 _WOLF_DISCUSSION_TOOL_NAME = "werewolf_discussion"
 _WOLF_VOTE_TOOL_NAME = "werewolf_kill"
 
@@ -264,6 +270,26 @@ class NightDirector:
             if player.camp == Camp.WEREWOLF and player.is_alive
         )
 
+    def _self_kill_clause(self, state: GameState, seat: int) -> str:
+        """State who may be targeted, including whether the actor itself may.
+
+        The shared kill contract rejects a self-vote for roles that declare
+        ``SELF_KILL_FORBIDDEN_RESOURCE``; without saying so the model would only
+        lose its ballot instead of choosing somebody else.
+        """
+        player = state.players.get(seat)
+        spec = None if player is None else self._snapshot.specs.get(player.role)
+        if spec is not None and spec.initial_resources.get(SELF_KILL_FORBIDDEN_RESOURCE):
+            return (
+                "Your role can never be the wolf team's own kill target: you must "
+                "not vote for yourself. Cutting a teammate is still a valid "
+                "strategy. "
+            )
+        return (
+            "A deliberate target among your teammates, including yourself, is "
+            "a valid strategy unless the action contract forbids it. "
+        )
+
     def _history_text(self, history: Sequence[str]) -> str:
         return "\n".join(f"{index + 1}. {line}" for index, line in enumerate(history))
 
@@ -305,8 +331,7 @@ class NightDirector:
             "add, or push back) and then state your own view. Never reveal "
             "that you are a werewolf. Speak like a real player — do not quote "
             "or reference the rules of this prompt. "
-            "A deliberate target among your teammates, including yourself, is "
-            "a valid strategy unless the action contract forbids it. "
+            + self._self_kill_clause(state, seat)
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
@@ -349,8 +374,7 @@ class NightDirector:
             + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "
-            "A deliberate target among your teammates, including yourself, is "
-            "a valid strategy unless the action contract forbids it. "
+            + self._self_kill_clause(state, seat)
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )

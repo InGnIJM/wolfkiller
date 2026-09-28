@@ -9,6 +9,7 @@ from app.core.night_flow import (
     DiscussionTurn,
     NightBriefing,
     NightDirector,
+    SELF_KILL_FORBIDDEN_RESOURCE,
     WolfVote,
     _clean,
     build_briefing,
@@ -18,6 +19,8 @@ from app.models.conversation import ConversationScope
 from app.models.game import GameConfig, GameState, PlayerState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
+from app.roles.werewolf import SELF_KILL_FORBIDDEN
+from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC
 
 
 def _state() -> GameState:
@@ -417,6 +420,54 @@ def test_build_briefing_caps_lines_and_content():
 
 
 # ── prompt builders ─────────────────────────────────────────
+
+BEAUTY = "wolf-killer-wolf-beauty"
+
+
+def _beauty_director() -> NightDirector:
+    return NightDirector(
+        RegistrySnapshot(specs={BEAUTY: WOLF_BEAUTY_SPEC}, digest="test"),
+        lambda messages, _tool_name, _schema, _seat: "{}",
+    )
+
+
+def _beauty_state() -> GameState:
+    state = _state()
+    state.players[1].role = BEAUTY
+    state.players[1].camp = "werewolf"
+    return state
+
+
+def _prompt_text(messages: list[dict[str, str]]) -> str:
+    return "\n".join(message["content"] for message in messages)
+
+
+def test_self_kill_resource_name_matches_the_role_declaration():
+    assert SELF_KILL_FORBIDDEN_RESOURCE == SELF_KILL_FORBIDDEN
+
+
+def test_self_kill_clause_tolerates_an_unknown_seat():
+    assert "including yourself" in _beauty_director()._self_kill_clause(_beauty_state(), 99)
+
+
+def test_wolf_prompts_forbid_a_role_that_may_not_kill_itself():
+    state, director = _beauty_state(), _beauty_director()
+    for messages in (
+        director.discussion_prompt(state, 1, []),
+        director.vote_prompt(state, 1, [], []),
+    ):
+        text = _prompt_text(messages)
+        assert "including yourself" not in text
+        assert "must not vote for yourself" in text
+
+
+def test_wolf_prompts_keep_the_self_knife_legal_for_every_other_wolf():
+    state, director = _state(), _director(lambda _messages: "{}")
+    for messages in (
+        director.discussion_prompt(state, 1, []),
+        director.vote_prompt(state, 1, [], []),
+    ):
+        assert "including yourself" in _prompt_text(messages)
 
 
 def test_discussion_prompt_target_rule_mentions_judgment_and_random(state: GameState, director: NightDirector):
