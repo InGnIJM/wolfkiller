@@ -447,3 +447,83 @@ async def test_journaled_interruption_ignores_other_rounds(tmp_path) -> None:
         PointCheckpoint((), (), (), (), (), (), WorkCursor("response", 0, 0), work_count=0),
     )
     assert engine._journaled_day_interruption() is not None
+
+
+@pytest.mark.asyncio
+async def test_the_duel_window_hands_its_events_to_the_spectator_stream(tmp_path) -> None:
+    """A daytime window has no ``night_point:`` channel of its own: the
+    ``day_point:`` step is what carries its public events into the god view."""
+    from app.services.audience_projector import AudienceProjector
+    from app.services.game_service import GameService
+
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "knight_duel":
+            return command("duel", 5, "查杀 5 号")
+        return command("pass")
+
+    engine = _engine(tmp_path, provider, "knight-spectator")
+    mapped: dict[str, list[dict]] = {}
+
+    def hook(step_key: str) -> None:
+        # Mirrors the service: the mapping runs when the step commits, i.e.
+        # while the window's events are still the pending ones.
+        mapped[step_key] = GameService._checkpoint_domain_events(engine, step_key)
+
+    engine._checkpoint_hook = hook
+
+    assert await engine._execute_speech_round() is True
+
+    label = next(key for key in mapped if ":day_point:post_speech_action:" in key)
+    events = mapped[label]
+    assert [event["event_type"] for event in events] == [
+        "KNIGHT_DUEL", "DAY_INTERRUPTED", "KNIGHT_REASONING",
+    ]
+    assert events[0]["payload"] == {
+        "seat": 1, "target_seat": 5, "camp": "werewolf", "round_number": 2,
+    }
+    # The window payloads carry no round number of their own; the step fills it.
+    assert events[2]["payload"]["round_number"] == 2
+    assert [event["visibility"] for event in events] == [["PUBLIC"]] * 3
+
+    # DAY_INTERRUPTED is an engine trigger the spectator contract has no event
+    # for: the projector is what keeps it out of the audience stream.
+    projected = AudienceProjector().project_events(engine.game_id, events)
+    assert [row["event_type"] for row in projected] == ["knight_duel", "night_thought"]
+    assert projected[0]["payload"] == {
+        "seat": 1, "target_seat": 5, "camp": "werewolf", "round_number": 2,
+    }
+    assert projected[1]["payload"]["action_type"] == "knight_reasoning"
+
+
+@pytest.mark.asyncio
+async def test_the_penance_death_is_announced_before_the_vote(tmp_path) -> None:
+    """A death that lands after the speeches needs a step of its own, or the
+    god view never learns that the knight died at all."""
+
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "knight_duel":
+            return command("duel", 2, "我怀疑 2 号")
+        return command("pass")
+
+    engine = _engine(tmp_path, provider, "knight-penance-announce")
+    from app.services.audience_projector import AudienceProjector
+    from app.services.game_service import GameService
+
+    mapped: dict[str, list[dict]] = {}
+    engine._checkpoint_hook = lambda step_key: mapped.__setitem__(
+        step_key, GameService._checkpoint_domain_events(engine, step_key),
+    )
+
+    assert await engine._execute_speech_round() is False
+
+    label = next(key for key in mapped if ":day_reaction:" in key)
+    assert label.endswith(":day_reaction:2:1:0:1")
+    assert [
+        (event["event_type"], event["payload"]["cause"])
+        for event in mapped[label]
+    ] == [("PLAYER_DIED", "knight_duel")]
+    announced = AudienceProjector().project_events(engine.game_id, mapped[label])
+    assert [row["event_type"] for row in announced] == ["death"]
+    assert announced[0]["payload"] == {
+        "player_seat": 1, "cause": "knight_duel", "round_number": 2,
+    }
