@@ -8,8 +8,8 @@
  * `feat(frontend): render the X event` 的改动时，也要回来给表补一行。
  *
  * 清单来源（改后端投影时同步这里）：
- * - `backend/app/services/audience_projector.py` 的 `_EVENTS`：26 类公开投影
- * - `backend/app/api/routes/game_routes.py` 合成的 `narration`
+ * - `backend/app/services/audience_projector.py` 的 `_EVENTS`：28 类公开投影
+ *   （其中 `narration` 也由 `game_routes.py` 的旧档合成路径产生）
  * - 旧档里仍会出现的 `witch_thought` / `seer_thought`
  */
 
