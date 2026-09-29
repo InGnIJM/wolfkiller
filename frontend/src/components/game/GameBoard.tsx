@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Box, Typography, Button, Chip, CircularProgress } from '@mui/material';
+import {
+  Alert, Box, Typography, Button, Chip, CircularProgress,
+  Dialog, DialogTitle, DialogContent, DialogActions,
+} from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { useGameStore } from '../../store/gameStore';
 import {
   AudienceApiError, fetchAudienceEvents, fetchAudienceSnapshot,
   fetchGameLogs, fetchGameDetail, GameNotFoundError,
+  controlGame, GameControlError,
 } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
-import type { PublicReplayEvent } from '../../store/types';
+import type { ExecutionStatus, PublicReplayEvent } from '../../store/types';
+import { recoveryBlockLabel } from '../lobby/recoveryLabels';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
@@ -16,6 +22,15 @@ import WinOverlay from './WinOverlay';
 import ActivityCard from './ActivityCard';
 import PageBackground from '../shared/PageBackground';
 import { BACKDROP } from '../../theme/tokens';
+
+const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
+  running: '运行中',
+  paused: '已暂停',
+  interrupted: '已中断',
+  recovery_blocked: '恢复受阻',
+  completed: '已完成',
+  failed: '执行失败',
+};
 
 interface Props {
   onBack: () => void;
@@ -95,14 +110,39 @@ export default function GameBoard({ onBack, gameId }: Props) {
     badgeCandidates, offBadgeSeats,
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
     loadAudienceSnapshot, loadAudienceHistory, mergeAudienceEvents, reset,
-    syncMode, streamError, executionStatus,
+    syncMode, streamError, executionStatus, recoverable, recoveryBlockCode,
   } = useGameStore();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionPending, setActionPending] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState<{ code: string } | null>(null);
+  const [controlErrorMsg, setControlErrorMsg] = useState<string | null>(null);
 
   const [syncRevision, setSyncRevision] = useState(0);
   const resync = useCallback(() => setSyncRevision((revision) => revision + 1), []);
+
+  const dismissConfirm = () => setConfirmTarget(null);
+
+  const handleRecover = async (options: { force?: boolean } = {}) => {
+    setActionPending(true);
+    setControlErrorMsg(null);
+    try {
+      await controlGame(gameId, 'recover', options);
+      setConfirmTarget(null);
+      const snapshot = await fetchAudienceSnapshot(gameId);
+      loadAudienceSnapshot(snapshot);
+      resync();
+    } catch (err: unknown) {
+      if (err instanceof GameControlError && err.confirmationRequired) {
+        setConfirmTarget({ code: err.code });
+      } else {
+        setControlErrorMsg(err instanceof Error ? err.message : '恢复对局失败');
+      }
+    } finally {
+      setActionPending(false);
+    }
+  };
 
   useEffect(() => {
     reset();
@@ -246,6 +286,11 @@ export default function GameBoard({ onBack, gameId }: Props) {
     Object.assign(voteTargets, nightWolfVoteTargets(timeline, timelineIndex));
   }
 
+  const recoveryTooltip = !recoverable
+    ? (recoveryBlockLabel(recoveryBlockCode) ?? '此对局无法恢复')
+    : undefined;
+  const blockReason = recoveryBlockLabel(recoveryBlockCode);
+
   const stage = loading ? (
     <Box sx={{
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2,
@@ -265,6 +310,71 @@ export default function GameBoard({ onBack, gameId }: Props) {
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {streamError && <Alert severity="warning">{streamError}</Alert>}
+      {controlErrorMsg && (
+        <Alert severity="error" onClose={() => setControlErrorMsg(null)}>
+          {controlErrorMsg}
+        </Alert>
+      )}
+      {executionStatus === 'interrupted' && (
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              variant="outlined"
+              disabled={actionPending || !recoverable}
+              title={recoveryTooltip}
+              onClick={() => void handleRecover({ force: false })}
+              startIcon={<RestartAltIcon fontSize="small" />}
+            >
+              恢复对局
+            </Button>
+          }
+        >
+          对局执行已中断。
+        </Alert>
+      )}
+      {executionStatus === 'recovery_blocked' && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              variant="outlined"
+              disabled={actionPending || !recoverable}
+              title={recoveryTooltip}
+              onClick={() => void handleRecover({ force: false })}
+              startIcon={<RestartAltIcon fontSize="small" />}
+            >
+              重试恢复
+            </Button>
+          }
+        >
+          对局恢复受阻{blockReason ? `（${blockReason}）` : ''}。
+        </Alert>
+      )}
+      {executionStatus === 'failed' && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              variant="outlined"
+              disabled={actionPending || !recoverable}
+              title={recoveryTooltip}
+              onClick={() => void handleRecover({ force: false })}
+              startIcon={<RestartAltIcon fontSize="small" />}
+            >
+              重试恢复
+            </Button>
+          }
+        >
+          对局执行失败。
+        </Alert>
+      )}
       <TimelineController />
 
       {/* 游戏信息条：存活统计 / 对局编号 / 视角标识 + 操作 */}
@@ -292,10 +402,17 @@ export default function GameBoard({ onBack, gameId }: Props) {
         <Box sx={{ ml: { xs: 0, md: 'auto' }, width: { xs: '100%', md: 'auto' }, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           {executionStatus && (
             <Chip
-              label={`执行：${executionStatus}`}
+              label={`执行：${EXECUTION_LABELS[executionStatus]}`}
               size="small"
-              color={executionStatus === 'failed' || executionStatus === 'recovery_blocked' ? 'error' : 'default'}
+              color={
+                executionStatus === 'failed' || executionStatus === 'recovery_blocked'
+                  ? 'error'
+                  : executionStatus === 'interrupted' || executionStatus === 'paused'
+                  ? 'warning'
+                  : 'default'
+              }
               variant="outlined"
+              title={recoveryTooltip}
             />
           )}
           <Chip
@@ -343,6 +460,30 @@ export default function GameBoard({ onBack, gameId }: Props) {
       {showWinOverlay && winResult && (
         <WinOverlay winResult={winResult} revealOnDeath={revealOnDeath} />
       )}
+
+      <Dialog open={confirmTarget !== null} onClose={dismissConfirm}>
+        <DialogTitle>角色声明已变更</DialogTitle>
+        <DialogContent>
+          <Typography>
+            这局是在旧的角色声明下中断的，直接续跑会按当前代码继续。
+            已经结算的行动与资源不会被重放，新声明的资源也不会补发。
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            原因代码：{confirmTarget?.code}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={dismissConfirm}>取消</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            disabled={actionPending}
+            onClick={() => void handleRecover({ force: true })}
+          >
+            继续对局
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AudienceApiError, fetchAudienceEvents, fetchAudienceSnapshot,
   fetchGameDetail, fetchGameLogs, GameNotFoundError,
+  controlGame, GameControlError,
 } from '../../../api/client';
 import { useGameStore } from '../../../store/gameStore';
 import type { GameLogs, PublicGameState } from '../../../store/types';
@@ -32,6 +33,19 @@ vi.mock('../../../api/client', () => ({
     constructor() {
       super('对局不存在或已失效');
       this.name = 'GameNotFoundError';
+    }
+  },
+  controlGame: vi.fn(),
+  GameControlError: class GameControlError extends Error {
+    status: number;
+    code: string;
+    confirmationRequired: boolean;
+    constructor(status: number, code: string, confirmationRequired: boolean) {
+      super(`${code}: ${status}`);
+      this.name = 'GameControlError';
+      this.status = status;
+      this.code = code;
+      this.confirmationRequired = confirmationRequired;
     }
   },
 }));
@@ -614,7 +628,7 @@ describe('GameBoard public replay', () => {
     });
     act(() => useGameStore.setState({ streamError: '事件流暂时中断' }));
 
-    expect(screen.getByText('执行：failed')).toBeVisible();
+    expect(screen.getByText('执行：执行失败')).toBeVisible();
     expect(screen.getByText('事件流暂时中断')).toBeVisible();
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(mergeAudienceEvents).toHaveBeenCalledOnce();
@@ -1004,5 +1018,274 @@ describe('GameBoard public replay', () => {
 
     expect(await screen.findByTestId('seat-map')).toBeInTheDocument();
     await waitFor(() => expect(useGameStore.getState().timelineIndex).toBe(-1));
+  });
+
+  it('renders interrupted notice and triggers recovery control from the game board', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'interrupted',
+        recoverable: true,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    vi.mocked(controlGame).mockResolvedValueOnce({
+      game_id: 'game-1',
+      execution_status: 'running',
+      recoverable: false,
+      recovery_block_code: null,
+    });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('执行：已中断')).toBeVisible();
+    expect(screen.getByText('对局执行已中断。')).toBeVisible();
+    const recoverButtons = screen.getAllByRole('button', { name: /恢复对局/ });
+    expect(recoverButtons.length).toBeGreaterThanOrEqual(1);
+    await act(async () => {
+      fireEvent.click(recoverButtons[0]);
+    });
+    expect(controlGame).toHaveBeenCalledWith('game-1', 'recover', { force: false });
+  });
+
+  it('shows confirmation dialog on recovery drift and recovers with force=true', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValue({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'interrupted',
+        recoverable: true,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValue({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    vi.mocked(controlGame)
+      .mockRejectedValueOnce(new GameControlError(409, 'role_declaration_drift', true))
+      .mockResolvedValueOnce({
+        game_id: 'game-1',
+        execution_status: 'running',
+        recoverable: false,
+        recovery_block_code: null,
+      });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const recoverButtons = screen.getAllByRole('button', { name: /恢复对局/ });
+    await act(async () => {
+      fireEvent.click(recoverButtons[0]);
+    });
+    expect(screen.getByText('角色声明已变更')).toBeVisible();
+    expect(screen.getByText(/原因代码：role_declaration_drift/)).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '继续对局' }));
+    });
+    expect(controlGame).toHaveBeenLastCalledWith('game-1', 'recover', { force: true });
+  });
+
+  it('allows dismissing the drift confirmation dialog with cancel', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValue({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'interrupted',
+        recoverable: true,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValue({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    vi.mocked(controlGame).mockRejectedValueOnce(new GameControlError(409, 'role_declaration_drift', true));
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /恢复对局/ }));
+    });
+    expect(screen.getByText('角色声明已变更')).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    });
+    await waitFor(() => expect(screen.queryByText('角色声明已变更')).not.toBeInTheDocument());
+  });
+
+  it('renders recovery blocked notice and triggers retry recovery when recoverable', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'recovery_blocked',
+        recoverable: true,
+        recovery_block_code: 'checkpoint_missing',
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    vi.mocked(controlGame).mockResolvedValueOnce({
+      game_id: 'game-1',
+      execution_status: 'running',
+      recoverable: false,
+      recovery_block_code: null,
+    });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('执行：恢复受阻')).toBeVisible();
+    expect(screen.getByText(/对局恢复受阻（找不到检查点）/)).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /重试恢复/ }));
+    });
+    expect(controlGame).toHaveBeenCalledWith('game-1', 'recover', { force: false });
+  });
+
+  it('renders execution failed notice and handles recovery failures', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'failed',
+        recoverable: true,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    vi.mocked(controlGame).mockRejectedValueOnce(new Error('网络异常'));
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('执行：执行失败')).toBeVisible();
+    expect(screen.getByText('对局执行失败。')).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /重试恢复/ }));
+    });
+    expect(screen.getByText('网络异常')).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    });
+    expect(screen.queryByText('网络异常')).not.toBeInTheDocument();
+
+    // Also test non-Error fallback
+    vi.mocked(controlGame).mockRejectedValueOnce('opaque failure');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /重试恢复/ }));
+    });
+    expect(screen.getByText('恢复对局失败')).toBeVisible();
+  });
+
+  it('renders paused execution status chip', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'paused',
+        recoverable: true,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('执行：已暂停')).toBeVisible();
+  });
+
+  it('disables recovery button with default fallback title when unrecoverable without block code', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'interrupted',
+        recoverable: false,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const recoverBtn = screen.getByRole('button', { name: /恢复对局/ });
+    expect(recoverBtn).toBeDisabled();
+    expect(recoverBtn).toHaveAttribute('title', '此对局无法恢复');
+  });
+
+  it('renders recovery blocked notice without reason label when block code is missing', async () => {
+    vi.mocked(fetchAudienceSnapshot).mockResolvedValueOnce({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: {
+        ...detail,
+        phase: 'speech',
+        win_result: null,
+        execution_status: 'recovery_blocked',
+        recoverable: false,
+        recovery_block_code: null,
+      },
+    });
+    vi.mocked(fetchAudienceEvents).mockResolvedValueOnce({
+      game_id: 'game-1', after_seq: 0, last_seq: 0, caught_up: true,
+      events: [],
+    });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('执行：恢复受阻')).toBeVisible();
+    expect(screen.getByText('对局恢复受阻。')).toBeVisible();
   });
 });
