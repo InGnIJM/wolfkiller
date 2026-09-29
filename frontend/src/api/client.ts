@@ -29,8 +29,21 @@ export async function createGame(config?: {
   return res.json();
 }
 
-export async function listGames(): Promise<GameListResponse> {
-  const res = await fetch(`${getApiBase()}/api/games`);
+export interface ListGamesParams {
+  page?: number;
+  pageSize?: number;
+  folderId?: string | null;
+}
+
+export async function listGames(params?: ListGamesParams): Promise<GameListResponse> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.pageSize) query.set('page_size', String(params.pageSize));
+  if (params?.folderId && params.folderId !== 'all') {
+    query.set('folder_id', params.folderId);
+  }
+  const qs = query.toString();
+  const res = await fetch(`${getApiBase()}/api/games${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error(`List games failed: ${res.status}`);
   return res.json();
 }

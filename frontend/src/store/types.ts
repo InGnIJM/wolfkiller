@@ -372,6 +372,9 @@ export interface GameListItem {
 
 export interface GameListResponse {
   games: GameListItem[];
+  total?: number;
+  page?: number;
+  page_size?: number;
 }
 
 export interface GameFolder {

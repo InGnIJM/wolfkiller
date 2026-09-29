@@ -5,7 +5,7 @@ import {
   createFolder, deleteBenchmark, deleteBenchmarkGame, deleteFolder,
   fetchBenchmarkGames, fetchBenchmarkReport, createBenchmark, createGame, createModel, deleteGame, deleteModel,
   fetchAudienceEvents, fetchAudienceSnapshot, fetchConstraints, fetchPresets,
-  fetchRoleCatalog, getWsUrl, listBenchmarks, listFolders, listModels, renameFolder, renameGame,
+  fetchRoleCatalog, getWsUrl, listBenchmarks, listFolders, listGames, listModels, renameFolder, renameGame,
   testModelConnection, updateModel,
 } from '../client';
 
@@ -245,5 +245,19 @@ describe('audience and benchmark api', () => {
     });
     expect(fetchFn.mock.calls[0][0]).toBe(`${BASE}/api/benchmarks`);
     expect(fetchFn.mock.calls[0][1].method).toBe('POST');
+  });
+
+  it('lists games with query parameters and handles pagination', async () => {
+    const fetchFn = mockFetch({ games: [{ game_id: 'g1' }], total: 25, page: 2, page_size: 10 });
+    const result = await listGames({ page: 2, pageSize: 10, folderId: 'f1' });
+    expect(result).toEqual({ games: [{ game_id: 'g1' }], total: 25, page: 2, page_size: 10 });
+    expect(fetchFn.mock.calls[0][0]).toBe(`${BASE}/api/games?page=2&page_size=10&folder_id=f1`);
+
+    mockFetch({ games: [], total: 0 });
+    await listGames();
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(`${BASE}/api/games`);
+
+    mockFetch({}, false, 500);
+    await expect(listGames()).rejects.toThrow('List games failed: 500');
   });
 });
