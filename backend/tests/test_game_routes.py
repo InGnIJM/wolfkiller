@@ -264,6 +264,78 @@ async def test_list_games_skips_benchmark_owned_games(monkeypatch):
 
     assert [item.game_id for item in response.games] == ["native"]
     assert response.games[0].folder_id == "folder-1"
+    assert response.total == 1
+    assert response.page == 1
+    assert response.page_size == 10
+
+
+@pytest.mark.asyncio
+async def test_list_games_pagination_and_folder_filtering(monkeypatch):
+    service = MagicMock()
+    service.list_games.return_value = ["g1", "g2", "g3"]
+    service.is_lobby_game.return_value = True
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        alive_players=lambda: [object()],
+        win_result=None,
+        players={1: object()},
+    )
+    service.get_game_state.return_value = state
+    service.get_display_name.side_effect = lambda gid: f"{gid}-name"
+    folders = {"g1": "f1", "g2": None, "g3": "f2"}
+    service.get_game_folder_id.side_effect = lambda gid: folders.get(gid)
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    # Test pagination slicing
+    resp_slice = await game_routes.list_games(page=2, page_size=1)
+    assert resp_slice.total == 3
+    assert resp_slice.page == 2
+    assert resp_slice.page_size == 1
+    assert [g.game_id for g in resp_slice.games] == ["g2"]
+
+    # Test folder_id="all"
+    resp_all = await game_routes.list_games(folder_id="all")
+    assert resp_all.total == 3
+    assert len(resp_all.games) == 3
+
+    # Test folder_id="unfiled"
+    resp_unfiled = await game_routes.list_games(folder_id="unfiled")
+    assert resp_unfiled.total == 1
+    assert [g.game_id for g in resp_unfiled.games] == ["g2"]
+
+    # Test folder_id="f1"
+    resp_f1 = await game_routes.list_games(folder_id="f1")
+    assert resp_f1.total == 1
+    assert [g.game_id for g in resp_f1.games] == ["g1"]
+
+    # Test folder_id="f_nonexistent"
+    resp_none = await game_routes.list_games(folder_id="f_nonexistent")
+    assert resp_none.total == 0
+    assert resp_none.games == []
+
+
+@pytest.mark.asyncio
+async def test_list_games_with_unregistered_folder_getter(monkeypatch):
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        alive_players=lambda: [object()],
+        win_result=None,
+        players={1: object()},
+    )
+    service = SimpleNamespace(
+        list_games=lambda: ["g1"],
+        get_game_state=lambda _gid: state,
+        get_display_name=lambda _gid: "普通局",
+        is_lobby_game="non_callable",
+        get_game_folder_id="non_callable",
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    resp = await game_routes.list_games(folder_id="unfiled")
+    assert resp.total == 1
+    assert resp.games[0].game_id == "g1"
 
 
 def test_list_item_skips_missing_folder_lookup():
@@ -498,6 +570,38 @@ async def test_get_game_snapshot_injects_public_model_snapshot(monkeypatch):
         "count": 2,
         "seats": [1, 3],
     }]
+
+
+@pytest.mark.asyncio
+async def test_get_game_snapshot_injects_live_execution_info(monkeypatch):
+    audience = MagicMock()
+    audience.get_snapshot.return_value = {
+        "game_id": "game-1", "schema_version": 1,
+        "projection_version": 1, "last_seq": 1,
+        "state": {
+            "phase": "night",
+            "execution_status": "running",
+            "recoverable": False,
+            "recovery_block_code": None,
+        },
+    }
+    service = MagicMock()
+    service.get_game_model_snapshot.return_value = []
+    service.get_execution_info.return_value = {
+        "execution_status": "interrupted",
+        "recoverable": True,
+        "recovery_block_code": None,
+        "interruption_count": 1,
+        "benchmark_run_id": None,
+    }
+    monkeypatch.setattr(game_routes, "get_audience_service", lambda: audience)
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    snapshot = await game_routes.get_game_snapshot("game-1")
+
+    assert snapshot.state["execution_status"] == "interrupted"
+    assert snapshot.state["recoverable"] is True
+    assert snapshot.state["recovery_block_code"] is None
 
 
 @pytest.mark.asyncio

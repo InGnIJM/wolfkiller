@@ -116,7 +116,11 @@ def _execution_info(service: GameService, game_id: str, state) -> dict[str, obje
                 "interruption_count": int(value.get("interruption_count", 0)),
                 "benchmark_run_id": value.get("benchmark_run_id"),
             }
-    completed = getattr(getattr(state, "phase", None), "value", None) == "game_over"
+    phase = getattr(state, "phase", None)
+    phase_str = getattr(phase, "value", None) or (phase if isinstance(phase, str) else None)
+    if phase_str is None and isinstance(state, Mapping):
+        phase_str = state.get("phase")
+    completed = phase_str == "game_over"
     return {
         "execution_status": "completed" if completed else "running",
         "recoverable": False,
@@ -196,10 +200,14 @@ def _list_item(service: GameService, game_id: str, state) -> GameListItem:
 
 
 @router.get("", response_model=GameListResponse)
-async def list_games():
+async def list_games(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 10,
+    folder_id: Annotated[str | None, Query()] = None,
+):
     service = get_service()
     games = service.list_games()
-    items = []
+    matching_games: list[tuple[str, Any]] = []
     for g in games:
         checker = getattr(service, "is_lobby_game", None)
         if callable(checker) and not checker(g):
@@ -207,8 +215,23 @@ async def list_games():
         state = service.get_game_state(g)
         if state is None:
             continue
-        items.append(_list_item(service, g, state))
-    return GameListResponse(games=items)
+        if folder_id is not None and folder_id != "all":
+            getter = getattr(service, "get_game_folder_id", None)
+            cur_folder = getter(g) if callable(getter) else None
+            if folder_id == "unfiled":
+                if cur_folder is not None:
+                    continue
+            elif cur_folder != folder_id:
+                continue
+        matching_games.append((g, state))
+
+    total = len(matching_games)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_slice = matching_games[start:end]
+
+    items = [_list_item(service, g, state) for g, state in page_slice]
+    return GameListResponse(games=items, total=total, page=page, page_size=page_size)
 
 
 @router.post("/batch-delete", response_model=BatchDeleteResponse)
@@ -375,13 +398,18 @@ async def get_game_snapshot(game_id: str):
             409, "snapshot_unavailable",
             "This game does not have an incremental audience snapshot",
         )
+    service = get_service()
     state = snapshot["state"]
+    exec_info = _execution_info(service, game_id, state)
     snapshot = {
         **snapshot,
         "state": {
             **state,
+            "execution_status": exec_info["execution_status"],
+            "recoverable": exec_info["recoverable"],
+            "recovery_block_code": exec_info["recovery_block_code"],
             "model_snapshot": public_model_snapshot(
-                get_service().get_game_model_snapshot(game_id),
+                service.get_game_model_snapshot(game_id),
             ),
         },
     }
