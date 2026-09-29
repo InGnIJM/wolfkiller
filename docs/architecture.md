@@ -157,7 +157,10 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **可恢复状态**：`paused / interrupted / failed / recovery_blocked` 都算"还能救"（`get_execution_info.recoverable`）。`recovery_blocked` 是**诊断结论**而不是终审：修好原因后直接再 `recover` 即可（默认接受这三种状态，更窄的 `expected_statuses` 仍可显式传入）。成功续跑在 `games/<id>/game.log` 写一行 `recovery` 审计（等级、代码、原因、是否 `force`、`from_status`、`execution_generation`、告警、冻结与当前 digest）；该 operation 不在 `_public_operation_events` 白名单里，所以不进观众时间线。
 - **降级为告警的门禁**：prompt digest 变化与模型参数变化只记告警（进上面的 `recovery` 审计行），不再拒绝续跑——它们改不了已提交的状态，而 `api_key` / `headers` 本来就从活配置读取。真正拒绝的只剩：缺模型配置、密钥不可用、检查点版本不受支持、检查点损坏。
 - **已知边界（有意为之）**：检查点记录每个角色的 `spec_versions`，但**不记录角色声明 digest**，所以只改**已落座角色**的 tags / instructions 判不出来，会落在 `compatible`；能判出来的是资源声明与已用契约 digest——本仓库历史上真正发生的两类变更（`WOLF_BEAUTY_SPEC.initial_resources`、`witch_action.allowed_effects`）。因此编码约定是**角色 id 永不删除、改名保留别名**：Hook 是代码，删掉的角色无法从旧档恢复，只能判 `incompatible`。
-- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器时拒绝恢复。注册表 digest 只与**文档自身**比对（见上一条），不再要求与运行中的注册表全等。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。**编排状态的字段集是精确匹配的**（`persistence/engine_checkpoint.py` 会拒绝字段集不符的检查点），所以只为提交一次而存在的临时槽位（白天窗口事件 `_pending_point_events`、旁白 `_pending_narration`）刻意不进编排状态：它们在写入后立刻由紧随其后的那一步提交，崩溃时最坏丢掉这一步。
+- **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器时拒绝恢复。
+- **写入口不变式**：`runtime.statuses` / `runtime.relations` 的值一律是普通 `set`，不能写 `frozenset`（`_set_map` 归一化时两者等价，但 `_apply_one` 对既有值直接 `.add()`，frozenset 会 `AttributeError`）。`ADD_RELATION` 是集合成员关系：**跨批次重复写入是幂等的**（狼美人隔一晚重魅同一人合法），但同一批次内重复仍是批次完整性违规。
+- **拒绝的分类**：`EffectConflict`（`EffectRejected` 子类）表示「批次合法、状态不允许」——模型可能合法地选到状态已不允许的目标。模型驱动的契约在 `Scheduler._apply_or_degrade` 遇到它降级为 `fallback_action_type` 并落 `stage_telemetry` 故障行（`code=effect_rejected`），不丢整局；结构性违规（effect id 错序、权限/visibility 越界、revision mismatch、`clone()` 期 runtime 损坏）仍是普通 `EffectRejected`，保持致命。结算（`settle_pending`）与纯 `react` 契约没有 fallback，其拒绝仍致命。
+注册表 digest 只与**文档自身**比对（见上一条），不再要求与运行中的注册表全等。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。**编排状态的字段集是精确匹配的**（`persistence/engine_checkpoint.py` 会拒绝字段集不符的检查点），所以只为提交一次而存在的临时槽位（白天窗口事件 `_pending_point_events`、旁白 `_pending_narration`）刻意不进编排状态：它们在写入后立刻由紧随其后的那一步提交，崩溃时最坏丢掉这一步。
 
 ### 公开事件同步
 
