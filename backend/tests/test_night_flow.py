@@ -539,7 +539,7 @@ def test_discussion_prompt_asks_for_day_plan(state: GameState, director: NightDi
     human = messages[1]["content"]
     assert "day_plan" in human
     assert "次日" in human
-    assert "嫁祸" in human
+    assert "差异化" in human
 
 
 def test_wolf_prompts_omit_sheriff_and_forbid_invented_rules(
