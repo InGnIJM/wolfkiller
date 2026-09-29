@@ -18,6 +18,7 @@ from app.core.action_resolver import ActionResolver, RuleExecutionError
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import (
+    EffectConflict,
     CommitResult, EffectApplier, EffectPermission, initialize_role_resources,
 )
 from app.core.night_settlement import settlement_key
@@ -438,6 +439,87 @@ class Scheduler:
             frozenset(context.facts.get("alive_seats", ())) | {context.actor_seat},
             role.visibility_namespaces & contract.visibility_namespaces)
 
+    def _record_effect_conflict(
+        self, state: GameState, contract: ActionContract,
+        request: IssuedActionRequest, error: BaseException,
+    ) -> None:
+        """Record a degraded application durably.
+
+        The game continues past a state-dependent rejection, so the fault is the
+        only trail that says a fallback stood in for the model's choice. It
+        reaches ``games/<id>/game.log`` through the same stage telemetry the
+        hook faults use, so the benchmark tooling can count it later.
+        """
+        logger.error(
+            "Effect rejected, falling back: game=%s contract=%s seat=%s error=%s",
+            state.game_id, contract.contract_id, request.actor_seat, error,
+        )
+        if (faults := self._faults.get()) is not None:
+            faults.append({
+                "code": "effect_rejected",
+                "contract_id": contract.contract_id,
+                "actor_seat": request.actor_seat,
+                "error": str(error),
+            })
+
+    def _apply_or_degrade(
+        self, state: GameState, context: ActionContext, role: RoleSpec,
+        contract: ActionContract, effects: object, commits: list, events: list,
+        request: IssuedActionRequest, *, retry: Callable[[], object] | None,
+    ) -> CommitResult:
+        """Apply ``effects``, degrading to ``retry``'s fallback on a state conflict.
+
+        A ``EffectConflict`` says the batch was well-formed and the world was
+        not — the model picked something the state no longer allows. That is a
+        legimate outcome for a model-driven contract, so the game keeps going on
+        the contract's fallback action. Structural ``EffectRejected`` stays
+        fatal: an id or permission mismatch is a bug and must not be papered
+        over.
+        """
+        try:
+            return self._apply(state, context, role, contract, effects, commits, events)
+        except EffectConflict as error:
+            self._record_effect_conflict(state, contract, request, error)
+            if retry is None:
+                raise
+        fallback_effects, fallback_context = retry()
+        return self._apply(state, fallback_context, role, contract, fallback_effects, commits, events)
+
+    def _fallback_effects(self, state: GameState, request: IssuedActionRequest,
+                          role: RoleSpec, contract: ActionContract) -> Callable[[], object]:
+        """A resolver of the contract's fallback effects, for a degraded apply."""
+        def retry() -> object:
+            base_context = self.projector.project(state, request, self.registry)
+            fallback, fallback_context = self._fallback(state, request, base_context)
+            effects = self._rule_call(
+                "resolve",
+                lambda: self.resolver.resolve_effects(fallback_context, role, contract, fallback),
+            )
+            return effects, fallback_context
+        return retry
+
+    def _fallback_aggregate_effects(
+        self, state: GameState, bound: tuple[IssuedActionRequest, ...],
+        contexts: tuple[ActionContext, ...], role: RoleSpec, contract: ActionContract,
+    ) -> Callable[[], object]:
+        """A resolver of the aggregate fallback effects, for a degraded apply."""
+        def retry() -> object:
+            fallbacks = tuple(
+                self._fallback(state, request, context)[0]
+                for request, context in zip(bound, contexts)
+            )
+            group_key = _digest(*(sorted(request.action_key for request in bound)))
+            group_request = self._bind(bound[0], state, action_key=group_key)
+            group_context = self.projector.project(state, group_request, self.registry)
+            # ``_rule_call`` already turns a hook failure into ``PipelinePaused``,
+            # so a fallback aggregate that fails is fatal here too.
+            effects = self._rule_call(
+                "aggregate",
+                lambda: self.resolver.aggregate_effects(group_context, role, contract, fallbacks),
+            )
+            return effects, group_context
+        return retry
+
     def _apply(self, state: GameState, context: ActionContext, role: RoleSpec,
                contract: ActionContract, effects, commits: list, events: list) -> CommitResult:
         commit = self.applier.apply(state, effects, self._permission(context, role, contract))
@@ -547,7 +629,11 @@ class Scheduler:
                     ),
                 )
                 effects = self._resolve_with_fallback(state, request, rule_context, role, command)
-                actual.append(request); self._apply(state, rule_context, role, contract, effects, commits, events)
+                actual.append(request)
+                self._apply_or_degrade(
+                    state, rule_context, role, contract, effects, commits, events, request,
+                    retry=self._fallback_effects(state, request, role, contract),
+                )
             else:
                 contract = members[0].contract; role = self.registry.require(members[0].role_id)
                 bound = tuple(self._bind(member, state) for member in members)
@@ -570,7 +656,11 @@ class Scheduler:
                     fallbacks = tuple(self._fallback(state, request, context)[0] for request, context in zip(bound, contexts))
                     try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, fallbacks))
                     except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
-                actual.extend(bound); self._apply(state, group_context, role, contract, effects, commits, events)
+                actual.extend(bound)
+                self._apply_or_degrade(
+                    state, group_context, role, contract, effects, commits, events, bound[0],
+                    retry=self._fallback_aggregate_effects(state, bound, contexts, role, contract),
+                )
             for commit_index in range(before, len(commits)):
                 pending.extend(PendingEvent(commit_index, ordinal, 0)
                                for ordinal, _ in enumerate(commits[commit_index].events))
@@ -621,7 +711,11 @@ class Scheduler:
                             ),
                         )
                         effects = self._resolve_with_fallback(state, base, rule_context, role, command); context = rule_context
-                    actual.append(base); new_commit = self._apply(state, context, role, contract, effects, commits, events)
+                    actual.append(base)
+                    new_commit = self._apply_or_degrade(
+                        state, context, role, contract, effects, commits, events, base,
+                        retry=self._fallback_effects(state, base, role, contract),
+                    )
                     commit_index = len(commits) - 1
                     pending.extend(PendingEvent(commit_index, ordinal, item.depth + 1)
                                    for ordinal, _ in enumerate(new_commit.events))
