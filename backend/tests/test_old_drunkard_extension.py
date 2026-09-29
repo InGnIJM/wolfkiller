@@ -187,8 +187,8 @@ async def test_poison_is_delayed_and_lands_after_the_next_speech_round(tmp_path)
     # Nobody died, and the seat carries the marks that explain why.
     assert engine.state.players[1].is_alive is True
     assert engine.state.death_history == []
-    assert engine.state._pipeline_runtime.statuses[1] == frozenset(
-        {POISONED_STATUS, DELAYED_DEATH_STATUS})
+    assert engine.state._pipeline_runtime.statuses[1] == {
+        POISONED_STATUS, DELAYED_DEATH_STATUS}
     assert [e["event_type"] for e in settlement.events] == ["STATUS_ADDED", "STATUS_ADDED"]
 
     # The delayed death needs a step of its own: no other announcement carries a
@@ -210,7 +210,10 @@ async def test_poison_is_delayed_and_lands_after_the_next_speech_round(tmp_path)
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [(1, "poison")]
     assert [(d.player_seat, d.cause) for d in engine.published] == [(1, "poison")]
     assert engine.state.players[1].is_alive is False
-    assert engine.state._pipeline_runtime.statuses[1] == frozenset()
+    assert engine.state._pipeline_runtime.statuses[1] == set()
+    # Resolving the mark subtracts into an empty set; the runtime must still be
+    # cloneable afterwards, or every later write would die on the same invariant.
+    assert engine.state._pipeline_runtime.clone().statuses[1] == set()
 
     delayed = next(key for key in mapped if ":delayed_death:2:1" in key)
     assert len(mapped[delayed]) == 1
@@ -230,8 +233,8 @@ async def test_gunshot_is_delayed_the_same_way(tmp_path) -> None:
         {"target": 1, "amount": 1, "cause": "hunter_shot"},
     )
     engine._pipeline_scheduler.settle_pending(engine.state)
-    assert engine.state._pipeline_runtime.statuses[1] == frozenset(
-        {WOUNDED_STATUS, DELAYED_DEATH_STATUS})
+    assert engine.state._pipeline_runtime.statuses[1] == {
+        WOUNDED_STATUS, DELAYED_DEATH_STATUS}
 
     await engine._execute_speech_round()
 
@@ -248,7 +251,42 @@ async def test_a_wolf_knife_kills_the_old_drunkard_that_same_night(tmp_path) -> 
 
     assert engine.state.players[1].is_alive is False
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [(1, "wolf_kill")]
-    assert engine.state._pipeline_runtime.statuses.get(1, frozenset()) == frozenset()
+    assert engine.state._pipeline_runtime.statuses.get(1, set()) == set()
+
+
+def test_a_settled_delay_mark_keeps_the_runtime_writable(tmp_path) -> None:
+    """The marks written for a spared seat must satisfy the runtime's set
+    invariant.
+
+    A frozen set here survived until the next ``clone()`` and then killed the
+    whole game: the dawn memory sweep clones the runtime once per seat, so a
+    poisoned Old Drunkard took the game down on the following transition.
+    """
+    engine = _engine(tmp_path, "drunkard-writable")
+    engine.state._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "poison"},
+    )
+    engine._pipeline_scheduler.settle_pending(engine.state)
+
+    runtime = engine.state._pipeline_runtime
+    assert type(runtime.statuses[1]) is set
+    # Every later operation clones the runtime first: this is the crash site.
+    assert runtime.clone().statuses[1] == {POISONED_STATUS, DELAYED_DEATH_STATUS}
+    assert dict(role_resource_view(engine.state, 1)) == {
+        "charm_immune": 1, "delayable": 1,
+    }
+
+
+def test_a_frozen_mark_still_clones_into_a_plain_set(tmp_path) -> None:
+    """Defence in depth: a frozen status must not take the runtime down."""
+    engine = _engine(tmp_path, "drunkard-frozen")
+    runtime = engine.state._pipeline_runtime
+    runtime.statuses[1] = frozenset({DELAYED_DEATH_STATUS})
+
+    cloned = runtime.clone()
+
+    assert type(cloned.statuses[1]) is set
+    assert cloned.statuses[1] == {DELAYED_DEATH_STATUS}
 
 
 @pytest.mark.asyncio

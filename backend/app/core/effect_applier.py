@@ -10,6 +10,16 @@ from app.core.role_runtime import clone_action_counts, initialize_role_resources
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 class EffectRejected(ValueError): pass
+class EffectConflict(EffectRejected):
+    """A state-dependent rejection: the batch is well-formed, the world is not.
+
+    Structural problems (an id that does not match its ordinal, a permission or
+    revision mismatch) stay plain ``EffectRejected``: they are programming
+    errors and must kill the run. This subclass marks the rejections that a
+    model-driven contract may legitimately hit — the seat is already dead, the
+    resource ran out, the relation is already a member — and which the caller
+    may therefore recover from by falling back to its ``fallback_action_type``.
+    """
 def _utf8(value: str, name: str, *, token: bool = False) -> str:
     if type(value) is not str: raise TypeError(f"{name} must be a string")
     try:
@@ -150,8 +160,13 @@ def _resource_map(value: object) -> dict[int, dict[str, int]]:
     return result
 def _set_map(value: object, name: str, *, relation: bool) -> dict[int, set]:
     if not isinstance(value, Mapping): raise EffectRejected(f"invalid {name}s")
+    # A ``frozenset`` carries exactly the same members, so it satisfies the
+    # invariant the runtime declares for statuses and relations; the loop below
+    # normalises either flavour to a plain ``set``. Rejecting the frozen variant
+    # outright used to take a whole game down on the next ``clone()``, which is
+    # too harsh a punishment for a value that means the same thing.
     result = {_seat(seat): {_set_item(item, name, relation) for item in values}
-              for seat, values in value.items() if type(values) is set}
+              for seat, values in value.items() if type(values) in (set, frozenset)}
     if len(result) != len(value): raise EffectRejected(f"invalid {name}s")
     return result
 def _set_item(item: object, name: str, relation: bool) -> object:
@@ -310,20 +325,20 @@ def _check_preconditions(effect: GameEffect, runtime: _Runtime, alive: dict[int,
     target = effect.target_seat
     if "target_alive" in effect.preconditions:
         expected = effect.preconditions["target_alive"]
-        if type(expected) is not bool or target is None or alive[target] is not expected: raise EffectRejected("target_alive precondition failed")
+        if type(expected) is not bool or target is None or alive[target] is not expected: raise EffectConflict("target_alive precondition failed")
     if "resource_equals" in effect.preconditions:
         condition = effect.preconditions["resource_equals"]
         if not isinstance(condition, Mapping): raise EffectRejected("resource precondition invalid")
         _exact(condition, frozenset({"resource", "value"}), "resource precondition")
         resource = _token_field(condition, "resource")
         value = _int_field(condition, "value")
-        if target is None or runtime.role_resources.get(target, {}).get(resource, 0) != value: raise EffectRejected("resource precondition failed")
+        if target is None or runtime.role_resources.get(target, {}).get(resource, 0) != value: raise EffectConflict("resource precondition failed")
     if "private_equals" in effect.preconditions:
         condition = effect.preconditions["private_equals"]
         if not isinstance(condition, Mapping): raise EffectRejected("private precondition invalid")
         _exact(condition, frozenset({"key", "value"}), "private precondition")
         key = _token_field(condition, "key")
-        if target is None or runtime.private_data.get(target, {}).get(key) != condition["value"]: raise EffectRejected("private precondition failed")
+        if target is None or runtime.private_data.get(target, {}).get(key) != condition["value"]: raise EffectConflict("private precondition failed")
     if "status_present" in effect.preconditions:
         condition = effect.preconditions["status_present"]
         if type(condition) is str:
@@ -336,9 +351,10 @@ def _check_preconditions(effect: GameEffect, runtime: _Runtime, alive: dict[int,
         else:
             raise EffectRejected("status precondition invalid")
         actual = target is not None and status in runtime.statuses.get(target, set())
-        if actual is not present: raise EffectRejected("status precondition failed")
+        if actual is not present: raise EffectConflict("status precondition failed")
 def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime,
-               alive: dict[int, bool], events: list[Mapping[str, object]]) -> None:
+               alive: dict[int, bool], events: list[Mapping[str, object]],
+               preexisting_relations: Mapping[int, frozenset] | None = None) -> None:
     kind = effect.kind
     if kind is EffectKind.ACCEPT_ACTION: return
     if kind is EffectKind.RECORD_VOTE:
@@ -351,26 +367,30 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
     elif kind is EffectKind.CONSUME_RESOURCE:
         resources = runtime.role_resources.setdefault(target, {})
         resource = str(payload["resource"]); amount = int(payload["amount"])
-        if resources.get(resource, 0) < amount: raise EffectRejected("resource underflow")
+        if resources.get(resource, 0) < amount: raise EffectConflict("resource underflow")
         resources[resource] -= amount
     elif kind is EffectKind.SET_PRIVATE_DATA:
         runtime.private_data.setdefault(target, {})[str(payload["key"])] = payload["value"]
     elif kind in {EffectKind.ADD_STATUS, EffectKind.REMOVE_STATUS}:
         statuses = runtime.statuses.setdefault(target, set()); status = str(payload["status"])
         if kind is EffectKind.ADD_STATUS:
-            if status in statuses: raise EffectRejected("status already present")
+            if status in statuses: raise EffectConflict("status already present")
             statuses.add(status)
         else:
-            if status not in statuses: raise EffectRejected("status is absent")
+            if status not in statuses: raise EffectConflict("status is absent")
             statuses.remove(status)
     elif kind in {EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION}:
         relations = runtime.relations.setdefault(target, set())
         relation = (str(payload["relation"]), int(payload["other_seat"]))
         if kind is EffectKind.ADD_RELATION:
-            if relation in relations: raise EffectRejected("relation already present")
+            # Already a member before this batch: re-establishing it is a no-op,
+            # not a rejection. Already added *by* this batch: that is a malformed
+            # batch and must stay fatal.
+            if relation in relations and relation not in (preexisting_relations or {}).get(target, frozenset()):
+                raise EffectConflict("relation already present")
             relations.add(relation)
         else:
-            if relation not in relations: raise EffectRejected("relation is absent")
+            if relation not in relations: raise EffectConflict("relation is absent")
             relations.remove(relation)
     elif kind is EffectKind.RECORD_PRIVATE_FACT:
         runtime.private_facts.setdefault(target, []).append({"namespace": payload["namespace"], "fact": payload["fact"]})
@@ -382,7 +402,7 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
             record["source"] = payload["source"]
         runtime.pending_protection += (record,)
     else:
-        if not alive[target]: raise EffectRejected("player already dead")
+        if not alive[target]: raise EffectConflict("player already dead")
         alive[target] = False
         events.append({"event_type": "PLAYER_DIED", "payload": {"seat": target, "cause": payload["cause"]}, "visibility": effect.visibility})
 class EffectApplier:
@@ -404,10 +424,12 @@ class EffectApplier:
             # once the next day's speeches are over.
             status_events: tuple[dict[str, object], ...] = ()
             for seat in sorted(delayed):
-                held = frozenset(simulated.statuses.get(seat, ()))
+                # Plain ``set``: the runtime declares ``dict[int, set[str]]`` and
+                # a frozen variant would only survive until the next clone.
+                held = set(simulated.statuses.get(seat, ()))
                 if any(status in held for status in delayed[seat]):
                     raise EffectRejected("delayed death status already present")
-                simulated.statuses[seat] = held | frozenset(delayed[seat])
+                simulated.statuses[seat] = held | set(delayed[seat])
                 status_events += tuple(
                     {"event_type": "STATUS_ADDED", "payload": {"seat": seat, "status": status, "round_number": round_number}, "visibility": ("PUBLIC",)}
                     for status in delayed[seat]
@@ -437,6 +459,11 @@ class EffectApplier:
         action_key = next(iter(action_keys))
         current = _runtime(state)
         simulated = current.clone()
+        # Relations are set memberships a role may legitimately re-establish on
+        # a later night (the Wolf Beauty may charm the same seat again once a
+        # night has passed), so only a duplicate raised *inside this batch* is a
+        # malformed batch. Whatever the batch started with stays idempotent.
+        preexisting_relations = {seat: frozenset(values) for seat, values in current.relations.items()}
         if action_key in current.commits:
             vote_effects = [effect for effect in effects if effect.kind is EffectKind.RECORD_VOTE]
             existing_vote = current.vote_receipts.get(action_key)
@@ -444,7 +471,7 @@ class EffectApplier:
                 if existing_vote is None: raise EffectRejected("vote receipt missing")
                 if (vote_effects[0].payload.get("command_digest")
                         != existing_vote.get("command_digest")):
-                    raise EffectRejected("vote_conflict")
+                    raise EffectConflict("vote_conflict")
             return current.commits[action_key]
         if resource_setup_digest is not None: simulated.resource_setup_digest = resource_setup_digest
         ordered = tuple(sorted(effects, key=lambda effect: (effect.sort_key, effect.effect_id)))
@@ -464,7 +491,7 @@ class EffectApplier:
             if effect.kind is EffectKind.ACCEPT_ACTION and payload:
                 record_accepted_action(simulated.action_counts, payload, set(state.players))
             _check_preconditions(effect, simulated, alive)
-            _apply_one(effect, payload, simulated, alive, generated_events)
+            _apply_one(effect, payload, simulated, alive, generated_events, preexisting_relations)
         simulated.revision += 1
         simulated.events += tuple(_json(event, "event") for event in generated_events)
         digest = _digest(state, simulated, alive)
@@ -483,7 +510,7 @@ class EffectApplier:
                     legacy = [vote for vote in projected_votes if vote.voter_seat == voter]
                     if len(legacy) == 1 and legacy[0].target_seat == payload["target_seat"]:
                         continue
-                    raise EffectRejected("vote projection conflict")
+                    raise EffectConflict("vote projection conflict")
                 projected_votes.append(VoteAction(voter, payload["target_seat"]))
                 projected_voters.add(voter)
         for seat, is_alive in alive.items(): state.players[seat].is_alive = is_alive

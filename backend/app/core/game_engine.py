@@ -2010,7 +2010,9 @@ class GameEngine:
             for death in deaths
         )
         for seat, statuses in cleared.items():
-            runtime.statuses[seat] = frozenset(runtime.statuses[seat]) - frozenset(statuses)
+            # ``set``, not ``frozenset``: the runtime declares plain sets for its
+            # statuses and the next clone would reject an immutable variant.
+            runtime.statuses[seat] = set(runtime.statuses[seat]) - set(statuses)
             self.state.players[seat].is_alive = False
         runtime.revision += 1
         self.state.death_history.extend(reports)
