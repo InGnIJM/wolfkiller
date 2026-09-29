@@ -298,6 +298,39 @@ def test_charm_window_runs_after_the_wolf_vote_and_spends_nothing() -> None:
     }
 
 
+def test_charm_can_be_repeated_on_a_later_night() -> None:
+    """Charming the same seat again once a night has passed is legal.
+
+    The rule only forbids charming the same player two nights *in a row*, so
+    re-charming an earlier target is a legal choice — and the relation the charm
+    records must not reject a membership the seat already holds. Rejecting it
+    here used to take the whole game down with an ``EffectRejected``.
+    """
+    picks = {1: 3, 2: 4, 3: 3}
+
+    def provider(request, projected, attempt):
+        if request.contract.contract_id == "werewolf_kill":
+            return command("pass")
+        return command("charm", picks[request.round_number])
+
+    game = GameState("beauty-repeat", phase=GamePhase.NIGHT, round_number=1, players={
+        1: PlayerState(1, BEAUTY, "werewolf"), 2: PlayerState(2, WOLF, "werewolf"),
+        3: PlayerState(3, VILLAGER, "good"), 4: PlayerState(4, HUNTER, "good"),
+    })
+    runner = _scheduler(provider)
+
+    for rnd in (1, 2, 3):
+        game.round_number = rnd
+        runner.run_point(game, SchedulePoint.NIGHT_WOLF_VOTE)
+        runner.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
+
+    assert game._pipeline_runtime.private_data[1]["last_charmed"] == 3
+    assert game._pipeline_runtime.relations[3] == frozenset({("charmed_by", 1)})
+    assert game._pipeline_runtime.relations[4] == frozenset({("charmed_by", 1)})
+    # Still cloneable: the runtime keeps its set invariant throughout.
+    assert game._pipeline_runtime.clone().relations[3] == {("charmed_by", 1)}
+
+
 def test_charm_window_can_still_charm_on_a_no_kill_night() -> None:
     """The rules charm on any night, so an all-pass wolf vote does not block it."""
     def provider(request, projected, attempt):

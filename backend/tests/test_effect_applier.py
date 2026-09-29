@@ -519,6 +519,37 @@ def test_duplicate_add_operations_are_atomic() -> None:
         assert not hasattr(s, "_pipeline_runtime")
 
 
+def test_re_adding_a_relation_held_before_the_batch_is_a_no_op() -> None:
+    """A relation is a set membership a role may legitimately re-establish.
+
+    Only a duplicate raised *inside* one batch is a malformed batch (see the test
+    above); a membership the runtime already held is a legal repeat and must
+    settle as a no-op instead of rejecting the whole game.
+    """
+    s = state()
+    first = batch([(EffectKind.ADD_RELATION, {"target": 1, "relation": "charmed_by", "other_seat": 2}, 1)], action="a")
+    EffectApplier().apply(s, first, permission())
+    assert s._pipeline_runtime.relations[1] == {("charmed_by", 2)}
+
+    # A later batch re-establishing the same membership must not reject.
+    second = batch([(EffectKind.ADD_RELATION, {"target": 1, "relation": "charmed_by", "other_seat": 2}, 1)], action="b", revision=1)
+    EffectApplier().apply(s, second, permission())
+    assert s._pipeline_runtime.relations[1] == {("charmed_by", 2)}
+    assert s._pipeline_runtime.clone().relations[1] == {("charmed_by", 2)}
+
+
+def test_a_frozen_relation_set_still_clones_into_a_plain_set() -> None:
+    """Defence in depth: a frozen relation must not take the runtime down."""
+    s = state()
+    EffectApplier().apply(s, batch([], action="a"), permission())
+    s._pipeline_runtime.relations[1] = frozenset({("known", 2)})
+
+    cloned = s._pipeline_runtime.clone()
+
+    assert type(cloned.relations[1]) is set
+    assert cloned.relations[1] == {("known", 2)}
+
+
 def test_concurrent_distinct_actions_serialize_commits(monkeypatch) -> None:
     import app.core.effect_applier as module
 
