@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Box, Button, Container, Dialog, DialogActions, DialogContent,
-  DialogTitle, MenuItem, Stack, TextField, Typography,
+  DialogTitle, MenuItem, Pagination, Stack, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import GameCard from './GameCard';
@@ -19,6 +19,8 @@ interface Props {
   onJoinGame: (gameId: string) => void;
   onCreateClick: () => void;
 }
+
+const PAGE_SIZE = 10;
 
 const PHASE_LABELS: Record<string, string> = {
   waiting: '等待中',
@@ -62,20 +64,41 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     { gameId: string; action: 'pause' | 'resume' | 'recover'; code: string } | null
   >(null);
 
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+
   const refresh = useCallback(async () => {
-    const [gamesRes, foldersRes] = await Promise.all([listGames(), listFolders()]);
+    const [gamesRes, foldersRes] = await Promise.all([
+      listGames({ page, pageSize: PAGE_SIZE, folderId: folderFilter }),
+      listFolders(),
+    ]);
     setGames(gamesRes.games);
+    const nextTotal = gamesRes.total ?? gamesRes.games.length;
+    setTotal(nextTotal);
     setFolders(foldersRes.folders);
-  }, []);
+    const maxPages = Math.max(1, Math.ceil(nextTotal / PAGE_SIZE));
+    if (page > maxPages) {
+      setPage(maxPages);
+    }
+  }, [page, folderFilter]);
 
   useEffect(() => {
     let active = true;
     const refreshWhileMounted = async () => {
       try {
-        const [gamesRes, foldersRes] = await Promise.all([listGames(), listFolders()]);
+        const [gamesRes, foldersRes] = await Promise.all([
+          listGames({ page, pageSize: PAGE_SIZE, folderId: folderFilter }),
+          listFolders(),
+        ]);
         if (active) {
           setGames(gamesRes.games);
+          const nextTotal = gamesRes.total ?? gamesRes.games.length;
+          setTotal(nextTotal);
           setFolders(foldersRes.folders);
+          const maxPages = Math.max(1, Math.ceil(nextTotal / PAGE_SIZE));
+          if (page > maxPages) {
+            setPage(maxPages);
+          }
         }
       } catch (e) {
         if (active) console.error('Failed to list games:', e);
@@ -88,12 +111,16 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       active = false;
       clearInterval(t);
     };
-  }, []);
+  }, [page, folderFilter]);
 
   const visibleGames = useMemo(
     () => games.filter((game) => matchesFolder(game, folderFilter)),
     [folderFilter, games],
   );
+
+  const totalCount = total > 0 ? total : visibleGames.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
 
   const runControl = async (
     gameId: string,
@@ -159,6 +186,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     try {
       await deleteGame(deleteTarget.game_id);
       setGames((prev) => prev.filter((item) => item.game_id !== deleteTarget.game_id));
+      setTotal((prev) => Math.max(0, prev - 1));
       setDeleteTarget(null);
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : String(error));
@@ -225,6 +253,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       const deleted = new Set(result.deleted);
       setGames((current) => current.filter((game) => !deleted.has(game.game_id)));
       setSelectedIds((current) => current.filter((id) => !deleted.has(id)));
+      setTotal((prev) => Math.max(0, prev - deleted.size));
       if (result.failed.length > 0) {
         setBatchDeleteError(result.failed.map((item) => item.message).join('；'));
         return;
@@ -283,7 +312,10 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         filter={folderFilter}
         creating={creatingFolder}
         draftName={folderDraft}
-        onFilter={setFolderFilter}
+        onFilter={(filter) => {
+          setFolderFilter(filter);
+          setPage(1);
+        }}
         onStartCreate={() => { setCreatingFolder(true); setFolderError(''); }}
         onDraftName={setFolderDraft}
         onCreate={() => void submitCreateFolder()}
@@ -340,6 +372,19 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           />
         ))}
       </Stack>
+
+      {totalPages > 1 && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, mb: 1 }}>
+          <Pagination
+            count={totalPages}
+            page={currentPage}
+            onChange={(_, newPage) => setPage(newPage)}
+            color="secondary"
+            shape="rounded"
+            size="medium"
+          />
+        </Box>
+      )}
 
       <BatchActionBar
         selectedCount={selectedIds.length}

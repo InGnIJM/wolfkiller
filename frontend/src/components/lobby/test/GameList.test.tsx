@@ -479,4 +479,103 @@ describe('GameList management', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
+
+  it('supports pagination and resets to page 1 when folder changes', async () => {
+    vi.mocked(listGames).mockResolvedValue({
+      games: Array.from({ length: 10 }, (_, i) => game(`game-${i + 1}`)),
+      total: 25,
+      page: 1,
+      page_size: 10,
+    });
+    vi.mocked(listFolders).mockResolvedValue({
+      folders: [{ folder_id: 'f1', name: '分类1', game_count: 5, created_at: '', updated_at: '' }],
+    });
+
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    expect(listGames).toHaveBeenCalledWith({ page: 1, pageSize: 10, folderId: 'all' });
+
+    const page2Button = screen.getByRole('button', { name: 'Go to page 2' });
+    expect(page2Button).toBeInTheDocument();
+
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: Array.from({ length: 10 }, (_, i) => game(`game-${i + 11}`)),
+      total: 25,
+      page: 2,
+      page_size: 10,
+    });
+
+    fireEvent.click(page2Button);
+    await act(async () => Promise.resolve());
+
+    expect(listGames).toHaveBeenCalledWith({ page: 2, pageSize: 10, folderId: 'all' });
+
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: [game('game-f1')],
+      total: 1,
+      page: 1,
+      page_size: 10,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /分类1/ }));
+    await act(async () => Promise.resolve());
+
+    expect(listGames).toHaveBeenCalledWith({ page: 1, pageSize: 10, folderId: 'f1' });
+  });
+
+  it('clamps page to maxPages when total shrinks in polling and explicit refresh', async () => {
+    vi.useFakeTimers();
+    vi.mocked(listGames).mockResolvedValue({
+      games: Array.from({ length: 10 }, (_, i) => game(`game-${i + 1}`)),
+      total: 25,
+      page: 1,
+      page_size: 10,
+    });
+    vi.mocked(listFolders).mockResolvedValue({ folders: [] });
+
+    render(<GameList onJoinGame={vi.fn()} onCreateClick={vi.fn()} />);
+    await act(async () => Promise.resolve());
+
+    const page2Button = screen.getByRole('button', { name: 'Go to page 2' });
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: Array.from({ length: 10 }, (_, i) => game(`game-${i + 11}`)),
+      total: 25,
+      page: 2,
+      page_size: 10,
+    });
+    fireEvent.click(page2Button);
+    await act(async () => Promise.resolve());
+
+    // 1. Polling: total drops to 5 (maxPages = 1 < page=2) -> triggers line 100
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: [game('game-1')],
+      total: 5,
+      page: 2,
+      page_size: 10,
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    await act(async () => Promise.resolve());
+
+    // Re-expand total to 25 and go to page 2 again
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: Array.from({ length: 10 }, (_, i) => game(`game-${i + 11}`)),
+      total: 25,
+      page: 2,
+      page_size: 10,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Go to page 2' }));
+    await act(async () => Promise.resolve());
+
+    // 2. Explicit refresh: move a game when total drops to 5 -> triggers line 81
+    vi.mocked(assignGameFolder).mockResolvedValue();
+    vi.mocked(listGames).mockResolvedValueOnce({
+      games: [game('game-1')],
+      total: 5,
+      page: 2,
+      page_size: 10,
+    });
+    fireEvent.click(screen.getByTestId('move-game-11'));
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await act(async () => Promise.resolve());
+  });
 });
