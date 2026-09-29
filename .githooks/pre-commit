@@ -1,0 +1,14 @@
+#!/bin/sh
+# Reject commits that carry credentials or local state into the repository.
+#
+#   git config core.hooksPath .githooks     install (once per clone)
+#   git commit --no-verify                  bypass, on purpose only
+#
+# git for Windows runs this through its bundled shell, so the scanner is invoked
+# with an explicit `sh` rather than relying on the executable bit — which this
+# checkout does not track anyway (core.fileMode=false on the /mnt/e mount).
+
+set -u
+
+root=$(git rev-parse --show-toplevel) || exit 1
+exec sh "$root/.githooks/secret-scan.sh" --staged

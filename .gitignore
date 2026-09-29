@@ -9,6 +9,24 @@ __pycache__/
 # Node
 node_modules/
 
+# Credentials and local secrets — never commit these.
+# `backend/.gitignore` covers backend/.env by exact name only, so the rule is
+# repeated here for any directory and any .env variant, plus the common key
+# formats. Templates stay trackable on purpose: they document the variables
+# without carrying values. Enforcement is `.githooks/secret-scan.sh`, which
+# treats .env.example/.sample/.template as the single exception.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.sample
+!**/.env.template
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.keystore
+
 # Local / temp tooling state
 .superpowers/
 .worktrees/
