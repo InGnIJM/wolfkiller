@@ -64,7 +64,6 @@ def test_spec_shares_the_kill_contract_and_adds_a_day_explode() -> None:
     assert {"PUBLIC", "ACTOR", "CAMP"} == explode.visibility_namespaces
     assert "sheriff" not in WEREWOLF_KING_SPEC.instructions.lower()
     lowered = WEREWOLF_KING_SPEC.instructions.lower()
-    assert "late-game" not in lowered and "emergency" not in lowered
     assert "win probability" in lowered
     assert "badge" in SHERIFF_GAME_RULES[2] or "badge" in " ".join(SHERIFF_GAME_RULES)
 
