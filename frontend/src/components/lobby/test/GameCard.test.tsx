@@ -100,6 +100,18 @@ describe('GameCard', () => {
     expect(onRecover).toHaveBeenCalledOnce();
   });
 
+  it('exposes recovery button directly on the card for interrupted games without opening menu', () => {
+    const onRecover = vi.fn();
+    const { onClick } = renderCard({
+      executionStatus: 'interrupted', recoverable: true, onRecover,
+    });
+    const directButton = screen.getByRole('button', { name: /恢复对局/ });
+    expect(directButton).toBeInTheDocument();
+    fireEvent.click(directButton);
+    expect(onRecover).toHaveBeenCalledOnce();
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
   it('runs pause and resume controls only when their callbacks are available', () => {
     const onPause = vi.fn();
     const { unmount } = render(

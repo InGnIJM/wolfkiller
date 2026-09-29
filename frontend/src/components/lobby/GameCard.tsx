@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card, CardActionArea, Checkbox, Typography, Chip, Box, IconButton, Menu, MenuItem } from '@mui/material';
+import { Card, CardActionArea, Checkbox, Typography, Chip, Box, IconButton, Menu, MenuItem, Button } from '@mui/material';
 import GroupsIcon from '@mui/icons-material/Groups';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
@@ -98,7 +98,13 @@ export default function GameCard({
                   <Chip
                     label={EXECUTION_LABELS[executionStatus]}
                     size="small"
-                    color={executionStatus === 'failed' || executionStatus === 'recovery_blocked' ? 'error' : 'default'}
+                    color={
+                      executionStatus === 'failed' || executionStatus === 'recovery_blocked'
+                        ? 'error'
+                        : executionStatus === 'interrupted' || executionStatus === 'paused'
+                        ? 'warning'
+                        : 'default'
+                    }
                     variant="outlined"
                     title={recoveryBlockLabel(recoveryBlockCode) ?? undefined}
                   />
@@ -122,7 +128,26 @@ export default function GameCard({
             </Box>
           </Box>
         </CardActionArea>
-        <Box sx={{ display: 'flex', alignItems: 'center', pr: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', pr: 1, gap: 0.5 }}>
+          {(executionStatus === 'interrupted'
+            || executionStatus === 'failed'
+            || executionStatus === 'recovery_blocked') && onRecover && (
+            <Button
+              variant="outlined"
+              size="small"
+              color={executionStatus === 'recovery_blocked' || executionStatus === 'failed' ? 'error' : 'warning'}
+              disabled={controlBusy || !recoverable}
+              title={!recoverable ? recoveryBlockLabel(recoveryBlockCode) ?? '此对局无法恢复' : undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRecover();
+              }}
+              startIcon={<RestartAltIcon fontSize="small" />}
+              sx={{ py: 0.25, px: 1, minWidth: 0, fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+            >
+              {executionStatus === 'recovery_blocked' ? '重试恢复' : '恢复对局'}
+            </Button>
+          )}
           <IconButton
             aria-label="对局操作"
             onClick={(event) => setMenuEl(event.currentTarget)}
