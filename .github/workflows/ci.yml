@@ -12,6 +12,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --history walks every ref and every blob ever stored, so the shallow
+          # default clone would hide exactly the case this job exists for: a
+          # credential that entered history and was deleted from the tree later.
+          fetch-depth: 0
+      - name: Scan every commit for credentials
+        run: sh .githooks/secret-scan.sh --history
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30

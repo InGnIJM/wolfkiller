@@ -4,7 +4,7 @@
 
 ## 环境变量
 
-完整定义见 `backend/app/config.py`（读取环境变量的默认值以源码为准）。在 `backend/` 目录创建 `.env` 生效；**`.env` 已被 `backend/.gitignore` 忽略、未提交到仓库，请勿提交**（含真实 API Key）。
+完整定义见 `backend/app/config.py`（读取环境变量的默认值以源码为准）。在 `backend/` 目录创建 `.env` 生效；**`.env` 已被忽略、未提交到仓库，请勿提交**（含真实 API Key）。忽略规则在根 `.gitignore` 的 `**/.env` 与 `**/.env.*`——`backend/.gitignore` 里的 `.env` 只按精确文件名覆盖 `backend/.env`，换个目录或加个 `.local` 后缀就漏过去了。提交前由 `.githooks/pre-commit` 强制检查，见下文「凭据与密钥防泄漏」。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -86,9 +86,29 @@ npm run lint       # ESLint
 | 后端覆盖率 | `tests` + `app` 全量，statement/branch 100%（`--cov-fail-under=100`） | 生效（CI） |
 | 前端覆盖率 | `vite.config.ts` 对 9 个核心文件（gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效（CI `npm run test:coverage`） |
 | 隐私扫描 | 公开 DTO 与前端消费链不得含私有字段（`role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等） | 生效（测试门禁） |
+| 凭据扫描 | 提交前 `.githooks/pre-commit` → `secret-scan.sh --staged`；CI 的 `secret-scan` job 用 `--history` 扫全历史 | 生效（钩子 + CI） |
 | 核心源码门禁 | 引擎/校验器/解析器/提示外壳的禁词与角色名测试，证明核心不写死内置角色分支 | 生效（测试门禁） |
 | Benchmark 工具链 | 对局质量评测（见 `docs/benchmark.md`） | 工具链，非门禁 |
 | CI 浏览器 E2E | Playwright 使用临时目录和无真实 Key 的 FastAPI，验证生命周期、进程恢复、断网重连、时间线、benchmark UI 和旧存档 | 生效 |
+
+### 凭据与密钥防泄漏
+
+`.githooks/secret-scan.sh` 是钩子与 CI 共用的**同一份**扫描器：纯 git + POSIX sh，不依赖任何第三方二进制，因此本地和 CI 的判定不会各自漂移。
+
+```bash
+git config core.hooksPath .githooks          # 每个克隆装一次
+sh .githooks/secret-scan.sh --staged         # 手动跑：只看暂存区
+sh .githooks/secret-scan.sh --history        # 手动跑：扫全历史
+```
+
+- **`--staged`（pre-commit）**：拦下禁止提交的路径（任何 `.env` 变体、`*.pem|key|p12|pfx|jks|keystore`、`data/models.json`、`*.sqlite3`）和含凭据特征的**内容**（`sk-`、`AKIA`、`ghp_`、`github_pat_`、`xox?-`、`AIza`、`BEGIN … PRIVATE KEY`）。它**不读基线**——此刻要提交的东西必须干净。`.env.example` / `.env.sample` / `.env.template` 是唯一放行的模板形态。
+- **`--history`（CI）**：同样的两类检查跑一遍全部历史。提交过、后来又删掉的泄漏只有这一模式看得见，而浅克隆看不到它，所以 CI 用 `fetch-depth: 0`。
+- 命中只打印**位置**，从不打印匹配内容：报告本身不会把凭据带进终端、CI 日志或 issue。
+- `git commit --no-verify` 能绕过钩子，所以 CI 那一层才是兜底。
+
+**发现泄漏后的顺序是：先吊销，再决定历史。** 吊销之后历史里那份就是废值，把它作为已接受项写进 `.githooks/secret-scan-baseline.txt`（带日期与理由）远比抹掉它便宜——本仓库那次泄漏位于**根提交**，抹掉等于改写全部提交 ID，而且改写也追不回 fork 与 GitHub 缓存。基线只作用于 `--history`；写进基线的路径若被再次提交，`--staged` 照样拦。基线文件每次新增都必须能回答"这把凭据已经吊销了吗"。
+
+本仓库是**公开仓库**，因此还要在 GitHub 的 Settings → Code security and analysis 打开 **Secret scanning** 与 **Push protection**：那是唯一能在入库**之前**直接拒绝的一层，本地钩子与 CI 都做不到。
 
 ### 新增角色
 
@@ -125,7 +145,7 @@ sqlite3 data/backups/wolfkiller-2026-09-06.sqlite3 "PRAGMA integrity_check;"
 
 ### CI
 
-`.github/workflows/ci.yml` 分别运行后端 pytest 与覆盖率门禁、前端 Vitest/lint/build，以及 `npm run test:e2e`。后端测试通过 `conftest.py` 将数据和模型配置隔离到临时目录，并清空真实 Key。Playwright 启动独立前后端进程，以真实 API 验证生命周期、进程恢复和观战同步；benchmark 页面交互使用受控 API 响应。浏览器失败时 CI 上传 trace 等产物，保留 7 天。工作流不注入真实 API Key。
+`.github/workflows/ci.yml` 分别运行凭据扫描（`secret-scan`，`fetch-depth: 0` 后跑 `secret-scan.sh --history`）、后端 pytest 与覆盖率门禁、前端 Vitest/lint/build，以及 `npm run test:e2e`。后端测试通过 `conftest.py` 将数据和模型配置隔离到临时目录，并清空真实 Key。Playwright 启动独立前后端进程，以真实 API 验证生命周期、进程恢复和观战同步；benchmark 页面交互使用受控 API 响应。浏览器失败时 CI 上传 trace 等产物，保留 7 天。工作流不注入真实 API Key。
 
 ## 已知的坑
 
