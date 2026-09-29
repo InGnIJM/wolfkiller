@@ -126,6 +126,8 @@ class BenchmarkGameExecutor:
             seats = _seat_assignments(assignment, player_count)
             roles = _role_assignments(assignment, player_count)
             runtime_seed = _runtime_seed(assignment)
+            enable_sheriff_raw = scenario.get("enable_sheriff")
+            enable_sheriff = enable_sheriff_raw if isinstance(enable_sheriff_raw, bool) else False
             game_id = str(uuid.uuid5(
                 uuid.NAMESPACE_URL, f"wolfkiller:benchmark:{run_id}:{item_index}",
             ))
@@ -138,6 +140,7 @@ class BenchmarkGameExecutor:
                 source="benchmark",
                 benchmark_run_id=run_id,
                 benchmark_item_index=item_index,
+                enable_sheriff=enable_sheriff,
             )
 
         arm = getattr(self._game_service, "arm_benchmark_timeout", None)

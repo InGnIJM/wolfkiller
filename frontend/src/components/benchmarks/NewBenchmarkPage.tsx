@@ -72,7 +72,11 @@ export default function NewBenchmarkPage() {
     const common = {
       client_request_id: clientRequestId,
       name: name.trim(), mode, seed,
-      scenario: { scenario_id: preset.id, role_counts: preset.role_counts },
+      scenario: {
+        scenario_id: preset.id,
+        role_counts: preset.role_counts,
+        enable_sheriff: Boolean(preset.enable_sheriff),
+      },
       block_count: blocks,
       concurrency,
       game_timeout_seconds: timeout,
