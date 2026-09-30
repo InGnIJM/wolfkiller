@@ -173,7 +173,8 @@ def assess(
         # Nothing to compare the game's durable identities against: resumable,
         # but only with an explicit confirmation.
         return RecoveryAssessment(DRIFT, REGISTRY_IDENTITY_UNKNOWN, ("registry_identity_unknown",))
-    if stored_marker != resource_declaration_marker(state, registry.specs, identity):
+    declared_marker = resource_declaration_marker(state, registry.specs, identity)
+    if stored_marker is not None and stored_marker != declared_marker:
         return RecoveryAssessment(DRIFT, ROLE_DECLARATION_DRIFT, ("resource_declaration",))
     if identity != registry.digest:
         return RecoveryAssessment(COMPATIBLE, None, ("registry_changed",))

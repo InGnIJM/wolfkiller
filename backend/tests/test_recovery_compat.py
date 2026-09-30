@@ -297,9 +297,16 @@ def test_verdicts_are_frozen_and_validated() -> None:
         verdict.level = COMPATIBLE  # type: ignore[misc]
 
 
-def test_a_runtime_without_a_marker_is_drift() -> None:
+def test_a_game_interrupted_before_its_first_point_is_exact() -> None:
+    """A missing marker means setup never ran, not that the declaration moved.
+
+    The marker is only stamped when the setup actually applies, so a game that
+    stopped before its first scheduling point has no declaration to contradict:
+    the next point establishes the resources from the code now running, exactly
+    as it does for a fresh game.
+    """
     live = registry()
     state = game(live)
-    doc = document(live, state)
     state._pipeline_runtime = _Runtime(revision=0)
-    assert assess(doc, state, live).code == ROLE_DECLARATION_DRIFT
+    doc = document(live, state)
+    assert assess(doc, state, live) == RecoveryAssessment(EXACT)

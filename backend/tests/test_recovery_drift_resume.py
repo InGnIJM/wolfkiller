@@ -221,18 +221,21 @@ async def test_a_declaration_added_later_is_set_up_on_the_next_point(
 
     monkeypatch.setattr(GameEngine, "restore", restored_loop)
     try:
-        with pytest.raises(ValueError, match="role_declaration_drift"):
-            await second.recover_game(game_id)
-        await second.recover_game(game_id, force=True)
+        # Nothing was set up for this game, so there is nothing to preserve and
+        # nothing to confirm: the current declaration is applied by the next
+        # scheduling point instead.
+        info = await second.recover_game(game_id)
         await second._tasks[game_id]
+        assert info["execution_status"] == "running"
         state = observed[0]
-        # Nothing was set up for this game, so there is nothing to preserve: the
-        # current declaration is applied by the next scheduling point instead.
         assert state._pipeline_runtime.resource_setup_digest is None
         initialize_role_resources(state, drifted.specs, state.registry_digest)
         assert state._pipeline_runtime.role_resources[_seat_of(state, WOLF_BEAUTY)] == {
             "self_kill_forbidden": 1, "charm_marker": 1,
         }
+        audit = _recovery_audit(tmp_path, game_id)
+        assert audit["data"]["level"] == "compatible"
+        assert audit["data"]["forced"] is False
     finally:
         await second.aclose()
         repository.close()
@@ -324,6 +327,54 @@ async def test_a_blocked_game_can_be_retried_once_the_cause_is_gone(
         await second._tasks[game_id]
         assert info["execution_status"] == "running"
         assert repository.get_game(game_id)["recovery_block_code"] is None
+    finally:
+        await second.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawn_declaration_keeps_the_established_resources(
+    tmp_path, monkeypatch, stopped_client,
+) -> None:
+    """A declaration that moved is still a drift once resources were set up.
+
+    Emptied out, the witch's declaration has no marker to adopt, so the one the
+    setup stamped stands — and the seats keep the resources they were granted.
+    """
+    from app.core.game_engine import GameEngine
+
+    repository = GameRepository(tmp_path)
+    game_id = await _interrupted_game(
+        tmp_path, repository, {WITCH: 1, VILLAGER: 3},
+    )
+    second = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    _seed_resource_setup(repository, game_id, second._registry_snapshot)
+    drifted = _drifted_snapshot(second, resources={WITCH: {}})
+    _install(second, drifted)
+    observed: list = []
+
+    async def restored_loop(self, state, orchestration, codec) -> None:
+        observed.append(state)
+        self._running = False
+
+    monkeypatch.setattr(GameEngine, "restore", restored_loop)
+    try:
+        with pytest.raises(ValueError, match="role_declaration_drift"):
+            await second.recover_game(game_id)
+        await second.recover_game(game_id, force=True)
+        await second._tasks[game_id]
+        state = observed[0]
+        # The declaration declares nothing now, so there is no marker to adopt:
+        # the established one stands and the next point leaves the seats alone.
+        assert state._pipeline_runtime.resource_setup_digest is not None
+        assert state._pipeline_runtime.role_resources[_seat_of(state, WITCH)] == {
+            "antidote": 1, "poison": 1,
+        }
+        assert initialize_role_resources(
+            state, drifted.specs, state.registry_digest,
+        ) is None
     finally:
         await second.aclose()
         repository.close()
