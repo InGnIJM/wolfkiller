@@ -5,7 +5,8 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import type { ExecutionStatus } from '../../store/types';
+import type { ExecutionStatus, GamePhase, WinningCamp } from '../../store/types';
+import { EXECUTION_LABELS, PHASE_LABELS, WINNER_LABELS } from '../../labels';
 import { recoveryBlockLabel } from './recoveryLabels';
 import { HAIRLINE } from '../../theme/tokens';
 
@@ -32,30 +33,24 @@ interface Props {
   onToggleSelect?: () => void;
 }
 
-const WINNER_META: Record<string, { label: string; color: 'success' | 'error' }> = {
-  good: { label: '好人胜', color: 'success' },
-  werewolf: { label: '狼人胜', color: 'error' },
+// 胜负徽标只在文案之外多一个色调，色调留在组件里（与 CAMP_ACCENT 同类）。
+const WINNER_COLOR: Record<WinningCamp, 'success' | 'error'> = {
+  good: 'success',
+  werewolf: 'error',
 };
 
-const PHASE_LABELS: Record<string, string> = {
-  error: '异常终止',
-};
-
-const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
-  running: '运行中',
-  paused: '已暂停',
-  interrupted: '已中断',
-  recovery_blocked: '恢复受阻',
-  completed: '已完成',
-  failed: '执行失败',
-};
+// 未知阵营（旧档脏数据）不渲染徽标，与旧行为一致。
+function winnerMeta(winner: string): { label: string; color: 'success' | 'error' } | null {
+  if (winner !== 'good' && winner !== 'werewolf') return null;
+  return { label: WINNER_LABELS[winner], color: WINNER_COLOR[winner] };
+}
 
 export default function GameCard({
   name, phase, roundNumber, playerCount, aliveCount, winner, onClick, onRename, onDelete,
   executionStatus, recoverable = false, recoveryBlockCode, controlBusy = false,
   onPause, onResume, onRecover, onMove, selected = false, onToggleSelect,
 }: Props) {
-  const win = winner ? WINNER_META[winner] : null;
+  const win = winner ? winnerMeta(winner) : null;
   const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
 
   return (
@@ -90,7 +85,8 @@ export default function GameCard({
                   {name}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3 }}>
-                  {PHASE_LABELS[phase] ?? phase} · 第 {roundNumber} 轮
+                  {/* phase 由调用方（GameList）先查表，未解析的机器值在这里兜底 */}
+                  {PHASE_LABELS[phase as GamePhase] ?? phase} · 第 {roundNumber} 轮
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>

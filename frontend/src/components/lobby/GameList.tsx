@@ -14,6 +14,7 @@ import {
   deleteGame, GameControlError, listFolders, listGames, renameGame,
 } from '../../api/client';
 import type { GameFolder, GameListItem } from '../../store/types';
+import { PHASE_LABELS } from '../../labels';
 
 interface Props {
   onJoinGame: (gameId: string) => void;
@@ -21,18 +22,6 @@ interface Props {
 }
 
 const PAGE_SIZE = 10;
-
-const PHASE_LABELS: Record<string, string> = {
-  waiting: '等待中',
-  role_deal: '分配角色',
-  night: '黑夜',
-  dawn: '天亮',
-  last_words: '遗言',
-  speech: '发言',
-  vote_casting: '投票',
-  vote_resolution: '公布结果',
-  game_over: '已结束',
-};
 
 function matchesFolder(game: GameListItem, filter: FolderFilter): boolean {
   if (filter === 'all') return true;

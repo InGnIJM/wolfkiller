@@ -12,7 +12,8 @@ import {
   controlGame, GameControlError,
 } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
-import type { ExecutionStatus, PublicReplayEvent } from '../../store/types';
+import type { PublicReplayEvent } from '../../store/types';
+import { EXECUTION_LABELS } from '../../labels';
 import { recoveryBlockLabel } from '../lobby/recoveryLabels';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
@@ -22,15 +23,6 @@ import WinOverlay from './WinOverlay';
 import ActivityCard from './ActivityCard';
 import PageBackground from '../shared/PageBackground';
 import { BACKDROP } from '../../theme/tokens';
-
-const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
-  running: '运行中',
-  paused: '已暂停',
-  interrupted: '已中断',
-  recovery_blocked: '恢复受阻',
-  completed: '已完成',
-  failed: '执行失败',
-};
 
 interface Props {
   onBack: () => void;
