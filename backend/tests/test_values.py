@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,7 @@ from app.core.sheriff_flow import (
     _POST_ELECTION_DEATH_CAUSES, _PRE_ELECTION_DEATH_CAUSES,
 )
 from app.models.actions import _DAYTIME_LAST_WORDS_CAUSES
+from app.models.game import GamePhase
 from app.models.values import DeathCause, WinReason
 from app.roles.hunter import _SHOOT_REASONS
 from app.roles.knight import _DUEL_CAUSE
@@ -97,6 +99,32 @@ def test_pre_and_post_election_death_causes_partition_the_catalogue() -> None:
         == DEATH_CAUSES
     )
     assert not (_PRE_ELECTION_DEATH_CAUSES & _POST_ELECTION_DEATH_CAUSES)
+
+
+FRONTEND_LABELS = (
+    Path(__file__).resolve().parents[2] / "frontend" / "src" / "labels.ts"
+)
+
+
+def _frontend_labelled_keys(namespace: str) -> set[str]:
+    text = FRONTEND_LABELS.read_text(encoding="utf-8")
+    body = text.split(f"export const {namespace}:")[1].split("\n};")[0]
+    return set(re.findall(r"^\s*'?([A-Za-z_][\w-]*)'?:\s*'", body, re.M))
+
+
+def test_frontend_labels_cover_every_declared_value() -> None:
+    """界面文案必须覆盖后端目录里的每个取值。
+
+    前后端是两种语言，各自的联合类型无法互相引用 —— 此前正是这条缝让新取值只在
+    后端出现而界面照旧：`wolves_outnumber_good`（22 局）与 `sheriff_election`
+    （29 局）都是直接把机器值渲染给了用户。这条门禁让「后端加一个取值」必然要求
+    「前端补一条文案」，否则后端测试套件变红。
+    """
+    assert _frontend_labelled_keys("DEATH_CAUSE_LABELS") == DEATH_CAUSES
+    assert _frontend_labelled_keys("WIN_REASON_LABELS") == WIN_REASONS
+    assert _frontend_labelled_keys("PHASE_LABELS") == {
+        phase.value for phase in GamePhase
+    }
 
 
 def _literal_keyword_arguments(name: str) -> list[tuple[Path, str]]:
