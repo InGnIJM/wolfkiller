@@ -312,16 +312,6 @@ class TestPromptBuilder:
         )
         assert "<decision_gate>" in first_prompt
 
-    def test_conversations_render_round_headers_for_multiple_rounds(self):
-        log = ConversationLog()
-        log.add_public_speech(4, "wolf-killer-villager", "第一轮的话", 1, "speech")
-        log.add_public_speech(4, "wolf-killer-villager", "第二轮的话", 2, "speech")
-        out = PromptBuilder()._format_conversations(log, 2, 4, "good")
-        assert "第1轮" in out
-        assert "第2轮" in out
-        assert "第一轮的话" in out
-        assert "第二轮的话" in out
-
     def test_day_speech_without_speaking_order_still_asks_for_own_analysis(self):
         builder = PromptBuilder()
         state = make_state()
@@ -765,19 +755,6 @@ class TestPromptBuilderHelpers:
             {"facts": {"camp_members": [1, 2], "alive_seats": "x"}}
         ) == ""
 
-    def test_conversations_render_scopes_and_empty_state(self):
-        from app.models.conversation import Conversation, ConversationScope
-        log = ConversationLog()
-        assert PromptBuilder()._format_conversations(log, 1, 1, "werewolf") == "（尚无对话记录）"
-        log.records.append(Conversation(
-            ConversationScope.WEREWOLF, "夜间交流", 1, speaker_seat=2, speaker_role="wolf-killer-werewolf",
-        ))
-        log.records.append(Conversation(
-            ConversationScope.PUBLIC, "系统提示", 1, phase="system",
-        ))
-        out = PromptBuilder()._format_conversations(log, 1, 1, "werewolf")
-        assert "[狼队频道]" in out and "[系统]" in out and "【本轮】" in out
-
     def test_thoughts_render_and_empty_state(self):
         log = ConversationLog()
         assert PromptBuilder._format_thoughts(log, 1, 1) == "（尚无思考记录）"
@@ -810,20 +787,6 @@ class TestPromptBuilderHelpers:
 
         assert PromptBuilder._format_thoughts(log, 1, 1).endswith("...")
         assert "independent judgment" in PromptBuilder._decision_gate()
-
-    def test_history_helpers_render_previous_speaker_and_full_thought_record(self):
-        log = make_log()
-
-        conversations = PromptBuilder()._format_conversations(
-            log, 1, 1, "werewolf", speaking_order=(2, 1),
-        )
-        assert PromptBuilder._previous_speaker((2, 1), 1) == 2
-        assert "2" in conversations
-
-        log.add_thought(1, "wolf-killer-werewolf", "bounded thought", 2, "speech")
-        thoughts = PromptBuilder._format_thoughts(log, 2, 1)
-        assert "bounded thought" in thoughts
-        assert "speech" in thoughts
 
     def test_public_role_rules_skip_zero_count_roles(self):
         state = make_state()

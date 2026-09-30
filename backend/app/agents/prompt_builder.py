@@ -352,42 +352,6 @@ class PromptBuilder:
                 continue
             lines.append(f"- {key}：{json.dumps(value, ensure_ascii=False, sort_keys=True)}")
         return "\n".join(lines) if len(lines) > 1 else "- 无额外私有事实。"
-
-    def _format_conversations(
-        self, conversation_log: ConversationLog, round_num: int, seat: int, camp: str,
-        speaking_order: object = None,
-    ) -> str:
-        records = conversation_log.get_conversations_for_role(seat, camp)
-        if not records:
-            return "（尚无对话记录）"
-        lines = []
-        current_round = None
-        for record in records[-30:]:
-            if record.round_number != current_round:
-                lines.append(f"—— 第{record.round_number}轮 ——")
-                current_round = record.round_number
-            prefix = "[狼队频道] " if record.scope is ConversationScope.WEREWOLF else ""
-            prefix += "[系统] " if record.scope is ConversationScope.PUBLIC and record.phase == "system" else ""
-            round_tag = "【本轮】" if record.round_number == round_num and record.scope is ConversationScope.PUBLIC else ""
-            speaker = f"{record.speaker_seat}号" if record.speaker_seat else "系统"
-            content = record.content if len(record.content) <= 300 else record.content[:300] + "..."
-            lines.append(f"{prefix}{round_tag}{speaker}: {content}")
-        previous = PromptBuilder._previous_speaker(speaking_order, seat)
-        if previous is not None:
-            lines.append(
-                f"⚠️ 注意：你前一位发言者是 {previous} 号。后置位玩家最容易受紧邻发言影响，"
-                "请独立核对其论据，禁止直接采信或复述其结论。"
-            )
-        return "\n".join(lines)
-
-    @staticmethod
-    def _previous_speaker(speaking_order: object, seat: int) -> int | None:
-        if not isinstance(speaking_order, (list, tuple)) or seat not in speaking_order:
-            return None
-        order = list(speaking_order)
-        position = order.index(seat)
-        return order[position - 1] if position > 0 else None
-
     @staticmethod
     def _format_thoughts(conversation_log: ConversationLog, round_num: int, seat: int) -> str:
         thoughts = conversation_log.get_thoughts_for_seat(seat)
