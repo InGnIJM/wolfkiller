@@ -77,6 +77,23 @@ async def get_model(config_id: str):
     return _to_response(config)
 
 
+def _endpoints_changed(
+    existing: ModelConfig, *, base_url: str, strict_base_url: str | None,
+) -> bool:
+    """Whether a request moves the host a stored key would be sent to.
+
+    Both the plain and the strict address count: the strict one is derived from
+    the base URL and is where a profile declaring ``strict_endpoint`` sends the
+    action calls. This is the single source of truth for "the endpoint moved",
+    shared by saving a config and by probing one.
+    """
+    return (
+        base_url.rstrip("/") != existing.base_url.rstrip("/")
+        or derive_strict_base_url(base_url, strict_base_url).rstrip("/")
+        != derive_strict_base_url(existing.base_url, existing.strict_base_url).rstrip("/")
+    )
+
+
 @router.put("/{config_id}", response_model=ModelConfigResponse)
 async def update_model(config_id: str, req: ModelConfigRequest):
     store = get_model_config_store()
@@ -87,10 +104,8 @@ async def update_model(config_id: str, req: ModelConfigRequest):
         raise HTTPException(409, "model config name already exists")
     crypto = ModelKeyCrypto()
     encrypted = existing.api_key_encrypted
-    endpoints_changed = (
-        req.base_url.rstrip("/") != existing.base_url.rstrip("/")
-        or derive_strict_base_url(req.base_url, req.strict_base_url).rstrip("/")
-        != derive_strict_base_url(existing.base_url, existing.strict_base_url).rstrip("/")
+    endpoints_changed = _endpoints_changed(
+        existing, base_url=req.base_url, strict_base_url=req.strict_base_url,
     )
     if encrypted and not req.api_key and endpoints_changed:
         raise HTTPException(400, "Changing model endpoints requires re-entering the API key")
@@ -147,15 +162,30 @@ async def test_model(req: ModelTestRequest):
         base_url = req.base_url or config.base_url
         model_id = req.model_id or config.model_id
         api_key = req.api_key or ""
+        explicit_strict_base_url = (
+            config.strict_base_url if req.strict_base_url is None else req.strict_base_url
+        )
+        provider_profile = req.provider_profile or config.provider_profile
+        # A stored key may only ever travel to the endpoint it was stored for.
+        # Saving a config already enforces that; probing it must too, or one
+        # local request with a ``config_id`` and an attacker's ``base_url``
+        # forwards the key. A profile counts as an endpoint change because it
+        # decides whether the strict address is used. The refusal happens before
+        # any decryption, so a rejected probe cannot leak even by accident.
+        if config.api_key_encrypted and not req.api_key and (
+            provider_profile != config.provider_profile
+            or _endpoints_changed(
+                config, base_url=base_url, strict_base_url=explicit_strict_base_url,
+            )
+        ):
+            raise HTTPException(
+                400, "Changing model endpoints requires re-entering the API key",
+            )
         if config.api_key_encrypted and not api_key:
             try:
                 api_key = crypto.decrypt(config.api_key_encrypted)
             except KeyDecryptionError:
                 raise HTTPException(400, "stored api key cannot be decrypted") from None
-        explicit_strict_base_url = (
-            config.strict_base_url if req.strict_base_url is None else req.strict_base_url
-        )
-        provider_profile = req.provider_profile or config.provider_profile
         # ``None`` keeps the stored headers so the dialog can test a profile
         # change without losing them; an explicit dict (even empty) wins.
         headers = dict(config.headers) if req.headers is None else req.headers

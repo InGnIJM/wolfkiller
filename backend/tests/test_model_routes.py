@@ -301,6 +301,93 @@ async def test_connection_test_by_id_uses_stored_key(store, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_connection_test_refuses_an_edited_base_url_with_the_stored_key(store, monkeypatch):
+    """A stored key must never travel to an endpoint the request chose.
+
+    ``PUT`` already refuses to move an endpoint without a re-entered key; the
+    probe skipped that rule, so one unauthenticated local request carrying a
+    ``config_id`` and an attacker's ``base_url`` turned the probe into a
+    credential forwarder.
+    """
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        with pytest.raises(HTTPException) as exc:
+            await model_routes.test_model(ModelTestRequest(
+                config_id=cfg.id, base_url="https://attacker.test/v1",
+            ))
+
+    assert exc.value.status_code == 400
+    assert "sk-stored-key" not in str(exc.value.detail)
+    # The key was never even decrypted, let alone sent anywhere.
+    assert mock_client.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_connection_test_refuses_an_edited_strict_base_url_with_the_stored_key(
+    store, monkeypatch,
+):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        with pytest.raises(HTTPException) as exc:
+            await model_routes.test_model(ModelTestRequest(
+                config_id=cfg.id, strict_base_url="https://attacker.test/beta",
+            ))
+
+    assert exc.value.status_code == 400
+    assert mock_client.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_connection_test_refuses_an_edited_profile_with_the_stored_key(store, monkeypatch):
+    """A profile can reroute the strict call, so it is an endpoint change too."""
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        with pytest.raises(HTTPException) as exc:
+            await model_routes.test_model(ModelTestRequest(
+                config_id=cfg.id, provider_profile="anthropic",
+            ))
+
+    assert exc.value.status_code == 400
+    assert mock_client.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_connection_test_treats_a_trailing_slash_as_the_same_endpoint(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        mock_client.return_value.probe.return_value = _CAPABILITIES
+        response = await model_routes.test_model(ModelTestRequest(
+            config_id=cfg.id, base_url="https://api.deepseek.com/v1/",
+        ))
+
+    assert response.ok is True
+    assert mock_client.call_args_list[0].kwargs["config"].api_key == "sk-stored-key"
+
+
+@pytest.mark.asyncio
+async def test_connection_test_allows_an_edited_endpoint_with_a_provided_key(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    crypto = ModelKeyCrypto()
+    cfg = _stored(store, api_key_encrypted=crypto.encrypt("sk-stored-key"))
+    with patch.object(model_routes, "LLMClient", autospec=True) as mock_client:
+        mock_client.return_value.probe.return_value = _CAPABILITIES
+        response = await model_routes.test_model(ModelTestRequest(
+            config_id=cfg.id, base_url="https://other.test/v1", api_key="sk-new-key",
+        ))
+
+    assert response.ok is True
+    assert mock_client.call_args_list[0].kwargs["config"].api_key == "sk-new-key"
+
+
+@pytest.mark.asyncio
 async def test_connection_test_by_id_with_provided_key_overrides_stored_key(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     crypto = ModelKeyCrypto()
