@@ -50,6 +50,24 @@ class TestMemoryService:
         assert beauty["teammates"] == [2]
         assert wolf["teammates"] == [1]
 
+    def test_only_the_real_seer_and_witch_get_their_private_knowledge(self, tmp_path):
+        """按角色名子串判定身份会把「名字里带 seer/witch 的角色」也算进去。
+
+        这类判定的历史后果已经出现过两次（狼队按子串判狼漏掉狼美人、神职按子串计数
+        漏掉骑士）；这里改成与权威角色 id 相等，任何取名相近的角色都不再误命中。
+        """
+        service = MemoryService(str(tmp_path))
+        state = make_state()
+        state.players[3] = PlayerState(
+            3, "wolf-killer-seer-imitator", "good",
+            check_results=[{"target_seat": 1, "result": "werewolf", "round": 1}],
+        )
+
+        knowledge = service._build_private_knowledge(state, 3, state.players[3])
+
+        assert knowledge["check_results"] == []
+        assert knowledge["last_wolf_kill_target"] is None
+
     def test_save_memories_writes_one_file_per_player(self, tmp_path):
         service = MemoryService(str(tmp_path))
         state = make_state()

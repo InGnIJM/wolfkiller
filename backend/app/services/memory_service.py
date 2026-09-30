@@ -3,6 +3,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from app.models.game import Camp, GameState
+from app.roles.seer import SEER_SPEC
+from app.roles.witch import WITCH_SPEC
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +80,12 @@ class MemoryService:
                 if p.camp == Camp.WEREWOLF and s != seat
             ]
 
-        if "seer" in player.role:
+        # 与权威角色 id 相等，而不是按名字子串：子串判定会把任何取名相近的角色
+        # 也当成本角色（狼队那边漏掉狼美人就是同一类错误的另一面）。
+        if player.role == SEER_SPEC.role_id:
             knowledge["check_results"] = list(player.check_results)
 
-        if "witch" in player.role:
+        if player.role == WITCH_SPEC.role_id:
             knowledge["last_wolf_kill_target"] = state.last_wolf_kill_target
 
         return knowledge
