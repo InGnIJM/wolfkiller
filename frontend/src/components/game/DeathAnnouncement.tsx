@@ -13,22 +13,13 @@ import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
 import type { DeathRecord } from '../../store/types';
 import { roleMetaFor } from '../shared/roleMeta';
+import { DEATH_CAUSE_LABELS } from '../../labels';
 import { BACKDROP, CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 interface Props {
   deaths: DeathRecord[];
   revealedRole?: string | null;
 }
-
-const CAUSE_LABELS: Record<string, string> = {
-  wolf_kill: '夜间死亡',
-  poison: '毒杀',
-  exile: '放逐',
-  hunter_shot: '猎人带走',
-  self_explode: '白狼王自爆',
-  knight_duel: '骑士决斗',
-  charm: '殉情',
-};
 
 const CAUSE_ICONS: Record<string, SvgIconComponent> = {
   wolf_kill: Bloodtype,
@@ -44,7 +35,7 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
   const latest = deaths[deaths.length - 1];
   if (!latest) return null;
 
-  const causeLabel = CAUSE_LABELS[latest.cause] || latest.cause;
+  const causeLabel = DEATH_CAUSE_LABELS[latest.cause] || latest.cause;
   const Icon = CAUSE_ICONS[latest.cause] ?? PersonOff;
   const revealed = roleMetaFor(revealedRole);
   const roleLabel = revealed?.label ?? revealedRole ?? null;

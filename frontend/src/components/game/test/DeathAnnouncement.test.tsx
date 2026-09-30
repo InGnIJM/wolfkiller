@@ -21,7 +21,7 @@ const record = (cause: string): DeathRecord => ({
 const CAUSE_CASES: Array<[DeathCause, string]> = [
   ['wolf_kill', '夜间死亡'],
   ['poison', '毒杀'],
-  ['exile', '放逐'],
+  ['exile', '被放逐'],
   ['hunter_shot', '猎人带走'],
   ['self_explode', '白狼王自爆'],
   ['knight_duel', '骑士决斗'],
