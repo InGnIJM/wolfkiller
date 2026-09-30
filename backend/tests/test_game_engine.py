@@ -2500,7 +2500,7 @@ class TestGameEngine:
         assert len(engine.conversation_log.get_all()) == 0
 
         engine.conversation_log.add_public_speech(1, "wolf-killer-villager", "hello", 1, "speech")
-        visible = engine.conversation_log.get_conversations_for_role(1, "wolf-killer-villager")
+        visible = engine.conversation_log.get_conversations_for_role(1, "good")
         assert len(visible) == 1
 
     @pytest.mark.asyncio
