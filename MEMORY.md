@@ -602,3 +602,36 @@
   same batch with it (measured: a `[poison, charm]` batch produced 0 events instead
   of 2). Keep the whitelist equal to what the producer emits, and prefer skipping
   the single row with a telemetry line over `return []`.
+
+## 取值目录与文案副本必须被门禁绑住（死因/胜因/阶段/事件类型）
+
+死因与胜因此前只是 `str` 加一句注释（`DeathReport.cause` / `WinResult.reason`），没有任何
+代码能枚举全集，于是每个消费方各抄一份：公开 DTO、旧档回放白名单、旧档重建、前端 types
+与 13 张取值→文案表。它们漂移了，而 100% 分支覆盖一直全绿。
+
+- Trigger: 引擎新增一个死因/胜因/阶段/事件类型，或新增角色带来新死因。Action: 它必须同时
+  出现在 `app/models/values.py` 的 `DeathCause` / `WinReason` / `WinningCamp` 里。门禁链：
+  `tests/test_values.py` 冻结全集并校验生产代码里的字面量与各规则子集；
+  `tests/test_schemas.py` 断言公开 DTO 等于目录；`tests/test_game_routes.py` 断言旧档白名单
+  等于公开 DTO；`tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读
+  `frontend/src/labels.ts`，断言界面文案覆盖每个取值。少任何一处都会变红 —— 这条跨语言
+  断言是最后补上的那环，此前「后端加了值、界面没加文案」只能靠人眼在界面上看见。
+- Trigger: 规则里有一组「某类死因」的白名单（开选前死亡、可开枪死因、延迟死因）。Action:
+  子集断言只能抓「凭空发明一个死因」，抓不到「漏掉一个」—— `charm` 漏在
+  `_PRE_ELECTION_DEATH_CAUSES` 里时所有子集断言仍全绿，而竞选提示词把首夜殉情的尸体写成
+  「警下、有投票权」。成对的白名单要写成**划分**断言：前 ∪ 后 ∪ 显式例外 == 全集且互不相交。
+- Trigger: 按角色名子串判阵营或身份（`"werewolf" in role`、`"seer" in role`）。Action: 一律
+  改读 `camp`（狼队）或 `RoleSpec.tags`（神职/平民）。狼美人的 id 是
+  `wolf-killer-wolf-beauty`，子串匹配让它看不到狼队频道、队友列表里也没有它，而同桌普通狼
+  一切正常 —— 测试与日志都只覆盖公共路径，所以这个 bug 活了很久。漏改一个调用点同样致命：
+  `game_service._command_provider` 曾把 role_id 传进按阵营取记录的入口，服务侧历史里的狼队
+  频道直接为空。
+- Trigger: 前端组件里出现 `Record<string, string>` 的取值→文案表。Action: 键类型必须是联合
+  （`Record<DeathCause, string>`），否则「后端加了值、界面漏了键」只表现为界面上冒出英文
+  机器值。文案统一放 `frontend/src/labels.ts` 并按渲染语境分命名空间（死因表与编年史短标签
+  对同一个键有不同措辞，合并不等于抹平），`src/test/labels.test.ts` 扫描组件，再出现本地表
+  即红。
+- Trigger: 不确定「未知取值」该怎么表示。Action: 用**缺省**（`None` / 字段不出现），不要用
+  空串或哨兵值 —— 空串不是词汇表成员，会被响应模型拒绝成 500（`_reconstruct_state` 曾把清单
+  里没有的胜因写成 `""`，只差一个没有 `game_over` 记录的旧档就会命中）。DTO 侧相应把字段设为
+  可选，界面渲染不出文案时本来也只是少一行。
