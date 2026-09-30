@@ -4,118 +4,15 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useGameStore } from '../../store/gameStore';
 import { fetchGameMemories } from '../../api/client';
 import type { PlayerMemory, PublicReplayEvent } from '../../store/types';
+import {
+  DEATH_CAUSE_LABELS, EVENT_TAGS, KNOWLEDGE_LABELS, MEMORY_ACTION_LABELS,
+  MEMORY_EVENT_LABELS, NIGHT_ACTION_LABELS, PLAYER_STATUS_LABELS, ROLE_LABELS,
+  SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
+} from '../../labels';
 
 interface Props {
   onClose: () => void;
 }
-
-const CAUSE_LABELS: Record<string, string> = {
-  wolf_kill: '夜间死亡',
-  poison: '毒杀',
-  exile: '放逐',
-  hunter_shot: '猎人带走',
-  self_explode: '白狼王自爆',
-  knight_duel: '骑士决斗',
-  charm: '殉情',
-};
-
-const NIGHT_ACTION_LABELS: Record<string, string> = {
-  werewolf_kill: '狼人行动',
-  witch_save: '女巫救人',
-  witch_poison: '女巫毒人',
-  seer_check: '预言家查验',
-  hunter_shot: '猎人开枪',
-  guard_protect: '守卫守护',
-  knight_duel: '骑士决斗',
-};
-
-const THOUGHT_LABELS: Record<string, string> = {
-  witch_reasoning: '女巫思考',
-  seer_reasoning: '预言家思考',
-  hunter_reasoning: '猎人思考',
-  guard_reasoning: '守卫思考',
-  werewolf_king_reasoning: '白狼王思考',
-  witch_thought: '女巫思考',
-  seer_thought: '预言家思考',
-};
-
-const MEMORY_ACTION_LABELS: Record<string, string> = {
-  kill: '狼刀',
-  check: '查验',
-  save: '救人',
-  poison: '毒人',
-  pass: '空过',
-};
-
-const MEMORY_EVENT_LABELS: Record<string, string> = {
-  death: '死亡',
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  'wolf-killer-werewolf': '狼人',
-  'wolf-killer-villager': '村民',
-  'wolf-killer-seer': '预言家',
-  'wolf-killer-witch': '女巫',
-  'wolf-killer-hunter': '猎人',
-  'wolf-killer-guard': '守卫',
-  'wolf-killer-idiot': '白痴',
-  'wolf-killer-werewolf-king': '白狼王',
-  'wolf-killer-knight': '骑士',
-  'wolf-killer-wolf-beauty': '狼美人',
-  'wolf-killer-old-drunkard': '老酒鬼',
-};
-
-const KNOWLEDGE_LABELS: Record<string, string> = {
-  teammates: '狼队友',
-  check_results: '查验记录',
-  has_antidote: '解药',
-  has_poison: '毒药',
-  has_gun: '枪',
-  last_wolf_kill_target: '昨夜狼刀目标',
-};
-
-// —— 编年史条目：类型标签 + 时间线色调 ——
-const EVENT_TAGS: Record<string, string> = {
-  speech: '发言',
-  vote: '投票',
-  vote_result: '放逐',
-  exile_cancelled: '翻牌',
-  self_explode: '自爆',
-  knight_duel: '决斗',
-  wolf_beauty_charm: '魅惑',
-  wolf_beauty_revenge: '殉情',
-  sheriff_elected: '警长',
-  sheriff_badge: '警徽',
-  sheriff_run: '上警',
-  sheriff_withdraw: '退水',
-  sheriff_vote: '警票',
-  sheriff_side: '警序',
-  speaking: '开口',
-  night_action: '夜间',
-  narration: '旁白',
-  player_status: '状态',
-  wolf_chat_message: '狼聊',
-  wolf_vote: '狼票',
-  witch_thought: '思考',
-  seer_thought: '思考',
-  night_thought: '思考',
-  death: '死亡',
-  phase: '阶段',
-  winner: '结局',
-};
-
-const PLAYER_STATUS_LABELS: Record<string, string> = {
-  poisoned: '中毒未死',
-  wounded: '中枪未死',
-  delayed_death: '延迟结算',
-};
-
-const SHERIFF_SIDE_LABELS: Record<string, string> = {
-  sheriff_left: '警左',
-  sheriff_right: '警右',
-  death_left: '死左',
-  death_right: '死右',
-};
 
 function eventTone(event: PublicReplayEvent): string {
   if (
@@ -501,7 +398,7 @@ function EventCard({
     case 'death':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.player_seat}号出局 · {CAUSE_LABELS[event.payload.cause]} · 第{event.payload.round_number}轮
+          {event.payload.player_seat}号出局 · {DEATH_CAUSE_LABELS[event.payload.cause]} · 第{event.payload.round_number}轮
         </Typography>
       );
       break;
@@ -525,7 +422,9 @@ function EventCard({
       return null;
   }
 
-  const tag = EVENT_TAGS[event.event_type] ?? '事件';
+  // 上表的键就是渲染面的全集（未知类型在上面的 default 已经返回 null），
+  // 所以这里不需要「未知就写事件」的兜底。
+  const tag = EVENT_TAGS[event.event_type];
   const tone = eventTone(event);
 
   return (

@@ -335,12 +335,13 @@ describe('HistoryPanel staged night event cards', () => {
     render(<HistoryPanel onClose={vi.fn()} />);
 
     expect(screen.getByText(/系统代投弃权/)).toBeVisible();
+    // 系统代投现在有专门的编年史标签（此前落到「事件」兜底）。
+    expect(screen.getByText('系统代投')).toBeVisible();
     expect(screen.getByText(/夜晚行动/)).toBeVisible();
     expect(screen.getByText(/2号 → 弃权/)).toBeVisible();
     expect(screen.getByText(/夜间思考 · 4号/)).toBeVisible();
     expect(screen.getByText(/不行动：暂不行动/)).toBeVisible();
     expect(screen.getByText('游戏结束')).toBeVisible();
-    expect(screen.getAllByText('事件').length).toBeGreaterThan(0);
     expect(screen.getAllByText('第1天').length).toBeGreaterThan(0);
     expect(screen.getByText('第?天')).toBeVisible();
   });
