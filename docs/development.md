@@ -116,7 +116,7 @@ sh .githooks/secret-scan.sh --history        # 手动跑：扫全历史
 
 ### Benchmark 基准评测
 
-采集层随对局事务性落入 SQLite；批量真实对局评测用仓库内的 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。对局结束时服务会自动写 `summary.json`。指标定义与用法见 `docs/benchmark.md`。最近一次本机跑批结论见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。`.gitignore` 目前只放行 `run_benchmark.py`，其它 `backend/scripts/*` 不在版本控制中。
+采集层随对局事务性落入 SQLite；批量真实对局评测用仓库内的 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。对局结束时服务会自动写 `summary.json`。指标定义与用法见 `docs/benchmark.md`。最近一次本机跑批结论见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。`.gitignore` 放行 `run_benchmark.py` 与 `purge_old_games.py`（后者是不可逆的批量回收工具：它驱动的 `mark_game_deleted` / `GameManifest.remove_game` 都已入库，所以入口与回归测试也入库），其它 `backend/scripts/*` 是本地一次性工具，不在版本控制中。
 
 ## 数据存储
 

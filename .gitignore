@@ -34,6 +34,10 @@ backend/scripts/
 !backend/scripts/
 backend/scripts/*
 !backend/scripts/run_benchmark.py
+# Destructive maintenance tool: it is the only bulk way to reclaim the fact
+# source, and the logic it drives (mark_game_deleted / GameManifest.remove_game)
+# is already tracked, so the entry point and its regression test belong here too.
+!backend/scripts/purge_old_games.py
 
 .zcode/
 .playwright-manual-data/
