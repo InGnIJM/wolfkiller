@@ -24,7 +24,11 @@ export type DeathCause =
   | 'knight_duel'
   | 'charm';
 export type WinningCamp = 'good' | 'werewolf';
-export type WinReason = 'all_gods_dead' | 'all_villagers_dead' | 'all_wolves_dead';
+export type WinReason =
+  | 'all_gods_dead'
+  | 'all_villagers_dead'
+  | 'all_wolves_dead'
+  | 'wolves_outnumber_good';
 export type UtcTimestamp = `${string}Z`;
 
 export interface PublicPlayerState {
@@ -44,7 +48,8 @@ export type ExecutionStatus =
   | 'interrupted'
   | 'recovery_blocked'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 export interface SpeechRecord {
   player_seat: number;
@@ -322,10 +327,13 @@ export type PublicReplayEvent =
       recovery_block_code: string | null;
     }>;
 
+/** The closed set of audience event types; text tables key off this union. */
+export type PublicEventType = PublicReplayEvent['event_type'];
+
 export interface AudienceEvent {
   seq: number;
   event_id: string;
-  event_type: PublicReplayEvent['event_type'];
+  event_type: PublicEventType;
   payload: Record<string, unknown>;
   schema_version: number;
   created_at?: string;
