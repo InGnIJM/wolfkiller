@@ -584,7 +584,8 @@ class GameEngine:
                         )
                         self.game_logger.log_audience_action(
                             self.game_id, state.round_number, "night",
-                            "WOLF_CHAT_MESSAGE", {"seat": seat, "text": result.text},
+                            "WOLF_CHAT_MESSAGE",
+                            {"seat": seat, "text": result.text, "day_plan": result.day_plan},
                         )
                     else:
                         history.append(f"{seat}号：（跳过）")
