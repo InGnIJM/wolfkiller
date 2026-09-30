@@ -77,6 +77,9 @@ PUBLIC_REPLAY_EVENTS = [
         "round_number": 1, "seat": 2, "side": "sheriff_right",
     }},
     {"event_type": "speaking", "payload": {"round_number": 1, "seat": 3}},
+    {"event_type": "technical_abstain", "payload": {
+        "voter_seat": 8, "round_number": 1, "failure_code": "request_timeout",
+    }},
 ]
 
 
@@ -270,6 +273,45 @@ class TestSchemas:
         assert resp.game_id == "abc"
         assert resp.model_dump()["reveal_on_death"] is True
         assert resp.model_snapshot == []
+
+    @pytest.mark.parametrize(
+        "cause",
+        ["wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
+         "knight_duel", "charm"],
+    )
+    def test_game_detail_accepts_every_death_cause_the_engine_produces(self, cause):
+        response = GameDetailResponse(
+            game_id="abc", phase="dawn", round_number=2,
+            players={}, sheriff=None, speeches=[],
+            death_history=[{"player_seat": 2, "cause": cause, "round_number": 2}],
+            win_result=None, reveal_on_death=True,
+        )
+
+        assert response.death_history[0].cause == cause
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["all_gods_dead", "all_villagers_dead", "all_wolves_dead",
+         "wolves_outnumber_good"],
+    )
+    def test_game_detail_accepts_every_win_reason_the_rule_engine_produces(self, reason):
+        response = GameDetailResponse(
+            game_id="abc", phase="game_over", round_number=4,
+            players={}, sheriff=None, speeches=[], death_history=[],
+            win_result={"winning_camp": "werewolf", "reason": reason},
+            reveal_on_death=True,
+        )
+
+        assert response.win_result.reason == reason
+
+    def test_game_detail_accepts_the_error_phase_of_a_crashed_game(self):
+        response = GameDetailResponse(
+            game_id="abc", phase="error", round_number=3,
+            players={}, sheriff=None, speeches=[], death_history=[],
+            win_result=None, reveal_on_death=True,
+        )
+
+        assert response.phase == "error"
 
     def test_game_detail_response_requires_reveal_on_death(self):
         with pytest.raises(ValidationError):

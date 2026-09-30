@@ -138,15 +138,26 @@ class _PublicResponse(BaseModel):
 
 PositivePublicInt = Annotated[int, Field(gt=0)]
 NonNegativePublicInt = Annotated[int, Field(ge=0)]
+# These three enumerations mirror what the engine actually produces: the rule
+# engine's win reasons, every death cause a role can apply, and the phase a
+# crashed game is parked in. A value missing here is not a cosmetic gap — the
+# detail route builds GameDetailResponse straight out of the live state, so an
+# unlisted value raises ValidationError and turns the response into HTTP 500.
+# Keep them in step with `core/rule_engine.py`, `models/actions.py` and the role
+# specs; `tests/test_schemas.py` fails if one drops out.
 PublicGamePhase = Literal[
     "waiting", "role_deal", "night", "dawn", "last_words",
     "sheriff_election", "speech", "vote_casting", "vote_resolution",
-    "game_over",
+    "game_over", "error",
 ]
-PublicDeathCause = Literal["wolf_kill", "poison", "hunter_shot", "exile", "self_explode"]
+PublicDeathCause = Literal[
+    "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
+    "knight_duel", "charm",
+]
 PublicWinningCamp = Literal["good", "werewolf"]
 PublicWinReason = Literal[
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
+    "wolves_outnumber_good",
 ]
 
 
@@ -195,6 +206,18 @@ class PublicVoteResponse(_PublicResponse):
 class PublicVoteResultResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     exiled_seat: Optional[PositivePublicInt] = None
+
+
+class PublicTechnicalAbstainResponse(_PublicResponse):
+    """The engine voted on a seat's behalf after that seat's model call failed.
+
+    ``failure_code`` deliberately carries no upper bound: the replay projection
+    accepts any non-empty code, so a stricter bound here would reject a record
+    the mapper had just produced and fail the entire replay response.
+    """
+    voter_seat: PositivePublicInt
+    round_number: NonNegativePublicInt
+    failure_code: Annotated[str, Field(min_length=1)]
 
 
 PublicNightActionType = Literal[
@@ -356,6 +379,11 @@ class PublicVoteResultReplayEvent(_PublicReplayEvent):
     payload: PublicVoteResultResponse
 
 
+class PublicTechnicalAbstainReplayEvent(_PublicReplayEvent):
+    event_type: Literal["technical_abstain"]
+    payload: PublicTechnicalAbstainResponse
+
+
 class PublicNightActionReplayEvent(_PublicReplayEvent):
     event_type: Literal["night_action"]
     payload: PublicNightActionResponse
@@ -467,6 +495,7 @@ PublicReplayEvent = Annotated[
         PublicDeathReplayEvent,
         PublicVoteReplayEvent,
         PublicVoteResultReplayEvent,
+        PublicTechnicalAbstainReplayEvent,
         PublicNightActionReplayEvent,
         PublicNightThoughtReplayEvent,
         PublicNarrationReplayEvent,
