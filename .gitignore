@@ -5,9 +5,13 @@ shit
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+htmlcov/
+.coverage
 
 # Node
 node_modules/
+.vite/
 
 # Credentials and local secrets — never commit these.
 # `backend/.gitignore` covers backend/.env by exact name only, so the rule is
@@ -40,7 +44,14 @@ backend/scripts/*
 !backend/scripts/purge_old_games.py
 
 .zcode/
+.cursor/
 .playwright-manual-data/
+
+# The default WOLFKILLER_DATA_DIR is the relative "data" (app/main.py), so
+# starting the backend from the repository root writes the fact source and the
+# encrypted-key file here. Anchored: backend/data/ has its own rule.
+/data/
+backend/_tmp_latest_dump/
 
 # Local debug artifacts
 .workbuddy-ai/
