@@ -299,6 +299,151 @@ async def test_manual_recovery_uses_checkpoint_without_new_game_reset(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_recovery_starts_one_engine_and_refuses_the_second(
+    tmp_path, monkeypatch,
+) -> None:
+    """Two overlapping recover requests must not both start an engine.
+
+    Without a per-game guard both coroutines pass the status gate before either
+    transitions, both decode the checkpoint and both register an engine: the
+    first task becomes an orphan that keeps calling models and writing
+    checkpoints, and the shared durable context lets a stale writer win the
+    revision CAS. The second request must be refused instead.
+    """
+    from app.core.game_engine import GameEngine
+
+    class FakeClient:
+        def __init__(self, *, config) -> None:
+            self.config = config
+
+        async def aclose(self) -> None:
+            pass
+
+    async def stop_after_initial_checkpoint(self) -> None:
+        self._running = False
+
+    monkeypatch.setattr(service_module, "LLMClient", FakeClient)
+    monkeypatch.setattr(GameEngine, "_game_loop", stop_after_initial_checkpoint)
+    repository = GameRepository(tmp_path)
+    first = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    game_id = await first.create_game(role_counts={
+        "wolf-killer-werewolf": 1,
+        "wolf-killer-villager": 3,
+    })
+    await first._tasks[game_id]
+    repository.transition_execution(
+        game_id, expected=("running",), target="interrupted",
+    )
+
+    second = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    restores: list[int] = []
+
+    async def blocking_restore(self, state, orchestration, codec) -> None:
+        restores.append(state.round_number)
+        started.set()
+        await release.wait()
+        self._running = False
+
+    monkeypatch.setattr(GameEngine, "restore", blocking_restore)
+    try:
+        calls = asyncio.gather(
+            second.recover_game(game_id),
+            second.recover_game(game_id),
+            return_exceptions=True,
+        )
+        await started.wait()
+        release.set()
+        results = await calls
+
+        # Exactly one engine ever reached the restore step.
+        assert restores == [0]
+        assert sum(isinstance(r, InvalidExecutionTransition) for r in results) == 1
+        assert sum(isinstance(r, dict) for r in results) == 1
+        assert list(second._engines) == [game_id]
+        assert list(second._tasks) == [game_id]
+        # One recovery means one generation bump, not two.
+        assert repository.get_game(game_id)["execution_generation"] == 2
+        await second._tasks[game_id]
+    finally:
+        release.set()
+        await first.aclose()
+        await second.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_resume_shares_the_same_guard(tmp_path, monkeypatch) -> None:
+    """``resume`` can start an engine too, so it must share the recovery guard."""
+    from app.core.game_engine import GameEngine
+
+    class FakeClient:
+        def __init__(self, *, config) -> None:
+            self.config = config
+
+        async def aclose(self) -> None:
+            pass
+
+    async def stop_after_initial_checkpoint(self) -> None:
+        self._running = False
+
+    monkeypatch.setattr(service_module, "LLMClient", FakeClient)
+    monkeypatch.setattr(GameEngine, "_game_loop", stop_after_initial_checkpoint)
+    repository = GameRepository(tmp_path)
+    first = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    game_id = await first.create_game(role_counts={
+        "wolf-killer-werewolf": 1,
+        "wolf-killer-villager": 3,
+    })
+    await first._tasks[game_id]
+    # Paused with no live engine in this service: resume must recover it.
+    repository.transition_execution(
+        game_id, expected=("running",), target="paused",
+    )
+
+    second = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    restores: list[int] = []
+
+    async def blocking_restore(self, state, orchestration, codec) -> None:
+        restores.append(state.round_number)
+        started.set()
+        await release.wait()
+        self._running = False
+
+    monkeypatch.setattr(GameEngine, "restore", blocking_restore)
+    try:
+        calls = asyncio.gather(
+            second.resume_game(game_id),
+            second.resume_game(game_id),
+            return_exceptions=True,
+        )
+        await started.wait()
+        release.set()
+        results = await calls
+
+        assert restores == [0]
+        assert sum(isinstance(r, InvalidExecutionTransition) for r in results) == 1
+        assert list(second._engines) == [game_id]
+        await second._tasks[game_id]
+    finally:
+        release.set()
+        await first.aclose()
+        await second.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
 async def test_recovery_refuses_states_the_caller_did_not_accept(tmp_path) -> None:
     """The default accepts a blocked game; an explicit narrower tuple still wins."""
     repository = GameRepository(tmp_path)

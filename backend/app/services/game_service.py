@@ -538,6 +538,10 @@ class GameService:
         self._recovery_warnings: dict[str, list[str]] = {}
         self._clock_tasks: dict[str, asyncio.Task] = {}
         self._clock_state: dict[str, dict[str, int | float | None]] = {}
+        # One guard per game for every control path that can start an engine.
+        # Never popped: dropping a lock while it is held would let a second one
+        # be created for the same game.
+        self._control_locks: dict[str, asyncio.Lock] = {}
 
         # Restore completed games so list / detail endpoints still work
         self._load_persisted_games()
@@ -838,10 +842,35 @@ class GameService:
         return self.get_execution_info(game_id)
 
     async def resume_game(self, game_id: str, *, force: bool = False) -> dict[str, object]:
-        return await self._resume_game(game_id, allow_benchmark=False, force=force)
+        return await self._control_guarded(
+            game_id,
+            lambda: self._resume_game(game_id, allow_benchmark=False, force=force),
+        )
 
     async def resume_benchmark_game(self, game_id: str, *, force: bool = False) -> dict[str, object]:
-        return await self._resume_game(game_id, allow_benchmark=True, force=force)
+        return await self._control_guarded(
+            game_id,
+            lambda: self._resume_game(game_id, allow_benchmark=True, force=force),
+        )
+
+    async def _control_guarded(self, game_id: str, work):
+        """Serialize every control path that can start an engine for one game.
+
+        Two overlapping requests used to pass the status gate together, both
+        decode the checkpoint and both register an engine: the first task became
+        an orphan that kept calling models and writing checkpoints, and the
+        shared durable context let a stale writer win the revision CAS.
+
+        The ``locked()`` probe is the authoritative concurrency gate: nothing
+        awaits between it and the acquire, so no other coroutine can slip past
+        it. A request that arrives after the holder finished is not concurrent —
+        it reads the fresh status under the lock and reports it.
+        """
+        lock = self._control_locks.setdefault(game_id, asyncio.Lock())
+        if lock.locked():
+            raise InvalidExecutionTransition("game control is already in progress")
+        async with lock:
+            return await work()
 
     async def _resume_game(
         self, game_id: str, *, allow_benchmark: bool, force: bool = False,
@@ -886,9 +915,12 @@ class GameService:
         expected_statuses: tuple[str, ...] = ("interrupted", "failed", "recovery_blocked"),
         force: bool = False,
     ) -> dict[str, object]:
-        return await self._recover_game(
-            game_id, expected_statuses=expected_statuses,
-            allow_benchmark=False, force=force,
+        return await self._control_guarded(
+            game_id,
+            lambda: self._recover_game(
+                game_id, expected_statuses=expected_statuses,
+                allow_benchmark=False, force=force,
+            ),
         )
 
     async def recover_benchmark_game(
@@ -896,9 +928,12 @@ class GameService:
         expected_statuses: tuple[str, ...] = ("interrupted", "failed", "recovery_blocked"),
         force: bool = False,
     ) -> dict[str, object]:
-        return await self._recover_game(
-            game_id, expected_statuses=expected_statuses,
-            allow_benchmark=True, force=force,
+        return await self._control_guarded(
+            game_id,
+            lambda: self._recover_game(
+                game_id, expected_statuses=expected_statuses,
+                allow_benchmark=True, force=force,
+            ),
         )
 
     async def _recover_game(
