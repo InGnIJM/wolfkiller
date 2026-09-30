@@ -6,20 +6,9 @@ import PauseIcon from '@mui/icons-material/Pause';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
 import LiveTvIcon from '@mui/icons-material/LiveTv';
 import { useGameStore, isAtTimelineEnd } from '../../store/gameStore';
+import { PHASE_LABELS } from '../../labels';
 
 const SPEEDS = [0.5, 1, 2, 4, 8];
-
-const PHASE_LABELS: Record<string, string> = {
-  waiting: '等待开始',
-  role_deal: '分配角色',
-  night: '夜晚',
-  dawn: '天亮',
-  last_words: '遗言',
-  speech: '发言',
-  vote_casting: '投票',
-  vote_resolution: '公布结果',
-  game_over: '已结束',
-};
 
 export default function TimelineController() {
   const {

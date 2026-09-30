@@ -4,41 +4,13 @@ import { keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent } from '../../store/types';
+import { DEATH_CAUSE_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_LABELS } from '../../labels';
 import { AVATAR_PALETTE, INK } from '../../theme/tokens';
 
 const livePulse = keyframes`
   0%, 100% { opacity: 0.4; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1.15); }
 `;
-
-const THOUGHT_LABELS: Record<string, string> = {
-  witch_reasoning: '女巫思考',
-  seer_reasoning: '预言家思考',
-  hunter_reasoning: '猎人思考',
-  guard_reasoning: '守卫思考',
-  werewolf_king_reasoning: '白狼王思考',
-  knight_reasoning: '骑士思考',
-  wolf_beauty_reasoning: '狼美人思考',
-  witch_thought: '女巫思考',
-  seer_thought: '预言家思考',
-};
-
-const CAUSE_LABELS: Record<string, string> = {
-  wolf_kill: '夜间死亡',
-  poison: '毒杀',
-  exile: '被放逐',
-  hunter_shot: '猎人带走',
-  self_explode: '白狼王自爆',
-  knight_duel: '骑士决斗',
-  charm: '殉情',
-};
-
-const SHERIFF_SIDE_LABELS: Record<string, string> = {
-  sheriff_left: '警左',
-  sheriff_right: '警右',
-  death_left: '死左',
-  death_right: '死右',
-};
 
 function campLabel(camp: string): string {
   return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp;
@@ -372,7 +344,7 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
     )
   )
     ? '竞选自爆'
-    : (CAUSE_LABELS[payload.cause] ?? payload.cause);
+    : (DEATH_CAUSE_LABELS[payload.cause] ?? payload.cause);
   return (
     <ActivityFrame tone="#F6686C">
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -639,7 +611,7 @@ export default function ActivityCard() {
         <DayVerdictView
           seat={entry.payload.target_seat}
           title={`${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`}
-          subtitle={`${CAUSE_LABELS[entry.payload.cause] ?? entry.payload.cause} · 第${entry.payload.round_number}轮`}
+          subtitle={`${DEATH_CAUSE_LABELS[entry.payload.cause] ?? entry.payload.cause} · 第${entry.payload.round_number}轮`}
           tone="#F4B3B6"
           tag="REVENGE"
         />

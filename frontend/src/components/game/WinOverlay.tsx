@@ -1,6 +1,7 @@
 import { Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Button } from '@mui/material';
 import type { WinResult, WinningCamp } from '../../store/types';
 import { useGameStore } from '../../store/gameStore';
+import { WINNING_CAMP_LABELS, WIN_REASON_LABELS } from '../../labels';
 import { CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 interface Props {
@@ -8,21 +9,10 @@ interface Props {
   revealOnDeath: boolean;
 }
 
-const CAMP_LABELS: Record<string, string> = {
-  good: '好人阵营',
-  werewolf: '狼人阵营',
-};
-
 // 阵营 → 胜利标题的强调色（狼人血红 / 好人鎏金）
 const CAMP_ACCENT: Record<WinningCamp, string> = {
   werewolf: 'error.light',
   good: 'secondary.light',
-};
-
-const REASON_LABELS: Record<string, string> = {
-  all_wolves_dead: '所有狼人出局',
-  all_gods_dead: '所有神职出局',
-  all_villagers_dead: '所有平民出局',
 };
 
 export default function WinOverlay({ winResult, revealOnDeath }: Props) {
@@ -71,10 +61,10 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
                 : '0 0 30px rgba(212,168,83,0.3)',
             }}
           >
-            {CAMP_LABELS[winResult.winning_camp] || winResult.winning_camp}获胜
+            {WINNING_CAMP_LABELS[winResult.winning_camp] || winResult.winning_camp}获胜
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {REASON_LABELS[winResult.reason] || winResult.reason}
+            {WIN_REASON_LABELS[winResult.reason] || winResult.reason}
           </Typography>
         </Box>
         <Box sx={{ borderRadius: 3, px: 2, py: 1.5, bgcolor: 'action.hover' }}>
