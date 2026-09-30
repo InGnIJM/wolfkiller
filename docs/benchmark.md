@@ -11,7 +11,7 @@
 | 评测层（仓库内 `scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v2 JSON 不含决策质量**（验狼、毒中、放逐命中、狼票集中度等）。那些指标仍由各局 `summary.json` 经 `app.benchmark.metrics` 聚合，评测详情页目前也不展示。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v2 JSON 不含决策质量**（验狼、毒中、放逐命中、狼票集中度等）。决策质量指标（验狼、毒中、放逐命中、狼票集中度等）的实现留在 `app/benchmark/`，但它**当前只被 `tests/test_benchmark_metrics.py` 引用**：生产代码与 `run_benchmark.py` 都没有接入，评测详情页也不展示。要得到这些口径目前需要手动调用该包。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
