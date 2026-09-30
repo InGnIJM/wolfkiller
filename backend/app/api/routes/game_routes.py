@@ -44,10 +44,17 @@ _CONFIRMATION_CODES = frozenset({
     recovery_compat.CONTRACT_DIGEST_DRIFT,
     recovery_compat.REGISTRY_IDENTITY_UNKNOWN,
 })
-_PUBLIC_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot", "exile", "self_explode"})
+# 旧档回放的三份过滤器必须覆盖引擎真实产出的取值：命中不认识的死因/胜因是
+# `return []`（丢整条记录），而不是跳过单条。`schemas.py` 的公开 DTO 是同一份
+# 枚举的第二处副本，两处要一起改；`tests/test_game_routes.py` 逐个取值钉住。
+_PUBLIC_DEATH_CAUSES = frozenset({
+    "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
+    "knight_duel", "charm",
+})
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
+    "wolves_outnumber_good",
 })
 
 _AUDIENCE_ACTION_SCHEMAS = {

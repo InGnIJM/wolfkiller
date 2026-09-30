@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes import game_routes
-from app.api.schemas import CreateGameRequest, RenameGameRequest
+from app.api.schemas import CreateGameRequest, GameLogsResponse, RenameGameRequest
 from app.persistence.repository import GameReferencedByBenchmark
 
 
@@ -911,6 +911,64 @@ def test_public_replay_skips_date_only_timestamp_without_changing_other_event_st
         "timestamp": "2026-01-01T00:00:01Z",
         "payload": {"phase": "speech", "round_number": 1},
     }]
+
+
+@pytest.mark.parametrize(
+    "cause",
+    ["wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
+     "knight_duel", "charm"],
+)
+def test_public_replay_keeps_every_death_cause_the_engine_produces(cause):
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths",
+        "round": 2, "phase": "dawn",
+        "data": {"deaths": [{"player_seat": 3, "cause": cause, "round_number": 2}]},
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "death",
+        "payload": {"player_seat": 3, "cause": cause, "round_number": 2},
+    }]
+
+
+def test_public_replay_keeps_the_outnumber_win_reason():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "game_over",
+        "round": 4, "phase": "game_over",
+        "data": {"winner": "werewolf", "reason": "wolves_outnumber_good"},
+    }
+
+    assert game_routes._public_operation_events(record) == [{
+        "event_type": "winner",
+        "payload": {"winning_camp": "werewolf", "reason": "wolves_outnumber_good"},
+    }]
+
+
+def test_game_logs_response_accepts_a_technical_abstain_record():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "vote_technical_abstain",
+        "round": 1, "phase": "vote_casting", "seat": 8,
+        "data": {"failure_code": "request_timeout"},
+    }
+
+    response = GameLogsResponse(
+        game_id="g", events=game_routes._public_replay_events([], [record]),
+    )
+
+    assert [event.event_type for event in response.events] == ["technical_abstain"]
+
+
+def test_game_logs_response_accepts_an_error_phase_record():
+    record = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change",
+        "round": 3, "phase": "error", "data": {"new_phase": "error"},
+    }
+
+    response = GameLogsResponse(
+        game_id="g", events=game_routes._public_replay_events([], [record]),
+    )
+
+    assert [event.event_type for event in response.events] == ["phase"]
 
 
 def test_public_technical_abstain_projection_hides_private_diagnostics():
