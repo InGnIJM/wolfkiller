@@ -1041,9 +1041,14 @@ class GameService:
             round_number=meta.get("round_number", 0),
             config=config,
         )
+        # The manifest records the winning camp but never the reason: that only
+        # exists in the log's `game_over` record, which is read below. Leaving the
+        # reason absent (rather than an empty string) keeps "unknown" out of the
+        # public vocabulary -- a value the response model would reject, turning
+        # the detail endpoint into HTTP 500.
         state.win_result = {
             "winning_camp": meta["winner"],
-            "reason": "",
+            "reason": None,
         } if meta.get("winner") else None
 
         # Reconstruct players + events from log
@@ -1106,9 +1111,11 @@ class GameService:
                     state.players[exiled].mark_dead()
 
             elif op == "game_over":
+                # `reason` is optional in the public contract: an archive whose
+                # log predates the field (or lost it) reports the camp only.
                 state.win_result = {
                     "winning_camp": data.get("winner"),
-                    "reason": data.get("reason", ""),
+                    "reason": data.get("reason") or None,
                 }
 
         # If manifest or config says N players but we found fewer, fill in placeholder seats

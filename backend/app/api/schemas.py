@@ -240,8 +240,17 @@ class PublicPhaseResponse(_PublicResponse):
 
 
 class PublicWinnerResponse(_PublicResponse):
+    """How the game ended.
+
+    ``reason`` is optional on purpose: an archive reconstructed from the manifest
+    knows the winning camp but not the reason (that only lives in the log's
+    ``game_over`` record), and "unknown" is expressed by absence rather than by a
+    magic value the vocabulary would have to carry — and that a response model
+    would otherwise reject.
+    """
+
     winning_camp: PublicWinningCamp
-    reason: PublicWinReason
+    reason: Optional[PublicWinReason] = None
 
 
 PublicThoughtActionType = Literal[

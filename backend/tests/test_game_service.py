@@ -9,6 +9,7 @@ from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.models.game import GamePhase
+from app.api.schemas import PublicWinnerResponse
 from app.api.websocket.ws_handler import WSManager
 from app.roles.registry import builtin_registry
 from app.services.game_manifest import GameManifest, default_game_name
@@ -1455,6 +1456,52 @@ class TestGameService:
         with patch("builtins.open", mock_open(read_data="not-json\n")):
             state = service._reconstruct_state("invalid", {})
         assert state is not None
+
+    def test_reconstruct_state_reports_an_unknown_win_reason_as_absent(self, tmp_path):
+        # `_reconstruct_state` fills win_result from the manifest before it reads
+        # the log, and the manifest records the camp but never the reason. The
+        # fallback used to be an empty string, which the public vocabulary does
+        # not declare -> ValidationError -> HTTP 500 on GET /api/games/{id}.
+        # "Unknown" must therefore be expressed by absence.
+        game_id = "legacy-without-game-over"
+        game_dir = tmp_path / "games" / game_id
+        game_dir.mkdir(parents=True)
+        (game_dir / "game.log").write_text(
+            '{"timestamp": "2026-01-01T00:00:00Z", "round": 1, "phase": "night",'
+            ' "operation": "phase_change", "seat": null,'
+            ' "data": {"new_phase": "night"}}\n',
+            encoding="utf-8",
+        )
+
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        state = service._reconstruct_state(
+            game_id, {"winner": "werewolf", "phase": "game_over"},
+        )
+
+        assert state is not None
+        assert state.win_result == {"winning_camp": "werewolf", "reason": None}
+        assert PublicWinnerResponse(**state.win_result).reason is None
+
+    def test_reconstruct_state_keeps_the_reason_recorded_in_the_log(self, tmp_path):
+        game_id = "legacy-with-game-over"
+        game_dir = tmp_path / "games" / game_id
+        game_dir.mkdir(parents=True)
+        (game_dir / "game.log").write_text(
+            '{"timestamp": "2026-01-01T00:00:00Z", "round": 3, "phase": "dawn",'
+            ' "operation": "game_over", "seat": null,'
+            ' "data": {"winner": "werewolf", "reason": "wolves_outnumber_good"}}\n',
+            encoding="utf-8",
+        )
+
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        state = service._reconstruct_state(
+            game_id, {"winner": "werewolf", "phase": "game_over"},
+        )
+
+        assert state is not None
+        assert state.win_result == {
+            "winning_camp": "werewolf", "reason": "wolves_outnumber_good",
+        }
 
     @pytest.mark.asyncio
     async def test_game_over_handler_none(self):
