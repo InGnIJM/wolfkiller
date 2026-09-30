@@ -167,6 +167,38 @@ def test_off_badge_seats_skip_first_night_deaths_and_keep_later_ones() -> None:
     assert off_badge_seats(state) == (3, 5, 7, 8, 9)
 
 
+def test_off_badge_seats_skip_a_charm_death_from_the_first_night() -> None:
+    """首夜被毒的狼美人会带走一名殉情者，那人在开选时已经死了。
+
+    死因白名单漏了 `charm`，于是竞选提示词把一具尸体写成「警下、有投票权」，
+    模型据此算票数、也可能把它当作可拉票的对象。
+    """
+    state = _state(seats=9)
+    state.sheriff_office.candidates = {1, 2}
+    state.death_history = [
+        DeathReport(3, "poison", 1),
+        DeathReport(4, "charm", 1),
+    ]
+
+    assert off_badge_seats(state) == (5, 6, 7, 8, 9)
+
+
+def test_off_badge_seats_keep_a_charm_death_that_follows_an_exile() -> None:
+    """白天被放逐的狼美人带走的殉情者，开选时还活着，必须留在警下名单。
+
+    这条守住上面那个修复的边界：`charm` 进入「开选前」白名单后，判定就依赖
+    `death_history` 的顺序与 `exile` 的截断，不能再退化成"只要有 charm 就排除"。
+    """
+    state = _state(seats=9)
+    state.sheriff_office.candidates = {1, 2}
+    state.death_history = [
+        DeathReport(3, "exile", 1),
+        DeathReport(4, "charm", 1),
+    ]
+
+    assert off_badge_seats(state) == (3, 4, 5, 6, 7, 8, 9)
+
+
 def test_night_death_seats_are_current_round_only() -> None:
     state = _state()
     state.round_number = 2

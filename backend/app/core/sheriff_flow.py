@@ -178,8 +178,14 @@ def night_death_seats(state: GameState) -> tuple[int, ...]:
 #: The election runs once, after the first night.
 _ELECTION_ROUND = 1
 
-#: Recorded before any seat can choose to run.
-_PRE_ELECTION_DEATH_CAUSES = frozenset({"wolf_kill", "poison", "hunter_shot"})
+#: Recorded before any seat can choose to run. This is every cause the first
+#: night can produce: the wolf kill, the witch's poison and the hunter's shot —
+#: plus `charm`, because a wolf beauty poisoned on the first night takes her
+#: charmed victim with her before the election starts. `knight_duel` is absent
+#: because the duel only happens after the day's speeches.
+_PRE_ELECTION_DEATH_CAUSES = frozenset({
+    "wolf_kill", "poison", "hunter_shot", "charm",
+})
 
 #: These causes begin at the election or the day after it. A death of one of
 #: the causes above that appears later in the same round happened to someone

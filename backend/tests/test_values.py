@@ -25,7 +25,9 @@ from pathlib import Path
 import pytest
 
 from app.core.night_settlement import _DELAYED_DEATH_CAUSES, _DELAY_CAUSES
-from app.core.sheriff_flow import _PRE_ELECTION_DEATH_CAUSES
+from app.core.sheriff_flow import (
+    _POST_ELECTION_DEATH_CAUSES, _PRE_ELECTION_DEATH_CAUSES,
+)
 from app.models.actions import _DAYTIME_LAST_WORDS_CAUSES
 from app.models.values import DeathCause, WinReason
 from app.roles.hunter import _SHOOT_REASONS
@@ -80,6 +82,21 @@ def test_every_rule_subset_stays_inside_the_catalogue() -> None:
     assert set(_DELAYED_DEATH_CAUSES.values()) <= DEATH_CAUSES
     assert set(_DAYTIME_LAST_WORDS_CAUSES) <= DEATH_CAUSES
     assert _DUEL_CAUSE in DEATH_CAUSES
+
+
+def test_pre_and_post_election_death_causes_partition_the_catalogue() -> None:
+    """开选前/后的死因白名单必须恰好划分整个目录。
+
+    子集门禁只能抓「凭空发明一个死因」，抓不到「漏掉一个」：`charm` 漏在开选前
+    白名单里时，首夜被毒的狼美人带走的殉情者会被竞选提示词写成「警下、有投票
+    权」，而所有子集断言依然全绿。骑士决斗只发生在全体发言之后，开选前不可能
+    出现，因此显式排除。
+    """
+    assert (
+        _PRE_ELECTION_DEATH_CAUSES | _POST_ELECTION_DEATH_CAUSES | {"knight_duel"}
+        == DEATH_CAUSES
+    )
+    assert not (_PRE_ELECTION_DEATH_CAUSES & _POST_ELECTION_DEATH_CAUSES)
 
 
 def _literal_keyword_arguments(name: str) -> list[tuple[Path, str]]:
