@@ -277,6 +277,39 @@ def test_a_settled_delay_mark_keeps_the_runtime_writable(tmp_path) -> None:
     }
 
 
+def test_the_night_commit_point_settles_two_delayed_causes(tmp_path) -> None:
+    """The engine's own call site must survive two delayed causes in one night.
+
+    ``Scheduler.run_point(NIGHT_COMMIT)`` is what invokes the follow-up
+    ``settle_pending`` for the response window's batch. A rejection there has no
+    fallback, so it used to escape ``run_point`` and the task watcher marked the
+    game ``failed``; recovery replays the same point, so the game could never be
+    resumed. Driving the real point is what proves a game already stuck in that
+    state can continue.
+    """
+    engine = _engine(tmp_path, "drunkard-night-point")
+    applier = EffectApplier()
+
+    engine.state._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "poison"},
+    )
+    applier.settle_pending(engine.state, round_number=2, batch=0)
+    # The hunter's response window queued its own lethal batch for the same seat.
+    engine.state._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "hunter_shot"},
+    )
+
+    result = engine._pipeline_scheduler.run_point(
+        engine.state, SchedulePoint.NIGHT_COMMIT,
+    )
+
+    assert result is not None
+    runtime = engine.state._pipeline_runtime
+    assert runtime.statuses[1] == {POISONED_STATUS, DELAYED_DEATH_STATUS}
+    assert engine.state.players[1].is_alive is True
+    assert runtime.pending_damage == ()
+
+
 def test_a_frozen_mark_still_clones_into_a_plain_set(tmp_path) -> None:
     """Defence in depth: a frozen status must not take the runtime down."""
     engine = _engine(tmp_path, "drunkard-frozen")
