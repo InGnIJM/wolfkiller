@@ -500,6 +500,71 @@
   purge bug — the test reads `os.path.getsize` after `repository.close()` while
   the committed rows still sit in `-wal`, and `purge_data_dir` measures the file
   *after* opening the repository and listing games, which folds the WAL back in.
-  Checkpoint first (`PRAGMA wal_checkpoint(TRUNCATE)`) so both numbers describe
-  the same file. Same reason the runtime backup docs say to use SQLite `.backup`
-  rather than copying the main `.sqlite3` file.
+  The first fix (checkpoint first so both numbers describe the same file) only
+  papered over it: a test that checkpoints its own subject cannot catch a
+  WAL-blind implementation. **Superseded** — the script now reports the logical
+  size (`PRAGMA page_count * page_size`) and copies with SQLite's online backup
+  API, and the test no longer checkpoints.
+
+## 备份 WAL 里的数据：拷主库文件是不够的
+- Trigger: a maintenance script "backs up" the database with `shutil.copy2` (or
+  any byte copy of `wolfkiller.sqlite3`) before deleting rows. Action: a copy of
+  the main file alone loses every commit still in `-wal` — reproduced with a
+  child process that `os._exit(0)`s right after committing, which leaves the
+  main file with **no tables at all** (backup opens as `no such table: games`)
+  while the purge then permanently deletes the games. Use
+  `sqlite3.Connection.backup()` (reads through the WAL, no checkpoint needed),
+  measure sizes with `PRAGMA page_count * page_size`, and take the data-directory
+  lock **before** constructing the repository — the constructor initializes the
+  schema and therefore writes a WAL into a directory another process may own.
+  A deterministic "WAL-only" test needs the writer to die without closing: closing
+  the last connection checkpoints.
+
+## 同一个判断写在两个入口，就一定会漂移
+- Trigger: `PUT /api/models/{id}` refuses to move an endpoint without a
+  re-entered key, but `POST /api/models/test` accepts a `config_id` plus an
+  arbitrary `base_url` and then decrypts the **stored** key for it. Action: treat
+  "the request picks the destination, the store supplies the credential" as the
+  vulnerability shape — one unauthenticated local request (`origin is None` is
+  trusted by design) turns the probe into a credential forwarder, and the
+  response only carries `error=<ExceptionName>` so nothing records it. Extract a
+  single `_endpoints_changed` used by both paths, check it **before** any
+  decryption, and count the provider profile as part of the endpoint: it decides
+  whether the derived strict address is used. Verified end to end: the exploit
+  went from a 107-second request that reached the target to a 400 in ~2 ms.
+
+## 恢复入口的锁：加在公开入口，且不可重入
+- Trigger: two overlapping `recover`/`resume` requests (a double click, or the
+  benchmark executor recovering a game while a human recovers the same one) both
+  pass the status gate because `_recover_game` awaits `load_checkpoint` after
+  reading the status. Action: both decode the checkpoint and both register an
+  engine — `_engines`/`_tasks` are plain assignments, so the first task becomes
+  an orphan that keeps calling models and writing checkpoints, and the shared
+  `_durable_contexts[game_id]` means the revision CAS can no longer tell the two
+  writers apart (forked checkpoint, or one engine crashes the game to `failed`
+  while the other keeps running). Add one `asyncio.Lock` per game in the **public**
+  entry points (`recover`/`resume`, normal and benchmark) and have the internal
+  `_recover_game` assume it is held: `resume`'s paused branch calls it, and
+  `asyncio.Lock` is **not reentrant**, so putting the lock inside deadlocks.
+  `lock.locked()` is the authoritative concurrency gate because nothing awaits
+  between it and the acquire; a request that arrives after the holder finished is
+  not concurrent and must keep the old idempotent `running` answer. Regression:
+  the concurrent test asserts `restores == [0]` — before the fix it was `[0, 0]`.
+
+## 结算里的"重复即违规"会把整局打死
+- Trigger: `EffectApplier.settle_pending` rejected a repeated delayed-death mark
+  with `EffectRejected`, and a test asserted that rejection as the spec. Action:
+  one night can legitimately deliver two lethal delayed causes to the same
+  `delayable` seat — the witch's vial is committed by the night batch and the
+  hunter's gunshot by the response window's follow-up batch — so the second mark
+  set is a legitimate repeat, not a malformed batch. `settle_pending` has **no
+  fallback** (only `EffectConflict` is degraded, and only for model-driven
+  contracts), so the raise ran all the way out of `run_point` and set the game
+  `failed`; recovery replayed the same settlement and failed again, i.e. the
+  game was bricked. The guard is now the same cross-batch idempotence
+  `ADD_RELATION` has: if the seat already holds `delayed_death`, the whole mark
+  set is skipped and the **first cause wins**. A duplicate *inside* one batch
+  stays impossible because `settle` emits at most one mark set per seat per call.
+  Corollary for review: when a guard rejects a repeated state, ask whether the
+  repeat is reachable through a legitimate path, and whether the caller has a
+  fallback — a rejection on the settlement path is fatal by construction.
