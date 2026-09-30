@@ -184,7 +184,7 @@ test('opens the failed game at its linked audience event', async ({ page }) => {
   state.benchmarkItems = [{
     run_id: state.benchmark.run_id, item_index: 0, scenario_id: 'four-player-e2e',
     pair_id: null, block_index: 0, assignment: {}, game_id: 'failed-game',
-    status: 'failed', terminal_reason: 'model_timeout', event_seq: 2,
+    status: 'failed', terminal_reason: 'model_timeout',
   }];
   const game = createLiveGame('failed-game');
   game.events.push(audienceEvent(3, 'speech', { player_seat: 4, text: '失败后的后续事件', round_number: 1, phase: 'speech' }));
