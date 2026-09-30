@@ -277,10 +277,12 @@
   failing or flaking. Action: don't suspect a stale checkout — read
   `.git/info/exclude` first (a **local-only** exclude list, invisible to
   `.gitignore` and to every other machine) together with `.gitignore`.
-  `backend/tests/test_purge_old_games.py` (14 tests, covering the ignored
-  `backend/scripts/purge_old_games.py`) is excluded that way, so CI never runs
-  it: its `test_purge_apply_deletes_and_backs_up` is order-dependent locally and
-  its failures there are local noise, not a regression.
+  `backend/tests/test_purge_old_games.py` was excluded that way for a while, so
+  local runs collected tests CI never saw. **Resolved 2026-09-30**: the purge
+  tool and its test are tracked now (`.gitignore` grants
+  `backend/scripts/purge_old_games.py` an exception), and the order-dependence
+  that made it local noise is gone — that test used to checkpoint its own
+  subject, which both hid the WAL bug and coupled it to suite order.
 
 ## Backend dev server on Windows (`--reload` zombie port)
 - Trigger: the lobby lists no games and the create wizard shows an empty role
