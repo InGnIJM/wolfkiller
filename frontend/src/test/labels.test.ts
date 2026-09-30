@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import * as labels from '../labels';
 import {
   DEATH_CAUSE_LABELS, EVENT_TAGS, EXECUTION_LABELS, PHASE_LABELS, WIN_REASON_LABELS,
 } from '../labels';
@@ -8,6 +9,18 @@ import {
 const componentSources = import.meta.glob('../components/**/*.{ts,tsx}', {
   query: '?raw', import: 'default', eager: true,
 }) as Record<string, string>;
+
+describe('文案表本身', () => {
+  it('19 个命名空间都在，且没有被清空的表', () => {
+    // 命名空间被误删或被清空都会让界面退回显示机器值，而类型系统只保证「键齐全」。
+    const tables = Object.entries(labels).filter(
+      (entry): entry is [string, Record<string, string>] => typeof entry[1] === 'object',
+    );
+
+    expect(tables).toHaveLength(19);
+    expect(tables.filter(([, table]) => Object.keys(table).length === 0)).toEqual([]);
+  });
+});
 
 describe('文案统一由 src/labels.ts 管理', () => {
   it('组件里不再有本地文案表', () => {

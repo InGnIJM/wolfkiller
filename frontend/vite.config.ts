@@ -10,6 +10,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text'],
       include: [
+        'src/labels.ts',
         'src/store/gameStore.ts',
         'src/store/benchmarkStore.ts',
         'src/api/websocket.ts',
