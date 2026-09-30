@@ -86,6 +86,20 @@ PUBLIC_REPLAY_EVENTS = [
     {"event_type": "technical_abstain", "payload": {
         "voter_seat": 8, "round_number": 1, "failure_code": "request_timeout",
     }},
+    {"event_type": "knight_duel", "payload": {
+        "round_number": 1, "seat": 3, "target_seat": 5, "camp": "good",
+    }},
+    {"event_type": "wolf_beauty_charm", "payload": {
+        "round_number": 1, "seat": 1, "target_seat": 2,
+    }},
+    # 魅惑没有指定目标（pass）时 `target_seat` 缺省，契约允许。
+    {"event_type": "wolf_beauty_charm", "payload": {"round_number": 2, "seat": 1}},
+    {"event_type": "wolf_beauty_revenge", "payload": {
+        "round_number": 3, "seat": 5, "target_seat": 4, "cause": "exile",
+    }},
+    {"event_type": "player_status", "payload": {
+        "round_number": 2, "player_seat": 7, "status": "poisoned",
+    }},
 ]
 
 

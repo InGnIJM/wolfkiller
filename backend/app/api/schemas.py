@@ -280,6 +280,8 @@ class PublicWolfChatMessageResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
     text: Annotated[str, Field(min_length=1, max_length=200)]
+    #: 该次发言给出的次日计划；旧日志里没有这个字段，所以是可选的。
+    day_plan: Optional[Annotated[str, Field(min_length=1, max_length=400)]] = None
 
 
 class PublicWolfVoteResponse(_PublicResponse):
@@ -362,6 +364,48 @@ class PublicPlayerRevealedResponse(_PublicResponse):
     seat_number: PositivePublicInt
     role: str
     camp: PublicWinningCamp
+
+
+class PublicKnightDuelResponse(_PublicResponse):
+    """The knight's public duel verdict, including the challenged camp.
+
+    The judge announces the verdict, so the audience sees which camp was
+    challenged — the players' own view never receives this event.
+    """
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: PositivePublicInt
+    camp: PublicWinningCamp
+
+
+class PublicWolfBeautyCharmResponse(_PublicResponse):
+    """The wolf beauty's charm, published because this stream is the god view.
+
+    ``target_seat`` is absent when the charm passed instead of naming a seat.
+    """
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: Optional[PositivePublicInt] = None
+
+
+class PublicWolfBeautyRevengeResponse(_PublicResponse):
+    """The charmed victim dying with the wolf beauty."""
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: PositivePublicInt
+    cause: PublicDeathCause
+
+
+class PublicPlayerStatusResponse(_PublicResponse):
+    """A status marker a settlement left on a seat (poisoned / wounded / ...).
+
+    Unknown statuses are carried through verbatim: the contract stays open here
+    because the marker vocabulary belongs to the settlement, and a new marker
+    must not turn the whole replay into HTTP 500.
+    """
+    round_number: NonNegativePublicInt
+    player_seat: PositivePublicInt
+    status: Annotated[str, Field(min_length=1)]
 
 
 class _PublicReplayEvent(_PublicResponse):
@@ -448,6 +492,26 @@ class PublicSelfExplodeReplayEvent(_PublicReplayEvent):
     payload: PublicSelfExplodeResponse
 
 
+class PublicKnightDuelReplayEvent(_PublicReplayEvent):
+    event_type: Literal["knight_duel"]
+    payload: PublicKnightDuelResponse
+
+
+class PublicWolfBeautyCharmReplayEvent(_PublicReplayEvent):
+    event_type: Literal["wolf_beauty_charm"]
+    payload: PublicWolfBeautyCharmResponse
+
+
+class PublicWolfBeautyRevengeReplayEvent(_PublicReplayEvent):
+    event_type: Literal["wolf_beauty_revenge"]
+    payload: PublicWolfBeautyRevengeResponse
+
+
+class PublicPlayerStatusReplayEvent(_PublicReplayEvent):
+    event_type: Literal["player_status"]
+    payload: PublicPlayerStatusResponse
+
+
 class PublicPlayerRevealedReplayEvent(_PublicReplayEvent):
     event_type: Literal["player_revealed"]
     payload: PublicPlayerRevealedResponse
@@ -492,6 +556,10 @@ PublicReplayEvent = Annotated[
     Union[
         PublicExileCancelledReplayEvent,
         PublicSelfExplodeReplayEvent,
+        PublicKnightDuelReplayEvent,
+        PublicWolfBeautyCharmReplayEvent,
+        PublicWolfBeautyRevengeReplayEvent,
+        PublicPlayerStatusReplayEvent,
         PublicSheriffElectedReplayEvent,
         PublicSheriffBadgeReplayEvent,
         PublicSheriffRunReplayEvent,
