@@ -124,7 +124,7 @@ describe('CenterDisplay war reports', () => {
       ],
       timelineIndex: 0,
     });
-    expect(screen.getByText(/9号在夜色中出局，死因：狼人袭击/)).toBeInTheDocument();
+    expect(screen.getByText(/9号在夜色中出局，死因：夜间死亡/)).toBeInTheDocument();
   });
 
   it('reports the latest exile result', () => {
@@ -197,7 +197,7 @@ describe('CenterDisplay event summary', () => {
       ],
       timelineIndex: 0,
     });
-    expect(screen.getByText('9号 狼人袭击')).toBeInTheDocument();
+    expect(screen.getByText('9号 夜间死亡')).toBeInTheDocument();
     cleanup();
     useGameStore.getState().reset();
 

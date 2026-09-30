@@ -1,72 +1,16 @@
 import { Box, Typography, keyframes } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
-import type { PublicReplayEvent } from '../../store/types';
+import type { GamePhase, PublicReplayEvent } from '../../store/types';
+import {
+  CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, NIGHT_ACTION_LABELS, NIGHT_ACTION_ROLE_NAMES,
+  PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
+} from '../../labels';
 import { BACKDROP } from '../../theme/tokens';
 
 const fadeIn = keyframes`
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 `;
-
-// —— 阶段文案：带白天/黑夜的叙事化表达，增强中央张力 ——
-const PHASE_LABELS: Record<string, string> = {
-  waiting: '夜宴将启',
-  role_deal: '身份落定',
-  night: '黑夜',
-  dawn: '白昼降临',
-  last_words: '遗言时刻',
-  sheriff_election: '警长竞选',
-  speech: '白天 · 发言',
-  vote_casting: '白天 · 投票',
-  vote_resolution: '白天 · 揭票',
-  game_over: '尘埃落定',
-  error: '对局异常',
-};
-
-const CAUSE_LABELS: Record<string, string> = {
-  wolf_kill: '狼人袭击',
-  poison: '毒杀',
-  exile: '被放逐',
-  hunter_shot: '猎人带走',
-  self_explode: '白狼王自爆',
-  knight_duel: '骑士决斗',
-  charm: '殉情',
-};
-
-const PLAYER_STATUS_LABELS: Record<string, string> = {
-  poisoned: '中毒未死',
-  wounded: '中枪未死',
-  delayed_death: '延迟结算',
-};
-
-const THOUGHT_LABELS: Record<string, string> = {
-  witch_reasoning: '女巫',
-  seer_reasoning: '预言家',
-  hunter_reasoning: '猎人',
-  guard_reasoning: '守卫',
-  werewolf_king_reasoning: '白狼王',
-  knight_reasoning: '骑士',
-  wolf_beauty_reasoning: '狼美人',
-  witch_thought: '女巫',
-  seer_thought: '预言家',
-};
-
-const NIGHT_ACTION_LABELS: Record<string, string> = {
-  werewolf_kill: '狼人行动',
-  witch_save: '女巫救人',
-  witch_poison: '女巫毒人',
-  seer_check: '预言家查验',
-  hunter_shot: '猎人开枪',
-  guard_protect: '守卫守护',
-  knight_duel: '骑士决斗',
-};
-
-const SHERIFF_SIDE_LABELS: Record<string, string> = {
-  sheriff_left: '警左',
-  sheriff_right: '警右',
-  death_left: '死左',
-  death_right: '死右',
-};
 
 function campLabel(camp: string): string {
   return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp;
@@ -79,14 +23,14 @@ function deathCauseLabel(
   index: number,
 ): string {
   if (event.payload.cause !== 'self_explode') {
-    return CAUSE_LABELS[event.payload.cause] ?? '未明';
+    return DEATH_CAUSE_LABELS[event.payload.cause] ?? '未明';
   }
   if (phase === 'sheriff_election') return '竞选自爆';
   const nearby = [events[index - 1], events[index + 1]];
   if (nearby.some((item) => item?.event_type === 'sheriff_elected' && item.payload.reason === 'explode')) {
     return '竞选自爆';
   }
-  return CAUSE_LABELS.self_explode;
+  return DEATH_CAUSE_LABELS.self_explode;
 }
 
 // 中央面板内容全部使用容器查询单位（cqh 相对舞台高度 / cqi 相对面板宽度），
@@ -119,35 +63,16 @@ function ordinalEn(n: number): string {
   return EN_ORDINAL[n] ?? String(n);
 }
 
-// 黑夜阶段：根据当前事件推导正在行动的角色（狼人/女巫/预言家/守卫/猎人）
-const NIGHT_ROLE_BY_ACTION: Record<string, string> = {
-  werewolf_kill: '狼人',
-  seer_check: '预言家',
-  witch_save: '女巫',
-  witch_poison: '女巫',
-  guard_protect: '守卫',
-  hunter_shot: '猎人',
-};
-
-const NIGHT_ROLE_BY_THOUGHT: Record<string, string> = {
-  witch_thought: '女巫',
-  witch_reasoning: '女巫',
-  seer_thought: '预言家',
-  seer_reasoning: '预言家',
-  hunter_reasoning: '猎人',
-  guard_reasoning: '守卫',
-};
-
 function nightRole(entry: PublicReplayEvent | null): string | null {
   if (!entry) return null;
   if (entry.event_type === 'night_action') {
-    return NIGHT_ROLE_BY_ACTION[entry.payload.action_type] ?? null;
+    return NIGHT_ACTION_ROLE_NAMES[entry.payload.action_type] ?? null;
   }
   if (entry.event_type === 'night_thought') {
-    return NIGHT_ROLE_BY_THOUGHT[entry.payload.action_type] ?? null;
+    return THOUGHT_ROLE_NAMES[entry.payload.action_type] ?? null;
   }
   if (entry.event_type === 'witch_thought' || entry.event_type === 'seer_thought') {
-    return NIGHT_ROLE_BY_THOUGHT[entry.event_type] ?? null;
+    return THOUGHT_ROLE_NAMES[entry.event_type] ?? null;
   }
   if (entry.event_type === 'wolf_chat_message' || entry.event_type === 'wolf_vote') {
     return '狼人';
@@ -207,7 +132,8 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   const currentEntry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;
-  let phaseLabel = PHASE_LABELS[phase] || phase;
+  // 组件签名的 phase 是 string（未知取值原样显示），查表时按联合收窄。
+  let phaseLabel = CENTER_PHASE_LABELS[phase as GamePhase] || phase;
   if (phase === 'night') {
     const role = nightRole(currentEntry);
     if (role) phaseLabel = `黑夜 · ${role}`;
@@ -333,11 +259,15 @@ function EventSummary({
           : `${entry.payload.player_seat}号正在发言`;
       break;
     case 'witch_thought':
-    case 'seer_thought':
+    case 'seer_thought': {
+      // 旧档事件类型本身就是「谁在想」，新档要看 payload.action_type，分开查表才能收窄键。
+      const who = THOUGHT_ROLE_NAMES[entry.event_type] ?? '角色';
+      text = `${who}思考中`;
+      tone = '#C4B5FD';
+      break;
+    }
     case 'night_thought': {
-      const who = THOUGHT_LABELS[
-        'action_type' in entry.payload ? entry.payload.action_type : entry.event_type
-      ] ?? '角色';
+      const who = THOUGHT_ROLE_NAMES[entry.payload.action_type] ?? '角色';
       text = `${who}思考中`;
       tone = '#C4B5FD';
       break;
