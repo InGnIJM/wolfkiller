@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from app.models.game import GameState
+from app.models.game import Camp, GameState
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +69,13 @@ class MemoryService:
             "last_wolf_kill_target": None,
         }
 
-        if "werewolf" in player.role:
+        # The team follows the camp, never the role id: an id is free-form, and
+        # matching "werewolf" inside it dropped the wolf beauty from every
+        # teammate list (its own included) while every other wolf stayed.
+        if player.camp == Camp.WEREWOLF:
             knowledge["teammates"] = [
                 s for s, p in state.players.items()
-                if "werewolf" in p.role and s != seat
+                if p.camp == Camp.WEREWOLF and s != seat
             ]
 
         if "seer" in player.role:

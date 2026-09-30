@@ -33,6 +33,23 @@ def make_state() -> GameState:
 
 
 class TestMemoryService:
+    def test_wolf_teammates_follow_the_camp_not_the_role_id(self, tmp_path):
+        """狼美人的 role id 不含 "werewolf"，旧实现按子串判狼。
+
+        后果是双向的：狼美人自己的队友列表为空，其它狼的列表里也漏掉它 —— 上帝
+        视角的记忆面板因此显示了一份不存在的狼队结构。
+        """
+        service = MemoryService(str(tmp_path))
+        state = make_state()
+        state.players[1] = PlayerState(1, "wolf-killer-wolf-beauty", "werewolf")
+        state.players[2] = PlayerState(2, "wolf-killer-werewolf", "werewolf")
+
+        beauty = service._build_private_knowledge(state, 1, state.players[1])
+        wolf = service._build_private_knowledge(state, 2, state.players[2])
+
+        assert beauty["teammates"] == [2]
+        assert wolf["teammates"] == [1]
+
     def test_save_memories_writes_one_file_per_player(self, tmp_path):
         service = MemoryService(str(tmp_path))
         state = make_state()
