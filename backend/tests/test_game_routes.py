@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -779,7 +780,7 @@ def test_public_projection_rejects_non_strict_or_negative_initial_round(invalid_
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1, "phase": "night", "data": {"deaths": []}},
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1, "phase": "dawn", "data": {"deaths": "bad"}},
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": 1, "phase": "speech", "data": {}},
-        {"timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1, "phase": "game_over", "data": {"winner": "good"}},
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1, "phase": "game_over", "data": {"winner": "third_party"}},
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "unknown", "round": 1, "phase": "x", "data": {}},
     ],
 )
@@ -960,6 +961,90 @@ def test_old_archive_whitelists_match_the_public_dto() -> None:
     assert game_routes._PUBLIC_DEATH_CAUSES == set(get_args(PublicDeathCause))
     assert game_routes._PUBLIC_WIN_REASONS == set(get_args(PublicWinReason))
     assert game_routes._PUBLIC_GAME_PHASES == set(get_args(PublicGamePhase))
+
+
+@pytest.fixture(autouse=True)
+def _clear_replay_drop_counters():
+    """丢弃计数是模块级的观测指标，逐条测试前后清空以免互相干扰。"""
+    game_routes._DROPPED_REPLAY_ROWS.clear()
+    yield
+    game_routes._DROPPED_REPLAY_ROWS.clear()
+
+
+def _replay_record(operation: str, data: dict, *, phase: str = "dawn", round_number: int = 1) -> dict:
+    return {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": operation,
+        "round": round_number, "phase": phase, "data": data,
+    }
+
+
+def test_undeclared_death_cause_drops_only_that_row(caplog) -> None:
+    """一条未声明死因曾丢掉整批死亡事件。
+
+    实测：`[poison, charm]` 两死只出 0 条事件 —— 循环里的 `return []` 把同批普通的死亡
+    一起带走了，而且没有任何日志，所以只能在界面上「少了一条」时才被发现。
+    """
+    record = _replay_record("night_deaths", {"deaths": [
+        {"player_seat": 3, "cause": "wolf_kill", "round_number": 1},
+        {"player_seat": 4, "cause": "love_death", "round_number": 1},
+        {"player_seat": 5, "cause": "charm", "round_number": 1},
+    ]})
+
+    with caplog.at_level(logging.WARNING):
+        events = game_routes._public_operation_events(record)
+
+    assert [event["payload"]["player_seat"] for event in events] == [3, 5]
+    assert game_routes._DROPPED_REPLAY_ROWS["night_deaths:undeclared_cause"] == 1
+    assert "love_death" in caplog.text
+
+
+def test_absent_win_reason_is_carried_without_a_reason() -> None:
+    """表里没有胜因的旧档不该丢掉整条结算事件。
+
+    清单只记赢的阵营，胜因只在日志的 `game_over` 记录里；公开 DTO 已把 `reason` 设为
+    可选，「未知」用缺省表示，而不是丢掉这条事件或编一个值。缺键与显式 `None` 都是缺省。
+    """
+    for data in ({"winner": "werewolf", "reason": None}, {"winner": "werewolf"}):
+        record = _replay_record("game_over", data, phase="game_over")
+
+        assert game_routes._public_operation_events(record) == [
+            {"event_type": "winner", "payload": {"winning_camp": "werewolf"}},
+        ]
+        assert not game_routes._DROPPED_REPLAY_ROWS
+
+
+def test_undeclared_win_reason_is_reported(caplog) -> None:
+    record = _replay_record(
+        "game_over", {"winner": "werewolf", "reason": "third_party_wins"},
+        phase="game_over",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        events = game_routes._public_operation_events(record)
+
+    assert events == []
+    assert game_routes._DROPPED_REPLAY_ROWS["game_over:undeclared_reason"] == 1
+    assert "third_party_wins" in caplog.text
+
+
+def test_unsupported_audience_event_type_is_reported(caplog) -> None:
+    """观众流里后端会发、白名单却没收录的事件类型，必须留下痕迹。
+
+    `audience_projector` 会发 `KNIGHT_DUEL` / `WOLF_BEAUTY_CHARM` 等，而回放白名单
+    没有它们 —— 旧档回退路径静默丢弃（11 局骑士、19 局狼美人受影响），没有任何计数或
+    日志说明「这条为什么不显示」。
+    """
+    record = _replay_record("audience_action", {
+        "event_type": "KNIGHT_DUEL",
+        "payload": {"seat": 3, "target_seat": 5, "camp": "good", "round_number": 1},
+    }, phase="speech")
+
+    with caplog.at_level(logging.WARNING):
+        events = game_routes._public_operation_events(record)
+
+    assert events == []
+    assert game_routes._DROPPED_REPLAY_ROWS["audience_action:unsupported_event_type"] == 1
+    assert "KNIGHT_DUEL" in caplog.text
 
 
 def test_game_logs_response_accepts_a_technical_abstain_record():

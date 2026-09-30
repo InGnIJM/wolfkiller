@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Annotated, Any
@@ -22,6 +24,26 @@ from app.services.audience_event_service import (
 from app.services.game_service import GameService
 
 router = APIRouter(prefix="/api/games", tags=["games"])
+
+logger = logging.getLogger(__name__)
+
+#: Rows and records the public contract cannot carry, by `operation:code`.
+#:
+#: These drops used to be silent `return []`s, and the ones inside a loop threw
+#: away every ordinary row in the same batch: a `[poison, charm]` night produced
+#: 0 events instead of 2, with nothing logged, so the only symptom was a replay
+#: that quietly showed less than happened. Counting them keeps the loss out of the
+#: public DTO while making it observable server-side.
+_DROPPED_REPLAY_ROWS: Counter[str] = Counter()
+
+
+def _drop_replay_row(operation: str, code: str, value: object = None) -> None:
+    """Count and report one row or record the public contract cannot carry."""
+    _DROPPED_REPLAY_ROWS[f"{operation}:{code}"] += 1
+    logger.warning(
+        "Dropped public replay row: operation=%s code=%s value=%r",
+        operation, code, value,
+    )
 
 _LEGACY_ROLE_COUNT_FIELDS = {
     "num_werewolves": "wolf-killer-werewolf",
@@ -624,16 +646,20 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
     """Project one audience_action log record into a closed audience event."""
     data = record.get("data")
     if not isinstance(data, dict):
+        _drop_replay_row("audience_action", "malformed_record")
         return []
     event_type = data.get("event_type")
     payload = data.get("payload")
     if not isinstance(event_type, str):
+        _drop_replay_row("audience_action", "malformed_event_type", event_type)
         return []
     if event_type in ("WOLF_CHAT_MESSAGE", "WITCH_THOUGHT", "SEER_THOUGHT"):
         if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+            _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         seat = payload.get("seat"); text = payload.get("text")
         if not _is_positive_int(seat) or not isinstance(text, str) or not text or len(text) > 200:
+            _drop_replay_row("audience_action", "invalid_seat_or_text", event_type)
             return []
         public_type = {"WOLF_CHAT_MESSAGE": "wolf_chat_message",
                        "WITCH_THOUGHT": "witch_thought",
@@ -642,32 +668,39 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             "round_number": round_number, "seat": seat, "text": text}}]
     if event_type == "WOLF_VOTE":
         if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+            _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         seat = payload.get("seat"); target = payload.get("target_seat")
         reasoning = payload.get("reasoning")
         if (not _is_positive_int(seat)
                 or (target is not None and not _is_positive_int(target))
                 or not _is_reasoning_text(reasoning)):
+            _drop_replay_row("audience_action", "invalid_reasoning", event_type)
             return []
         return [{"event_type": "wolf_vote", "payload": {
             "round_number": round_number, "seat": seat,
             "target_seat": target, "reasoning": reasoning}}]
     if event_type in _REASONING_EVENT_TYPES:
         if not isinstance(payload, dict) or set(payload) != _REASONING_EVENT_SCHEMA:
+            _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         return _public_reasoning_event(event_type, payload, round_number)
     if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "PLAYER_REVEALED",
                       "SHERIFF_ELECTED", "SHERIFF_BADGE",
                       "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE"):
         if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+            _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         return _public_day_verdict_event(event_type, payload, round_number)
     if event_type not in _AUDIENCE_ACTION_SCHEMAS:
+        _drop_replay_row("audience_action", "unsupported_event_type", event_type)
         return []
     if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+        _drop_replay_row("audience_action", "malformed_payload", event_type)
         return []
     target = payload.get("target_seat")
     if not _is_positive_int(target):
+        _drop_replay_row("audience_action", "invalid_target", event_type)
         return []
     public_payload: dict[str, Any] = {
         "action_type": event_type.lower(),
@@ -677,14 +710,17 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
     if event_type == "WEREWOLF_KILL":
         votes = payload.get("vote_counts")
         if not isinstance(votes, dict):
+            _drop_replay_row("audience_action", "invalid_vote_counts", event_type)
             return []
         for seat_key, count in votes.items():
             if not isinstance(seat_key, str) or not seat_key.isdigit() or not _is_positive_int(count):
+                _drop_replay_row("audience_action", "invalid_vote_counts", event_type)
                 return []
         public_payload["vote_counts"] = votes
     if event_type == "SEER_CHECK":
         result = payload.get("result")
         if not isinstance(result, str) or result not in _PUBLIC_WINNING_CAMPS:
+            _drop_replay_row("audience_action", "undeclared_camp", event_type)
             return []
         public_payload["result"] = result
     return [{"event_type": "night_action", "payload": public_payload}]
@@ -751,18 +787,25 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
 
     if operation == "night_deaths":
         if phase != "dawn" or not isinstance(data.get("deaths"), list):
+            _drop_replay_row("night_deaths", "malformed_record", data.get("deaths"))
             return []
         events = []
         for death in data["deaths"]:
             if not isinstance(death, dict) or set(death) != {"player_seat", "cause", "round_number"}:
-                return []
+                _drop_replay_row("night_deaths", "malformed_row", death)
+                continue
             if not (
                 _is_positive_int(death["player_seat"])
-                and isinstance(death["cause"], str)
-                and death["cause"] in _PUBLIC_DEATH_CAUSES
                 and _is_non_negative_int(death["round_number"])
             ):
-                return []
+                _drop_replay_row("night_deaths", "invalid_seat_or_round", death)
+                continue
+            if (
+                not isinstance(death["cause"], str)
+                or death["cause"] not in _PUBLIC_DEATH_CAUSES
+            ):
+                _drop_replay_row("night_deaths", "undeclared_cause", death["cause"])
+                continue
             events.append({
                 "event_type": "death",
                 "payload": {
@@ -796,12 +839,17 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     if operation == "game_over":
         winner = data.get("winner")
         reason = data.get("reason")
-        if (
-            not isinstance(winner, str)
-            or winner not in _PUBLIC_WINNING_CAMPS
-            or not isinstance(reason, str)
-            or reason not in _PUBLIC_WIN_REASONS
-        ):
+        if not isinstance(winner, str) or winner not in _PUBLIC_WINNING_CAMPS:
+            _drop_replay_row("game_over", "undeclared_camp", winner)
+            return []
+        if reason is None:
+            # An archive reconstructed from the manifest knows the camp but not the
+            # reason (that only lives in the log). "Unknown" is absence, not a value
+            # the vocabulary would have to carry -- `PublicWinnerResponse.reason` is
+            # optional for exactly this case.
+            return [{"event_type": "winner", "payload": {"winning_camp": winner}}]
+        if not isinstance(reason, str) or reason not in _PUBLIC_WIN_REASONS:
+            _drop_replay_row("game_over", "undeclared_reason", reason)
             return []
         return [{
             "event_type": "winner",
