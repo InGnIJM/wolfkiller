@@ -235,12 +235,17 @@ def test_a_structural_violation_stays_fatal() -> None:
 
 
 def test_the_settlement_rejection_stays_fatal() -> None:
-    """The settlement has no fallback: its rejection must still kill the run."""
+    """The settlement has no fallback: a rejected batch must still kill the run.
+
+    The trigger is a structural one. A state-dependent rejection used to live
+    here too — a repeated delayed-death mark — but that is idempotent by design,
+    because one night can deliver two lethal delayed causes (the vial and the
+    gun) to the same delayable seat.
+    """
     game = _game()
-    runtime = game._pipeline_runtime
-    runtime.role_resources[4] = {"charm_immune": 1, "delayable": 1}
-    runtime.statuses[4] = {"poisoned"}
-    runtime.pending_damage = ({"target": 4, "amount": 1, "cause": "poison"},)
+    game._pipeline_runtime.pending_damage = (
+        {"target": 4, "amount": 1, "cause": "not a valid cause"},
+    )
 
     with pytest.raises(EffectRejected):
         EffectApplier().settle_pending(game, round_number=1)

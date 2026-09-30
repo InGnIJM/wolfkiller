@@ -14,7 +14,7 @@ import pytest
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import EffectApplier, EffectRejected, role_resource_view
+from app.core.effect_applier import EffectApplier, role_resource_view
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.game_engine import GameEngine
 from app.core.night_settlement import (
@@ -306,7 +306,49 @@ async def test_resuming_the_speech_round_does_not_kill_twice(tmp_path) -> None:
     assert engine.published == published
 
 
-def test_settle_pending_rejects_a_repeated_delay_mark(tmp_path) -> None:
+def test_two_delayed_causes_in_one_night_merge_into_one_death(tmp_path) -> None:
+    """The vial and the gun can land on the same delayable seat in one night.
+
+    ``settle_pending`` runs once per batch: the vial is committed by the night
+    commit and the gunshot by the follow-up settlement of the response window.
+    That second batch recomputes ``(wounded, delayed_death)`` for a seat which
+    already holds ``delayed_death``. Raising there is fatal on the settlement
+    path — there is no fallback — and it took the whole game down even though
+    the seat is only owed a single death.
+    """
+    engine = _engine(tmp_path, "drunkard-two-causes")
+    applier = EffectApplier()
+
+    engine.state._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "poison"},
+    )
+    applier.settle_pending(engine.state, round_number=2, batch=0)
+    assert engine.state._pipeline_runtime.statuses[1] == {
+        POISONED_STATUS, DELAYED_DEATH_STATUS}
+
+    # The hunter's response window queues its own lethal batch for the same seat.
+    engine.state._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "hunter_shot"},
+    )
+    applier.settle_pending(engine.state, round_number=2, batch=1)
+
+    # First cause wins: the poison mark stays, no second wound is recorded and
+    # the seat is still owed exactly one delayed death.
+    runtime = engine.state._pipeline_runtime
+    assert runtime.statuses[1] == {POISONED_STATUS, DELAYED_DEATH_STATUS}
+    assert engine.state.players[1].is_alive is True
+    assert engine.state.death_history == []
+    assert runtime.pending_damage == ()
+
+
+def test_settle_pending_merges_a_repeated_delay_mark(tmp_path) -> None:
+    """A seat already owed a delayed death absorbs a second lethal cause.
+
+    This used to raise, and that raise is what killed a game in which the vial
+    and the gun both found the Old Drunkard: the settlement path has no
+    fallback. The mark is idempotent across batches, so the later cause is
+    swallowed whole and the seat keeps the marks of the first one.
+    """
     engine = _engine(tmp_path, "drunkard-repeat")
     runtime = engine.state._pipeline_runtime
     runtime.role_resources = dict(runtime.role_resources)
@@ -314,8 +356,11 @@ def test_settle_pending_rejects_a_repeated_delay_mark(tmp_path) -> None:
     runtime.statuses[1] = {DELAYED_DEATH_STATUS}
     runtime.pending_damage = ({"target": 1, "amount": 1, "cause": "poison"},)
 
-    with pytest.raises(EffectRejected, match="delayed death status already present"):
-        EffectApplier().settle_pending(engine.state, round_number=2)
+    EffectApplier().settle_pending(engine.state, round_number=2)
+
+    assert engine.state._pipeline_runtime.statuses[1] == {DELAYED_DEATH_STATUS}
+    assert engine.state.players[1].is_alive is True
+    assert engine.state.death_history == []
 
 
 def test_resolve_delayed_deaths_needs_a_runtime(tmp_path) -> None:

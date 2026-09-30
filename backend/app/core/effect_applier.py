@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field; from types import MappingProxyType
 from typing import Mapping
 from app.models.game import GameState; from app.models.pipeline import EffectKind, GameEffect
-from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import settle, settlement_key, state_digest as _digest
+from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, settle, settlement_key, state_digest as _digest
 from app.core.role_runtime import clone_action_counts, initialize_role_resources, record_accepted_action, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -427,8 +427,16 @@ class EffectApplier:
                 # Plain ``set``: the runtime declares ``dict[int, set[str]]`` and
                 # a frozen variant would only survive until the next clone.
                 held = set(simulated.statuses.get(seat, ()))
-                if any(status in held for status in delayed[seat]):
-                    raise EffectRejected("delayed death status already present")
+                if DELAYED_DEATH_STATUS in held:
+                    # One night can deliver two lethal delayed causes to the same
+                    # seat (the witch's vial is committed by the night batch, the
+                    # hunter's gunshot by the response window's follow-up batch).
+                    # The seat is already owed exactly one death, so a later mark
+                    # set is a no-op and the first cause wins — the same
+                    # cross-batch idempotence ``ADD_RELATION`` has. Only a
+                    # duplicate *inside one batch* would be malformed, and
+                    # ``settle`` emits at most one mark set per seat per call.
+                    continue
                 simulated.statuses[seat] = held | set(delayed[seat])
                 status_events += tuple(
                     {"event_type": "STATUS_ADDED", "payload": {"seat": seat, "status": status, "round_number": round_number}, "visibility": ("PUBLIC",)}
