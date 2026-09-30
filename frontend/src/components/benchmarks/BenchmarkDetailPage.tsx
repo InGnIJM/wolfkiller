@@ -16,16 +16,10 @@ import DownloadIcon from '@mui/icons-material/Download';
 
 import { benchmarkExportUrl } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
-import type { BenchmarkReport, BenchmarkStatus } from '../../store/types';
+import type { BenchmarkReport, BenchmarkStatus, GamePhase, WinningCamp } from '../../store/types';
+import { PHASE_LABELS, WINNER_LABELS } from '../../labels';
 import { BACKDROP } from '../../theme/tokens';
 
-const PHASE_LABELS: Record<string, string> = {
-  waiting: '等待中', role_deal: '分配角色', night: '黑夜', dawn: '天亮',
-  last_words: '遗言', speech: '发言', vote_casting: '投票',
-  vote_resolution: '公布结果', game_over: '已结束', error: '异常终止',
-};
-
-const WINNER_LABELS: Record<string, string> = { good: '好人胜', werewolf: '狼人胜' };
 const TERMINAL = new Set<BenchmarkStatus>(['completed', 'failed', 'cancelled']);
 
 function record(value: unknown): Record<string, unknown> {
@@ -275,9 +269,9 @@ export default function BenchmarkDetailPage() {
                           {item.alive_count != null && item.player_count != null ? ` · ${item.alive_count}/${item.player_count}` : ''}
                         </Typography>
                       </TableCell>
-                      <TableCell>{item.phase ? (PHASE_LABELS[item.phase] ?? item.phase) : '—'}</TableCell>
+                      <TableCell>{item.phase ? (PHASE_LABELS[item.phase as GamePhase] ?? item.phase) : '—'}</TableCell>
                       <TableCell>{item.terminal_reason ?? item.status}{item.execution_status ? ` · ${item.execution_status}` : ''}</TableCell>
-                      <TableCell>{item.winner ? (WINNER_LABELS[item.winner] ?? item.winner) : '—'}</TableCell>
+                      <TableCell>{item.winner ? (WINNER_LABELS[item.winner as WinningCamp] ?? item.winner) : '—'}</TableCell>
                       <TableCell align="right">
                         {gameId && (
                           <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
