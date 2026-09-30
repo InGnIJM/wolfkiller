@@ -570,3 +570,35 @@
   Corollary for review: when a guard rejects a repeated state, ask whether the
   repeat is reachable through a legitimate path, and whether the caller has a
   fallback — a rejection on the settlement path is fatal by construction.
+
+## 公开 DTO 的枚举是三份手写副本，新增取值只改一处就 500
+- Trigger: a new role or a new rule value (death cause, win reason, phase, event
+  type) ships while only its producer and the frontend were updated, and
+  `GET /api/games/{id}` starts answering HTTP 500. Action: the public contract's
+  enumerations live in **three hand-written copies** — the `Literal`s in
+  `api/schemas.py` (they validate the response), the sets and tables in
+  `api/routes/game_routes.py` (they filter the old-archive replay), and
+  `store/types.ts`. `PublicDeathCause` / `PublicWinReason` / `PublicGamePhase` had
+  drifted behind the first copy alone, and because the route builds
+  `GameDetailResponse` straight out of the live state, one unlisted value raises
+  `ValidationError` inside the handler and takes the whole response down. Measured
+  against the real fact source: the missing 4th win reason
+  (`wolves_outnumber_good`) is the **second most common** ending (22 games), the
+  missing causes (`charm`, `knight_duel`) cover 17 more, and the crash phase
+  `error` broke `/logs` for 10 games that were already unopenable. When adding a
+  value, grep for its *siblings*, not for the value itself.
+- Trigger: "the branch is covered, so this path is safe". Action: branch coverage
+  proves every **branch** was walked, never that every **value** was. All three
+  failures sat behind 100% branch coverage: `wolves_outnumber_good` appears exactly
+  once in the whole suite (asserting the rule engine produces it) and was never
+  handed to a DTO, and `GameDetailResponse` is exercised only by `test_schemas.py`,
+  which had zero mentions of `charm` / `knight_duel`. The question for a new enum
+  value is "does a test push this value **across the contract boundary**", not
+  "does a test reach this branch". What catches it is a parametrized test that
+  walks every value the producer can emit.
+- Trigger: an old-archive or audience projection filters records with
+  `if value not in WHITELIST: return []`. Action: that drops the **whole record**,
+  not the offending row — one unknown death cause took every ordinary death in the
+  same batch with it (measured: a `[poison, charm]` batch produced 0 events instead
+  of 2). Keep the whitelist equal to what the producer emits, and prefer skipping
+  the single row with a telemetry line over `return []`.
