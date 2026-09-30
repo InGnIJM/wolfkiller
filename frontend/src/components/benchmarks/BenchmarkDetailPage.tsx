@@ -252,9 +252,6 @@ export default function BenchmarkDetailPage() {
                 {items.map((item) => {
                   const gameId = item.game_id;
                   const selected = Boolean(gameId && selectedIds.includes(gameId));
-                  const replayLabel = item.event_seq
-                    ? `查看回放 · 事件 ${item.event_seq}`
-                    : '查看回放';
                   return (
                     <TableRow key={item.item_index} selected={selected}>
                       <TableCell padding="checkbox">
@@ -286,10 +283,10 @@ export default function BenchmarkDetailPage() {
                           <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
                             <Button
                               component={Link}
-                              to={`/game/${gameId}${item.event_seq ? `?seq=${item.event_seq}` : ''}`}
+                              to={`/game/${gameId}`}
                               size="small"
                             >
-                              {replayLabel}
+                              查看回放
                             </Button>
                             <Button
                               color="error"

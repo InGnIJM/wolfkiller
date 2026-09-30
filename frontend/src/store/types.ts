@@ -555,7 +555,6 @@ export interface BenchmarkItem {
   terminal_reason: string | null;
   created_at?: string;
   updated_at?: string;
-  event_seq?: number | null;
   name?: string | null;
   phase?: string | null;
   round_number?: number | null;

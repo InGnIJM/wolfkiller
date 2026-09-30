@@ -68,7 +68,7 @@ describe('benchmark report completion', () => {
     await showDetail([{
       run_id: 'r', item_index: 0, scenario_id: 's', pair_id: null, block_index: 0,
       assignment: {}, game_id: 'failed-game', status: 'failed', terminal_reason: 'model_timeout',
-      event_seq: 2, name: '评测局', phase: 'night', round_number: 1,
+      name: '评测局', phase: 'night', round_number: 1,
       player_count: 8, alive_count: 6, winner: 'good', execution_status: 'failed',
     }, {
       run_id: 'r', item_index: 1, scenario_id: 's', pair_id: null, block_index: 0,
@@ -76,7 +76,9 @@ describe('benchmark report completion', () => {
       winner: 'other',
     }], { fakeTimers: false });
     expect(screen.getByText('评测局')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '查看回放 · 事件 2' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看回放' })).toHaveAttribute(
+      'href', '/game/failed-game',
+    );
     expect(screen.getByText('好人胜')).toBeInTheDocument();
     expect(screen.getByText('排程 #2')).toBeInTheDocument();
     expect(screen.getByText('custom')).toBeInTheDocument();
