@@ -475,6 +475,16 @@
   (`resource_setup_digest is None`), leave the marker alone so the next schedule
   point sets it up; adopting unconditionally raises
   `EffectRejected("pipeline runtime is missing")`.
+- Trigger: a durable record is *absent* and you are tempted to read that as "it
+  changed". Action: prove what the absence means before grading on it. The setup
+  marker is only stamped when setup actually applies, so
+  `resource_setup_digest is None` means the game never established resources —
+  not that the declaration moved. Grading `None != marker` as `drift` made every
+  game interrupted before its first scheduling point announce「角色声明已变更」
+  and refuse to resume. Write the comparison as
+  `stored is not None and stored != declared`: a game that never set anything up
+  has nothing to contradict, and the next scheduling point establishes the
+  current declaration exactly as it does for a fresh game.
 - Trigger: you are about to trust a "no replay" claim because the keys are now
   version-stable. Action: prove it end to end, as
   `test_crash_recovery_subprocess.py::test_a_drifted_registry_neither_replays_commits_nor_recalls_models`
