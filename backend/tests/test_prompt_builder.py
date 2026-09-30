@@ -214,6 +214,34 @@ class TestPromptBuilder:
         assert "不得机械复读计划原文" in prompt
         assert "untrusted proposal" not in prompt
 
+    def test_every_wolf_role_sees_the_wolf_channel_records(self):
+        """狼阵营的每个角色都能在发言提示词里看到狼队频道记录。
+
+        狼美人的 role id 是 `wolf-killer-wolf-beauty`，不含 "werewolf" 子串；旧实现
+        按角色名子串判狼，于是同一张桌子上普通狼看得到队友夜里商定的次日计划，
+        狼美人看不到 —— 而次日协同正是白天发言要用到的东西。
+        """
+        state = make_state({
+            1: "wolf-killer-wolf-beauty", 2: "wolf-killer-werewolf",
+            3: "wolf-killer-werewolf", 4: "wolf-killer-villager",
+            5: "wolf-killer-villager", 6: "wolf-killer-villager",
+            7: "wolf-killer-seer", 8: "wolf-killer-witch", 9: "wolf-killer-hunter",
+        })
+        state.speaking_order = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        state.current_speaker = 1
+        log = make_log()
+        log.add_werewolf_channel(
+            "今晚刀 5 号，明天我跳预言家。", 1,
+            speaker_seat=2, speaker_role="wolf-killer-werewolf",
+        )
+
+        for seat, role in ((2, "wolf-killer-werewolf"), (1, "wolf-killer-wolf-beauty")):
+            prompt = PromptBuilder().build_speech_prompt(
+                state, seat, role, log, "day_speech",
+            )
+
+            assert "今晚刀 5 号" in prompt, f"{role} 在发言提示词里看不到狼队频道"
+
     def test_public_role_rules_explain_witch_potion_boundaries(self):
         prompt = PromptBuilder().build_speech_prompt(
             make_state(), 4, "wolf-killer-villager", make_log(), "day_speech"
@@ -288,7 +316,7 @@ class TestPromptBuilder:
         log = ConversationLog()
         log.add_public_speech(4, "wolf-killer-villager", "第一轮的话", 1, "speech")
         log.add_public_speech(4, "wolf-killer-villager", "第二轮的话", 2, "speech")
-        out = PromptBuilder()._format_conversations(log, 2, 4, "wolf-killer-villager")
+        out = PromptBuilder()._format_conversations(log, 2, 4, "good")
         assert "第1轮" in out
         assert "第2轮" in out
         assert "第一轮的话" in out
@@ -740,14 +768,14 @@ class TestPromptBuilderHelpers:
     def test_conversations_render_scopes_and_empty_state(self):
         from app.models.conversation import Conversation, ConversationScope
         log = ConversationLog()
-        assert PromptBuilder()._format_conversations(log, 1, 1, "wolf-killer-werewolf") == "（尚无对话记录）"
+        assert PromptBuilder()._format_conversations(log, 1, 1, "werewolf") == "（尚无对话记录）"
         log.records.append(Conversation(
             ConversationScope.WEREWOLF, "夜间交流", 1, speaker_seat=2, speaker_role="wolf-killer-werewolf",
         ))
         log.records.append(Conversation(
             ConversationScope.PUBLIC, "系统提示", 1, phase="system",
         ))
-        out = PromptBuilder()._format_conversations(log, 1, 1, "wolf-killer-werewolf")
+        out = PromptBuilder()._format_conversations(log, 1, 1, "werewolf")
         assert "[狼队频道]" in out and "[系统]" in out and "【本轮】" in out
 
     def test_thoughts_render_and_empty_state(self):
@@ -787,7 +815,7 @@ class TestPromptBuilderHelpers:
         log = make_log()
 
         conversations = PromptBuilder()._format_conversations(
-            log, 1, 1, "wolf-killer-werewolf", speaking_order=(2, 1),
+            log, 1, 1, "werewolf", speaking_order=(2, 1),
         )
         assert PromptBuilder._previous_speaker((2, 1), 1) == 2
         assert "2" in conversations

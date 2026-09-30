@@ -5,6 +5,7 @@ import logging
 import random
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, mock_open, patch, PropertyMock
+from app.core.conversation_log import ConversationLog
 from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
@@ -2385,6 +2386,45 @@ class TestCommandProvider:
         renderer.render.assert_called_once()
         history = renderer.render.call_args.args[3]
         assert "大家好" in history
+
+    def test_provider_history_follows_the_camp_not_the_role_id(self):
+        """服务路径取历史记录也必须按阵营，与提示词路径是同一个入口。
+
+        该入口改成读阵营后，这里若继续传 role_id，那么任何狼的角色名都不等于
+        "werewolf"，狼队频道在服务侧的历史里直接为空 —— 上面那条测试把入口整个
+        mock 掉了，所以它发现不了。
+
+        这里用狼美人的魅惑契约：狼人的狼刀契约走 `NIGHT_WOLF_VOTE`，在渲染之前就
+        由 director 直接返回命令，不经过历史与渲染。
+        """
+        from unittest.mock import MagicMock
+        from app.models.pipeline import IssuedActionRequest, SchedulePoint
+        service = GameService(WSManager(), EventBus())
+        log = ConversationLog()
+        log.add_werewolf_channel(
+            "今晚刀 5 号", 1, speaker_seat=2, speaker_role="wolf-killer-werewolf",
+        )
+        engine = MagicMock()
+        engine.conversation_log = log
+        service._engines = {"g": engine}
+        provider, renderer = self._provider(
+            service, '{"action_type":"charm","target_seat":2,"reasoning":"x"}',
+        )
+        charm = next(
+            contract
+            for contract in builtin_registry.freeze()
+            .require("wolf-killer-wolf-beauty").contracts
+            if contract.schedule_point is SchedulePoint.NIGHT_WITCH_ACTION
+        )
+
+        provider(
+            IssuedActionRequest(
+                1, "wolf-killer-wolf-beauty", charm, 0, 1, "night", "w", "k",
+            ),
+            MagicMock(game_id="g"), 0,
+        )
+
+        assert "今晚刀 5 号" in renderer.render.call_args.args[3]
 
     def test_provider_renders_empty_history_without_engine(self):
         service = GameService(WSManager(), EventBus())

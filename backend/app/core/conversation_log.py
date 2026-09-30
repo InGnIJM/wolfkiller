@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 from app.models.conversation import Conversation, ConversationScope
+from app.models.game import Camp
 
 
 class ConversationLog:
@@ -188,11 +189,17 @@ class ConversationLog:
     # ── Query methods ─────────────────────────────────────────────
 
     def get_conversations_for_role(
-        self, seat: int, role: str
+        self, seat: int, camp: str
     ) -> list[Conversation]:
-        """Return all conversation records visible to a given player."""
+        """Return all conversation records visible to a given player.
+
+        Visibility follows the **camp**, never the role id: an id is free-form, so
+        testing it for a magic substring silently hid the wolf channel from every
+        wolf whose id happens to lack it — the wolf beauty kept talking to a team
+        it could not hear.
+        """
         result: list[Conversation] = []
-        is_werewolf = "werewolf" in role
+        is_werewolf = camp == Camp.WEREWOLF
         for record in self.records:
             if record.scope == ConversationScope.PUBLIC:
                 result.append(record)

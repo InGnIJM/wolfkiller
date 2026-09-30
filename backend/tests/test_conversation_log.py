@@ -46,9 +46,9 @@ class TestConversationLogLifecycle:
         assert record.phase == "night"
         assert record.round_number == 3
 
-        wolf_view = log.get_conversations_for_role(1, "wolf-killer-werewolf")
+        wolf_view = log.get_conversations_for_role(1, "werewolf")
         assert [item.content for item in wolf_view] == ["提议刀 2 号：理由"]
-        villager_view = log.get_conversations_for_role(2, "wolf-killer-villager")
+        villager_view = log.get_conversations_for_role(2, "good")
         assert villager_view == []
 
     def test_add_werewolf_channel_carries_speaker(self):
@@ -82,9 +82,9 @@ class TestConversationLogLifecycle:
             ConversationScope.NIGHT_INTEL, "只给3号看的情报", 1, phase="night", visible_to=[3],
         ))
 
-        visible_to_2 = log.get_conversations_for_role(2, "wolf-killer-witch")
+        visible_to_2 = log.get_conversations_for_role(2, "good")
         assert [record.content for record in visible_to_2] == ["只给2号看的情报"]
-        visible_to_1 = log.get_conversations_for_role(1, "wolf-killer-villager")
+        visible_to_1 = log.get_conversations_for_role(1, "good")
         assert visible_to_1 == []
 
 
@@ -126,7 +126,7 @@ class TestConversationLogThoughts:
         log.add_thought(1, "wolf-killer-werewolf", "我的思考", 1, "day_speech")
         log.add_public_speech(1, "wolf-killer-werewolf", "我的发言", 1, "speech")
 
-        conversations = log.get_conversations_for_role(1, "wolf-killer-werewolf")
+        conversations = log.get_conversations_for_role(1, "werewolf")
         scopes = [r.scope for r in conversations]
         assert ConversationScope.THOUGHT not in scopes
         assert ConversationScope.PUBLIC in scopes

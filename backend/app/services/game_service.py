@@ -2351,8 +2351,11 @@ class GameService:
             engine = self._engines.get(context.game_id)
             history = ""
             if engine is not None:
+                # Visibility follows the camp, not the role id: passing the id here
+                # made the wolf channel empty for every wolf whose id is not the
+                # string "werewolf" -- and for all of them once the entry took a camp.
                 records = engine.conversation_log.get_conversations_for_role(
-                    request.actor_seat, request.role_id,
+                    request.actor_seat, role_spec.camp_id,
                 )
                 history = "\n".join(
                     f"[{record.round_number}|{record.phase}|"

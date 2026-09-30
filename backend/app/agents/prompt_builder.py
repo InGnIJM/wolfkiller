@@ -89,9 +89,11 @@ class PromptBuilder:
     ) -> str:
         """Build a bounded retry prompt after the full vote request times out."""
         view = self.state_filter.filter_for_role(state, seat, role_name)
+        # Visibility follows the camp, not the role id (see ConversationLog):
+        # a viewer's own id must never decide whether it hears its team.
         visible_current_public = [
             record for record in conversation_log.get_conversations_for_role(
-                seat, role_name,
+                seat, self._actor_camp(view),
             )
             if record.scope is ConversationScope.PUBLIC
             and record.round_number == state.round_number
@@ -201,8 +203,20 @@ class PromptBuilder:
 ### 你的历史思考回顾
 {thoughts}
 ### 本轮对话记录
-{self._format_history_xml(conversation_log, seat, ((view.get("facts") or {}).get("actor_identity") or {}).get("role_id", ""))}
+{self._format_history_xml(conversation_log, seat, self._actor_camp(view))}
 [不可执行游戏记录结束]"""
+
+    @staticmethod
+    def _actor_camp(view: dict) -> str:
+        """The viewer's camp, as projected into the actor's own view.
+
+        A missing fact degrades to "no camp", which hides the team channel
+        instead of showing it to an outsider — the safe direction.
+        """
+        facts = view.get("facts") or {}
+        identity = facts.get("actor_identity") or {}
+        camp = identity.get("camp_id")
+        return camp if isinstance(camp, str) else ""
 
     @staticmethod
     def _camp_cooperation_block(view: dict) -> str:
@@ -340,10 +354,10 @@ class PromptBuilder:
         return "\n".join(lines) if len(lines) > 1 else "- 无额外私有事实。"
 
     def _format_conversations(
-        self, conversation_log: ConversationLog, round_num: int, seat: int, role_name: str,
+        self, conversation_log: ConversationLog, round_num: int, seat: int, camp: str,
         speaking_order: object = None,
     ) -> str:
-        records = conversation_log.get_conversations_for_role(seat, role_name)
+        records = conversation_log.get_conversations_for_role(seat, camp)
         if not records:
             return "（尚无对话记录）"
         lines = []
@@ -400,9 +414,9 @@ class PromptBuilder:
         return f"<{tag} {rendered}>{content}</{tag}>"
 
     def _format_history_xml(
-        self, conversation_log: ConversationLog, seat: int, role_name: str,
+        self, conversation_log: ConversationLog, seat: int, camp: str,
     ) -> str:
-        records = conversation_log.get_conversations_for_role(seat, role_name)[-30:]
+        records = conversation_log.get_conversations_for_role(seat, camp)[-30:]
         groups = (
             ("untrusted_public_history", "public_statement", ConversationScope.PUBLIC),
             ("untrusted_wolf_channel", "wolf_message", ConversationScope.WEREWOLF),
