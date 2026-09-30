@@ -1,3 +1,5 @@
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
@@ -5,13 +7,17 @@ from app.api.schemas import (
     CreateGameRequest, CreateGameResponse, GameListItem,
     GameListResponse, GameDetailResponse, GameLogsResponse,
     GameMemoriesResponse, PlayerMemoryResponse,
-    PublicDeathResponse, PublicNarrationResponse, PublicNightActionResponse,
+    PublicDeathCause, PublicDeathResponse, PublicGamePhase,
+    PublicNarrationResponse, PublicNightActionResponse,
     PublicNightThoughtResponse, PublicPhaseResponse, PublicPlayerResponse,
     PublicSeerThoughtResponse, PublicSpeechResponse, PublicVoteResponse,
-    PublicVoteResultResponse, PublicWinnerResponse, PublicWitchThoughtResponse,
+    PublicVoteResultResponse, PublicWinnerResponse, PublicWinningCamp,
+    PublicWinReason, PublicWitchThoughtResponse,
     PublicWolfChatMessageResponse, PublicWolfVoteResponse,
     RenameGameRequest, SetSpeedRequest, WSMessage, FolderNameRequest,
 )
+from app.models.game import GamePhase
+from app.models.values import DeathCause, WinReason, WinningCamp
 
 
 PUBLIC_TIMESTAMP = "2026-08-12T12:34:56Z"
@@ -81,6 +87,29 @@ PUBLIC_REPLAY_EVENTS = [
         "voter_seat": 8, "round_number": 1, "failure_code": "request_timeout",
     }},
 ]
+
+
+# The public enumerations are the contract the frontend renders and the route
+# validates against. Each one is a hand-written mirror of what the engine
+# produces, so every mirror is asserted equal to its catalogue in
+# `app/models/values.py` / `GamePhase`: adding a value to the engine without
+# adding it here is what turned `GET /api/games/{id}` into HTTP 500 for
+# `charm`, `knight_duel` and `wolves_outnumber_good` while 100% branch coverage
+# stayed green.
+def test_public_death_causes_match_the_catalogue() -> None:
+    assert set(get_args(PublicDeathCause)) == {cause.value for cause in DeathCause}
+
+
+def test_public_win_reasons_match_the_catalogue() -> None:
+    assert set(get_args(PublicWinReason)) == {reason.value for reason in WinReason}
+
+
+def test_public_winning_camps_match_the_catalogue() -> None:
+    assert set(get_args(PublicWinningCamp)) == {camp.value for camp in WinningCamp}
+
+
+def test_public_game_phases_match_the_domain_enum() -> None:
+    assert set(get_args(PublicGamePhase)) == {phase.value for phase in GamePhase}
 
 
 class TestSchemas:

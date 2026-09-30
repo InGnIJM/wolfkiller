@@ -3,11 +3,16 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from typing import get_args
+
 import pytest
 from fastapi import HTTPException
 
 from app.api.routes import game_routes
-from app.api.schemas import CreateGameRequest, GameLogsResponse, RenameGameRequest
+from app.api.schemas import (
+    CreateGameRequest, GameLogsResponse, PublicDeathCause, PublicGamePhase,
+    PublicWinReason, RenameGameRequest,
+)
 from app.persistence.repository import GameReferencedByBenchmark
 
 
@@ -942,6 +947,19 @@ def test_public_replay_keeps_the_outnumber_win_reason():
         "event_type": "winner",
         "payload": {"winning_camp": "werewolf", "reason": "wolves_outnumber_good"},
     }]
+
+
+def test_old_archive_whitelists_match_the_public_dto() -> None:
+    """The route's filters are the DTO's second hand-written copy.
+
+    They were free to drift apart -- nothing tied them together -- and a value
+    missing from the filter drops the whole record from the replay while a value
+    missing from the DTO fails the response. Binding both to the same literal is
+    what makes a future addition update both.
+    """
+    assert game_routes._PUBLIC_DEATH_CAUSES == set(get_args(PublicDeathCause))
+    assert game_routes._PUBLIC_WIN_REASONS == set(get_args(PublicWinReason))
+    assert game_routes._PUBLIC_GAME_PHASES == set(get_args(PublicGamePhase))
 
 
 def test_game_logs_response_accepts_a_technical_abstain_record():
