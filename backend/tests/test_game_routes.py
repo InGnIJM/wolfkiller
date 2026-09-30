@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes import game_routes
+from app.services import audience_projector
 from app.api.schemas import (
     CreateGameRequest, GameLogsResponse, PublicDeathCause, PublicGamePhase,
     PublicWinReason, RenameGameRequest,
@@ -1027,16 +1028,192 @@ def test_undeclared_win_reason_is_reported(caplog) -> None:
     assert "third_party_wins" in caplog.text
 
 
-def test_unsupported_audience_event_type_is_reported(caplog) -> None:
-    """观众流里后端会发、白名单却没收录的事件类型，必须留下痕迹。
+#: 引擎会写进 game.log、但投影器**不**声明为公开的 audience_action 类型。
+#: 它们只是引擎内部的编排标记（白天中断、放逐前的待定宣告），旧档回放必须**静默跳过**：
+#: 按「未知类型」计数会让 `EXILE_PENDING`（每次放逐都写）把计数刷成噪音。
+_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING"})
 
-    `audience_projector` 会发 `KNIGHT_DUEL` / `WOLF_BEAUTY_CHARM` 等，而回放白名单
-    没有它们 —— 旧档回退路径静默丢弃（11 局骑士、19 局狼美人受影响），没有任何计数或
-    日志说明「这条为什么不显示」。
+#: 投影器声明为公开、但旧档回放**不由** audience_action 记录产出的类型：它们分别来自
+#: 会话记录（speech）、`night_deaths`（death）与 `narration` / `phase_change` /
+#: `vote` / `vote_result` / `vote_technical_abstain` / `game_over` 等操作记录。
+_REPLAY_FROM_OTHER_RECORDS = frozenset({
+    "SPEECH_MADE", "PLAYER_DIED", "VOTE_CAST", "VOTE_RESULT", "GAME_OVER",
+    "TECHNICAL_ABSTAIN", "NARRATION", "PHASE_CHANGED",
+})
+
+#: 观众流会发、旧档日志里**没有**对应来源的类型 —— 已知的路径差异，不是遗漏：
+#: `SPEAKING` 表示「该座位开始生成发言」，`GAME_INITIALIZED` / `EXECUTION_STATE` 由
+#: 领域事件直接进 audience 表，`NIGHT_ACTION` 是投影器聚合夜间动作用的条目（回放路径
+#: 直接按 6 个角色动作类型产出 `night_action`，它们是 `_EVENTS` 的独立键）。
+_NO_REPLAY_MECHANISM = frozenset({
+    "SPEAKING", "GAME_INITIALIZED", "EXECUTION_STATE", "NIGHT_ACTION",
+})
+
+#: 日志里这 4 个类型的 payload 形状取自真实 `game.log`（`tests` 之外无第二来源）。
+_LOG_PAYLOAD_OVERRIDES: dict[str, dict] = {
+    "KNIGHT_DUEL": {"seat": 1, "target_seat": 2, "camp": "good", "round_number": 1},
+    "WOLF_BEAUTY_CHARM": {"seat": 1, "target_seat": 2, "round_number": 1},
+    "WOLF_BEAUTY_REVENGE": {"seat": 1, "target_seat": 2, "cause": "exile", "round_number": 1},
+    "STATUS_ADDED": {"seat": 1, "status": "poisoned", "round_number": 1},
+}
+
+_DEFAULT_VALUES: dict[str, object] = {
+    "seat": 1, "player_seat": 1, "voter_seat": 2, "target_seat": 2, "from_seat": 1,
+    "to_seat": 2, "round_number": 1, "exiled_seat": 2, "seat_number": 2,
+    "text": "发言内容", "reasoning": "推理内容", "thought": "思考内容",
+    "status": "poisoned", "camp": "good", "result": "good", "cause": "exile",
+    "choice": "run", "kind": "vote", "side": "sheriff_left", "reason": "vote",
+    "winning_camp": "good", "failure_code": "timeout", "phase": "speech",
+    "action_type": "pass", "role": "wolf-killer-villager",
+}
+
+#: 取值受限的字段按类型改写（`run` 只对 SHERIFF_RUN 合法）。
+_FIELD_OVERRIDES: dict[str, dict[str, object]] = {
+    "SHERIFF_WITHDRAW": {"choice": "stay"},
+}
+_REASONING_ACTIONS = {
+    "WITCH_REASONING": "save", "SEER_REASONING": "check", "GUARD_REASONING": "guard",
+    "KNIGHT_REASONING": "duel", "WEREWOLF_KING_REASONING": "explode",
+    "WOLF_BEAUTY_REASONING": "charm", "HUNTER_REASONING": "shoot",
+}
+_VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
+
+
+def _log_payload(event_type: str, allowed: frozenset[str]) -> dict:
+    """造一份与真实日志同形的 payload（形状以路由/日志为准，而不是投影器的过滤集）。"""
+    if event_type in _LOG_PAYLOAD_OVERRIDES:
+        return dict(_LOG_PAYLOAD_OVERRIDES[event_type])
+    if event_type in audience_projector._PUBLIC_REASONING_EVENTS:
+        return {
+            "seat": 1, "action_type": _REASONING_ACTIONS[event_type],
+            "target_seat": 2, "reasoning": "推理内容", "thought": "思考内容",
+        }
+    required = game_routes._AUDIENCE_ACTION_SCHEMAS.get(event_type)
+    fields = required if required else (allowed - {"round_number"})
+    overrides = _FIELD_OVERRIDES.get(event_type, {})
+    payload: dict[str, object] = {}
+    for field in fields:
+        if field in _VOTE_COUNT_FIELDS:
+            payload[field] = {"2": 1}
+        elif field in overrides:
+            payload[field] = overrides[field]
+        elif field in _DEFAULT_VALUES:
+            payload[field] = _DEFAULT_VALUES[field]
+    return payload
+
+
+def _projector_declared_events() -> dict[str, tuple[str, frozenset[str]]]:
+    return dict(audience_projector._EVENTS)
+
+
+def test_every_public_audience_action_type_has_a_replay_branch() -> None:
+    """投影器声明为公开的每个类型，旧档回放路径都必须能产出事件。
+
+    这条门禁的由来：`KNIGHT_DUEL` / `WOLF_BEAUTY_CHARM` / `WOLF_BEAUTY_REVENGE` /
+    `KNIGHT_REASONING` / `WOLF_BEAUTY_REASONING` / `STATUS_ADDED` 六个类型后端能发、
+    投影器声明公开、前端也早已渲染，唯独回放白名单没收录 —— 旧档回退路径上它们直接
+    消失，而没有任何测试会红。以后再加一个公开类型却忘了补回放分支，这里就会失败。
+    """
+    declared = _projector_declared_events()
+    classified = _REPLAY_FROM_OTHER_RECORDS | _NO_REPLAY_MECHANISM
+    # 归类表要干净：不能出现投影器没声明的类型（改名后忘了同步这里）。
+    assert classified <= set(declared)
+
+    missing: list[str] = []
+    for event_type, (public_type, allowed) in sorted(declared.items()):
+        if event_type in classified:
+            continue
+        record = _replay_record("audience_action", {
+            "event_type": event_type, "payload": _log_payload(event_type, allowed),
+        }, phase="speech")
+        events = game_routes._public_operation_events(record)
+        if len(events) != 1 or events[0]["event_type"] != public_type:
+            missing.append(f"{event_type} -> {public_type}: 产出 {events!r}")
+
+    assert missing == []
+
+
+def test_wolf_chat_carries_the_day_plan_and_accepts_records_without_it() -> None:
+    """狼聊的「次日计划」要进旧档回放；**已有旧记录没有该字段，不能被丢掉**。
+
+    计划目前只存在于观众流（投影器的 schema 已含 `day_plan`）与狼队频道的会话记录里，
+    而旧档回放只投影 public 会话，所以旧档看不到计划。补字段时如果把字段集写死成
+    「必须有 day_plan」，所有历史日志的狼聊会从「少一个字段」变成「整条丢弃」。
+    """
+    with_plan = _replay_record("audience_action", {
+        "event_type": "WOLF_CHAT_MESSAGE",
+        "payload": {"seat": 1, "text": "今晚刀 4 号", "day_plan": "明天我跳预言家"},
+    }, phase="night")
+    without_plan = _replay_record("audience_action", {
+        "event_type": "WOLF_CHAT_MESSAGE",
+        "payload": {"seat": 1, "text": "今晚刀 4 号"},
+    }, phase="night")
+
+    events = game_routes._public_operation_events(with_plan)
+    assert events == [{"event_type": "wolf_chat_message", "payload": {
+        "round_number": 1, "seat": 1, "text": "今晚刀 4 号", "day_plan": "明天我跳预言家",
+    }}]
+
+    legacy = game_routes._public_operation_events(without_plan)
+    assert legacy == [{"event_type": "wolf_chat_message", "payload": {
+        "round_number": 1, "seat": 1, "text": "今晚刀 4 号",
+    }}]
+    assert not game_routes._DROPPED_REPLAY_ROWS
+
+
+@pytest.mark.parametrize(("event_type", "payload", "code"), [
+    ("KNIGHT_DUEL", {"seat": 0, "target_seat": 2, "camp": "good", "round_number": 1}, "invalid_duel"),
+    ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "camp": "third_party", "round_number": 1}, "invalid_duel"),
+    ("WOLF_BEAUTY_CHARM", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_charm"),
+    ("WOLF_BEAUTY_CHARM", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_charm_target"),
+    ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 0, "cause": "exile", "round_number": 1}, "invalid_revenge"),
+    ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 2, "cause": "love_death", "round_number": 1}, "invalid_revenge"),
+    ("STATUS_ADDED", {"seat": 0, "status": "poisoned", "round_number": 1}, "invalid_status"),
+    ("STATUS_ADDED", {"seat": 1, "status": "", "round_number": 1}, "invalid_status"),
+    ("STATUS_ADDED", {"seat": 1, "status": 3, "round_number": 1}, "invalid_status"),
+    ("WOLF_CHAT_MESSAGE", "不是一个对象", "malformed_payload"),
+    # 字段集不符（缺 camp）走的是另一条分支。
+    ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "round_number": 1}, "malformed_payload"),
+])
+def test_role_skill_events_drop_only_the_bad_record(event_type, payload, code, caplog) -> None:
+    """字段集合法但取值非法的记录只丢自己那一条，并留下计数与告警。"""
+    record = _replay_record("audience_action", {
+        "event_type": event_type, "payload": payload,
+    }, phase="speech")
+
+    with caplog.at_level(logging.WARNING):
+        events = game_routes._public_operation_events(record)
+
+    assert events == []
+    assert game_routes._DROPPED_REPLAY_ROWS[f"audience_action:{code}"] == 1
+    assert event_type in caplog.text
+
+
+def test_internal_audience_action_types_are_skipped_silently() -> None:
+    """引擎内部的记录不是「未知类型」，跳过时不该计数。
+
+    `EXILE_PENDING` 每次放逐都会写一条，若按未知类型计数，计数会被它刷满。
     """
     record = _replay_record("audience_action", {
-        "event_type": "KNIGHT_DUEL",
-        "payload": {"seat": 3, "target_seat": 5, "camp": "good", "round_number": 1},
+        "event_type": "EXILE_PENDING",
+        "payload": {"target_seat": 2, "cause": "exile", "round_number": 1},
+    }, phase="vote_resolution")
+
+    assert game_routes._public_operation_events(record) == []
+    assert not game_routes._DROPPED_REPLAY_ROWS
+
+
+def test_unsupported_audience_event_type_is_reported(caplog) -> None:
+    """白名单里真的没有的事件类型，必须留下痕迹（计数 + 日志）。
+
+    曾经的现实例子是 `KNIGHT_DUEL` / `WOLF_BEAUTY_CHARM` 等六个类型：投影器声明公开、
+    前端早已渲染，回放白名单却没有它们，于是旧档回退路径静默丢弃、没有任何痕迹说明
+    「这条为什么不显示」。那六个已补齐（见 `test_every_public_audience_action_type_has_a_replay_branch`），
+    这里用一个真正未知的类型守住计数与告警这条兜底。
+    """
+    record = _replay_record("audience_action", {
+        "event_type": "NOT_A_REAL_TYPE",
+        "payload": {"seat": 3, "target_seat": 5, "round_number": 1},
     }, phase="speech")
 
     with caplog.at_level(logging.WARNING):
@@ -1044,7 +1221,7 @@ def test_unsupported_audience_event_type_is_reported(caplog) -> None:
 
     assert events == []
     assert game_routes._DROPPED_REPLAY_ROWS["audience_action:unsupported_event_type"] == 1
-    assert "KNIGHT_DUEL" in caplog.text
+    assert "NOT_A_REAL_TYPE" in caplog.text
 
 
 def test_game_logs_response_accepts_a_technical_abstain_record():
@@ -1419,6 +1596,7 @@ def test_narration_and_staged_night_events_project_to_public_events():
         "narration", "wolf_chat_message", "wolf_vote", "witch_thought", "seer_thought"]
     narration = events[0]["payload"]
     assert narration == {"round_number": 1, "title": "天黑请闭眼", "text": "狼人请睁眼，开始讨论今晚的行动。"}
+    # 直接投影不做响应模型序列化：没有 day_plan 的记录就不带这个键。
     assert events[1]["payload"] == {"round_number": 1, "seat": 1, "text": "我怀疑2号"}
     assert events[2]["payload"] == {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "像神"}
 
@@ -1784,7 +1962,9 @@ async def test_get_game_logs_serializes_staged_night_events_end_to_end(monkeypat
     assert events[0]["payload"] == {
         "round_number": 1, "title": "天黑请闭眼", "text": "狼人请睁眼，开始讨论今晚的行动。",
     }
-    assert events[1]["payload"] == {"round_number": 1, "seat": 1, "text": "我怀疑2号"}
+    assert events[1]["payload"] == {
+        "round_number": 1, "seat": 1, "text": "我怀疑2号", "day_plan": None,
+    }
     assert events[2]["payload"] == {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "像神"}
     assert events[3]["payload"] == {"round_number": 1, "seat": 3, "text": "考虑救人"}
     assert events[4]["payload"] == {"round_number": 1, "seat": 4, "text": "查验2号"}

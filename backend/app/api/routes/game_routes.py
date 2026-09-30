@@ -1,11 +1,10 @@
 import json
-import logging
 import os
-from collections import Counter
 from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query
+from app.api import replay_diagnostics
 from app.api.model_schemas import public_model_snapshot
 from app.api.schemas import (
     AssignFolderRequest, BatchDeleteResponse, BatchGameIdsRequest, BatchMoveRequest,
@@ -25,25 +24,10 @@ from app.services.game_service import GameService
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
-logger = logging.getLogger(__name__)
-
-#: Rows and records the public contract cannot carry, by `operation:code`.
-#:
-#: These drops used to be silent `return []`s, and the ones inside a loop threw
-#: away every ordinary row in the same batch: a `[poison, charm]` night produced
-#: 0 events instead of 2, with nothing logged, so the only symptom was a replay
-#: that quietly showed less than happened. Counting them keeps the loss out of the
-#: public DTO while making it observable server-side.
-_DROPPED_REPLAY_ROWS: Counter[str] = Counter()
-
-
-def _drop_replay_row(operation: str, code: str, value: object = None) -> None:
-    """Count and report one row or record the public contract cannot carry."""
-    _DROPPED_REPLAY_ROWS[f"{operation}:{code}"] += 1
-    logger.warning(
-        "Dropped public replay row: operation=%s code=%s value=%r",
-        operation, code, value,
-    )
+#: 丢弃计数与告警的实现放在 `api/replay_diagnostics.py`：诊断接口也要读它，而路由之间
+#: 不该互相 import 私有名。旧名保留为别名，调用点与既有测试无需改动。
+_DROPPED_REPLAY_ROWS = replay_diagnostics.ROWS
+_drop_replay_row = replay_diagnostics.drop
 
 _LEGACY_ROLE_COUNT_FIELDS = {
     "num_werewolves": "wolf-killer-werewolf",
@@ -99,7 +83,34 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "SHERIFF_VOTE": frozenset({"voter_seat", "target_seat", "kind", "round_number"}),
     "SHERIFF_SIDE": frozenset({"seat", "side", "round_number"}),
     "PLAYER_REVEALED": frozenset({"seat_number", "role", "camp"}),
+    # 骑士与狼美人的白天/夜晚技能，以及结算留给座位的状态标记。投影器声明它们公开
+    # （frontend 也早已渲染），但旧档回放白名单此前漏了这四类 —— 旧档回退路径上它们
+    # 直接消失。字段集取自真实 game.log。
+    "KNIGHT_DUEL": frozenset({"seat", "target_seat", "camp", "round_number"}),
+    "WOLF_BEAUTY_CHARM": frozenset({"seat", "target_seat", "round_number"}),
+    "WOLF_BEAUTY_REVENGE": frozenset({"seat", "target_seat", "cause", "round_number"}),
+    "STATUS_ADDED": frozenset({"seat", "status", "round_number"}),
 }
+
+#: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
+#: 编排标记（白天中断、放逐前的待定宣告）。旧档回放要静默跳过它们 —— 按「未知类型」计数
+#: 会让每次放逐都写的 `EXILE_PENDING` 把丢弃计数刷成噪音。
+_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING"})
+
+#: 允许缺省的可选字段：`day_plan` 是后加的，历史日志里的狼聊没有它 —— 若把它写进必填集，
+#: 所有旧记录都会从「少一个字段」变成「整条丢弃」。
+_AUDIENCE_ACTION_OPTIONAL = {
+    "WOLF_CHAT_MESSAGE": frozenset({"day_plan"}),
+}
+
+
+def _payload_matches(event_type: str, payload: object) -> bool:
+    """字段集判定：必填齐全，且不含必填与可选之外的字段。"""
+    if not isinstance(payload, dict):
+        return False
+    required = _AUDIENCE_ACTION_SCHEMAS[event_type]
+    optional = _AUDIENCE_ACTION_OPTIONAL.get(event_type, frozenset())
+    return required <= set(payload) <= required | optional
 
 _SHERIFF_RUN_CHOICES = frozenset({"run", "pass"})
 _SHERIFF_WITHDRAW_CHOICES = frozenset({"stay", "withdraw"})
@@ -117,6 +128,8 @@ _REASONING_EVENT_TYPES = {
     "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
     "GUARD_REASONING": ("guard_reasoning", frozenset({"guard", "pass"})),
     "WEREWOLF_KING_REASONING": ("werewolf_king_reasoning", frozenset({"explode", "pass"})),
+    "KNIGHT_REASONING": ("knight_reasoning", frozenset({"duel", "pass"})),
+    "WOLF_BEAUTY_REASONING": ("wolf_beauty_reasoning", frozenset({"charm", "pass"})),
 }
 
 
@@ -642,6 +655,56 @@ def _public_day_verdict_event(
         "seat_number": seat, "role": role, "camp": camp}}]
 
 
+def _public_role_skill_event(
+    event_type: str, payload: dict[str, Any], round_number: int,
+) -> list[dict]:
+    """Project the knight's duel, the wolf beauty's charm/revenge and the status
+    markers a settlement leaves on a seat into closed audience events.
+
+    The audience stream already serves all four (the frontend renders them in the
+    day cards, the seat display and the chronicle); the old-archive replay simply
+    never learned them, so they vanished on that path.
+    """
+    if event_type == "KNIGHT_DUEL":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        camp = payload.get("camp")
+        if (not _is_positive_int(seat) or not _is_positive_int(target)
+                or camp not in _PUBLIC_WINNING_CAMPS):
+            _drop_replay_row("audience_action", "invalid_duel", event_type)
+            return []
+        return [{"event_type": "knight_duel", "payload": {
+            "round_number": round_number, "seat": seat,
+            "target_seat": target, "camp": camp}}]
+    if event_type == "WOLF_BEAUTY_CHARM":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        if not _is_positive_int(seat):
+            _drop_replay_row("audience_action", "invalid_charm", event_type)
+            return []
+        if target is not None and not _is_positive_int(target):
+            _drop_replay_row("audience_action", "invalid_charm_target", event_type)
+            return []
+        return [{"event_type": "wolf_beauty_charm", "payload": {
+            "round_number": round_number, "seat": seat, "target_seat": target}}]
+    if event_type == "WOLF_BEAUTY_REVENGE":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        cause = payload.get("cause")
+        if (not _is_positive_int(seat) or not _is_positive_int(target)
+                or not isinstance(cause, str) or cause not in _PUBLIC_DEATH_CAUSES):
+            _drop_replay_row("audience_action", "invalid_revenge", event_type)
+            return []
+        return [{"event_type": "wolf_beauty_revenge", "payload": {
+            "round_number": round_number, "seat": seat,
+            "target_seat": target, "cause": cause}}]
+    seat = payload.get("seat"); status = payload.get("status")
+    if not _is_positive_int(seat) or not isinstance(status, str) or not status:
+        _drop_replay_row("audience_action", "invalid_status", event_type)
+        return []
+    # Same seat-key mapping the audience projector does: the settlement names the
+    # seat `seat`, the public contract keeps the `player_seat` shape a death uses.
+    return [{"event_type": "player_status", "payload": {
+        "round_number": round_number, "player_seat": seat, "status": status}}]
+
+
 def _public_audience_action_event(record: dict[str, Any], round_number: int) -> list[dict]:
     """Project one audience_action log record into a closed audience event."""
     data = record.get("data")
@@ -654,7 +717,7 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         _drop_replay_row("audience_action", "malformed_event_type", event_type)
         return []
     if event_type in ("WOLF_CHAT_MESSAGE", "WITCH_THOUGHT", "SEER_THOUGHT"):
-        if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+        if not _payload_matches(event_type, payload):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         seat = payload.get("seat"); text = payload.get("text")
@@ -664,10 +727,16 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         public_type = {"WOLF_CHAT_MESSAGE": "wolf_chat_message",
                        "WITCH_THOUGHT": "witch_thought",
                        "SEER_THOUGHT": "seer_thought"}[event_type]
-        return [{"event_type": public_type, "payload": {
-            "round_number": round_number, "seat": seat, "text": text}}]
+        public_payload: dict[str, Any] = {
+            "round_number": round_number, "seat": seat, "text": text,
+        }
+        day_plan = payload.get("day_plan")
+        if isinstance(day_plan, str) and day_plan:
+            # 狼队当夜商定的次日计划：观众流一直带它，旧档回放的日志记录此前根本没有。
+            public_payload["day_plan"] = day_plan
+        return [{"event_type": public_type, "payload": public_payload}]
     if event_type == "WOLF_VOTE":
-        if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+        if not _payload_matches(event_type, payload):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         seat = payload.get("seat"); target = payload.get("target_seat")
@@ -685,17 +754,27 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         return _public_reasoning_event(event_type, payload, round_number)
+    if event_type in ("KNIGHT_DUEL", "WOLF_BEAUTY_CHARM", "WOLF_BEAUTY_REVENGE",
+                      "STATUS_ADDED"):
+        if not _payload_matches(event_type, payload):
+            _drop_replay_row("audience_action", "malformed_payload", event_type)
+            return []
+        return _public_role_skill_event(event_type, payload, round_number)
     if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "PLAYER_REVEALED",
                       "SHERIFF_ELECTED", "SHERIFF_BADGE",
                       "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE"):
-        if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+        if not _payload_matches(event_type, payload):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         return _public_day_verdict_event(event_type, payload, round_number)
+    if event_type in _INTERNAL_AUDIENCE_ACTION_TYPES:
+        # 引擎的编排标记，不是「未知类型」：静默跳过，不计数（否则每次放逐的
+        # EXILE_PENDING 会把丢弃计数刷成噪音）。
+        return []
     if event_type not in _AUDIENCE_ACTION_SCHEMAS:
         _drop_replay_row("audience_action", "unsupported_event_type", event_type)
         return []
-    if not isinstance(payload, dict) or set(payload) != _AUDIENCE_ACTION_SCHEMAS[event_type]:
+    if not _payload_matches(event_type, payload):
         _drop_replay_row("audience_action", "malformed_payload", event_type)
         return []
     target = payload.get("target_seat")
@@ -739,6 +818,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
         or phase not in _PUBLIC_GAME_PHASES
         or not isinstance(data, dict)
     ):
+        _drop_replay_row("replay", "malformed_envelope")
         return []
 
     if operation == "vote":
@@ -749,6 +829,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
             or not _is_positive_int(seat)
             or (target is not None and not _is_positive_int(target))
         ):
+            _drop_replay_row("vote", "invalid_vote")
             return []
         return [{
             "event_type": "vote",
@@ -764,6 +845,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
             or not isinstance(failure_code, str)
             or not failure_code
         ):
+            _drop_replay_row("vote_technical_abstain", "invalid_abstention")
             return []
         return [{
             "event_type": "technical_abstain",
@@ -776,9 +858,11 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
 
     if operation == "vote_result":
         if "exiled" not in data:
+            _drop_replay_row("vote_result", "malformed_payload")
             return []
         exiled = data.get("exiled")
         if phase != "vote_resolution" or (exiled is not None and (not _is_int(exiled) or exiled <= 0)):
+            _drop_replay_row("vote_result", "invalid_vote_result")
             return []
         return [{
             "event_type": "vote_result",
@@ -822,6 +906,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     if operation == "phase_change":
         new_phase = data.get("new_phase")
         if not isinstance(new_phase, str) or new_phase not in _PUBLIC_GAME_PHASES:
+            _drop_replay_row("phase_change", "undeclared_phase")
             return []
         return [{
             "event_type": "phase",
@@ -832,6 +917,7 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
         title, text = data.get("title"), data.get("text")
         if (not isinstance(title, str) or not isinstance(text, str)
                 or not title or not text or len(title) > 100 or len(text) > 200):
+            _drop_replay_row("narration", "invalid_narration")
             return []
         return [{"event_type": "narration", "payload": {
             "round_number": round_number, "title": title, "text": text}}]
