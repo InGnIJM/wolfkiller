@@ -15,6 +15,7 @@ from app.api.routes.model_routes import router as model_router
 from app.api.routes.catalog_routes import router as catalog_router
 from app.api.routes.benchmark_routes import router as benchmark_router
 from app.api.routes.folder_routes import router as folder_router
+from app.api.routes.diagnostics_routes import router as diagnostics_router
 from app.api.websocket.ws_handler import WSManager, WSHandler
 from app.persistence.process_lock import ProcessLock
 from app.persistence.repository import GameRepository
@@ -99,6 +100,7 @@ app.include_router(model_router)
 app.include_router(catalog_router)
 app.include_router(benchmark_router)
 app.include_router(folder_router)
+app.include_router(diagnostics_router)
 
 
 @app.get("/api/health")
