@@ -2,6 +2,8 @@
 
 本文描述 Wolf Killer 的对局规则、角色能力与游戏流程。规则由 `backend/app/core/rule_engine.py`（胜负判定）、`backend/app/core/state_machine.py`（阶段流转）与 `backend/app/core/game_engine.py`（流程编排）实现。
 
+应用内同一套规则的展示页是右上角「规则介绍」（`/rules`，源码 `frontend/src/components/rules/`）：角色能力卡片来自 `backend/app/catalog.py` 的 `ROLE_METADATA.rules`，板子构成与开关来自 `/api/catalog/*`，流程与胜负文案在 `frontend/src/components/rules/ruleSections.ts`。改规则时，本文与这两处一起改。
+
 ## 角色配置
 
 默认预设为 9 人局（`backend/app/catalog.py`），另有附带守卫的 10 人局预设，以及四套 12 人板子（`twelve-player-idiot`：4 狼 4 民 预女猎白痴；`twelve-player-wolf-king`：3 狼 1 白狼王 4 民 预女猎守；`twelve-player-knight`：4 狼 4 民 预女猎骑士；`twelve-player-wolf-beauty`：3 狼 1 狼美人 3 民 1 老酒鬼 预女猎守）：

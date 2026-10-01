@@ -136,13 +136,14 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 
 ## 模型配置与角色目录
 
-- `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束
+- `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束；角色条目另带 `rules`（玩家向规则条目，供规则介绍页渲染）。它是**展示元数据**，刻意留在冻结的 `RoleSpec` 之外：新增角色只需加 `roles/*.py` 与这里的 `name_zh` / `rules`，`registry.digest` 不变，旧档仍可续跑
 - `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点；配置项还含自定义请求头 `headers`（管理面可见可编辑）与严格模式地址 `strict_base_url`；`POST /api/models/test` 带 `config_id` 时，请求里显式给出的可编辑字段（`base_url` / `model_id` / `strict_base_url` / `api_key` / `provider_profile` / `headers`）一律覆盖已存配置、传 `None` 沿用存储值（`strict_base_url` 传空串表示清空），所以对话框能在保存前试通当前表单值
 - `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 `NightDirector`（`core/night_flow.py`）都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
 - `GET /api/games/{id}` 与 `GET /api/games/{id}/snapshot` 向观众暴露无密钥的 v2 `model_snapshot`（`name / model_id / provider_profile / seats`）；旧档缺少 `seats` 的条目会被滤掉而不是 500。前端座位图悬停卡按 `seats` 反查模型，不把 `model_id` 写入玩家 DTO 或隐私白名单。**自定义请求头不进快照**：它可能携带中转站凭据，`ModelSnapshotEntry` 也不声明该字段，多传也会被丢弃
 - 模型参数 digest 与检查点**不含 headers**，续跑时与 `api_key` 一样从当前模型配置读取。这样新增 headers 不会改变 `parameters_digest`，处于 `interrupted` 的旧局仍可续跑；代价是续跑不检测 headers 变化（与 api_key 的既有语义一致）
 - 分配只引用创建时物化的配置快照；之后编辑或删除 `models.json` 中的配置不会改变进行中的对局
 - 前端：`components/create/CreateGameWizard.tsx` 两步向导；`ModelStep.tsx` 以数量分配环境默认与已存配置；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
+- 规则介绍页：`components/rules/RulesPage.tsx`（右上角「规则介绍」，路由 `/rules`）只消费 `/api/catalog/*` 的公开字段——板子构成与警长开关来自 presets，角色卡来自 roles 的 `name_zh` / `camp` / `rules`，所以新增角色会自动出现；流程、遗言、票制、胜负与可选规则的叙述文案在 `components/rules/ruleSections.ts`，与 `docs/gameplay.md` 同一套规则
 
 ## 持久化与存档
 

@@ -59,6 +59,8 @@ npm run build
 
 `GameEngine` 运行时固定 `PipelineMode.V2`。环境变量 `ROLE_PIPELINE_V2` **不改变对局**。
 
+角色展示元数据（`name_zh` / `icon` / `description` / `rules`）与标准预设集中在 `catalog.py`，经 `/api/catalog/{roles,presets,constraints}` 暴露。它刻意留在冻结的 `RoleSpec` 之外：新增角色只写 `roles/*.py` + 这里的元数据，`registry.digest` 不变、旧档仍可续跑。前端规则介绍页 `components/rules/RulesPage.tsx`（右上角入口，路由 `/rules`）只读这三条公开目录接口，叙述文案在 `components/rules/ruleSections.ts`，与 `docs/gameplay.md` 同一套规则。
+
 ## 规则（改代码时容易漏）
 
 - 守卫：不能连续两晚守同一人；守护只抵消狼刀，毒药与猎枪无视守卫；守卫守护与女巫解药同时作用于同一狼刀目标时目标仍死亡（对穿）。
@@ -92,7 +94,7 @@ npm run build
 - `tests/test_game_engine.py` 引擎禁词
 - `tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 角色名禁词
 - `tests/test_prompt_renderer.py` 渲染器禁词
-- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`、`tests/test_knight_extension.py`、`tests/test_wolf_beauty_extension.py`、`tests/test_old_drunkard_extension.py`；`tests/test_catalog_routes.py` 断言 11 角色 6 预设
+- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`、`tests/test_knight_extension.py`、`tests/test_wolf_beauty_extension.py`、`tests/test_old_drunkard_extension.py`；`tests/test_catalog_routes.py` 断言 11 角色 6 预设，并要求每个已注册角色都有非空 `rules` 条目（新增角色漏写展示规则即红）
 - 共享狼刀契约的角色差异：改 `roles/werewolf.py` 的 `validate_werewolf_action()` 或 `core/night_flow.py` 的 `_self_kill_clause()` 后，更新 `tests/test_wolf_beauty_extension.py`（自刀被拒 / 队友可切 / 其他狼不受限）与 `tests/test_night_flow.py`（三态提示词 + 常量与角色侧声明一致）
 - 观众事件类型：`app/services/audience_projector.py` 的 `_EVENTS` 增删类型后，同步四处 —— `tests/test_audience_projector.py` 的类型全集快照、**旧档回放**的公开 DTO（`api/schemas.py` 的 `PublicReplayEvent` 联合）与白名单/分支（`api/routes/game_routes.py` 的 `_AUDIENCE_ACTION_SCHEMAS`、`_REASONING_EVENT_TYPES`、`_public_day_verdict_event` / `_public_role_skill_event`）、前端 `components/game/test/eventCoverage.test.tsx` 的期望表、以及 `src/labels.ts`（`EVENT_TAGS`）。门禁：`tests/test_game_routes.py::test_every_public_audience_action_type_has_a_replay_branch` 会遍历投影器声明的每个类型，用规范 payload 要求回放路径产出对应事件 —— 漏一个分支即红；引擎写进 `game.log` 但投影器不声明公开的类型（`DAY_INTERRUPTED` / `EXILE_PENDING`）登记在 `game_routes._INTERNAL_AUDIENCE_ACTION_TYPES`，回放**静默跳过**、不计入丢弃计数
 - 取值目录（死因 / 胜因 / 阵营 / 阶段）：新增或改名要同步**五处**，缺一处就有门禁变红 —— `app/models/values.py` 的 `DeathCause`/`WinReason`/`WinningCamp`（与 `models/game.py` 的 `GamePhase`）是权威目录；`api/schemas.py` 的公开 DTO 必须等于目录（`tests/test_schemas.py`）；`api/routes/game_routes.py` 的三张旧档白名单必须等于公开 DTO（`tests/test_game_routes.py`）；前端 `store/types.ts` 的联合类型 + `src/labels.ts` 的文案必须覆盖目录里的每个值（后端 `tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读前端文案比对，前端 `src/test/labels.test.ts` 断言命名空间非空）。生产代码里的 `cause=` / `reason=` 字面量与各规则子集由 `tests/test_values.py` 扫描校验 —— 注意**目录只做门禁锚点**，不要把它传进检查点或 Effect 载荷（`checkpoint_codec` 与 `effect_applier` 用 `type(value) is not str` 精确校验，枚举成员会被拒）
