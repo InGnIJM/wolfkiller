@@ -648,7 +648,9 @@ async def test_recovered_night_gateway_rejects_malformed_payloads_and_handles_ea
     assert repository.list_model_attempts(game_id)[0]["status"] == "failed"
 
     invoke_sync = service._model_invocations.invoke_sync
-    monkeypatch.setattr(service._model_invocations, "invoke_sync", lambda **_kwargs: SimpleNamespace(normalized_result=[]))
+    # ``reused`` mirrors ``InvocationResult``: game_service reads it to decide
+    # whether a durable replay should be captured again.
+    monkeypatch.setattr(service._model_invocations, "invoke_sync", lambda **_kwargs: SimpleNamespace(normalized_result=[], reused=False))
     with pytest.raises(ValueError, match="not a JSON object"):
         recovered._director._invoke([], "werewolf_discussion", {}, 1)
 

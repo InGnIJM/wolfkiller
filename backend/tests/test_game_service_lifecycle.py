@@ -22,7 +22,7 @@ from app.persistence.repository import GameRepository
 from app.services.game_service import GameService
 from app.core.scheduler import PointResult
 from app.persistence.repository import InvalidExecutionTransition
-from app.services.model_invocation_service import ModelRequestUnavailable
+from app.services.model_invocation_service import InvocationResult, ModelRequestUnavailable
 
 
 def test_startup_quarantines_corrupt_checkpoint_instead_of_crashing(tmp_path) -> None:
@@ -1330,7 +1330,9 @@ async def test_role_instrumentation_durably_round_trips_speech_and_action(
             normalized, _usage = await kwargs["provider_call"]()
             if self.malformed:
                 normalized = {"command": None}
-            return SimpleNamespace(normalized_result=normalized)
+            # Use the real result type: game_service reads ``reused`` off it, and a
+            # hand-rolled namespace silently loses that contract.
+            return InvocationResult(normalized_result=normalized, reused=False, attempt_id=None)
 
     invocations = Invocations()
     service._model_invocations = invocations
@@ -1471,7 +1473,7 @@ def test_recovered_night_gateway_uses_durable_result_and_logs_telemetry(
         def invoke_sync(**kwargs):
             calls.append(kwargs)
             normalized, _usage = kwargs["provider_call"]()
-            return SimpleNamespace(normalized_result=normalized)
+            return InvocationResult(normalized_result=normalized, reused=False, attempt_id=None)
 
     class Engine:
         def __init__(self, **kwargs):
