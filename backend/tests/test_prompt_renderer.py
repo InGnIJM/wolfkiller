@@ -75,11 +75,24 @@ def test_renderer_rejects_exact_type_and_binding_mismatches() -> None:
 
 def test_renderer_bounds_text_and_has_no_builtin_role_or_state_branches() -> None:
     spec, contract, context = values(); renderer = PromptRenderer()
-    with pytest.raises(ValueError): renderer.render(spec, contract, context, "x" * 20_001)
     with pytest.raises(ValueError): renderer.render(spec, contract, context, "\ud800")
     source = inspect.getsource(PromptRenderer).lower()
     for token in ('"witch"', '"hunter"', '"werewolf"', '"seer"', "gamestate", "statefilter", "promptbuilder"):
         assert token not in source
+
+
+def test_oversized_history_is_truncated_to_the_newest_tail() -> None:
+    """A long game must not fail a call by producing a long history.
+
+    The history is assembled from an unbounded record window, so it can exceed
+    the bound on its own. Truncation keeps the newest tail — the part that still
+    describes the live situation — and the final prompt-size check remains the
+    hard ceiling.
+    """
+    spec, contract, context = values()
+    rendered = PromptRenderer().render(spec, contract, context, "x" * 20_001)
+    assert "x" * 20_000 in rendered
+    assert "x" * 20_001 not in rendered
 
 
 def test_renderer_includes_projected_command_and_aggregate_summaries() -> None:
@@ -90,7 +103,13 @@ def test_renderer_includes_projected_command_and_aggregate_summaries() -> None:
     assert '"accepted_command_summaries"' in rendered and '"aggregate_result"' in rendered
 
 
-def test_renderer_includes_all_projected_public_role_rules() -> None:
+def test_renderer_renders_projected_public_role_rules_exactly_once() -> None:
+    """The role-rules block is the single rendering site for this fact.
+
+    `PROJECTED_CONTEXT` serialises every projected fact, so leaving
+    `public_role_rules` in it shipped the same instructions twice: once as
+    facts and once as the dedicated `<public_role_rules>` block.
+    """
     spec, contract, context = values()
     context = replace(context, facts={
         "public_role_rules": ({
@@ -101,8 +120,25 @@ def test_renderer_includes_all_projected_public_role_rules() -> None:
 
     rendered = PromptRenderer().render(spec, contract, context, "")
 
-    assert "antidote may save only the wolf-kill target" in rendered
+    assert rendered.count("antidote may save only the wolf-kill target") == 1
     assert '"count":1' in rendered
+
+
+def test_renderer_leaves_speeches_and_votes_to_the_history_block() -> None:
+    """Recorded statements reach the model through the history, once."""
+    spec, contract, context = values()
+    context = replace(context, facts={
+        **dict(context.facts),
+        "speeches": ({"player_seat": 2, "text": "a recorded statement", "round_number": 1},),
+        "votes": ({"voter_seat": 2, "target_seat": 1},),
+    })
+
+    rendered = PromptRenderer().render(spec, contract, context, "history carries it")
+
+    assert "a recorded statement" not in rendered
+    assert '"speeches"' not in rendered
+    assert '"votes"' not in rendered
+    assert "history carries it" in rendered
 
 
 def test_json_and_final_prompt_are_bounded() -> None:

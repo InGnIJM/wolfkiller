@@ -9,17 +9,27 @@ from app.models.pipeline import ActionContext, ActionContract, RoleSpec
 
 _MAX_HISTORY = 20_000
 
+# Projected facts that a dedicated block renders. The generic PROJECTED_CONTEXT
+# dump must skip them, or the same content ships to the model twice.
+_HOISTED_FACTS = frozenset({"public_role_rules", "speeches", "votes"})
 
-def _text(value: object, name: str, maximum: int) -> str:
+
+def _history_text(value: object) -> str:
+    """Validate the untrusted history, then bound it by truncation.
+
+    The history is assembled from an unbounded record window, so a long game can
+    exceed any fixed bound on its own; raising there would turn an ordinary
+    late-game state into a failed call. The newest tail survives because it is
+    the part that still describes the live situation, and the final prompt-size
+    check below remains the hard ceiling.
+    """
     if type(value) is not str:
-        raise TypeError(f"{name} must be a string")
+        raise TypeError("history must be a string")
     try:
         value.encode("utf-8", errors="strict")
     except UnicodeEncodeError as error:
-        raise ValueError(f"{name} must be valid UTF-8") from error
-    if len(value) > maximum:
-        raise ValueError(f"{name} is too long")
-    return value
+        raise ValueError("history must be valid UTF-8") from error
+    return value[-_MAX_HISTORY:]
 
 
 def _json(value: object) -> str:
@@ -55,7 +65,7 @@ class PromptRenderer:
             raise TypeError("contract must be an exact ActionContract")
         if type(context) is not ActionContext:
             raise TypeError("context must be an exact ActionContext")
-        history = _text(history, "history", _MAX_HISTORY)
+        history = _history_text(history)
         if not any(item is contract for item in spec.contracts):
             raise ValueError("contract is not registered by spec")
         bindings = (
@@ -86,7 +96,8 @@ class PromptRenderer:
             "actor_alive": context.actor_alive,
             "facts": {
                 key: value for key, value in context.facts.items()
-                if enabled or key not in {"sheriff", "sheriff_enabled"}
+                if key not in _HOISTED_FACTS
+                and (enabled or key not in {"sheriff", "sheriff_enabled"})
             },
             "resources": context.resources,
             "counters": context.counters,
