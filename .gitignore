@@ -42,6 +42,10 @@ backend/scripts/*
 # source, and the logic it drives (mark_game_deleted / GameManifest.remove_game)
 # is already tracked, so the entry point and its regression test belong here too.
 !backend/scripts/purge_old_games.py
+# Prompt-size acceptance tool: it reads the captured prompts under data/ and
+# reports per-section sizes plus duplicate-fact leakage, which is the measurable
+# gate for any prompt change. It ships with its own regression test.
+!backend/scripts/prompt_size_report.py
 
 .zcode/
 .cursor/
