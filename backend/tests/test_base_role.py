@@ -964,3 +964,149 @@ class TestBaseRoleAccept:
                 state, self._vote_request(state),
                 ActionCommand(action_type="vote", target_seat=2, reasoning="x"),
             )
+
+
+class RecordingCapture:
+    """Duck-typed stand-in for the prompt-capture sink."""
+
+    def __init__(self):
+        self.calls = []
+
+    def record(self, messages, *, tool_schema=None, tool_name=None):
+        self.calls.append({
+            "messages": list(messages),
+            "tool_schema": tool_schema,
+            "tool_name": tool_name,
+        })
+
+    def user_text(self, index=0):
+        return self.calls[index]["messages"][1].content
+
+
+class TestPromptCaptureWiring:
+    """The sink must see the text the model actually receives.
+
+    Capturing the pre-rewrite prompt would silently poison the training corpus:
+    the speech gateway appends a JSON fallback instruction, and the retry path
+    appends an escalation notice, so both differ from the rendered prompt.
+    """
+
+    def _vote_request(self, state) -> ActionRequest:
+        return ActionRequest(
+            actor_seat=1, role_id="wolf-killer-villager", contract=VOTE_CONTRACT,
+            phase=GamePhase.VOTE_CASTING, round_id=state.round_number,
+            idempotency_key="1:vote_casting:1:1:exile_vote",
+        )
+
+    @pytest.mark.asyncio
+    async def test_speak_capture_sees_the_rewritten_gateway_prompt(self):
+        class GatewayClient:
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            async def ainvoke_json(self, messages, *, tool_name, schema):
+                return StructuredResponse(
+                    payload={"text": "我认为三号玩家的发言存在矛盾，需要继续关注。"},
+                    transport="tool", has_tool_calls=True,
+                )
+
+        capture = RecordingCapture()
+        role = make_role(client=GatewayClient())
+
+        await role.speak(make_state(), ConversationLog(), "day_speech", capture=capture)
+
+        assert len(capture.calls) == 1
+        assert capture.user_text().endswith("不要添加解释或代码块。")
+        assert "如果当前接口无法调用函数" in capture.user_text()
+        assert capture.calls[0]["tool_name"] == "speak"
+        assert capture.calls[0]["tool_schema"]["required"] == ["text"]
+
+    @pytest.mark.asyncio
+    async def test_speak_capture_records_the_bound_tool_schema(self):
+        client = ClientStub(tools=[
+            tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。"),
+        ])
+        capture = RecordingCapture()
+        role = make_role(client=client)
+
+        await role.speak(make_state(), ConversationLog(), "day_speech", capture=capture)
+
+        assert len(capture.calls) == 1
+        assert capture.calls[0]["tool_name"] == "speak"
+        assert capture.calls[0]["tool_schema"]["required"] == ["text"]
+        # This transport binds the tools instead of rewriting the prompt.
+        assert "如果当前接口无法调用函数" not in capture.user_text()
+
+    @pytest.mark.asyncio
+    async def test_speak_capture_records_each_attempt_including_the_retry(self):
+        client = ClientStub(tools=[
+            AIMessage(content="普通文本，没有调用函数。"),
+            tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。"),
+        ])
+        capture = RecordingCapture()
+        role = make_role(client=client)
+
+        await role.speak(make_state(), ConversationLog(), "day_speech", capture=capture)
+
+        assert len(capture.calls) == 2
+        assert "你刚才没有调用发言函数" not in capture.user_text(0)
+        assert "你刚才没有调用发言函数" in capture.user_text(1)
+
+    @pytest.mark.asyncio
+    async def test_speak_capture_covers_non_tool_contexts(self):
+        client = ClientStub(plain=[AIMessage(content="普通发言内容，长度足够通过校验。")])
+        capture = RecordingCapture()
+        role = make_role(client=client)
+
+        await role.speak(make_state(), ConversationLog(), "werewolf_chat", capture=capture)
+
+        assert len(capture.calls) == 1
+        assert capture.calls[0]["tool_name"] is None
+        assert capture.calls[0]["tool_schema"] is None
+
+    @pytest.mark.asyncio
+    async def test_json_transport_capture_records_no_tool_name(self):
+        client = ClientStub(
+            supports_strict_actions=False,
+            plain=[AIMessage(
+                content='{"action_type":"vote","target_seat":2,"reasoning":"x"}',
+            )],
+        )
+        capture = RecordingCapture()
+        role = make_role(client=client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        await role.request_action(
+            state, ConversationLog(), self._vote_request(state), capture=capture,
+        )
+
+        # The JSON transport carries the schema inside the prompt itself.
+        assert capture.calls[0]["tool_name"] is None
+        assert capture.calls[0]["messages"][1].content
+
+    @pytest.mark.asyncio
+    async def test_strict_transport_capture_records_the_contract_tool_name(self):
+        # The strict transport validates the payload, so this has to be a real
+        # exile_vote command: ``tool_msg``'s ``{"text": ...}`` shape would fail
+        # validation and spend an unseeded retry.
+        client = ClientStub(
+            supports_strict_actions=True,
+            strict=[AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "exile_vote",
+                    "args": {"action_type": "vote", "target_seat": 2, "reasoning": "x"},
+                    "id": "call_1",
+                }],
+            )],
+        )
+        capture = RecordingCapture()
+        role = make_role(client=client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        await role.request_action(
+            state, ConversationLog(), self._vote_request(state), capture=capture,
+        )
+
+        assert len(capture.calls) == 1
+        assert capture.calls[0]["tool_name"] == VOTE_CONTRACT.resolved_tool_name

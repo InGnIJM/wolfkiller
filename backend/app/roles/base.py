@@ -75,6 +75,17 @@ class _ActionTransportTimeout(RuntimeError):
     """Signals that the primary action transport should use its fallback."""
 
 
+def _capture_messages(capture, messages, *, tool_schema=None, tool_name=None) -> None:
+    """Hand the messages about to be sent to the prompt-capture sink.
+
+    Duck-typed on purpose: roles only ever call ``record``, so they never import
+    capture internals. ``capture`` is ``None`` whenever capture is off, which is
+    the common case in tests and in every non-instrumented code path.
+    """
+    if capture is not None:
+        capture.record(messages, tool_schema=tool_schema, tool_name=tool_name)
+
+
 class BaseRole:
     """Base class for all Werewolf roles. Handles LLM interaction for speech and voting."""
 
@@ -107,7 +118,8 @@ class BaseRole:
     # ── Speech (with tool calling + validation) ─────────────────
 
     async def speak(
-        self, state: GameState, conversation_log: ConversationLog, context: str
+        self, state: GameState, conversation_log: ConversationLog, context: str,
+        *, capture=None,
     ) -> str | None:
         """Generate speech. Uses tool calling with validation for day_speech and last_words.
         Returns the speech text, or None if validation failed.
@@ -118,11 +130,13 @@ class BaseRole:
 
         # Use tool calling for speech/last_words contexts
         if context in ("day_speech", "last_words", "sheriff_campaign"):
-            return await self._speak_with_tools(state, prompt, context, conversation_log)
+            return await self._speak_with_tools(
+                state, prompt, context, conversation_log, capture=capture,
+            )
 
         # Other contexts (e.g. werewolf chat handled elsewhere) use plain LLM
         started = time.monotonic()
-        raw = await self._invoke_llm(prompt)
+        raw = await self._invoke_llm(prompt, capture=capture)
         speech = self.output_parser.parse_speech(raw)
         self._log_llm_call(
             conversation_log,
@@ -137,7 +151,7 @@ class BaseRole:
 
     async def _speak_with_tools(
         self, state: GameState, prompt: str, context: str,
-        conversation_log: ConversationLog,
+        conversation_log: ConversationLog, *, capture=None,
     ) -> str | None:
         """Invoke LLM with speech tools, validate the tool call, return the speech text.
         Retries once on tool-calling failure, then generates a fallback speech so the
@@ -180,7 +194,7 @@ class BaseRole:
         attempts = 0
         try:
             attempts += 1
-            tool_result = await self._invoke_llm_with_tools(prompt, tools)
+            tool_result = await self._invoke_llm_with_tools(prompt, tools, capture=capture)
         except Exception as e:
             logger.error(
                 f"Seat {self.seat}: LLM invocation failed with exception for "
@@ -204,7 +218,9 @@ class BaseRole:
                 + "直接输出文本无效！不调用函数等于放弃发言！"
             )
             try:
-                tool_result = await self._invoke_llm_with_tools(retry_prompt, tools)
+                tool_result = await self._invoke_llm_with_tools(
+                    retry_prompt, tools, capture=capture,
+                )
             except Exception as e:
                 logger.error(
                     f"Seat {self.seat}: LLM invocation failed with exception for "
@@ -410,12 +426,13 @@ class BaseRole:
     # ── Voting ──────────────────────────────────────────────────
 
     async def vote(
-        self, state: GameState, conversation_log: ConversationLog, context: str
+        self, state: GameState, conversation_log: ConversationLog, context: str,
+        *, capture=None,
     ) -> VoteAction:
         prompt = self.prompt_builder.build_vote_prompt(
             state, self.seat, self.role_name, conversation_log, context
         )
-        raw = await self._invoke_llm(prompt)
+        raw = await self._invoke_llm(prompt, capture=capture)
         return self.output_parser.parse_vote_action(raw, self.seat)
 
     # ── LLM invocation ──────────────────────────────────────────
@@ -425,6 +442,7 @@ class BaseRole:
         state: GameState,
         conversation_log: ConversationLog,
         request: ActionRequest,
+        *, capture=None,
     ) -> AcceptedAction:
         """Request, strictly parse, and atomically accept one issued action."""
         prompt = self._build_contract_action_prompt(state, conversation_log, request)
@@ -442,7 +460,7 @@ class BaseRole:
             try:
                 return await self._request_action_with_transport(
                     state, request, messages, self._invoke_json_action,
-                    conversation_log, "json", 1,
+                    conversation_log, "json", 1, capture=capture,
                 )
             except _ActionTransportTimeout:
                 retry_messages = self._build_vote_retry_messages(
@@ -451,19 +469,19 @@ class BaseRole:
             try:
                 return await self._request_action_with_transport(
                     state, request, retry_messages, self._invoke_json_action,
-                    conversation_log, "json", 2,
+                    conversation_log, "json", 2, capture=capture,
                 )
             except _ActionTransportTimeout:
                 pass
             return await self._request_action_with_transport(
                 state, request, self._final_retry_messages(state, conversation_log),
-                self._invoke_json_action, conversation_log, "json", 3,
+                self._invoke_json_action, conversation_log, "json", 3, capture=capture,
             )
         tool_transport = "strict" if supports_strict else "tool"
         try:
             return await self._request_action_with_transport(
                 state, request, messages, self._invoke_strict_action,
-                conversation_log, tool_transport, 1,
+                conversation_log, tool_transport, 1, capture=capture,
             )
         except _ActionTransportTimeout:
             retry_messages = self._build_vote_retry_messages(
@@ -476,13 +494,13 @@ class BaseRole:
         try:
             return await self._request_action_with_transport(
                 state, request, retry_messages, self._invoke_json_action,
-                conversation_log, "json", 2,
+                conversation_log, "json", 2, capture=capture,
             )
         except _ActionTransportTimeout:
             pass
         return await self._request_action_with_transport(
             state, request, self._final_retry_messages(state, conversation_log),
-            self._invoke_json_action, conversation_log, "json", 3,
+            self._invoke_json_action, conversation_log, "json", 3, capture=capture,
         )
 
     def _final_retry_messages(
@@ -592,13 +610,19 @@ class BaseRole:
 
     async def _request_action_with_transport(
         self, state, request, messages, invoke, conversation_log: ConversationLog,
-        transport: str, first_attempt: int,
+        transport: str, first_attempt: int, *, capture=None,
     ) -> AcceptedAction:
         active_messages = messages
+        # The JSON transport carries the schema inside the prompt itself, so only
+        # the native tool transports have a tool name worth recording.
+        capture_tool_name = (
+            None if transport == "json" else request.contract.resolved_tool_name
+        )
         for attempt_number in range(first_attempt, 4):
             prompt_chars = sum(len(message.content) for message in active_messages)
             started = time.monotonic()
             try:
+                _capture_messages(capture, active_messages, tool_name=capture_tool_name)
                 command = await asyncio.wait_for(
                     invoke(active_messages, request),
                     timeout=self._action_timeout_seconds(
@@ -838,19 +862,20 @@ class BaseRole:
             )
         return self.output_parser.parse_action_payload(content, request.contract)
 
-    async def _invoke_llm(self, prompt: str) -> str:
+    async def _invoke_llm(self, prompt: str, *, capture=None) -> str:
         model = self.llm_client.get_model()
         messages = [
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
+        _capture_messages(capture, messages)
         response = await asyncio.wait_for(
             model.ainvoke(messages),
             timeout=self._action_timeout_seconds(retried=False, final=False),
         )
         return response.content if hasattr(response, "content") else str(response)
 
-    async def _invoke_llm_with_tools(self, prompt: str, tools: list[dict]):
+    async def _invoke_llm_with_tools(self, prompt: str, tools: list[dict], *, capture=None):
         """Invoke LLM with tool definitions. Returns ToolCallResult or None."""
         gateway = getattr(self.llm_client, "ainvoke_json", None)
         if callable(gateway) and len(tools) == 1:
@@ -865,6 +890,12 @@ class BaseRole:
                 SystemMessage(content=self.prompt_builder.get_system_prompt()),
                 HumanMessage(content=fallback_prompt),
             ]
+            # Capture the rewritten prompt, not the one handed in: the fallback
+            # suffix above is part of what the model actually reads.
+            _capture_messages(
+                capture, messages,
+                tool_schema=function["parameters"], tool_name=tool_name,
+            )
             result = await asyncio.wait_for(
                 gateway(
                     messages,
@@ -883,6 +914,13 @@ class BaseRole:
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
+        # This transport binds the tools to the model instead of inlining them.
+        # The speech path always sends exactly one, so record that one.
+        _capture_messages(
+            capture, messages,
+            tool_schema=tools[0]["function"]["parameters"],
+            tool_name=tools[0]["function"]["name"],
+        )
         response = await asyncio.wait_for(
             model.ainvoke(messages),
             timeout=self._action_timeout_seconds(retried=False, final=False),
