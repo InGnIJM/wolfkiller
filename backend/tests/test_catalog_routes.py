@@ -23,6 +23,7 @@ def test_catalog_item_known_role_uses_metadata():
     assert item["icon"] == "wolf"
     assert item["camp"] == "werewolf"
     assert item["description"] == ROLE_METADATA["wolf-killer-werewolf"]["description"]
+    assert item["rules"] == ROLE_METADATA["wolf-killer-werewolf"]["rules"]
 
 
 def test_catalog_item_unknown_role_falls_back_to_spec_display():
@@ -35,10 +36,33 @@ def test_catalog_item_unknown_role_falls_back_to_spec_display():
     assert item["name_zh"] == "Mystery"
     assert item["icon"] == "unknown"
     assert item["description"] == ""
+    assert item["rules"] == []
     assert item["min_count"] == 1
     assert item["max_count"] == 3
     assert item["dependencies"] == ["a"]
     assert item["exclusions"] == []
+
+
+def test_catalog_item_drops_non_string_rule_entries(monkeypatch):
+    spec = SimpleNamespace(
+        display_name="Mixed", camp_id="good", min_count=0,
+        max_count=None, dependencies=frozenset(), exclusions=frozenset(),
+    )
+    monkeypatch.setitem(ROLE_METADATA, "x-mixed-role", {"rules": ["可用", 7]})
+
+    assert _catalog_item("x-mixed-role", spec)["rules"] == ["可用"]
+
+
+def test_every_registered_role_publishes_rule_bullets():
+    """The rules page renders whatever the catalog lists, so a role that ships
+    without player-facing rule text would show up blank there."""
+    items = role_catalog(builtin_registry.freeze())
+
+    assert all(item["name_zh"] for item in items)
+    assert all(item["description"] for item in items)
+    for item in items:
+        assert item["rules"], item["role_id"]
+        assert all(rule.strip() for rule in item["rules"]), item["role_id"]
 
 
 def test_catalog_item_empty_display_falls_back_to_role_id():
@@ -117,6 +141,7 @@ def test_field_constraints_defaults():
 def test_schema_models_accept_catalog_shapes():
     item = RoleCatalogItem(**role_catalog(builtin_registry.freeze())[0])
     assert item.role_id
+    assert item.rules
     preset = PresetItem(**STANDARD_PRESETS[0])
     assert preset.id
     constraints = ConstraintsResponse(**FIELD_CONSTRAINTS)

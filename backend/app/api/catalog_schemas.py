@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RoleCatalogItem(BaseModel):
@@ -8,6 +8,7 @@ class RoleCatalogItem(BaseModel):
     camp: str
     icon: str
     description: str
+    rules: list[str] = Field(default_factory=list)
     min_count: int
     max_count: int | None
     dependencies: list[str]
