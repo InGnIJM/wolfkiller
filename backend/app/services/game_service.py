@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
 import random
 import shutil
+import threading
 import time
 import traceback
 import uuid
@@ -33,6 +35,13 @@ from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier
 from app.core.night_flow import NightDirector
+from app.core.prompt_capture import (
+    PromptCapture,
+    PromptSink,
+    build_prompt_record,
+    prompt_capture_marker_exists,
+    resolve_capture_setting,
+)
 from app.core.role_runtime import (
     adopt_resource_declaration, resource_declaration_marker,
 )
@@ -487,6 +496,35 @@ def _prompt_digest() -> str:
     return hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
 
 
+def _accepts_capture(func) -> bool:
+    """Whether a role callable can take the prompt-capture sink.
+
+    Production roles are ``BaseRole`` subclasses and always can. Test doubles
+    often keep the historical three-argument shape, so the durable wrapper adapts
+    to both rather than forcing every double to grow a parameter.
+    """
+    try:
+        parameters = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return any(
+        name == "capture" or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for name, parameter in parameters.items()
+    )
+
+
+def _capture_adapter(func):
+    """Adapt a role callable to ``(state, conversation_log, payload, sink)``."""
+    if not _accepts_capture(func):
+        async def call(state, conversation_log, payload, sink):
+            return await func(state, conversation_log, payload)
+        return call
+
+    async def call(state, conversation_log, payload, sink):
+        return await func(state, conversation_log, payload, capture=sink)
+    return call
+
+
 def _usage_mapping(value: object) -> dict[str, int] | None:
     if value is None:
         return None
@@ -535,6 +573,15 @@ class GameService:
             None if repository is None else ModelInvocationService(repository)
         )
         self._durable_contexts: dict[str, dict[str, int]] = {}
+        # Runtime-only, like the other per-game maps here: capture handles must
+        # never reach a checkpoint, because the orchestration codec matches field
+        # sets exactly and any extra field stops old games from resuming.
+        self._prompt_captures: dict[str, PromptCapture | None] = {}
+        # The pipeline provider runs on an ``asyncio.to_thread`` worker while the
+        # speech and vote paths run on the event loop, so this map is touched from
+        # two threads. Two handles for one game would mean two descriptors and two
+        # independent write locks, which interleaves records into corrupt lines.
+        self._prompt_captures_lock = threading.Lock()
         self._recovery_warnings: dict[str, list[str]] = {}
         self._clock_tasks: dict[str, asyncio.Task] = {}
         self._clock_state: dict[str, dict[str, int | float | None]] = {}
@@ -1316,6 +1363,24 @@ class GameService:
                         )
                         self._wait_model_consumption_allowed_sync(game_id)
                         payload = durable.normalized_result
+                        capture = self._prompt_capture(game_id)
+                        if capture is not None and not durable.reused:
+                            # The night flow already hands over OpenAI-shaped
+                            # messages; the sink normalises and keeps them as-is.
+                            sink = PromptSink()
+                            sink.record(messages, tool_schema=schema, tool_name=tool_name)
+                            capture.flush(build_prompt_record(
+                                request_id=(
+                                    f"night:{round_number}:{tool_name}:{seat}:{digest[:16]}"
+                                ),
+                                call_kind="night", round_number=round_number,
+                                phase="night", seat=seat, contract_id=tool_name,
+                                transport="night_json", attempt=1,
+                                model_id=self._client_identity(llm_client)[1],
+                                # The only digest that covers the messages, which
+                                # is what makes this record independently verifiable.
+                                request_digest=digest, sink=sink,
+                            ))
                     if not isinstance(payload, Mapping):
                         raise ValueError("model gateway response is not a JSON object")
                 except Exception as error:
@@ -1472,6 +1537,7 @@ class GameService:
             self._engines.pop(game_id, None)
             self._games.pop(game_id, None)
             self._model_snapshots.pop(game_id, None)
+            self._close_prompt_capture(game_id)
             await self._close_game_clients(game_id)
             try:
                 self._manifest.remove_game(game_id)
@@ -1490,6 +1556,9 @@ class GameService:
             clock_task = self._clock_tasks.pop(game_id, None)
             if clock_task is not None and not clock_task.done():
                 clock_task.cancel()
+            # Release the capture descriptor here too: a long-lived process would
+            # otherwise hold one open fd per game it has ever run.
+            self._close_prompt_capture(game_id)
             asyncio.create_task(self._close_game_clients(game_id))
             if done.cancelled():
                 return
@@ -2038,6 +2107,44 @@ class GameService:
                 )
             time.sleep(0.05)
 
+    def _prompt_capture_setting(self) -> object:
+        """Stored operator override for prompt capture, or ``None``.
+
+        The settings store is wired in a later change; until then the environment
+        switch is the only input, which is also the documented fallback.
+        """
+        return None
+
+    def _prompt_capture(self, game_id: str) -> PromptCapture | None:
+        """Return this game's capture handle, deciding the switch once per game.
+
+        Capture latches at the game's first decision: a game that started with
+        capture on keeps capturing across a resume even if the switch is later
+        flipped off, and a game that started with it off never starts mid-way.
+        Re-reading the live switch would produce half-captured games, which
+        cannot be turned into complete training pairs.
+        """
+        # The whole check-then-create runs under the lock: two threads racing here
+        # would otherwise each open their own descriptor on the same file.
+        with self._prompt_captures_lock:
+            if game_id in self._prompt_captures:
+                return self._prompt_captures[game_id]
+            enabled, _source = resolve_capture_setting(self._prompt_capture_setting())
+            capture = (
+                PromptCapture(self.data_dir, game_id)
+                if enabled or prompt_capture_marker_exists(self.data_dir, game_id)
+                else None
+            )
+            self._prompt_captures[game_id] = capture
+            return capture
+
+    def _close_prompt_capture(self, game_id: str) -> None:
+        """Release this game's capture descriptor. Idempotent."""
+        with self._prompt_captures_lock:
+            capture = self._prompt_captures.pop(game_id, None)
+        if capture is not None:
+            capture.close()
+
     def _instrument_roles(self, game_id: str, roles: Mapping[int, object]) -> None:
         invocations = self._model_invocations
         if invocations is None:
@@ -2045,18 +2152,24 @@ class GameService:
         for seat, role in roles.items():
             original_speak = getattr(role, "speak")
             original_request_action = getattr(role, "request_action")
+            # Adapt once per role: the capture sink is optional for callables that
+            # predate it, and probing the signature per call would be wasteful.
+            call_speak = _capture_adapter(original_speak)
+            call_request_action = _capture_adapter(original_request_action)
 
             async def durable_speak(
                 state, conversation_log, context, *,
-                _seat=seat, _role=role, _call=original_speak,
+                _seat=seat, _role=role,
             ):
                 position = f"round:{state.round_number}:speech:{context}:seat:{_seat}"
                 request_id = f"speech:{state.round_number}:{context}:{_seat}"
                 profile, model = self._client_identity(getattr(_role, "llm_client", None))
                 generation = self._durable_contexts[game_id]["execution_generation"]
+                capture = self._prompt_capture(game_id)
+                sink = None if capture is None else PromptSink()
 
                 async def provider_call():
-                    value = await _call(state, conversation_log, context)
+                    value = await call_speak(state, conversation_log, context, sink)
                     return ({"text": value, "is_none": value is None}, None)
 
                 result = await invocations.invoke(
@@ -2072,17 +2185,29 @@ class GameService:
                     provider_call=provider_call, recovery=generation > 1,
                 )
                 await self._wait_model_consumption_allowed(game_id)
+                if capture is not None and not result.reused:
+                    capture.flush(build_prompt_record(
+                        request_id=request_id, call_kind="speech",
+                        round_number=state.round_number, phase=state.phase.value,
+                        seat=_seat, contract_id=context, transport="speech_tool",
+                        attempt=sink.attempt_count, model_id=model,
+                        request_digest=None, sink=sink,
+                    ))
                 return None if result.normalized_result.get("is_none") is True else result.normalized_result.get("text")
 
             async def durable_request_action(
                 state, conversation_log, request, *,
-                _seat=seat, _role=role, _call=original_request_action,
+                _seat=seat, _role=role,
             ):
                 profile, model = self._client_identity(getattr(_role, "llm_client", None))
                 generation = self._durable_contexts[game_id]["execution_generation"]
+                capture = self._prompt_capture(game_id)
+                sink = None if capture is None else PromptSink()
 
                 async def provider_call():
-                    accepted = await _call(state, conversation_log, request)
+                    accepted = await call_request_action(
+                        state, conversation_log, request, sink,
+                    )
                     return ({
                         "command": accepted.command.model_dump(),
                         "technical_failure_code": accepted.technical_failure_code,
@@ -2107,6 +2232,17 @@ class GameService:
                     provider_call=provider_call, recovery=generation > 1,
                 )
                 await self._wait_model_consumption_allowed(game_id)
+                if capture is not None and not result.reused:
+                    capture.flush(build_prompt_record(
+                        request_id=f"action:{request.idempotency_key}",
+                        call_kind="action",
+                        round_number=request.round_id, phase=request.phase.value,
+                        seat=_seat, contract_id=request.contract.contract_id,
+                        # The transport is chosen inside the role; a non-null
+                        # tool_name in the record is what marks a native-tool run.
+                        transport=None, attempt=sink.attempt_count,
+                        model_id=model, request_digest=None, sink=sink,
+                    ))
                 row = result.normalized_result
                 command = row.get("command")
                 if not isinstance(command, Mapping):
@@ -2214,6 +2350,22 @@ class GameService:
             )
             self._wait_model_consumption_allowed_sync(state.game_id)
             payload = durable.normalized_result
+            capture = self._prompt_capture(state.game_id)
+            if capture is not None and not durable.reused:
+                # Mirrors the create path: the same record shape, so a resumed
+                # night decision is indistinguishable from a fresh one.
+                sink = PromptSink()
+                sink.record(messages, tool_schema=schema, tool_name=tool_name)
+                capture.flush(build_prompt_record(
+                    request_id=(
+                        f"night:{state.round_number}:{tool_name}:{seat}:{digest[:16]}"
+                    ),
+                    call_kind="night", round_number=state.round_number,
+                    phase="night", seat=seat, contract_id=tool_name,
+                    transport="night_json", attempt=1,
+                    model_id=self._client_identity(client)[1],
+                    request_digest=digest, sink=sink,
+                ))
             if not isinstance(payload, Mapping):
                 raise ValueError("model gateway response is not a JSON object")
             engine = engine_box.get("engine")
@@ -2339,7 +2491,7 @@ class GameService:
         ActionCommand. Parse failures degrade to the contract's safe fallback
         so a point never stalls on a malformed model response.
         """
-        def provider(request, context, attempt):
+        def provider(request, context, attempt, *, prompt_sink=None):
             if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
                 command = director.collected_vote(request.actor_seat)
                 return command if command is not None else PipelineActionCommand(
@@ -2383,6 +2535,13 @@ class GameService:
             llm_client = None
             command = None
             failure: Exception | None = None
+            if prompt_sink is not None:
+                # The rendered prompt already embeds OUTPUT_ACTION_COMMAND_SCHEMA,
+                # so only the tool name is worth recording. The transient retry
+                # below re-sends these same messages, so one record covers both.
+                prompt_sink.record(
+                    messages, tool_name=request.contract.resolved_tool_name,
+                )
             try:
                 llm_client = client_provider(request.actor_seat)
                 result = llm_client.invoke_action(messages, request.contract)
@@ -2457,9 +2616,11 @@ class GameService:
                 "context_revision": request.context_revision,
             }
             generation = engine_context["execution_generation"]
+            capture = self._prompt_capture(context.game_id)
+            sink = None if capture is None else PromptSink()
 
             def provider_call():
-                command = provider(request, context, attempt)
+                command = provider(request, context, attempt, prompt_sink=sink)
                 return command.model_dump(), None
 
             result = self._model_invocations.invoke_sync(
@@ -2474,6 +2635,17 @@ class GameService:
                 provider_call=provider_call, recovery=generation > 1,
             )
             self._wait_model_consumption_allowed_sync(context.game_id)
+            if capture is not None and not result.reused:
+                capture.flush(build_prompt_record(
+                    request_id=f"pipeline:{request.action_key}",
+                    call_kind="pipeline",
+                    round_number=request.round_number, phase=request.phase,
+                    seat=request.actor_seat,
+                    contract_id=request.contract.contract_id,
+                    transport=None, attempt=sink.attempt_count,
+                    model_id=self._client_identity(client)[1],
+                    request_digest=None, sink=sink,
+                ))
             return PipelineActionCommand.model_validate(result.normalized_result)
 
         return durable_provider
@@ -2688,6 +2860,7 @@ class GameService:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 logger.warning("Engine task did not stop cleanly for %s", game_id)
         await self.ws_manager.close_game(game_id)
+        self._close_prompt_capture(game_id)
         game_dir = os.path.join(self.data_dir, "games", game_id)
         if os.path.exists(game_dir):
             shutil.rmtree(game_dir)
