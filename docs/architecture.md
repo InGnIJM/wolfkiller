@@ -71,10 +71,10 @@ WolfKiller/
 | `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
 | `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
-| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点，journal 键与请求 token 都用**对局冻结的** `registry_digest` 盖章（`core/registry_identity.py`），所以新增/修改角色不会让已完成的调度点被重放、也不会重复发起同一次模型请求 |
+| `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / POST_SPEECH_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点，journal 键与请求 token 都用**对局冻结的** `registry_digest` 盖章（`core/registry_identity.py`），所以新增/修改角色不会让已完成的调度点被重放、也不会重复发起同一次模型请求 |
 | `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
-| `roles/{werewolf,witch,seer,hunter,villager,guard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*`） |
+| `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king,knight,wolf_beauty,old_drunkard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王与狼美人复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴与狼美人殉情是仅 `react` 的无 LLM 契约，老酒鬼只有声明式标记（`charm_immune` / `delayable`）无契约 |
 
 辅助模块：
 
@@ -183,5 +183,5 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 ## 关键设计约束
 
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
-- **测试门禁**：后端 pytest 全量（`tests` + `app/` 内嵌测试）+ `--cov-fail-under=100`（statement/branch）。守卫样例证明新增角色不必改核心模块；`test_guard_extension.py` **不再**校验五个核心文件的 blob 哈希。
+- **测试门禁**：后端 pytest 全量（`tests` + `app/` 内嵌测试）+ `--cov-fail-under=100`（statement/branch）。六个扩展样例（`test_guard_extension.py` / `test_idiot_extension.py` / `test_werewolf_king_extension.py` / `test_knight_extension.py` / `test_wolf_beauty_extension.py` / `test_old_drunkard_extension.py`；`test_catalog_routes.py` 断言 11 角色 6 预设）；`test_guard_extension.py` **不再**校验五个核心文件的 blob 哈希。
 - **核心源码门禁**：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新禁词/角色名测试：`tests/test_game_engine.py`、`tests/test_action_resolver.py`、`tests/test_prompt_builder.py`、`tests/test_prompt_renderer.py`。
