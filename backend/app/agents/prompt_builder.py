@@ -12,6 +12,23 @@ from app.models.game import GameState
 from app.roles.registry import builtin_registry
 
 
+# Facts whose content already has a dedicated rendering site in the same prompt:
+# `public_role_rules` is rendered by `_public_role_rules`, `speeches`/`votes` by
+# the history block, and the public state keys by `## 当前公开状态`. Dumping them
+# again inside `## 你的私有事实` shipped the same data twice and cost roughly a
+# third of every prompt.
+_RENDERED_ELSEWHERE_FACT_KEYS = frozenset({
+    "actor_identity",
+    "public_role_rules",
+    "speeches",
+    "votes",
+    "alive_seats",
+    "dead_seats",
+    "phase",
+    "round_number",
+})
+
+
 SPEECH_TOOLS = [
     {
         "type": "function",
@@ -340,7 +357,7 @@ class PromptBuilder:
         lines = [f"- 可用资源：{resource_text}"]
         facts = view.get("facts") or {}
         for key, value in facts.items():
-            if key in {"actor_identity"}:
+            if key in _RENDERED_ELSEWHERE_FACT_KEYS:
                 continue
             if key in {"sheriff", "sheriff_enabled"} and not facts.get("sheriff_enabled"):
                 continue
@@ -351,7 +368,11 @@ class PromptBuilder:
                     lines.append(f"- 解药救治目标（银水）：{value}号玩家（你曾在夜间对该玩家使用了解药）")
                 continue
             lines.append(f"- {key}：{json.dumps(value, ensure_ascii=False, sort_keys=True)}")
-        return "\n".join(lines) if len(lines) > 1 else "- 无额外私有事实。"
+        if len(lines) > 1:
+            return "\n".join(lines)
+        # Declared resources have no other rendering site, so a role that owns
+        # them must still see them once every other fact is rendered elsewhere.
+        return lines[0] if resources else "- 无额外私有事实。"
     @staticmethod
     def _format_thoughts(conversation_log: ConversationLog, round_num: int, seat: int) -> str:
         thoughts = conversation_log.get_thoughts_for_seat(seat)
@@ -410,9 +431,15 @@ class PromptBuilder:
             if not count:
                 continue
             spec = specs[role_id]
+            # Attribute values need quote escaping; element text does not, and
+            # escaping it turned every apostrophe into `&#x27;` — noise the model
+            # has to decode, and five extra characters per occurrence. This
+            # matches PromptRenderer, which escapes its own rules block the same
+            # way, so both rendering sites read identically.
             lines.append(
                 f'<role id="{escape(role_id, quote=True)}" count="{count}">'
-                f'{escape(spec.display_name)}: {escape(spec.instructions)}</role>'
+                f'{escape(spec.display_name, quote=False)}: '
+                f'{escape(spec.instructions, quote=False)}</role>'
             )
         return "<public_role_rules>\n" + "\n".join(lines) + "\n</public_role_rules>"
 

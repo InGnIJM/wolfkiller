@@ -515,8 +515,11 @@ class TestPromptBuilderHelpers:
             "resources": {"gun": 1},
             "facts": {"actor_identity": {}, "alive_seats": [1, 2], "dead_seats": []},
         })
+        # Resources are private facts and have no other rendering site, so a role
+        # that declares them must still see them once every other fact is
+        # rendered by its canonical block.
         assert "可用资源：gun=1" in block
-        assert "alive_seats" in block
+        assert "alive_seats" not in block
         assert "dead_seats" not in block  # empty sequences are skipped
 
     def test_private_facts_block_omits_unimplemented_sheriff(self):
@@ -524,7 +527,44 @@ class TestPromptBuilderHelpers:
             "facts": {"actor_identity": {}, "sheriff": None, "alive_seats": [1, 2]},
         })
         assert "sheriff" not in block
-        assert "alive_seats" in block
+        assert "alive_seats" not in block
+
+    def test_private_facts_block_keeps_unrendered_private_facts(self):
+        block = PromptBuilder._private_facts_block({
+            "facts": {
+                "actor_identity": {}, "alive_seats": [1, 2],
+                "public_role_rules": ({"id": "x"},), "speeches": [{"text": "t"}],
+                "votes": [{"voter_seat": 1}], "phase": "day", "round_number": 2,
+                "wolf_kill_target": 9,
+            },
+        })
+        assert "wolf_kill_target" in block
+        for key in ("public_role_rules", "speeches", "votes", "alive_seats",
+                    "phase", "round_number"):
+            assert f"- {key}：" not in block
+
+    def test_day_prompt_renders_each_fact_exactly_once(self):
+        """Every projected fact must reach the model through one rendering site.
+
+        `alive_seats`/`dead_seats`/`phase`/`round_number` are rendered by
+        `## 当前公开状态`, `public_role_rules` by `<public_role_rules>`, and
+        `speeches`/`votes` by `## 历史与对话`. Dumping the same facts again as
+        JSON inside `## 你的私有事实` cost about 7.7k characters of every prompt.
+        """
+        prompt = PromptBuilder().build_speech_prompt(
+            make_state(), 4, "wolf-killer-villager", make_log(), "day_speech",
+        )
+
+        for key in ("public_role_rules", "speeches", "votes", "alive_seats",
+                    "dead_seats", "phase", "round_number"):
+            assert f"- {key}：" not in prompt
+
+        # The canonical rendering sites all survive.
+        assert "<public_role_rules>" in prompt
+        assert "## 当前公开状态" in prompt
+        assert "存活玩家：" in prompt
+        assert "## 历史与对话" in prompt
+        assert "我觉得3号有点可疑。" in prompt
 
     def test_day_speech_prompt_omits_sheriff_and_forbids_invented_rules(self):
         prompt = PromptBuilder().build_speech_prompt(
