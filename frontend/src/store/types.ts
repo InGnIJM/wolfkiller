@@ -478,6 +478,8 @@ export interface RoleCatalogItem {
   camp: string;
   icon: string;
   description: string;
+  /** 玩家向的规则条目；旧响应或测试 mock 可能没有这个字段。 */
+  rules?: string[];
   min_count: number;
   max_count: number | null;
   dependencies: string[];

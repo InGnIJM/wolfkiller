@@ -34,6 +34,10 @@ vi.mock('../components/create/CreateGameWizard', () => ({
   default: () => <div data-testid="wizard-page" />,
 }));
 
+vi.mock('../components/rules/RulesPage', () => ({
+  default: () => <div data-testid="rules-page" />,
+}));
+
 vi.mock('../components/benchmarks/BenchmarkListPage', () => ({
   default: () => <div data-testid="benchmarks-page" />,
 }));
@@ -93,6 +97,16 @@ describe('AppShell routing', () => {
   it('renders the 模型管理 nav button', () => {
     renderAt('/');
     expect(screen.getByRole('button', { name: '模型管理' })).toBeInTheDocument();
+  });
+
+  it('renders rules page at /rules and opens it from the nav', () => {
+    renderAt('/rules');
+    expect(screen.getByTestId('rules-page')).toBeInTheDocument();
+
+    cleanup();
+    renderAt('/');
+    fireEvent.click(screen.getByRole('button', { name: '规则介绍' }));
+    expect(navigateMock).toHaveBeenCalledWith('/rules');
   });
 
   it.each([

@@ -13,6 +13,7 @@ import GameList from './components/lobby/GameList';
 import GameBoard from './components/game/GameBoard';
 import ModelConfigPage from './components/models/ModelConfigPage';
 import CreateGameWizard from './components/create/CreateGameWizard';
+import RulesPage from './components/rules/RulesPage';
 
 const BenchmarkListPage = lazy(() => import('./components/benchmarks/BenchmarkListPage'));
 const NewBenchmarkPage = lazy(() => import('./components/benchmarks/NewBenchmarkPage'));
@@ -95,6 +96,9 @@ export function AppShell() {
                   血月剧场 · AI WEREWOLF
                 </Typography>
               </Box>
+              <Button color="inherit" size="small" onClick={() => navigate('/rules')}>
+                规则介绍
+              </Button>
               <Button color="inherit" size="small" onClick={() => navigate('/benchmarks')}>
                 模型评测
               </Button>
@@ -116,6 +120,7 @@ export function AppShell() {
               )}
             />
             <Route path="/models" element={<ModelConfigPage />} />
+            <Route path="/rules" element={<RulesPage />} />
             <Route path="/create" element={<CreateGameWizard />} />
             <Route path="/game/:gameId" element={<GameRoute />} />
             <Route path="/benchmarks" element={<Suspense fallback={<RouteFallback />}><BenchmarkListPage /></Suspense>} />
