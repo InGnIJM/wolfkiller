@@ -2159,7 +2159,7 @@ class GameService:
 
             async def durable_speak(
                 state, conversation_log, context, *,
-                _seat=seat, _role=role,
+                _seat=seat, _role=role, _call=call_speak,
             ):
                 position = f"round:{state.round_number}:speech:{context}:seat:{_seat}"
                 request_id = f"speech:{state.round_number}:{context}:{_seat}"
@@ -2169,7 +2169,7 @@ class GameService:
                 sink = None if capture is None else PromptSink()
 
                 async def provider_call():
-                    value = await call_speak(state, conversation_log, context, sink)
+                    value = await _call(state, conversation_log, context, sink)
                     return ({"text": value, "is_none": value is None}, None)
 
                 result = await invocations.invoke(
@@ -2197,7 +2197,7 @@ class GameService:
 
             async def durable_request_action(
                 state, conversation_log, request, *,
-                _seat=seat, _role=role,
+                _seat=seat, _role=role, _call=call_request_action,
             ):
                 profile, model = self._client_identity(getattr(_role, "llm_client", None))
                 generation = self._durable_contexts[game_id]["execution_generation"]
@@ -2205,7 +2205,7 @@ class GameService:
                 sink = None if capture is None else PromptSink()
 
                 async def provider_call():
-                    accepted = await call_request_action(
+                    accepted = await _call(
                         state, conversation_log, request, sink,
                     )
                     return ({
