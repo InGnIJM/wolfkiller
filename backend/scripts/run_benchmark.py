@@ -174,7 +174,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--client-request-id", help="idempotency key; generated when omitted")
     parser.add_argument("--poll-interval", type=_positive_float, default=5.0)
-    parser.add_argument("--timeout-seconds", type=_positive_float, default=3600.0)
+    parser.add_argument("--timeout-seconds", type=_positive_float, default=7200.0)
     parser.add_argument(
         "--data-dir", default="data",
         help="deprecated compatibility option; data directory belongs to the API service",

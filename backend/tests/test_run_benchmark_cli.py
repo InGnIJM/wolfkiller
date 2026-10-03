@@ -77,7 +77,7 @@ def test_legacy_arguments_build_explicit_single_config_spec() -> None:
     assert payload["games"] == 3
     assert payload["models"] == [{"model_config_id": "model-a"}]
     assert payload["concurrency"] == 1
-    assert payload["game_timeout_seconds"] == 3600
+    assert payload["game_timeout_seconds"] == 7200
 
 
 @pytest.mark.parametrize("model_id", [None, "model-a"])
