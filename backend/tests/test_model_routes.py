@@ -1,9 +1,11 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app.agents.providers.registry import ProviderRegistry
 from app.api.model_schemas import (
     ModelAssignment, ModelConfigRequest, ModelConfigResponse,
     ModelListResponse, ModelTestRequest,
@@ -88,6 +90,71 @@ async def test_list_models_masks_all_keys(store, monkeypatch):
     assert len(response.configs) == 1
     assert "sk-very-secret-9999" not in response.model_dump_json()
     assert response.configs[0].api_key_masked == "sk-***9999"
+
+
+@pytest.mark.asyncio
+async def test_list_models_attaches_recorded_latency(store, monkeypatch):
+    """The benchmark wizard budgets a run from this, so it has to be the
+    resolved endpoint identity, not the raw ``auto`` profile."""
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    config = _stored(store)
+    profile = ProviderRegistry().resolve(
+        config.provider_profile, config.base_url, config.model_id,
+    ).profile_id
+    seen: list[dict[str, object]] = []
+
+    def _stats(**kwargs):
+        seen.append(kwargs)
+        return {(config.model_id, profile): {
+            "samples": 30, "avg_ms": 12000, "p50_ms": 9000, "p90_ms": 30000,
+        }}
+
+    monkeypatch.setattr(
+        model_routes, "get_repository", lambda: SimpleNamespace(model_latency_stats=_stats),
+    )
+
+    response = await model_routes.list_models()
+
+    latency = response.configs[0].latency
+    assert latency is not None
+    assert (latency.samples, latency.avg_ms, latency.p50_ms, latency.p90_ms) == (
+        30, 12000, 9000, 30000,
+    )
+    assert list(seen[0]) == ["since"]
+    assert str(seen[0]["since"]).startswith("20")
+    # The wizard reads these snake_case keys straight off the wire.
+    assert set(response.model_dump()["configs"][0]["latency"]) == {
+        "samples", "avg_ms", "p50_ms", "p90_ms",
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_models_without_repository_reports_no_latency(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    _stored(store)
+    monkeypatch.setattr(model_routes, "get_repository", lambda: None)
+
+    response = await model_routes.list_models()
+
+    assert response.configs[0].latency is None
+
+
+@pytest.mark.asyncio
+async def test_list_models_ignores_history_from_another_endpoint(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    config = _stored(store)
+    monkeypatch.setattr(
+        model_routes, "get_repository",
+        lambda: SimpleNamespace(model_latency_stats=lambda **_: {
+            (config.model_id, "some-other-profile"): {
+                "samples": 30, "avg_ms": 1, "p50_ms": 1, "p90_ms": 1,
+            },
+        }),
+    )
+
+    response = await model_routes.list_models()
+
+    assert response.configs[0].latency is None
 
 
 @pytest.mark.asyncio

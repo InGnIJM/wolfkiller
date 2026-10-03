@@ -246,3 +246,86 @@ def test_model_attempt_quota_is_atomic_across_repository_instances(tmp_path) -> 
     finally:
         first.close()
         second.close()
+
+
+def _record_attempt(
+    repository: GameRepository, *, request_id: str, model_id: str,
+    provider_profile: str, elapsed_ms: int | None, status: str = "resolved",
+) -> None:
+    repository.prepare_model_request(
+        game_id="game-1", request_id=request_id, actor_seat=1,
+        action_position=request_id, request_digest=request_id,
+        provider_profile=provider_profile, model_id=model_id,
+    )
+    attempt = repository.start_model_attempt(
+        game_id="game-1", request_id=request_id, execution_generation=1,
+    )
+    repository.finish_model_attempt(
+        attempt["attempt_id"], status=status, failure_code=None,
+        elapsed_ms=elapsed_ms, usage=None,
+    )
+
+
+def test_model_latency_stats_summarize_resolved_attempts(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        repository.create_game(
+            game_id="game-1", name="latency", config={},
+            execution_status="running", source="native", model_snapshot=[],
+        )
+        for index, elapsed in enumerate([4000, 1000, 3000, 2000]):
+            _record_attempt(
+                repository, request_id=f"fast-{index}", model_id="model-fast",
+                provider_profile="profile-a", elapsed_ms=elapsed,
+            )
+        # A lone call is not a measurement, and a failed or untimed attempt
+        # never carried a latency worth averaging.
+        _record_attempt(
+            repository, request_id="lonely", model_id="model-slow",
+            provider_profile="profile-a", elapsed_ms=9000,
+        )
+        _record_attempt(
+            repository, request_id="failed", model_id="model-fast",
+            provider_profile="profile-a", elapsed_ms=60000, status="failed",
+        )
+        _record_attempt(
+            repository, request_id="untimed", model_id="model-fast",
+            provider_profile="profile-a", elapsed_ms=None,
+        )
+
+        stats = repository.model_latency_stats(min_samples=2)
+
+        assert stats == {
+            ("model-fast", "profile-a"): {
+                "samples": 4, "avg_ms": 2500, "p50_ms": 3000, "p90_ms": 4000,
+            },
+        }
+    finally:
+        repository.close()
+
+
+def test_model_latency_stats_window_and_sample_floor(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        repository.create_game(
+            game_id="game-1", name="latency", config={},
+            execution_status="running", source="native", model_snapshot=[],
+        )
+        for index in range(3):
+            _record_attempt(
+                repository, request_id=f"call-{index}", model_id="model-a",
+                provider_profile="profile-a", elapsed_ms=1000 * (index + 1),
+            )
+
+        assert ("model-a", "profile-a") in repository.model_latency_stats(min_samples=3)
+        assert repository.model_latency_stats(min_samples=4) == {}
+        assert repository.model_latency_stats(
+            since="2000-01-01T00:00:00+00:00", min_samples=1,
+        ) == {("model-a", "profile-a"): {
+            "samples": 3, "avg_ms": 2000, "p50_ms": 2000, "p90_ms": 3000,
+        }}
+        assert repository.model_latency_stats(
+            since="2999-01-01T00:00:00+00:00", min_samples=1,
+        ) == {}
+    finally:
+        repository.close()
