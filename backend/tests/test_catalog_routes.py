@@ -138,6 +138,15 @@ def test_field_constraints_defaults():
     assert FIELD_CONSTRAINTS["min_good"] == 1
 
 
+def test_every_preset_publishes_a_timeout_budget_matching_its_size():
+    """A twelve-player field costs about 136 model calls against 100-111 for
+    nine or ten, and that difference is what makes an hour run out."""
+    for preset in STANDARD_PRESETS:
+        players = sum(preset["role_counts"].values())
+        expected = 7200 if players >= 12 else 3600
+        assert preset["recommended_timeout_seconds"] == expected, preset["id"]
+
+
 def test_schema_models_accept_catalog_shapes():
     item = RoleCatalogItem(**role_catalog(builtin_registry.freeze())[0])
     assert item.role_id
@@ -169,6 +178,10 @@ async def test_list_presets_endpoint_returns_standards():
 
     assert len(response.presets) == 6
     assert response.presets[0].name == "九人标准场"
+    assert response.presets[0].recommended_timeout_seconds == 3600
+    assert response.presets[-1].recommended_timeout_seconds == 7200
+    # The wizard reads this key straight off the wire.
+    assert "recommended_timeout_seconds" in response.model_dump()["presets"][0]
 
 
 @pytest.mark.asyncio

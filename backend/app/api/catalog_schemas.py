@@ -25,6 +25,10 @@ class PresetItem(BaseModel):
     description: str
     role_counts: dict[str, int]
     enable_sheriff: bool = False
+    # Wall-clock budget the benchmark wizard seeds for this field: a twelve
+    # player game needs roughly 136 model calls against 100-111 for nine or
+    # ten, which is the difference between finishing and timing out.
+    recommended_timeout_seconds: int = 3600
 
 
 class PresetsResponse(BaseModel):

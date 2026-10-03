@@ -127,6 +127,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-hunter": 1,
         },
         "enable_sheriff": False,
+        "recommended_timeout_seconds": 3600,
     },
     {
         "id": "ten-player-standard",
@@ -141,6 +142,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-guard": 1,
         },
         "enable_sheriff": False,
+        "recommended_timeout_seconds": 3600,
     },
     {
         "id": "twelve-player-idiot",
@@ -155,6 +157,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-idiot": 1,
         },
         "enable_sheriff": True,
+        "recommended_timeout_seconds": 7200,
     },
     {
         "id": "twelve-player-wolf-king",
@@ -170,6 +173,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-guard": 1,
         },
         "enable_sheriff": True,
+        "recommended_timeout_seconds": 7200,
     },
     {
         "id": "twelve-player-knight",
@@ -184,6 +188,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-knight": 1,
         },
         "enable_sheriff": False,
+        "recommended_timeout_seconds": 7200,
     },
     {
         "id": "twelve-player-wolf-beauty",
@@ -200,6 +205,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-guard": 1,
         },
         "enable_sheriff": True,
+        "recommended_timeout_seconds": 7200,
     },
 ]
 
