@@ -72,6 +72,19 @@ class ModelConfigRequest(BaseModel):
         return validated_headers(value)
 
 
+class ModelLatencyStats(BaseModel):
+    """Observed call latency for one model, used to budget a benchmark game.
+
+    ``avg_ms`` drives the wall-clock estimate; the percentiles are published
+    so the wizard can show how heavy the tail is without recomputing it.
+    """
+
+    samples: int
+    avg_ms: int
+    p50_ms: int
+    p90_ms: int
+
+
 class ModelConfigResponse(BaseModel):
     id: str
     name: str
@@ -86,6 +99,8 @@ class ModelConfigResponse(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     created_at: str
     updated_at: str
+    # ``None`` when this model has too little recorded history to estimate.
+    latency: Optional[ModelLatencyStats] = None
 
 
 class ModelListResponse(BaseModel):

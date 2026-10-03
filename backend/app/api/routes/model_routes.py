@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import time
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
 from app.agents.llm_client import LLMClient, LLMClientConfig, derive_strict_base_url
 from app.agents.providers.registry import ProviderRegistry
 from app.api.model_schemas import (
     ModelConfigRequest, ModelConfigResponse, ModelListResponse,
-    ModelCapabilitiesResponse, ModelTestRequest, ModelTestResponse,
+    ModelCapabilitiesResponse, ModelLatencyStats, ModelTestRequest, ModelTestResponse,
 )
 from app.stores.model_config_store import ModelConfig, get_model_config_store
 from app.stores.model_key_crypto import (
@@ -19,6 +19,9 @@ from app.stores.model_key_crypto import (
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
+# Latency history older than this says little about the endpoint as it is now.
+LATENCY_WINDOW_DAYS = 30
+
 
 def get_repository():
     """Use the repository already owned by the running application."""
@@ -26,7 +29,20 @@ def get_repository():
     return None if main is None else getattr(main, "repository", None)
 
 
-def _to_response(config: ModelConfig) -> ModelConfigResponse:
+def _latency_stats() -> dict[tuple[str, str], dict[str, int]]:
+    """Per (model_id, provider_profile) call latency, or empty when unknown."""
+    repository = get_repository()
+    if repository is None:
+        return {}
+    since = (
+        datetime.now(timezone.utc) - timedelta(days=LATENCY_WINDOW_DAYS)
+    ).isoformat()
+    return repository.model_latency_stats(since=since)
+
+
+def _to_response(
+    config: ModelConfig, latency: ModelLatencyStats | None = None,
+) -> ModelConfigResponse:
     crypto = ModelKeyCrypto()
     masked: str | None = None
     key_invalid = False
@@ -43,13 +59,32 @@ def _to_response(config: ModelConfig) -> ModelConfigResponse:
         provider_profile=config.provider_profile,
         headers=dict(config.headers),
         created_at=config.created_at, updated_at=config.updated_at,
+        latency=latency,
     )
+
+
+def _latency_for(
+    config: ModelConfig, stats: dict[tuple[str, str], dict[str, int]],
+) -> ModelLatencyStats | None:
+    """Match stored history to this config's resolved endpoint identity.
+
+    Recorded attempts carry the profile the transport actually used, so an
+    ``auto`` config has to be resolved the same way before it can be matched.
+    """
+    resolved = ProviderRegistry().resolve(
+        config.provider_profile, config.base_url, config.model_id,
+    ).profile_id
+    row = stats.get((config.model_id, resolved))
+    return None if row is None else ModelLatencyStats(**row)
 
 
 @router.get("", response_model=ModelListResponse)
 async def list_models():
     store = get_model_config_store()
-    return ModelListResponse(configs=[_to_response(c) for c in store.list_all()])
+    stats = _latency_stats()
+    return ModelListResponse(
+        configs=[_to_response(c, _latency_for(c, stats)) for c in store.list_all()],
+    )
 
 
 @router.post("", response_model=ModelConfigResponse, status_code=201)

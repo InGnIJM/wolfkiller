@@ -63,6 +63,12 @@ def _decode(value: str | None, default: T) -> Any | T:
     return json.loads(value)
 
 
+def _percentile(sorted_values: list[int], fraction: float) -> int:
+    """Nearest-rank percentile over an already sorted, non-empty sample."""
+    index = min(int(len(sorted_values) * fraction), len(sorted_values) - 1)
+    return sorted_values[index]
+
+
 def _references_model_config(value: object, config_id: str) -> bool:
     if isinstance(value, Mapping):
         for key, item in value.items():
@@ -1348,6 +1354,46 @@ class GameRepository:
                 )
                 result.append(item)
             return result
+
+    def model_latency_stats(
+        self, *, since: str | None = None, min_samples: int = 20,
+    ) -> dict[tuple[str, str], dict[str, int]]:
+        """Aggregate resolved attempt latency per (model_id, provider_profile).
+
+        The benchmark wizard spends this to estimate how long one game will
+        take before committing an hour of wall clock to it, so only attempts
+        that actually resolved with a recorded ``elapsed_ms`` count, and a
+        group below ``min_samples`` is dropped rather than published as if a
+        handful of calls were a measurement.
+        """
+        query = (
+            "SELECT r.model_id, r.provider_profile, a.elapsed_ms "
+            "FROM model_attempts a JOIN model_requests r "
+            "ON r.game_id=a.game_id AND r.request_id=a.request_id "
+            "WHERE a.status='resolved' AND a.elapsed_ms IS NOT NULL"
+        )
+        params: tuple[object, ...] = ()
+        if since is not None:
+            query += " AND a.started_at >= ?"
+            params = (since,)
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        grouped: dict[tuple[str, str], list[int]] = {}
+        for row in rows:
+            key = (row["model_id"], row["provider_profile"])
+            grouped.setdefault(key, []).append(int(row["elapsed_ms"]))
+        stats: dict[tuple[str, str], dict[str, int]] = {}
+        for key, values in grouped.items():
+            if len(values) < min_samples:
+                continue
+            values.sort()
+            stats[key] = {
+                "samples": len(values),
+                "avg_ms": round(sum(values) / len(values)),
+                "p50_ms": _percentile(values, 0.50),
+                "p90_ms": _percentile(values, 0.90),
+            }
+        return stats
 
     def create_benchmark_run(
         self, *, run_id: str, client_request_id: str, request_digest: str,
