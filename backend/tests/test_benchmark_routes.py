@@ -323,6 +323,24 @@ def test_explicit_model_assignment_counts_are_preserved():
     ]
 
 
+def test_default_game_timeout_budgets_two_hours_per_game():
+    """One hour only bought two or three days of a twelve-player game, so the
+    fallback budget is two hours unless the caller sends its own value."""
+    specification = BenchmarkCreateRequest(
+        client_request_id="client", name="Arena", mode="mixed_arena", seed=1,
+        role_counts={"villager": 12}, games=1,
+        models=[{"model_config_id": "a"}],
+    ).frozen_specification()
+
+    assert specification["game_timeout_seconds"] == 7200
+    explicit = BenchmarkCreateRequest(
+        client_request_id="client", name="Arena", mode="mixed_arena", seed=1,
+        role_counts={"villager": 12}, games=1, game_timeout_seconds=1800,
+        models=[{"model_config_id": "a"}],
+    ).frozen_specification()
+    assert explicit["game_timeout_seconds"] == 1800
+
+
 @pytest.mark.parametrize(
     "model_fields",
     [
