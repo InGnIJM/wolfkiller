@@ -10,8 +10,53 @@ import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import { fetchPresets } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import { useModelConfigStore } from '../../store/modelConfigStore';
-import type { BenchmarkCreateInput, BenchmarkMode, GamePreset } from '../../store/types';
+import type {
+  BenchmarkCreateInput, BenchmarkMode, GamePreset, ModelLatencyStats,
+} from '../../store/types';
 import { BACKDROP } from '../../theme/tokens';
+
+/** 单局活动超时默认值（秒）：12 人板一局约 136 次模型调用，慢模型下 3600 秒必然超时。 */
+const DEFAULT_TIMEOUT_SECONDS = 7200;
+
+/** 预估单局时长的安全余量：覆盖长尾样本与后期变慢（存活人数减少后发言与复投拉长）。 */
+const LATENCY_SAFETY_FACTOR = 1.3;
+
+/**
+ * 预估单局模型调用耗时（毫秒）。
+ * 调用次数按实测拟合：10 人无警长约 111 次、12 人无警长约 117 次、12 人开警长约 136 次，
+ * 公式 `人数 × 10 +（开警长 ? 16 : 0）` 对后两者误差约 ±10%。
+ */
+function estimateSingleGameMs(
+  { playerCount, enableSheriff, avgMs }:
+  { playerCount: number; enableSheriff: boolean; avgMs: number },
+): number {
+  const estimatedCalls = playerCount * 10 + (enableSheriff ? 16 : 0);
+  return estimatedCalls * avgMs * LATENCY_SAFETY_FACTOR;
+}
+
+/** 预估值与单局超时的对比结论：超过超时即几乎必定超时，超过 75% 建议调大超时。 */
+function timeoutEstimateAlert(
+  estimatedMs: number, timeoutSeconds: number,
+): { severity: 'info' | 'warning' | 'error'; message: string } {
+  const estimatedMinutes = Math.round(estimatedMs / 60000);
+  const timeoutMinutes = Math.round(timeoutSeconds / 60);
+  if (estimatedMs > timeoutSeconds * 1000) {
+    return {
+      severity: 'error',
+      message: `预计单局约 ${estimatedMinutes} 分钟，已超过单局超时 ${timeoutMinutes} 分钟，几乎必定超时`,
+    };
+  }
+  if (estimatedMs > timeoutSeconds * 1000 * 0.75) {
+    return {
+      severity: 'warning',
+      message: `预计单局约 ${estimatedMinutes} 分钟，接近单局超时 ${timeoutMinutes} 分钟，建议调大超时`,
+    };
+  }
+  return {
+    severity: 'info',
+    message: `预计单局约 ${estimatedMinutes} 分钟（单局超时 ${timeoutMinutes} 分钟）`,
+  };
+}
 
 function requestId(): string {
   return globalThis.crypto?.randomUUID?.()
@@ -30,7 +75,7 @@ export default function NewBenchmarkPage() {
   const [blocks, setBlocks] = useState(1);
   const [maxGames, setMaxGames] = useState<number | ''>('');
   const [concurrency, setConcurrency] = useState(1);
-  const [timeout, setTimeoutValue] = useState(3600);
+  const [timeout, setTimeoutValue] = useState(DEFAULT_TIMEOUT_SECONDS);
   const [modelIds, setModelIds] = useState<string[]>([]);
   const [baselineId, setBaselineId] = useState('');
   const [candidateId, setCandidateId] = useState('');
@@ -50,6 +95,18 @@ export default function NewBenchmarkPage() {
     return () => { active = false; };
   }, [loadModels]);
 
+  // 切换角色预设时按预设的推荐超时抬升单局超时，只升不降：用户手动调大的值不会被调小，
+  // 而从轻板切到 12 人板时也不会停在不够用的旧值上。首次加载直接 setPresetId，
+  // 不走这里，所以默认超时仍是 DEFAULT_TIMEOUT_SECONDS。
+  const applyPreset = (nextPresetId: string) => {
+    setPresetId(nextPresetId);
+    const recommended = presets.find(
+      (item) => item.id === nextPresetId,
+    )?.recommended_timeout_seconds;
+    if (typeof recommended !== 'number' || !Number.isInteger(recommended) || recommended <= 0) return;
+    setTimeoutValue((current) => Math.max(current, recommended));
+  };
+
   const preset = presets.find((item) => item.id === presetId) ?? null;
   const playerCount = preset
     ? Object.values(preset.role_counts).reduce((total, count) => total + count, 0)
@@ -66,6 +123,23 @@ export default function NewBenchmarkPage() {
   );
 
   const modelById = useMemo(() => new Map(configs.map((item) => [item.id, item])), [configs]);
+
+  // 混座评测的发言是串行的，单局总时长由所选模型的平均延迟决定，因此多模型取算术平均而非最大值。
+  const selectedModelIds = mode === 'mixed_arena' ? modelIds : [baselineId, candidateId].filter(Boolean);
+  const latencySamples = selectedModelIds
+    .map((id) => modelById.get(id)?.latency)
+    .filter((item): item is ModelLatencyStats => item != null && item.samples > 0);
+  const averageLatencyMs = latencySamples.length === 0
+    ? null
+    : latencySamples.reduce((total, item) => total + item.avg_ms, 0) / latencySamples.length;
+  const estimate = preset && averageLatencyMs !== null
+    ? timeoutEstimateAlert(
+        estimateSingleGameMs({
+          playerCount, enableSheriff: Boolean(preset.enable_sheriff), avgMs: averageLatencyMs,
+        }),
+        timeout,
+      )
+    : null;
 
   const submit = async () => {
     if (!preset || !canSubmit) return;
@@ -121,7 +195,7 @@ export default function NewBenchmarkPage() {
             </FormControl>
             <FormControl>
               <InputLabel id="scenario-label">角色场景</InputLabel>
-              <Select labelId="scenario-label" label="角色场景" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+              <Select labelId="scenario-label" label="角色场景" value={presetId} onChange={(event) => applyPreset(event.target.value)}>
                 {presets.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
               </Select>
             </FormControl>
@@ -172,6 +246,11 @@ export default function NewBenchmarkPage() {
               <Box><Typography color="text.secondary">实际总局数</Typography><Typography variant="h5">{actualGames}</Typography></Box>
               <Box><Typography color="text.secondary">均衡状态</Typography><Chip color={balanced ? 'success' : 'warning'} label={balanced ? '完整均衡' : '截断，不完全均衡'} /></Box>
             </Box>
+            {preset && (
+              <Alert severity={estimate ? estimate.severity : 'info'} sx={{ mt: 2 }}>
+                {estimate ? estimate.message : '暂无该模型的历史延迟数据，无法预估单局时长'}
+              </Alert>
+            )}
           </CardContent>
         </Card>
 

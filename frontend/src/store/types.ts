@@ -438,6 +438,14 @@ export type ProviderProfileId =
   | 'anthropic'
   | 'custom-anthropic';
 
+/** 后端按历史模型请求统计的延迟分布；没有样本时为 `null`。 */
+export interface ModelLatencyStats {
+  samples: number;
+  avg_ms: number;
+  p50_ms: number;
+  p90_ms: number;
+}
+
 export interface ModelConfig {
   id: string;
   name: string;
@@ -450,6 +458,8 @@ export interface ModelConfig {
   strict_base_url: string | null;
   provider_profile: ProviderProfileId;
   headers: Record<string, string>;
+  /** 旧响应或测试 mock 可能没有这个字段。 */
+  latency?: ModelLatencyStats | null;
   created_at: string;
   updated_at: string;
 }
@@ -492,6 +502,8 @@ export interface GamePreset {
   description: string;
   role_counts: Record<string, number>;
   enable_sheriff?: boolean;
+  /** 该板子建议的单局超时（秒）：9/10 人板 3600，12 人板 7200；旧响应可能没有这个字段。 */
+  recommended_timeout_seconds?: number;
 }
 
 export interface FieldConstraints {
