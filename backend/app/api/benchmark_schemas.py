@@ -26,7 +26,11 @@ class BenchmarkCreateRequest(BaseModel):
     block_count: int = Field(default=1, ge=1, le=10_000)
     max_games: int | None = Field(default=None, ge=1)
     concurrency: int = Field(default=1, ge=1, le=4)
-    game_timeout_seconds: int = Field(default=3600, ge=1)
+    # Two hours, not one: a twelve-player field costs roughly 136 model calls
+    # and a slow gateway charges 30s+ for each, so an hour only buys two or
+    # three days of a game that needs four. Callers that know better still
+    # send their own value; this is only the fallback.
+    game_timeout_seconds: int = Field(default=7200, ge=1)
     max_attempts_per_game: int | None = Field(default=None, ge=1)
 
     # Compatibility fields understood by the current deterministic scheduler.

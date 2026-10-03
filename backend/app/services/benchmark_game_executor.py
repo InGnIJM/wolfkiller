@@ -99,7 +99,7 @@ class BenchmarkGameExecutor:
         timeout_seconds = (
             configured_timeout
             if type(configured_timeout) is int and configured_timeout > 0
-            else 3600
+            else 7200
         )
         game_id = item.get("game_id")
         if isinstance(game_id, str):
