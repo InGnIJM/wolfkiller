@@ -6,7 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModelSnapshotEntry, PublicPlayerState } from '../../../store/types';
-import { CARD_BACK, ROLE_ART } from '../../../theme/tokens';
+import { CARD_BACK, roleArt } from '../../../theme/tokens';
 import SeatMap from '../SeatMap';
 
 class MockResizeObserver {
@@ -177,7 +177,8 @@ describe('SeatMap role badges', () => {
 
     const wolf = screen.getByLabelText('1号 狼人 存活');
     const hidden = screen.getByLabelText('2号 存活');
-    expect(wolf.querySelector('img')).toHaveAttribute('src', ROLE_ART.werewolf);
+    expect(wolf.querySelector('img'))
+      .toHaveAttribute('src', roleArt('wolf-killer-werewolf'));
     expect(hidden.querySelector('img')).toHaveAttribute('src', CARD_BACK);
     expect(wolf).not.toHaveTextContent('存活');
     expect(wolf).toHaveTextContent('狼人');

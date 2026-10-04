@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import theme from '../theme';
-import {
-  BACKDROP, BACKGROUNDS, CARD_BACK, INK, ROLE_ART, ROLE_ART_BY_ID, ROLE_COLORS,
-  roleArt,
-} from '../theme/tokens';
-import type { RoleColorKey } from '../theme/tokens';
+import { BACKDROP, BACKGROUNDS, CARD_BACK, INK, ROLE_ART_BY_ID, roleArt } from '../theme/tokens';
 
 describe('血月剧场主题令牌', () => {
   it('使用血月剧场画布色与双色主轴', () => {
@@ -93,15 +89,23 @@ function plateOver(scrim: string): [number, number, number] {
 }
 
 describe('血月剧场素材令牌', () => {
-  it('登记三张背景、十一张立绘与卡背', () => {
+  it('登记三张背景与卡背', () => {
     expect(Object.keys(BACKGROUNDS).sort()).toEqual(['game', 'lobby', 'main']);
     for (const src of Object.values(BACKGROUNDS)) expect(src).toEqual(expect.any(String));
-    const keys = Object.keys(ROLE_COLORS) as RoleColorKey[];
-    expect(Object.keys(ROLE_ART).sort()).toEqual([...keys].sort());
-    for (const key of keys) expect(ROLE_ART[key]).toEqual(expect.any(String));
     expect(CARD_BACK).toEqual(expect.any(String));
-    expect(new Set([CARD_BACK, ...Object.values(ROLE_ART), ...Object.values(BACKGROUNDS)]).size)
-      .toBe(keys.length + 4);
+    // 背景与卡背是自有素材、必须入库，所以四张图的地址必须互不相同。
+    expect(new Set([CARD_BACK, ...Object.values(BACKGROUNDS)]).size).toBe(4);
+  });
+
+  it('立绘表登记的是文件名，不是 URL', () => {
+    // 立绘不入库（role-*.webp 在 .gitignore 里），所以这张表只能记文件名 ——
+    // 记 URL 就等于把「图一定在」写死，新克隆会直接构建失败。
+    for (const [roleId, name] of Object.entries(ROLE_ART_BY_ID)) {
+      expect(name, roleId).toMatch(/^role-[a-z0-9_-]+$/);
+    }
+    // 每个角色一张自己的图：共用文件名就等于共用图，正是这次要消灭的问题。
+    const names = Object.values(ROLE_ART_BY_ID);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it('遮罩参数落在可读范围内，暗角从 40% 开始', () => {
@@ -126,35 +130,40 @@ describe('血月剧场素材令牌', () => {
 });
 
 describe('roleArt', () => {
-  it('returns the role\'s own portrait when it has one', () => {
-    for (const [roleId, art] of Object.entries(ROLE_ART_BY_ID)) {
-      expect(roleArt(roleId)).toBe(art);
-    }
+  /**
+   * 「抓图脚本跑过没有」的探针。不能用「任意角色有图」来判断 —— 老酒鬼的立绘
+   * 是自有素材、始终入库，那个判断会永远为真。预言家是纯官方立绘，只在跑过
+   * `scripts/fetch-official-role-art.py` 之后才有图。
+   */
+  const officialArtPresent = roleArt('wolf-killer-seer') !== CARD_BACK;
+
+  it('未登记的角色回退卡背，绝不借用别人的图', () => {
+    expect(roleArt('wolf-killer-not-a-role')).toBe(CARD_BACK);
+    expect(roleArt('wolf-killer-awakened-seer')).toBe(CARD_BACK);
   });
 
-  it('falls back to the card back for a role without a portrait', () => {
-    // 这五个角色还没有立绘。以前它们借用配色相近角色的图（狼王显示成白狼王、
-    // 恶夜骑士和石像鬼显示成狼人），现在一律回退卡背。
-    for (const roleId of [
-      'wolf-killer-wolf-king', 'wolf-killer-evil-knight',
-      'wolf-killer-dream-weaver', 'wolf-killer-gargoyle',
-      'wolf-killer-gravekeeper',
-    ]) {
-      expect(roleArt(roleId)).toBe(CARD_BACK);
-    }
-  });
-
-  it('falls back for a missing or unknown id', () => {
+  it('没有角色 id 时回退卡背', () => {
     expect(roleArt(null)).toBe(CARD_BACK);
     expect(roleArt(undefined)).toBe(CARD_BACK);
     expect(roleArt('')).toBe(CARD_BACK);
-    expect(roleArt('wolf-killer-not-a-role')).toBe(CARD_BACK);
   });
 
-  it('never borrows another role\'s portrait', () => {
-    const own = new Set(Object.values(ROLE_ART_BY_ID));
+  it('登记过的角色要么是真图、要么是卡背，不会是第三种东西', () => {
+    // 立绘不入库：磁盘上没图时必须回退卡背，而不是给出一个 404 的地址。
     for (const roleId of Object.keys(ROLE_ART_BY_ID)) {
-      expect(own.has(roleArt(roleId))).toBe(true);
+      const art = roleArt(roleId);
+      if (art !== CARD_BACK) expect(art, roleId).toMatch(/\.webp$/);
     }
+  });
+
+  it.runIf(officialArtPresent)('磁盘上有立绘时，登记过的角色都能取到自己的图', () => {
+    for (const roleId of Object.keys(ROLE_ART_BY_ID)) {
+      expect(roleArt(roleId), roleId).not.toBe(CARD_BACK);
+    }
+  });
+
+  it.runIf(officialArtPresent)('每个角色取到的地址互不相同', () => {
+    const urls = Object.keys(ROLE_ART_BY_ID).map((roleId) => roleArt(roleId));
+    expect(new Set(urls).size).toBe(urls.length);
   });
 });

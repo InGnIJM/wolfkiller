@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { rankOf, roleMetaFor, ROLE_META, ROLE_ORDER } from '../roleMeta';
-import { CARD_BACK, ROLE_ART, ROLE_ART_BY_ID, ROLE_COLORS, roleArt } from '../../../theme/tokens';
+import { CARD_BACK, ROLE_ART_BY_ID, ROLE_COLORS, roleArt } from '../../../theme/tokens';
 import type { RoleColorKey } from '../../../theme/tokens';
 
 const ROLES: readonly [string, RoleColorKey, string][] = [
@@ -43,16 +43,25 @@ describe('roleMeta', () => {
     }
   });
 
-  it('does not hand a role a portrait it does not have', () => {
-    // 狼王与白狼王共用配色，但立绘必须各走各的。
-    expect(roleMetaFor('wolf-killer-werewolf-king')?.art).toBe(
-      ROLE_ART_BY_ID['wolf-killer-werewolf-king'],
-    );
-    expect(roleMetaFor('wolf-killer-wolf-king')?.art).toBe(CARD_BACK);
-    expect(roleMetaFor('wolf-killer-evil-knight')?.art).toBe(CARD_BACK);
-    expect(roleMetaFor('wolf-killer-gargoyle')?.art).toBe(CARD_BACK);
-    // 配色键仍然映射到那 11 张图，没有因为这次改造而失效。
-    expect(ROLE_ART.werewolf_king).toEqual(expect.any(String));
+  it('hands every registered role its own portrait, never a borrowed one', () => {
+    // 曾经这五个角色借图：狼王显示成白狼王、恶夜骑士和石像鬼显示成狼人、
+    // 摄梦人和守墓人显示成守卫。现在它们各有各的官方立绘。
+    for (const roleId of [
+      'wolf-killer-werewolf-king', 'wolf-killer-wolf-king',
+      'wolf-killer-evil-knight', 'wolf-killer-gargoyle',
+      'wolf-killer-dream-weaver', 'wolf-killer-gravekeeper',
+    ]) {
+      expect(roleMetaFor(roleId)?.art, roleId).toBe(roleArt(roleId));
+    }
+    // 狼王与白狼王共用配色，但立绘必须各走各的 —— 文件名不许撞。
+    expect(ROLE_ART_BY_ID['wolf-killer-werewolf-king'])
+      .not.toBe(ROLE_ART_BY_ID['wolf-killer-wolf-king']);
+  });
+
+  it('falls back to the card back for an id it cannot label', () => {
+    // 未登记的角色没有 roleMeta，也就没有角色名可查 —— 只能回退卡背。
+    expect(roleMetaFor('wolf-killer-awakened-seer')).toBeUndefined();
+    expect(roleArt('wolf-killer-awakened-seer')).toBe(CARD_BACK);
   });
 
   it('returns undefined for a hidden or unknown identity', () => {
@@ -60,7 +69,8 @@ describe('roleMeta', () => {
     expect(roleMetaFor(null)).toBeUndefined();
     expect(roleMetaFor('')).toBeUndefined();
     expect(roleMetaFor('wolf-killer-unknown')).toBeUndefined();
-    expect(roleMetaFor('wolf-killer-werewolf')?.art).not.toBe(CARD_BACK);
+    // 已登记且图在仓库里的角色照常拿到自己的图（老酒鬼是自有素材，始终入库）。
+    expect(roleMetaFor('wolf-killer-old-drunkard')?.art).not.toBe(CARD_BACK);
   });
 });
 

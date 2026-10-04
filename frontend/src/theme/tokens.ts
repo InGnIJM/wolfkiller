@@ -9,17 +9,6 @@ import bgGame from '../assets/bg/bg-game.webp';
 import bgLobby from '../assets/bg/bg-lobby.webp';
 import bgMain from '../assets/bg/bg-main.webp';
 import cardBack from '../assets/roles/card-back.webp';
-import artGuard from '../assets/roles/role-guard.webp';
-import artHunter from '../assets/roles/role-hunter.webp';
-import artIdiot from '../assets/roles/role-idiot.webp';
-import artKnight from '../assets/roles/role-knight.webp';
-import artOldDrunkard from '../assets/roles/role-old_drunkard.webp';
-import artSeer from '../assets/roles/role-seer.webp';
-import artVillager from '../assets/roles/role-villager.webp';
-import artWerewolf from '../assets/roles/role-werewolf.webp';
-import artWerewolfKing from '../assets/roles/role-werewolf_king.webp';
-import artWitch from '../assets/roles/role-witch.webp';
-import artWolfBeauty from '../assets/roles/role-wolf_beauty.webp';
 
 /** 基础画布与表面 */
 export const CANVAS = {
@@ -94,55 +83,81 @@ export const BACKDROP = {
   fadeMs: 300,
 } as const;
 
-/** 角色身份卡立绘，键与 ROLE_COLORS 一致。 */
-export const ROLE_ART: Record<RoleColorKey, string> = {
-  werewolf: artWerewolf,
-  witch: artWitch,
-  seer: artSeer,
-  hunter: artHunter,
-  villager: artVillager,
-  guard: artGuard,
-  idiot: artIdiot,
-  werewolf_king: artWerewolfKing,
-  knight: artKnight,
-  wolf_beauty: artWolfBeauty,
-  old_drunkard: artOldDrunkard,
-};
+/**
+ * 立绘文件表：`role-*.webp` 的路径 → Vite 处理后的资源 URL。
+ *
+ * 用 `import.meta.glob` 而不是一条条静态 `import`，是因为**立绘不进仓库**
+ * （`role-*.webp` 在 `.gitignore` 里，见 `scripts/fetch-official-role-art.py`）。
+ * 静态 import 在文件缺失时会让 `npm run build` 直接失败；glob 只会让那张表
+ * 少一个键，`roleArt()` 照常回退卡背，**空仓库也能构建、也能跑**。
+ *
+ * 顺带的好处：换成自制立绘时只要文件名不变，**不用改任何代码**。
+ */
+const ROLE_ART_FILES = import.meta.glob('../assets/roles/role-*.webp', {
+  eager: true, query: '?url', import: 'default',
+}) as Record<string, string>;
 
-/** 未揭晓身份 / 翻牌演出用的卡背。 */
+/** 未揭晓身份 / 翻牌演出用的卡背。它必须入库 —— 回退总得有东西。 */
 export const CARD_BACK = cardBack;
 
 /**
- * 角色立绘，键是**角色 id**。
+ * 角色 id → 立绘文件名（不含扩展名）。
  *
- * 与 `ROLE_ART`（键是配色键）的区别：配色键只有 11 个，多个角色共用一个配色键
+ * 按**角色 id** 而不是按配色键登记：配色键只有 11 个，多个角色共用一个配色键
  * 就必然共用一张图 —— 狼王会显示成白狼王、恶夜骑士和石像鬼会显示成狼人。
- * 这里按角色 id 登记，没有登记的角色由 `roleArt()` 回退到卡背，等立绘补齐后
- * **只在这里加一行**，不必改任何组件。
+ * 表里有名字但磁盘上没图时 `roleArt()` 仍回退卡背，所以这张表可以**先行**登记
+ * 还没做图的角色，不必等素材。
+ *
+ * 官方立绘覆盖 29 个角色；官方卡牌表里没有的（老酒鬼属假面舞会）与 2023 年后
+ * 的新牌（觉醒预言家、寻香魅影、觉醒狼美人、觉醒猎人）暂时没有图。
  */
 export const ROLE_ART_BY_ID: Record<string, string> = {
-  'wolf-killer-werewolf': artWerewolf,
-  'wolf-killer-villager': artVillager,
-  'wolf-killer-seer': artSeer,
-  'wolf-killer-witch': artWitch,
-  'wolf-killer-hunter': artHunter,
-  'wolf-killer-guard': artGuard,
-  'wolf-killer-idiot': artIdiot,
-  'wolf-killer-werewolf-king': artWerewolfKing,
-  'wolf-killer-knight': artKnight,
-  'wolf-killer-wolf-beauty': artWolfBeauty,
-  'wolf-killer-old-drunkard': artOldDrunkard,
+  'wolf-killer-werewolf': 'role-werewolf',
+  'wolf-killer-villager': 'role-villager',
+  'wolf-killer-seer': 'role-seer',
+  'wolf-killer-witch': 'role-witch',
+  'wolf-killer-hunter': 'role-hunter',
+  'wolf-killer-guard': 'role-guard',
+  'wolf-killer-idiot': 'role-idiot',
+  'wolf-killer-werewolf-king': 'role-werewolf-king',
+  'wolf-killer-knight': 'role-knight',
+  'wolf-killer-wolf-beauty': 'role-wolf-beauty',
+  'wolf-killer-old-drunkard': 'role-old_drunkard',
+  'wolf-killer-wolf-king': 'role-wolf-king',
+  'wolf-killer-evil-knight': 'role-evil-knight',
+  'wolf-killer-dream-weaver': 'role-dream-weaver',
+  'wolf-killer-gargoyle': 'role-gargoyle',
+  'wolf-killer-gravekeeper': 'role-gravekeeper',
+  'wolf-killer-pure-white': 'role-pure-white',
+  'wolf-killer-wolf-witch': 'role-wolf-witch',
+  'wolf-killer-demon-hunter': 'role-demon-hunter',
+  'wolf-killer-crimson-envoy': 'role-crimson-envoy',
+  'wolf-killer-nightmare': 'role-nightmare',
+  'wolf-killer-time-wolf': 'role-time-wolf',
+  'wolf-killer-order-prince': 'role-order-prince',
+  'wolf-killer-miracle-merchant': 'role-miracle-merchant',
+  'wolf-killer-lonely-girl': 'role-lonely-girl',
+  'wolf-killer-mirror-girl': 'role-mirror-girl',
+  'wolf-killer-awakened-hidden-wolf': 'role-awakened-hidden-wolf',
+  'wolf-killer-awakened-wolf-king': 'role-awakened-wolf-king',
+  'wolf-killer-eclipse-maid': 'role-eclipse-maid',
+  'wolf-killer-radiance-earl': 'role-radiance-earl',
 };
 
 /**
  * 取一个角色的立绘地址。
  *
- * 没有立绘的角色回退到卡背，而不是借用别人的图 —— 后续还有 19 个角色要加，
- * 借图会让「这个角色长什么样」彻底失真。
+ * 三种情况都回退到卡背，而不是借用别人的图 —— 借图会让「这个角色长什么样」
+ * 彻底失真，而卡背至少是诚实的：
+ *   1. 没有角色 id（身份未揭晓）
+ *   2. 角色 id 没登记
+ *   3. 登记了但磁盘上没有对应文件（立绘不入库，新克隆就是这样）
  */
 export function roleArt(roleId: string | null | undefined): string {
   if (!roleId) return CARD_BACK;
-  return ROLE_ART_BY_ID[roleId] ?? CARD_BACK;
+  const name = ROLE_ART_BY_ID[roleId];
+  if (!name) return CARD_BACK;
+  return ROLE_ART_FILES[`../assets/roles/${name}.webp`] ?? CARD_BACK;
 }
 
 /** 头像底色的深色宝石盘（保证浅墨文字 ≥4.5:1 对比度，按座位取色） */

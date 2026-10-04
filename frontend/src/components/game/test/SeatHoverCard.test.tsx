@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import SeatHoverCard from '../SeatHoverCard';
-import { CARD_BACK, ROLE_ART, ROLE_COLORS } from '../../../theme/tokens';
+import { CARD_BACK, ROLE_COLORS, roleArt } from '../../../theme/tokens';
 
 afterEach(() => cleanup());
 
@@ -96,10 +96,11 @@ describe('SeatHoverCard', () => {
         isSheriff={false}
         isCurrentSpeaker={false}
         accent={ROLE_COLORS.werewolf.color}
-        art={ROLE_ART.werewolf}
+        art={roleArt('wolf-killer-werewolf')}
       />,
     );
-    expect(container.querySelector('img')).toHaveAttribute('src', ROLE_ART.werewolf);
+    expect(container.querySelector('img'))
+      .toHaveAttribute('src', roleArt('wolf-killer-werewolf'));
     expect(screen.getByText('狼人 · 狼人阵营')).toBeInTheDocument();
   });
 

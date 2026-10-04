@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import RolePortrait from '../RolePortrait';
-import { CARD_BACK, ROLE_ART_BY_ID, roleArt } from '../../../theme/tokens';
+import { CARD_BACK, roleArt } from '../../../theme/tokens';
 
 afterEach(cleanup);
 
@@ -18,25 +18,30 @@ function portraitImage(container: HTMLElement): HTMLImageElement {
 
 describe('RolePortrait', () => {
   it("renders the role's own portrait", () => {
-    const { container } = render(<RolePortrait roleId="wolf-killer-seer" width={64} />);
-    expect(portraitImage(container)).toHaveAttribute('src', ROLE_ART_BY_ID['wolf-killer-seer']);
+    // 老酒鬼的立绘是自有素材、始终入库，所以这条在任何状态下都成立；
+    // 官方立绘是否已抓取由 `theme.test.ts` 的探针负责。
+    const { container } = render(<RolePortrait roleId="wolf-killer-old-drunkard" width={64} />);
+    expect(portraitImage(container)).toHaveAttribute('src', roleArt('wolf-killer-old-drunkard'));
+    expect(roleArt('wolf-killer-old-drunkard')).not.toBe(CARD_BACK);
   });
 
   it('renders the card back plus a name watermark when the role has no portrait', () => {
-    const { container } = render(<RolePortrait roleId="wolf-killer-gargoyle" width={64} />);
+    // 立绘不入库，所以「没图」有两种来源：角色没登记（下面这个），或登记了但
+    // 磁盘上没文件（新克隆，见 `theme.test.ts` 里对 `roleArt` 的断言）。两条
+    // 路径都回退卡背 —— 卡背不是空白，叠了一层角色名。
+    const { container } = render(<RolePortrait roleId="wolf-killer-awakened-seer" width={64} />);
     expect(portraitImage(container)).toHaveAttribute('src', CARD_BACK);
-    // 卡背不是空白：叠了一层角色名，免得整个格子看不出是什么。
-    expect(screen.getByText('石像鬼')).toBeInTheDocument();
+    expect(screen.getByText('未知身份')).toBeInTheDocument();
   });
 
   it('shows no watermark for a role that has its own portrait', () => {
-    render(<RolePortrait roleId="wolf-killer-seer" width={64} />);
-    expect(screen.queryByText('预言家')).not.toBeInTheDocument();
+    render(<RolePortrait roleId="wolf-killer-old-drunkard" width={64} />);
+    expect(screen.queryByText('老酒鬼')).not.toBeInTheDocument();
   });
 
   it('can turn the watermark off', () => {
-    render(<RolePortrait roleId="wolf-killer-gargoyle" width={64} showLabel={false} />);
-    expect(screen.queryByText('石像鬼')).not.toBeInTheDocument();
+    render(<RolePortrait roleId="wolf-killer-awakened-seer" width={64} showLabel={false} />);
+    expect(screen.queryByText('未知身份')).not.toBeInTheDocument();
   });
 
   it('falls back to the card back for a missing or unknown role', () => {
@@ -45,11 +50,6 @@ describe('RolePortrait', () => {
       expect(portraitImage(container)).toHaveAttribute('src', CARD_BACK);
       unmount();
     }
-  });
-
-  it('labels an unknown role rather than leaving the watermark blank', () => {
-    render(<RolePortrait roleId="wolf-killer-unknown" width={64} />);
-    expect(screen.getByText('未知身份')).toBeInTheDocument();
   });
 
   it('is decorative by default so the row is not announced twice', () => {
