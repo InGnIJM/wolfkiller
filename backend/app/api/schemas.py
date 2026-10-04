@@ -153,7 +153,7 @@ PublicGamePhase = Literal[
 ]
 PublicDeathCause = Literal[
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-    "knight_duel", "charm", "wolf_king_shot",
+    "knight_duel", "charm", "wolf_king_shot", "reflect",
 ]
 PublicWinningCamp = Literal["good", "werewolf"]
 PublicWinReason = Literal[

@@ -925,7 +925,7 @@ def test_public_replay_skips_date_only_timestamp_without_changing_other_event_st
 @pytest.mark.parametrize(
     "cause",
     ["wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-     "knight_duel", "charm", "wolf_king_shot"],
+     "knight_duel", "charm", "wolf_king_shot", "reflect"],
 )
 def test_public_replay_keeps_every_death_cause_the_engine_produces(cause):
     record = {

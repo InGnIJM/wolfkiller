@@ -55,7 +55,7 @@ _CONFIRMATION_CODES = frozenset({
 # 枚举的第二处副本，两处要一起改；`tests/test_game_routes.py` 逐个取值钉住。
 _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-    "knight_duel", "charm", "wolf_king_shot",
+    "knight_duel", "charm", "wolf_king_shot", "reflect",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
