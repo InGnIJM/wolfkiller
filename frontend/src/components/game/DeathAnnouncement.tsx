@@ -9,6 +9,7 @@ import GpsFixed from '@mui/icons-material/GpsFixed';
 import HeartBroken from '@mui/icons-material/HeartBroken';
 import PersonOff from '@mui/icons-material/PersonOff';
 import Pets from '@mui/icons-material/Pets';
+import Replay from '@mui/icons-material/Replay';
 import Science from '@mui/icons-material/Science';
 import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
@@ -31,6 +32,7 @@ const CAUSE_ICONS: Record<string, SvgIconComponent> = {
   knight_duel: Bolt,
   charm: HeartBroken,
   wolf_king_shot: Pets,
+  reflect: Replay,
 };
 
 export default function DeathAnnouncement({ deaths, revealedRole }: Props) {

@@ -14,6 +14,7 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-idiot', 'idiot', '白痴'],
   ['wolf-killer-werewolf-king', 'werewolf_king', '白狼王'],
   ['wolf-killer-wolf-king', 'werewolf_king', '狼王'],
+  ['wolf-killer-evil-knight', 'werewolf', '恶夜骑士'],
   ['wolf-killer-knight', 'knight', '骑士'],
   ['wolf-killer-wolf-beauty', 'wolf_beauty', '狼美人'],
   ['wolf-killer-old-drunkard', 'old_drunkard', '老酒鬼'],

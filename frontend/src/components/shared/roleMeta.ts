@@ -20,6 +20,7 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   // 狼王与白狼王共用狼王配色与立绘（同一「狼王」视觉家族），靠 label 与 RoleIcon
   // 的图标区分。两个 id 只差词序，任何地方都不许简写。
   { id: 'wolf-killer-wolf-king', key: 'werewolf_king', label: '狼王' },
+  { id: 'wolf-killer-evil-knight', key: 'werewolf', label: '恶夜骑士' },
   { id: 'wolf-killer-knight', key: 'knight', label: '骑士' },
   { id: 'wolf-killer-wolf-beauty', key: 'wolf_beauty', label: '狼美人' },
   { id: 'wolf-killer-old-drunkard', key: 'old_drunkard', label: '老酒鬼' },

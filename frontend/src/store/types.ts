@@ -23,7 +23,8 @@ export type DeathCause =
   | 'self_explode'
   | 'knight_duel'
   | 'charm'
-  | 'wolf_king_shot';
+  | 'wolf_king_shot'
+  | 'reflect';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'

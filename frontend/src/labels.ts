@@ -44,6 +44,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   knight_duel: '骑士决斗',
   charm: '殉情',
   wolf_king_shot: '狼王带走',
+  reflect: '反伤',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -270,6 +271,8 @@ export const ROLE_LABELS: Record<string, string> = {
   'wolf-killer-knight': '骑士',
   'wolf-killer-wolf-beauty': '狼美人',
   'wolf-killer-old-drunkard': '老酒鬼',
+  'wolf-killer-wolf-king': '狼王',
+  'wolf-killer-evil-knight': '恶夜骑士',
 };
 
 /** 记忆里 `private_knowledge` 的键（存档 JSON，键开放）。 */
