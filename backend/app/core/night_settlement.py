@@ -15,6 +15,20 @@ DELAYABLE_RESOURCE = "delayable"
 DELAYED_DEATH_STATUS = "delayed_death"
 POISONED_STATUS = "poisoned"
 WOUNDED_STATUS = "wounded"
+#: Shields that cancel the wolf kill — the long-standing "guard" semantics. An
+#: unnamed protection keeps that meaning, so a shield that declares no source
+#: still stops the knife.
+_WOLF_ONLY_SOURCES = frozenset({"guard", "witch_antidote"})
+#: Shields that count towards the "guard and antidote on the same target" breach.
+#: Deliberately narrower than the wolf-kill tier: a dream weave is not a guard,
+#: so dreaming a target the witch also saves does not breach it.
+_DOUBLE_SAVE_SOURCES = frozenset({"guard", "witch_antidote"})
+#: Shields that cancel *any* lethal night damage, the poison included. A dream
+#: weave is the first of these. Such a shield also stops the knife, so the wolf
+#: total is measured against both tiers together.
+_ANY_DAMAGE_SOURCES = frozenset({"dream"})
+_PROTECTION_SOURCES = _WOLF_ONLY_SOURCES | _ANY_DAMAGE_SOURCES
+
 #: A seat that declares this marker shrugs off *every* lethal night effect —
 #: the wolf kill, the poison and anything else that settles here. Unlike
 #: ``delayable`` it leaves no mark and never dies later: the hit simply does not
@@ -112,9 +126,9 @@ def settle(
     ):
         raise ValueError("invalid role resource map")
     settlement_key("validation", round_number)
-    damage_totals, protection_totals = {}, {}
+    damage_totals = {}
     wolf_totals, other_totals = {}, {}
-    protection_sources: dict[int, set[str]] = {}
+    protection_by_source: dict[int, dict[str | None, int]] = {}
     causes: dict[int, str] = {}
     first_wolf_cause: dict[int, str] = {}
     first_other_cause: dict[int, str] = {}
@@ -136,18 +150,35 @@ def settle(
             first_other_cause.setdefault(target, cause)
     for record in protection:
         target, amount = _record(record, seats, frozenset({"target", "amount"}))
-        _add(protection_totals, target, amount)
+        # Amounts are kept per source, not pooled: a dream weave and a guard
+        # shield both sit on the same seat and only one of them stops the vial.
         source = _protection_source(record)
-        if source is not None:
-            protection_sources.setdefault(target, set()).add(source)
+        bucket = protection_by_source.setdefault(target, {})
+        total = bucket.get(source, 0) + amount
+        if total > _INT32: raise ValueError("pending amount overflow")
+        bucket[source] = total
     resulting_alive = dict(alive); deaths = []; delayed: dict[int, tuple[str, ...]] = {}
     for target in sorted(damage_totals):
+        shields = protection_by_source.get(target, {})
+        named = {source for source in shields if source is not None}
+        # An unnamed shield keeps the historical guard semantics.
+        wolf_shields = sum(
+            amount for source, amount in shields.items()
+            if source is None or source in _WOLF_ONLY_SOURCES
+        )
+        any_shields = sum(
+            amount for source, amount in shields.items()
+            if source is not None and source in _ANY_DAMAGE_SOURCES
+        )
         double_save = (
             "wolf_kill" in damage_causes[target]
-            and {"guard", "witch_antidote"}.issubset(protection_sources.get(target, set()))
+            and _DOUBLE_SAVE_SOURCES.issubset(named)
         )
-        lethal_wolf = double_save or wolf_totals.get(target, 0) > protection_totals.get(target, 0)
-        lethal_other = other_totals.get(target, 0) > 0
+        lethal_wolf = (
+            double_save
+            or wolf_totals.get(target, 0) > wolf_shields + any_shields
+        )
+        lethal_other = other_totals.get(target, 0) > any_shields
         if not resulting_alive[target] or not (lethal_wolf or lethal_other):
             continue
         if role_resources.get(target, {}).get(NIGHT_IMMUNE_RESOURCE, 0) > 0:
@@ -190,7 +221,7 @@ def _protection_source(record: object) -> str | None:
     source = record.get("source")
     if source is None:
         return None
-    if source not in {"guard", "witch_antidote"}:
+    if source not in _PROTECTION_SOURCES:
         raise ValueError("invalid protection source")
     return source
 
