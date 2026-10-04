@@ -20,17 +20,17 @@ from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 
 # Private relation name recorded on the charmed seat.
 _CHARM_RELATION = "charmed_by"
-# The charm drags the charmed player along on every way out of the game except
-# the ones the rules exclude. Two groups are deliberately absent:
+# The official card names exactly two ways out, and no others:
 #
-# * ``self_explode`` / ``self_kill``: the rules forbid Wolf Beauty from using
-#   them at all, so they can never be the way out that triggers the revenge.
-# * ``knight_duel``: the official (NetEase) ruling is that a Wolf Beauty exiled
-#   by the Knight's duel does not flip and does not drag the charmed player
-#   along. A hunter's shot and the Wolf King's claw both still do.
-_REVENGE_REASONS = frozenset(
-    {"wolf_kill", "poison", "exile", "hunter_shot", "wolf_king_shot"}
-)
+#   「狼美人在夜里可以魅惑一人，天亮后，如果狼美人被**放逐出局**或者被**猎人
+#     射击**，被魅惑的玩家跟随狼美人一起出局，且无技能。」
+#
+# So this is a whitelist of two. Everything else stays out — including
+# ``poison``, ``wolf_kill`` and ``wolf_king_shot``, which this set used to carry
+# on no authority at all. ``self_explode`` / ``self_kill`` are absent for a
+# different reason: the rules forbid Wolf Beauty from using them, so they can
+# never be the way out in the first place.
+_REVENGE_REASONS = frozenset({"exile", "hunter_shot"})
 _WOLF_CAMP = "werewolf"
 
 

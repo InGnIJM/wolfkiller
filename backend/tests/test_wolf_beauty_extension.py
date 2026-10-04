@@ -105,16 +105,21 @@ def test_spec_shares_the_kill_contract_and_adds_charm_and_revenge() -> None:
     assert "Wolf Beauty" in WOLF_BEAUTY_SPEC.instructions
 
 
-def test_revenge_contract_excludes_the_forbidden_ways_out() -> None:
+def test_revenge_fires_on_exactly_the_two_official_ways_out() -> None:
+    """The card names two causes and no others.
+
+    Official card text: 「狼美人在夜里可以魅惑一人，天亮后，如果狼美人被**放逐
+    出局**或者被**猎人射击**，被魅惑的玩家跟随狼美人一起出局，且无技能。」 The
+    set used to also carry ``wolf_kill`` / ``poison`` / ``wolf_king_shot`` —
+    none of which the official text mentions.
+    """
     revenge = WOLF_BEAUTY_REVENGE_CONTRACT
     assert revenge.schedule_point is SchedulePoint.DAWN_REACTION
     assert revenge.response_event_types == {"PLAYER_DIED"}
-    assert revenge.response_reasons == {
-        "wolf_kill", "poison", "exile", "hunter_shot", "wolf_king_shot"}
-    # Self-destruct and self-kill are forbidden, so they never drag anyone along.
-    assert "self_explode" not in revenge.response_reasons
-    # The official (NetEase) ruling: a duel by the Knight takes nobody with it.
-    assert "knight_duel" not in revenge.response_reasons
+    assert revenge.response_reasons == {"exile", "hunter_shot"}
+    # Causes the official text does not list must stay out.
+    for reason in ("wolf_kill", "poison", "wolf_king_shot", "self_explode", "knight_duel"):
+        assert reason not in revenge.response_reasons, reason
     assert revenge.react is react_wolf_beauty_revenge and revenge.resolve is None
     assert revenge.per_window_limit == 1
     assert revenge.is_applicable is wolf_beauty_revenge_applicable
@@ -237,8 +242,17 @@ def test_revenge_drags_the_charmed_player_along() -> None:
 
 
 def test_revenge_covers_every_allowed_way_out() -> None:
-    for reason in ("wolf_kill", "poison", "exile", "hunter_shot"):
+    for reason in ("exile", "hunter_shot"):
         assert react_wolf_beauty_revenge(revenge_context(reason=reason)) != (), reason
+
+
+def test_revenge_stays_silent_when_the_official_text_is_silent() -> None:
+    """被夜刀 / 被毒 / 被狼王爪带走都不在官方那两种死因里。
+
+    这些曾经都会带走被魅惑者 —— 被毒不再殉情会明显削弱狼美人，但那是官方口径。
+    """
+    for reason in ("wolf_kill", "poison", "wolf_king_shot"):
+        assert react_wolf_beauty_revenge(revenge_context(reason=reason)) == (), reason
 
 
 def test_revenge_stays_silent_when_the_knight_wins_the_duel() -> None:
