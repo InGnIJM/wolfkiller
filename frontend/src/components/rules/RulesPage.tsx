@@ -20,6 +20,7 @@ const CAMP_ORDER: readonly string[] = ['werewolf', 'good'];
 const ROLE_ORDER: readonly string[] = [
   'wolf-killer-werewolf',
   'wolf-killer-werewolf-king',
+  'wolf-killer-wolf-king',
   'wolf-killer-wolf-beauty',
   'wolf-killer-seer',
   'wolf-killer-witch',

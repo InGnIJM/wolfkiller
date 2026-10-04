@@ -22,7 +22,8 @@ export type DeathCause =
   | 'exile'
   | 'self_explode'
   | 'knight_duel'
-  | 'charm';
+  | 'charm'
+  | 'wolf_king_shot';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'
@@ -152,6 +153,7 @@ export type NightActionType =
   | 'witch_poison'
   | 'seer_check'
   | 'hunter_shot'
+  | 'wolf_king_shot'
   | 'guard_protect';
 
 export interface NightActionRecord {
@@ -228,6 +230,7 @@ export interface NightThoughtPayload {
   seat: number;
   action_type:
     | 'hunter_reasoning'
+    | 'wolf_king_reasoning'
     | 'witch_reasoning'
     | 'seer_reasoning'
     | 'guard_reasoning'

@@ -43,6 +43,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   self_explode: '白狼王自爆',
   knight_duel: '骑士决斗',
   charm: '殉情',
+  wolf_king_shot: '狼王带走',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ export const NIGHT_ACTION_LABELS: Record<NightActionType, string> = {
   witch_poison: '女巫毒人',
   seer_check: '预言家查验',
   hunter_shot: '猎人开枪',
+  wolf_king_shot: '狼王开枪',
   guard_protect: '守卫守护',
 };
 
@@ -94,6 +96,7 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   witch_reasoning: '女巫思考',
   seer_reasoning: '预言家思考',
   hunter_reasoning: '猎人思考',
+  wolf_king_reasoning: '狼王思考',
   guard_reasoning: '守卫思考',
   werewolf_king_reasoning: '白狼王思考',
   knight_reasoning: '骑士思考',
@@ -110,6 +113,7 @@ export const NIGHT_ACTION_ROLE_NAMES: Record<NightActionType, string> = {
   witch_poison: '女巫',
   guard_protect: '守卫',
   hunter_shot: '猎人',
+  wolf_king_shot: '狼王',
 };
 
 /** 思考事件 → 角色短名，和上表同为「正在行动的是谁」，共用同一套短名。 */
@@ -119,6 +123,7 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   seer_thought: '预言家',
   seer_reasoning: '预言家',
   hunter_reasoning: '猎人',
+  wolf_king_reasoning: '狼王',
   guard_reasoning: '守卫',
   werewolf_king_reasoning: '白狼王',
   knight_reasoning: '骑士',

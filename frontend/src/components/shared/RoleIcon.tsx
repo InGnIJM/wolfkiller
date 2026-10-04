@@ -1,6 +1,7 @@
 import Gavel from '@mui/icons-material/Gavel';
 import GpsFixed from '@mui/icons-material/GpsFixed';
 import Help from '@mui/icons-material/Help';
+import LocalFireDepartment from '@mui/icons-material/LocalFireDepartment';
 import Mood from '@mui/icons-material/Mood';
 import WorkspacePremium from '@mui/icons-material/WorkspacePremium';
 import Person from '@mui/icons-material/Person';
@@ -27,6 +28,7 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-guard': { Icon: Security, label: '守卫', color: ROLE_COLORS.guard.color },
   'wolf-killer-idiot': { Icon: Mood, label: '白痴', color: ROLE_COLORS.idiot.color },
   'wolf-killer-werewolf-king': { Icon: WorkspacePremium, label: '白狼王', color: ROLE_COLORS.werewolf_king.color },
+  'wolf-killer-wolf-king': { Icon: LocalFireDepartment, label: '狼王', color: ROLE_COLORS.werewolf_king.color },
   'wolf-killer-knight': { Icon: Gavel, label: '骑士', color: ROLE_COLORS.knight.color },
   'wolf-killer-wolf-beauty': { Icon: Favorite, label: '狼美人', color: ROLE_COLORS.wolf_beauty.color },
   'wolf-killer-old-drunkard': { Icon: LocalBar, label: '老酒鬼', color: ROLE_COLORS.old_drunkard.color },
