@@ -11,9 +11,13 @@ Pillow available — the repo venv does not need it:
     PYTHONPATH=/tmp/imgtool python3 scripts/fetch-official-role-art.py
 
 The images are **not committed** (``.gitignore`` keeps ``role-*.webp`` out):
-they are NetEase's artwork, and they are placeholders until hand-made art
-replaces them. ``card-back.webp`` stays tracked — the fallback has to exist for
-a fresh clone to render anything at all.
+they are NetEase's artwork, so they are only for local use, and they are
+placeholders until hand-made art replaces them. The project's own portraits live
+in ``frontend/src/assets/roles-original/`` and are tracked — copy them back over
+``frontend/src/assets/roles/`` to drop the official art. ``card-back.webp`` and
+``role-old_drunkard.webp`` stay tracked in the active folder: the fallback has to
+exist for a fresh clone to render anything at all, and the Old Drunkard has no
+official portrait to fetch.
 
 Re-running is safe and cheap: unchanged files are skipped unless ``--force``.
 """
