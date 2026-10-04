@@ -87,27 +87,27 @@ afterEach(() => {
 
 async function renderStep1() {
   render(<CreateGameWizard />);
-  await waitFor(() => expect(screen.getByText('九人标准场')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole('button', { name: '九人标准场' })).toBeInTheDocument());
 }
 
 describe('CreateGameWizard step 1', () => {
   it('loads presets, roles, and defaults to the nine-player preset', async () => {
     await renderStep1();
-    expect(screen.getByText(/共 9 人/)).toBeInTheDocument();
+    expect(screen.getByTestId('roster-total')).toHaveTextContent(`共 9 人`);
     expect(screen.getByRole('button', { name: '下一步' })).toBeEnabled();
     expect(screen.getByRole('checkbox', { name: /警长/ })).not.toBeChecked();
   });
 
   it('turns sheriff on when selecting a twelve-player preset', async () => {
     await renderStep1();
-    fireEvent.click(screen.getByText('十二人预女猎白'));
+    fireEvent.click(screen.getByRole('button', { name: '十二人预女猎白' }));
     expect(screen.getByRole('checkbox', { name: /警长/ })).toBeChecked();
   });
 
   it('adjusting a role switches to custom preset and updates the total', async () => {
     await renderStep1();
     fireEvent.click(screen.getByRole('button', { name: '增加狼人' }));
-    expect(screen.getByText(/共 10 人/)).toBeInTheDocument();
+    expect(screen.getByTestId('roster-total')).toHaveTextContent(`共 10 人`);
   });
 
   it('stops decrementing wolves at the min_werewolves constraint', async () => {
@@ -135,21 +135,21 @@ describe('CreateGameWizard step 1', () => {
 
   it('selecting the ten-player preset applies its role counts', async () => {
     await renderStep1();
-    fireEvent.click(screen.getByText('十人标准场'));
-    expect(screen.getByText(/共 10 人/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '十人标准场' }));
+    expect(screen.getByTestId('roster-total')).toHaveTextContent(`共 10 人`);
   });
 
   it('counts the werewolf king toward the wolf quota so the twelve-player board is valid', async () => {
     vi.mocked(fetchConstraints).mockResolvedValue({ ...CONSTRAINTS, min_werewolves: 4 });
     await renderStep1();
-    fireEvent.click(screen.getByText('十二人白狼王'));
-    expect(screen.getByText(/共 12 人/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '十二人白狼王' }));
+    expect(screen.getByTestId('roster-total')).toHaveTextContent(`共 12 人`);
     expect(screen.getByRole('button', { name: '下一步' })).toBeEnabled();
     // 3 狼 + 1 白狼王刚好达到下限，任一狼阵营角色都不能再减
     expect(screen.getByRole('button', { name: '减少狼人' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '减少白狼王' })).toBeDisabled();
     // 白痴 max_count=1 达到上限后不能再加
-    fireEvent.click(screen.getByText('十二人预女猎白'));
+    fireEvent.click(screen.getByRole('button', { name: '十二人预女猎白' }));
     expect(screen.getByRole('button', { name: '增加白痴' })).toBeDisabled();
   });
 });
@@ -291,7 +291,7 @@ describe('CreateGameWizard step 2 and submission', () => {
     fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
 
     fireEvent.click(screen.getByRole('button', { name: '上一步' }));
-    fireEvent.click(await screen.findByText('十人标准场'));
+    fireEvent.click(await screen.findByRole('button', { name: '十人标准场' }));
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
     await waitFor(() => expect(screen.getByText('已分配 9 / 总人数 10')).toBeInTheDocument());
@@ -303,14 +303,14 @@ describe('CreateGameWizard step 2 and submission', () => {
   it('preserves allocations when the player total shrinks and reports excess', async () => {
     await goToStep2();
     fireEvent.click(screen.getByRole('button', { name: '上一步' }));
-    fireEvent.click(await screen.findByText('十人标准场'));
+    fireEvent.click(await screen.findByRole('button', { name: '十人标准场' }));
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     await waitFor(() => expect(screen.getByText('已分配 9 / 总人数 10')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
     expect(screen.getByText('已分配 10 / 总人数 10')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '上一步' }));
-    fireEvent.click(await screen.findByText('九人标准场'));
+    fireEvent.click(await screen.findByRole('button', { name: '九人标准场' }));
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
     await waitFor(() => expect(screen.getByText('已分配 10 / 总人数 9')).toBeInTheDocument());
@@ -405,7 +405,7 @@ describe('CreateGameWizard step 2 and submission', () => {
     fireEvent.click(screen.getByRole('button', { name: '增加 DeepSeek Pro 人数' }));
 
     fireEvent.click(screen.getByRole('button', { name: '上一步' }));
-    await screen.findByText('十人标准场');
+    await screen.findByRole('button', { name: '十人标准场' });
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
     await waitFor(() => expect(screen.getByText(/刷新失败/)).toBeInTheDocument());

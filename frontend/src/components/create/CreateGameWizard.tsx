@@ -86,10 +86,7 @@ export default function CreateGameWizard() {
   };
 
   return (
-    <Container maxWidth="md" sx={{
-      position: 'relative', zIndex: 1, py: 4,
-      bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
-    }}>
+    <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1, py: 4 }}>
       <Typography variant="h4" sx={{
         fontWeight: 400, mb: 2, display: 'inline-block',
         bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
