@@ -119,6 +119,28 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "摄梦人在夜间出局时，当夜的梦游者与之同亡；白天被放逐或被骑士决斗出局时梦游者不受影响。",
         ],
     },
+    "wolf-killer-gargoyle": {
+        "name_zh": "石像鬼", "icon": "gargoyle",
+        "description": "狼人，不属于狼窝；每晚查验一名玩家的具体身份",
+        "rules": [
+            "你不属于狼窝：不参与狼队讨论与狼刀投票，其他狼不知道你是谁，你也看不到他们是谁，"
+            "只知道场上还剩几只狼。",
+            "因此你可能亲手刀死自己的狼队友；当其他狼全部出局后，你获得带刀权。",
+            "不能自爆，也不能吞警徽。",
+            "每晚可以查验一名存活玩家的具体身份，不能查自己，也不能重复查同一人；结果只有你知道。",
+            "被预言家查验时你会显示为狼人。",
+        ],
+    },
+    "wolf-killer-gravekeeper": {
+        "name_zh": "守墓人", "icon": "gravekeeper",
+        "description": "好人神职，每晚获知上一个被放逐者的阵营",
+        "rules": [
+            "没有任何主动技能，白天像普通村民一样发言与投票。",
+            "每晚自动获知上一个白天被放逐玩家的阵营（好人 / 狼人），不需要做选择，也不消耗资源。",
+            "第一个夜晚还没有人被放逐，因此当晚没有信息。",
+            "被放逐的石像鬼会显示为狼人。",
+        ],
+    },
     "wolf-killer-knight": {
         "name_zh": "骑士", "icon": "knight",
         "description": "发言结束后投票前翻牌决斗一名玩家，是狼人则白天立即结束",
@@ -315,6 +337,24 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
             "wolf-killer-dream-weaver": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Gargoyle + Gravekeeper" board.
+        "id": "twelve-player-gargoyle-gravekeeper",
+        "name": "十二人石像鬼守墓人",
+        "description": "3狼 1石像鬼 4民 1预言家 1女巫 1猎人 1守墓人",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-gargoyle": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-gravekeeper": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",
