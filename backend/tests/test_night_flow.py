@@ -15,11 +15,15 @@ from app.core.night_flow import (
     build_briefing,
 )
 from app.core.conversation_log import ConversationLog
+from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
+from app.core.role_runtime import initialize_role_resources
 from app.models.conversation import ConversationScope
 from app.models.game import GameConfig, GameState, PlayerState
 from app.models.pipeline import ActionCommand
 from app.roles.registry import RegistrySnapshot
-from app.roles.werewolf import SELF_KILL_FORBIDDEN
+from app.roles.evil_knight import EVIL_KNIGHT_SPEC
+from app.roles.registry import builtin_registry
+from app.roles.werewolf import NIGHT_IMMUNE, SELF_KILL_FORBIDDEN
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC
 
 
@@ -444,6 +448,48 @@ def _prompt_text(messages: list[dict[str, str]]) -> str:
 
 def test_self_kill_resource_name_matches_the_role_declaration():
     assert SELF_KILL_FORBIDDEN_RESOURCE == SELF_KILL_FORBIDDEN
+
+
+def test_night_immune_resource_name_matches_the_role_declaration():
+    assert NIGHT_IMMUNE_RESOURCE == NIGHT_IMMUNE
+
+
+def test_night_immune_clause_is_empty_when_nobody_bounces_the_kill():
+    assert _director(lambda _messages: "{}")._night_immune_clause(_state()) == ""
+
+
+def _evil_knight_state() -> tuple[GameState, NightDirector]:
+    """A real state where seat 1 is the Evil Knight with its markers set up."""
+    state = _state()
+    state.players[1].role = EVIL_KNIGHT_SPEC.role_id
+    state.players[1].camp = "werewolf"
+    snapshot = builtin_registry.freeze()
+    director = NightDirector(
+        snapshot, lambda messages, _tool_name, _schema, _seat: "{}",
+    )
+    initialize_role_resources(state, snapshot.specs, snapshot.digest)
+    return state, director
+
+
+def test_wolf_prompts_name_the_seat_the_kill_cannot_touch():
+    """The shared kill contract aggregates votes and cannot read per-target
+    facts, so the only warning the model gets is this clause; without it the
+    wolves would burn the night on a seat that shrugs the kill off."""
+    state, director = _evil_knight_state()
+    clause = director._night_immune_clause(state)
+    assert "1 号" in clause and "免疫夜间伤害" in clause
+    for messages in (
+        director.discussion_prompt(state, 2, []),
+        director.vote_prompt(state, 2, [], []),
+    ):
+        assert "1 号" in _prompt_text(messages)
+        assert "免疫夜间伤害" in _prompt_text(messages)
+
+
+def test_night_immune_clause_skips_dead_seats():
+    state, director = _evil_knight_state()
+    state.players[1].is_alive = False
+    assert director._night_immune_clause(state) == ""
 
 
 def test_self_kill_clause_tolerates_an_unknown_seat():

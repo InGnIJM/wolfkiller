@@ -60,7 +60,21 @@ _SELECTED_TARGET_NAMESPACES = frozenset(
     {"camp_label", "status_labels", "resource_labels"}
 )
 _PUBLIC_STATUSES = frozenset({"poisoned", "wounded"})
-_PUBLIC_RESOURCES = frozenset({"charm_immune"})
+#: Resources a contract may observe on its chosen target. These reach the pure
+#: ``validate`` / ``resolve`` hooks only — ``selected_target`` is never part of
+#: the context handed to the model, so a producer learns what the rules make
+#: observable without the prompt leaking it.
+#:
+#: * ``charm_immune`` — Wolf Beauty sees who cannot be charmed.
+#: * ``night_immune`` — the wolf team sees who the kill cannot touch.
+#: * ``reflect_check`` / ``reflect_poison`` — the seer and the witch see that
+#:   the target bounces their skill back at them.
+#: * ``reflect_used`` — the bounce is spent, so a second skill that same night
+#:   lands normally instead of firing a second revenge.
+_PUBLIC_RESOURCES = frozenset({
+    "charm_immune", "night_immune",
+    "reflect_check", "reflect_poison", "reflect_used",
+})
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
 

@@ -41,10 +41,15 @@ def test_spec_and_hooks_are_closed_and_role_agnostic() -> None:
     contract = SEER_SPEC.contracts[0]
     assert SEER_SPEC.role_id == "wolf-killer-seer"
     assert SEER_SPEC.initial_private_data == {"private_checks": ()}
-    assert SEER_SPEC.allowed_effects == {EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}
+    assert SEER_SPEC.allowed_effects == {
+        EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT,
+        EffectKind.SET_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+    }
     assert contract.schedule_point is SchedulePoint.NIGHT_SEER_ACTION and contract.order == 30
     assert contract.action_types == ("check", "pass")
-    assert contract.selected_target_fact_namespaces == {"camp_label"}
+    # ``resource_labels`` lets the pure hook see a bouncing target; the fact is
+    # never part of the context handed to the model.
+    assert contract.selected_target_fact_namespaces == {"camp_label", "resource_labels"}
     assert contract.per_window_limit == contract.per_round_limit == 1
     assert seer_applicable(context()) is True
     assert seer_applicable(replace(context(), actor_alive=False)) is False

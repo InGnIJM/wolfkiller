@@ -1,10 +1,13 @@
 from __future__ import annotations
 import logging
+from collections.abc import Mapping
+
 from app.models.game import DEFAULT_WITCH_SELF_SAVE, GameState
 from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
+from app.core.reflect import REFLECT_POISON_RESOURCE, reflect_effects
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
     RuleViolation, SchedulePoint,
@@ -118,6 +121,12 @@ def resolve_witch_action(
             payload={"event_type": emit_type, "payload": {"target_seat": target}},
             visibility=("PUBLIC",), sort_key=(idx,), **common),
     )
+    if command.action_type == "poison":
+        selected = context.facts.get("selected_target")
+        if isinstance(selected, Mapping):
+            effects.extend(reflect_effects(
+                context, selected, REFLECT_POISON_RESOURCE, len(effects) + 1,
+            ))
     return tuple(effects)
 
 
@@ -132,8 +141,11 @@ WITCH_SPEC = RoleSpec(
         allowed_effects=frozenset({
             EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
             EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
+            EffectKind.SET_RESOURCE,
         }),
-        visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}), per_window_limit=1, per_round_limit=1,
+        visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
+        selected_target_fact_namespaces=frozenset({"resource_labels"}),
+        per_window_limit=1, per_round_limit=1,
         is_applicable=witch_applicable, validate=validate_witch_action, resolve=resolve_witch_action,
     ),),
     initial_resources={"antidote": 1, "poison": 1},
@@ -141,6 +153,7 @@ WITCH_SPEC = RoleSpec(
     allowed_effects=frozenset({
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
         EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
+        EffectKind.SET_RESOURCE,
     }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(

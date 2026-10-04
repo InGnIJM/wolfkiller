@@ -6,6 +6,7 @@ from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
+from app.core.reflect import REFLECT_CHECK_RESOURCE, reflect_effects
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
     RuleViolation, SchedulePoint,
@@ -65,37 +66,41 @@ def resolve_seer_action(
     camp = selected.get("camp_label")
     if type(camp) is not str:
         raise TypeError("selected target camp label must be a string")
-    return (GameEffect(
-        derive_effect_id(context.action_key, 1),
-        EffectKind.RECORD_PRIVATE_FACT,
-        context.action_key,
-        payload={
-            "target": context.actor_seat,
-            "namespace": "private_checks",
-            "fact": {"target": command.target_seat, "camp": camp},
-        },
-        visibility=("ACTOR",),
-        expected_revision=context.revision,
-        target_seat=context.actor_seat,
-        source_event_id=context.source_event_id,
-        sort_key=(1,),
-    ), _seer_reasoning_effect(
-        context, command, 2,
-        expected_revision=context.revision,
-        source_event_id=context.source_event_id,
-    ), GameEffect(
-        derive_effect_id(context.action_key, 3),
-        EffectKind.EMIT_EVENT,
-        context.action_key,
-        payload={
-            "event_type": "SEER_CHECK",
-            "payload": {"target_seat": command.target_seat, "result": camp},
-        },
-        visibility=("PUBLIC",),
-        expected_revision=context.revision,
-        source_event_id=context.source_event_id,
-        sort_key=(3,),
-    ),)
+    return (
+        GameEffect(
+            derive_effect_id(context.action_key, 1),
+            EffectKind.RECORD_PRIVATE_FACT,
+            context.action_key,
+            payload={
+                "target": context.actor_seat,
+                "namespace": "private_checks",
+                "fact": {"target": command.target_seat, "camp": camp},
+            },
+            visibility=("ACTOR",),
+            expected_revision=context.revision,
+            target_seat=context.actor_seat,
+            source_event_id=context.source_event_id,
+            sort_key=(1,),
+        ),
+        _seer_reasoning_effect(
+            context, command, 2,
+            expected_revision=context.revision,
+            source_event_id=context.source_event_id,
+        ),
+        GameEffect(
+            derive_effect_id(context.action_key, 3),
+            EffectKind.EMIT_EVENT,
+            context.action_key,
+            payload={
+                "event_type": "SEER_CHECK",
+                "payload": {"target_seat": command.target_seat, "result": camp},
+            },
+            visibility=("PUBLIC",),
+            expected_revision=context.revision,
+            source_event_id=context.source_event_id,
+            sort_key=(3,),
+        ),
+    ) + reflect_effects(context, selected, REFLECT_CHECK_RESOURCE, 4)
 
 
 SEER_SPEC = RoleSpec(
@@ -111,9 +116,12 @@ SEER_SPEC = RoleSpec(
         action_types=("check", "pass"),
         actions_requiring_target=frozenset({"check"}),
         fallback_action_type="pass",
-        allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}),
+        allowed_effects=frozenset({
+            EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT,
+            EffectKind.SET_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+        }),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-        selected_target_fact_namespaces=frozenset({"camp_label"}),
+        selected_target_fact_namespaces=frozenset({"camp_label", "resource_labels"}),
         per_window_limit=1,
         per_round_limit=1,
         is_applicable=seer_applicable,
@@ -121,7 +129,10 @@ SEER_SPEC = RoleSpec(
         resolve=resolve_seer_action,
     ),),
     initial_private_data={"private_checks": ()},
-    allowed_effects=frozenset({EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT}),
+    allowed_effects=frozenset({
+        EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT,
+        EffectKind.SET_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+    }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
         "Each night the Seer may check one other living player's camp. The engine returns "

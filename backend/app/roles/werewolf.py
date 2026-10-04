@@ -1,18 +1,18 @@
 from __future__ import annotations
+
 from app.models.game import GameState
 from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
+from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
     RuleViolation, SchedulePoint,
 )
 
-
 def werewolf_applicable(context: ActionContext) -> bool:
     return context.actor_alive
-
 
 # Declared by roles that may never be the wolf team's own kill target (Wolf
 # Beauty). The kill contract is shared byte-identically across the camp, so the
@@ -20,6 +20,13 @@ def werewolf_applicable(context: ActionContext) -> bool:
 # enforced here for whoever declares it.
 SELF_KILL_FORBIDDEN = "self_kill_forbidden"
 
+# Declared by roles the kill simply does not land on (the Evil Knight). The
+# shared kill contract aggregates votes and therefore may not read per-target
+# facts, so this is *not* enforced at validation time: ``NightDirector`` names
+# those seats in the discussion and vote prompts, and the settlement honours the
+# marker, so a vote for one is a wasted night rather than a kill. The marker name
+# has one definition, in the settlement that consumes it.
+NIGHT_IMMUNE = NIGHT_IMMUNE_RESOURCE
 
 def validate_werewolf_action(
     context: ActionContext, command: ActionCommand,
@@ -35,7 +42,6 @@ def validate_werewolf_action(
             "this role can never be the wolf team's own kill target",
         ),)
     return ()
-
 
 def aggregate_werewolf_votes(
     context: ActionContext, commands: tuple[ActionCommand, ...],
@@ -70,7 +76,6 @@ def aggregate_werewolf_votes(
         sort_key=(2,), **common,
     ),)
 
-
 # Shared by every werewolf-camp role that joins the nightly kill vote; the
 # registry accepts one contract id across roles only when the declarations
 # are identical, and the scheduler aggregates all holders together.
@@ -100,7 +105,6 @@ WEREWOLF_SPEC = RoleSpec(
         "information without ever revealing the channel."
     ),
 )
-
 
 class Werewolf(BaseRole):
     """Werewolf role: can kill at night. Wolves coordinate through their kill votes."""

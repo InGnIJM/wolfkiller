@@ -15,6 +15,11 @@ DELAYABLE_RESOURCE = "delayable"
 DELAYED_DEATH_STATUS = "delayed_death"
 POISONED_STATUS = "poisoned"
 WOUNDED_STATUS = "wounded"
+#: A seat that declares this marker shrugs off *every* lethal night effect —
+#: the wolf kill, the poison and anything else that settles here. Unlike
+#: ``delayable`` it leaves no mark and never dies later: the hit simply does not
+#: land. The Evil Knight is the only built-in holder.
+NIGHT_IMMUNE_RESOURCE = "night_immune"
 # Causes whose lethal hit leaves a visible poisoned / wounded mark. Anything
 # else (a wolf kill) kills the delayable seat on the spot, as the rules require.
 _POISON_CAUSES = frozenset({"poison"})
@@ -144,6 +149,11 @@ def settle(
         lethal_wolf = double_save or wolf_totals.get(target, 0) > protection_totals.get(target, 0)
         lethal_other = other_totals.get(target, 0) > 0
         if not resulting_alive[target] or not (lethal_wolf or lethal_other):
+            continue
+        if role_resources.get(target, {}).get(NIGHT_IMMUNE_RESOURCE, 0) > 0:
+            # Permanent immunity: no death and no delayed mark either. Checked
+            # before the delayable branch so a seat holding both markers still
+            # takes nothing from the settlement.
             continue
         if lethal_wolf and lethal_other:
             cause = causes[target]

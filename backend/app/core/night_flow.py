@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.core.conversation_log import ConversationLog
+from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
 from app.models.conversation import ConversationScope
 from app.models.game import Camp, GameState
 from app.models.pipeline import ActionCommand
@@ -290,6 +291,28 @@ class NightDirector:
             "a valid strategy unless the action contract forbids it. "
         )
 
+    def _night_immune_clause(self, state: GameState) -> str:
+        """Name the seats the shared kill contract refuses as a target.
+
+        A seat declaring ``NIGHT_IMMUNE_RESOURCE`` shrugs the kill off in the
+        settlement and the contract rejects the vote outright; without saying so
+        the model would only lose its ballot without knowing why.
+        """
+        immune = sorted(
+            seat for seat, player in state.players.items()
+            if player.is_alive and self._has_marker(state, seat, NIGHT_IMMUNE_RESOURCE)
+        )
+        if not immune:
+            return ""
+        seats = "、".join(f"{seat} 号" for seat in immune)
+        return f"{seats}玩家免疫夜间伤害，不能作为刀口：投给他们的票会被判为无效票。"
+
+    @staticmethod
+    def _has_marker(state: GameState, seat: int, marker: str) -> bool:
+        from app.core.role_runtime import role_resource_view
+
+        return role_resource_view(state, seat).get(marker, 0) > 0
+
     def _history_text(self, history: Sequence[str]) -> str:
         return "\n".join(f"{index + 1}. {line}" for index, line in enumerate(history))
 
@@ -332,6 +355,7 @@ class NightDirector:
             "that you are a werewolf. Speak like a real player — do not quote "
             "or reference the rules of this prompt. "
             + self._self_kill_clause(state, seat)
+            + self._night_immune_clause(state)
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
@@ -381,6 +405,7 @@ class NightDirector:
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "
             + self._self_kill_clause(state, seat)
+            + self._night_immune_clause(state)
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )

@@ -30,6 +30,7 @@ from app.roles.seer import SEER_SPEC, Seer
 from app.roles.villager import VILLAGER_SPEC, Villager
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC, Werewolf
 from app.roles.werewolf_king import WEREWOLF_KING_SPEC, WerewolfKing
+from app.roles.evil_knight import EVIL_KNIGHT_SPEC, EvilKnight
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
 from app.roles.witch import WITCH_SPEC, Witch
@@ -440,6 +441,7 @@ builtin_registry.register_pipeline(OLD_DRUNKARD_SPEC)
 builtin_registry.register_pipeline(WOLF_BEAUTY_SPEC)
 builtin_registry.register_pipeline(WEREWOLF_KING_SPEC)
 builtin_registry.register_pipeline(WOLF_KING_SPEC)
+builtin_registry.register_pipeline(EVIL_KNIGHT_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -556,6 +558,22 @@ builtin_registry.register(
         "wolf-killer-wolf-king",
         Camp.WEREWOLF,
         WolfKing,
+        (
+            _contract(
+                "werewolf_kill",
+                GamePhase.NIGHT,
+                ("kill", "pass"),
+                frozenset({"kill"}),
+                resolution_priority=10,
+            ),
+        ),
+    )
+)
+builtin_registry.register(
+    LegacyRoleSpec(
+        "wolf-killer-evil-knight",
+        Camp.WEREWOLF,
+        EvilKnight,
         (
             _contract(
                 "werewolf_kill",
