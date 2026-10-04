@@ -98,6 +98,27 @@ def test_instructions_name_every_ability() -> None:
         assert ability in text
 
 
+def test_instructions_state_the_real_reflect_order() -> None:
+    """反伤是被动的：谁先动手谁出局，而引擎里女巫一定在预言家之前。
+
+    模型必须知道这个顺序，否则算不清「毒我 = 换掉女巫」和「验我 = 换掉预言家」。
+    """
+    text = EVIL_KNIGHT_SPEC.instructions
+    assert "女巫在预言家之前" in text
+    assert "女巫先出局" in text
+    assert "自动触发" in text
+
+
+def test_instructions_never_promise_the_guard_blocks_a_reflect() -> None:
+    """官方「守卫守护恶灵骑士不会被反伤」的主语是守卫，不是「守护能挡反伤」。
+
+    这句话曾经写反过，模型会据此以为守卫守着预言家就换不掉他，从而放弃反伤。
+    """
+    text = EVIL_KNIGHT_SPEC.instructions
+    assert "守卫的守护挡不住反伤" in text
+    assert "守卫的守护可以挡住反伤" not in text
+
+
 # ── settlement side: permanent immunity ───────────────────────────────────
 
 @pytest.mark.parametrize("cause", ["wolf_kill", "poison", "hunter_shot", "reflect"])

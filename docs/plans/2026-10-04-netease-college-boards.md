@@ -38,6 +38,14 @@
 >    进上帝视角，零新事件类型。
 > 8. 石像鬼**没有**声明 §6.2 提到的 `no_self_explode` 标记：警长竞选的自爆选项已改挂
 >    `in_wolf_pack`，隐狼天然不能自爆吞警徽；白天自爆本来就只有白狼王契约才有。
+> 9. **§5.2 的「守卫守护可阻断反伤」已作废。** 官方原文是「守卫守护恶灵骑士不会被反伤」，
+>    主语是**守卫**——守卫去守恶灵骑士、守卫自己不会被反伤（反伤只对查验和毒药生效），
+>    不是「守卫的守护可以挡住反伤」。曾按错误理解改过 `night_settlement` 又回滚，
+>    代码保持原样；`instructions` / `catalog` / `docs/gameplay.md` 里的那句话已改成正确口径。
+> 10. **§5.2 括号里的「（查验在先则只死预言家）」是把官方举例当成了规则。** 官方夜晚顺序是
+>    守卫 → 狼人 → 狼美人 → **女巫 → 预言家**（[九游](https://www.9game.cn/langrensha/5401730.html)），
+>    本引擎完全一致，所以女巫一定先发动、**同验同毒时女巫先出局**。引擎无需改动，
+>    只需在提示词里把顺序写清楚（已补）。
 
 ---
 
@@ -497,7 +505,9 @@ initial_resources={"night_immune": 1, "reflect_check": 1, "reflect_poison": 1,
   ```
 - `roles/witch.py` 的 `resolve`：毒药命中 `reflect_poison` 时同理
 - **去重靠 `resource_equals` 前置条件**（CAS）：同夜两者都命中时，第二笔会因 `reflect_used == 1` 被拒 → 天然满足"同夜叠加只发动一次"。注意 `EffectConflict` 在模型驱动的契约里会被 `Scheduler._apply_or_degrade` 降级为 fallback，不会丢局
-- **守卫守护可阻断反伤**：`reflect` 死因走 `SUBMIT_DAMAGE`，需要在 §2.3 的分账里把 `reflect` 归入"可被 `guard` 抵消"的伤害类
+- ~~**守卫守护可阻断反伤**~~ **【本条已作废，见文末偏差记录第 9 条】**：官方原文是「守卫守护恶灵骑士不会被反伤」，
+  主语是**守卫**——意思是守卫去守恶灵骑士、守卫自己不会被反伤（反伤只对查验和毒药生效），
+  **不是**「守卫的守护可以挡住反伤」。`reflect` 死因走 `SUBMIT_DAMAGE`，**不需要**归入可被 `guard` 抵消的伤害类
 
 **同步**：`DeathCause` 加 `reflect`；新观众事件 `EVIL_KNIGHT_REFLECT`；`test_evil_knight_extension.py` 覆盖三条能力的正反例。
 
