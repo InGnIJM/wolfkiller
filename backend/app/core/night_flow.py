@@ -7,6 +7,7 @@ from typing import Optional
 
 from app.core.conversation_log import ConversationLog
 from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
+from app.core.wolf_pack import in_wolf_pack
 from app.models.conversation import ConversationScope
 from app.models.game import Camp, GameState
 from app.models.pipeline import ActionCommand
@@ -268,7 +269,7 @@ class NightDirector:
     def _wolf_team(self, state: GameState) -> list[int]:
         return sorted(
             seat for seat, player in state.players.items()
-            if player.camp == Camp.WEREWOLF and player.is_alive
+            if in_wolf_pack(state, seat) and player.is_alive
         )
 
     def _self_kill_clause(self, state: GameState, seat: int) -> str:

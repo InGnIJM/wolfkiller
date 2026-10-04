@@ -37,6 +37,7 @@ from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier
 from app.core.night_flow import NightDirector
+from app.core.wolf_pack import in_wolf_pack
 from app.core.prompt_capture import (
     PromptCapture,
     PromptSink,
@@ -2513,8 +2514,15 @@ class GameService:
                 # Visibility follows the camp, not the role id: passing the id here
                 # made the wolf channel empty for every wolf whose id is not the
                 # string "werewolf" -- and for all of them once the entry took a camp.
+                # Pack membership needs the live state; a caller that has none
+                # keeps the long-standing camp-only visibility.
+                state = getattr(engine, "state", None)
                 records = engine.conversation_log.get_conversations_for_role(
                     request.actor_seat, role_spec.camp_id,
+                    in_pack=(
+                        in_wolf_pack(state, request.actor_seat)
+                        if isinstance(state, GameState) else True
+                    ),
                 )
                 history = "\n".join(
                     f"[{record.round_number}|{record.phase}|"

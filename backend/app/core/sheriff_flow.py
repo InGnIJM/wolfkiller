@@ -13,6 +13,7 @@ from typing import Optional
 from app.agents.game_rules import BASE_RULES, SHERIFF_GAME_RULES
 from app.agents.output_parser import extract_json_object
 from app.core.conversation_log import ConversationLog
+from app.core.wolf_pack import actor_sees_pack, in_wolf_pack, pack_seats
 from app.core.role_runtime import (
     role_private_facts_view, role_resource_view,
 )
@@ -405,14 +406,15 @@ class SheriffDirector:
     _MAX_WOLF_CHANNEL_CHARS = 1000
 
     def _wolf_team_block(self, state: GameState, seat: int) -> list[str]:
-        """Wolf-only lines: teammate seats and this night's wolf-channel plan."""
-        player = state.players.get(seat)
-        if player is None or player.camp != Camp.WEREWOLF:
+        """Wolf-only lines: teammate seats and this night's wolf-channel plan.
+
+        Gated on *pack* membership, not camp: a role declaring ``no_wolf_pack``
+        is a werewolf the pack cannot see, so handing it the roster (or the
+        channel) would leak exactly the team the rules keep from it.
+        """
+        if not actor_sees_pack(state, seat):
             return []
-        teammates = sorted(
-            mate.seat_number for mate in state.players.values()
-            if mate.camp == Camp.WEREWOLF
-        )
+        teammates = sorted(pack_seats(state))
         lines = ["狼队成员：" + "、".join(f"{item}号" for item in teammates) + "。"]
         if self._conversation_log is not None:
             channel = [
@@ -433,8 +435,20 @@ class SheriffDirector:
                 lines.append("本夜狼队频道记录（含次日计划，仅作参考）：\n" + "\n".join(plan_lines))
         return lines
 
+    @staticmethod
+    def _may_explode(state: GameState, seat: int) -> bool:
+        """Only a wolf the pack can actually see may swallow the badge.
+
+        ``wolf`` at every call site means *werewolf camp*, because a hidden wolf
+        still knows what it is. Exploding is a pack move, so it follows pack
+        membership instead: a role declaring ``no_wolf_pack`` has no badge to
+        swallow on the team's behalf.
+        """
+        return in_wolf_pack(state, seat)
+
     def campaign_prompt(self, state: GameState, seat: int, *, wolf: bool) -> list[dict[str, str]]:
-        actions = [_RUN, _PASS] + ([_EXPLODE] if wolf else [])
+        explode = wolf and self._may_explode(state, seat)
+        actions = [_RUN, _PASS] + ([_EXPLODE] if explode else [])
         human = (
             f"第{state.round_number}轮警长竞选。{self._context_block(state, seat, wolf=wolf)}"
             "action_type=run 表示上警成为候选人（由从未上警的警下玩家投票，"
@@ -446,7 +460,8 @@ class SheriffDirector:
         return self._messages(self._system(), human)
 
     def withdraw_prompt(self, state: GameState, seat: int, *, wolf: bool) -> list[dict[str, str]]:
-        actions = [_STAY, _WITHDRAW] + ([_EXPLODE] if wolf else [])
+        explode = wolf and self._may_explode(state, seat)
+        actions = [_STAY, _WITHDRAW] + ([_EXPLODE] if explode else [])
         human = (
             f"第{state.round_number}轮警长竞选退水。你是{seat}号候选人。\n"
             f"{self._context_block(state, seat, wolf=wolf)}"
@@ -498,7 +513,8 @@ class SheriffDirector:
         return value
 
     def campaign_turn(self, state: GameState, seat: int, *, wolf: bool) -> str:
-        actions = [_RUN, _PASS] + ([_EXPLODE] if wolf else [])
+        explode = wolf and self._may_explode(state, seat)
+        actions = [_RUN, _PASS] + ([_EXPLODE] if explode else [])
         try:
             value = self._invoke_json(
                 self.campaign_prompt(state, seat, wolf=wolf),
@@ -506,13 +522,14 @@ class SheriffDirector:
                 schema=_schema(actions),
                 seat=seat,
             )
-            return parse_campaign(value, wolf=wolf)
+            return parse_campaign(value, wolf=explode)
         except Exception:
             logger.warning("sheriff campaign failed seat=%s", seat, exc_info=True)
             return _PASS
 
     def withdraw_turn(self, state: GameState, seat: int, *, wolf: bool) -> str:
-        actions = [_STAY, _WITHDRAW] + ([_EXPLODE] if wolf else [])
+        explode = wolf and self._may_explode(state, seat)
+        actions = [_STAY, _WITHDRAW] + ([_EXPLODE] if explode else [])
         try:
             value = self._invoke_json(
                 self.withdraw_prompt(state, seat, wolf=wolf),
@@ -520,7 +537,7 @@ class SheriffDirector:
                 schema=_schema(actions),
                 seat=seat,
             )
-            return parse_withdraw(value, wolf=wolf)
+            return parse_withdraw(value, wolf=explode)
         except Exception:
             logger.warning("sheriff withdraw failed seat=%s", seat, exc_info=True)
             return _STAY
@@ -528,7 +545,8 @@ class SheriffDirector:
     def vote_turn(
         self, state: GameState, seat: int, candidates: Sequence[int], *, wolf: bool,
     ) -> int | str | None:
-        actions = [_VOTE, _PASS] + ([_EXPLODE] if wolf else [])
+        explode = wolf and self._may_explode(state, seat)
+        actions = [_VOTE, _PASS] + ([_EXPLODE] if explode else [])
         try:
             value = self._invoke_json(
                 self.vote_prompt(state, seat, candidates),
@@ -539,7 +557,7 @@ class SheriffDirector:
                 ),
                 seat=seat,
             )
-            return parse_vote(value, set(candidates), wolf=wolf)
+            return parse_vote(value, set(candidates), wolf=explode)
         except Exception:
             logger.warning("sheriff vote failed seat=%s", seat, exc_info=True)
             return None

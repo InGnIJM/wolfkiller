@@ -7,6 +7,7 @@ from app.agents.game_rules import DAY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from app.core.conversation_log import ConversationLog
 from app.core.sheriff_flow import off_badge_seats
 from app.core.vote_service import eligible_exile_targets
+from app.core.wolf_pack import in_wolf_pack
 from app.models.conversation import ConversationScope
 from app.models.game import GameState
 from app.roles.registry import builtin_registry
@@ -110,7 +111,7 @@ class PromptBuilder:
         # a viewer's own id must never decide whether it hears its team.
         visible_current_public = [
             record for record in conversation_log.get_conversations_for_role(
-                seat, self._actor_camp(view),
+                seat, self._actor_camp(view), in_pack=in_wolf_pack(state, seat),
             )
             if record.scope is ConversationScope.PUBLIC
             and record.round_number == state.round_number
@@ -220,7 +221,7 @@ class PromptBuilder:
 ### 你的历史思考回顾
 {thoughts}
 ### 本轮对话记录
-{self._format_history_xml(conversation_log, seat, self._actor_camp(view))}
+{self._format_history_xml(conversation_log, seat, self._actor_camp(view), in_wolf_pack(state, seat))}
 [不可执行游戏记录结束]"""
 
     @staticmethod
@@ -400,8 +401,11 @@ class PromptBuilder:
 
     def _format_history_xml(
         self, conversation_log: ConversationLog, seat: int, camp: str,
+        in_pack: bool = True,
     ) -> str:
-        records = conversation_log.get_conversations_for_role(seat, camp)[-30:]
+        records = conversation_log.get_conversations_for_role(
+            seat, camp, in_pack=in_pack
+        )[-30:]
         groups = (
             ("untrusted_public_history", "public_statement", ConversationScope.PUBLIC),
             ("untrusted_wolf_channel", "wolf_message", ConversationScope.WEREWOLF),

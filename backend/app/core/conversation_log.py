@@ -189,7 +189,7 @@ class ConversationLog:
     # ── Query methods ─────────────────────────────────────────────
 
     def get_conversations_for_role(
-        self, seat: int, camp: str
+        self, seat: int, camp: str, *, in_pack: bool = True,
     ) -> list[Conversation]:
         """Return all conversation records visible to a given player.
 
@@ -199,7 +199,7 @@ class ConversationLog:
         it could not hear.
         """
         result: list[Conversation] = []
-        is_werewolf = camp == Camp.WEREWOLF
+        is_werewolf = camp == Camp.WEREWOLF and in_pack
         for record in self.records:
             if record.scope == ConversationScope.PUBLIC:
                 result.append(record)

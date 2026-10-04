@@ -6,14 +6,17 @@ from collections.abc import Mapping, Sequence
 import re
 from types import MappingProxyType
 from app.models.actions import SpeechRecord, VoteAction
-from app.models.game import DEFAULT_WITCH_SELF_SAVE, GameState, PlayerState
+from app.models.game import DEFAULT_WITCH_SELF_SAVE, Camp, GameState, PlayerState
 from app.models.pipeline import (
     ActionCommand, ActionContext, IssuedActionRequest, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
 from app.core.role_runtime import (
-    role_action_counters, role_private_data_view, role_private_facts_view,
-    role_resource_view,
+    has_role_marker, role_action_counters, role_private_data_view,
+    role_private_facts_view, role_resource_view,
+)
+from app.core.wolf_pack import (
+    NO_WOLF_PACK_RESOURCE, actor_sees_pack, pack_seats,
 )
 
 
@@ -78,6 +81,39 @@ _PUBLIC_RESOURCES = frozenset({
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
 
+
+
+def _camp_facts(state: GameState, actor: PlayerState) -> dict[str, object]:
+    """Camp membership, with the wolf pack's blind spot honoured.
+
+    Only werewolf-camp roles declare the CAMP namespace, so ``camp_members`` is
+    in practice the teammate list in the wolf prompt. A role that declares
+    ``no_wolf_pack`` must be missing from it (the pack is never told who the
+    Gargoyle is) and must not receive it either — the Gargoyle may shoot a
+    teammate it cannot identify, and that gamble is the whole board. Such a seat
+    gets ``wolf_pack_count`` instead: how many wolves are left, never which
+    seats. ``wolf_knows_pack`` is the one-way variant (the Eclipse Maid sees the
+    pack; the pack does not see her).
+
+    Known identities persist after death, so neither list filters on life state.
+    """
+    if actor.camp != Camp.WEREWOLF:
+        return {"camp_members": tuple(sorted(
+            seat for seat, player in state.players.items() if player.camp == actor.camp
+        ))}
+    facts: dict[str, object] = {
+        "camp_members": (
+            pack_seats(state) if actor_sees_pack(state, actor.seat_number) else ()
+        ),
+    }
+    if has_role_marker(state, actor.seat_number, NO_WOLF_PACK_RESOURCE):
+        # A hidden wolf always gets the count — it is its own fact, and it is
+        # what unlocks the lone kill once the pack is gone. ``wolf_knows_pack``
+        # adds the roster on top; it never replaces the count.
+        facts["wolf_pack_count"] = sum(
+            1 for seat in pack_seats(state) if state.players[seat].is_alive
+        )
+    return facts
 
 class ContextProjector:
     """Create the only state snapshot that pipeline hooks and prompts may read."""
@@ -208,14 +244,7 @@ class ContextProjector:
                 )
             )
         if "CAMP" in visible:
-            # Known identities persist after death; only public life state changes.
-            facts["camp_members"] = tuple(
-                sorted(
-                    seat
-                    for seat, player in state.players.items()
-                    if player.camp == actor.camp
-                )
-            )
+            facts.update(_camp_facts(state, actor))
         # RELATION is intentionally a no-op until GameState has tagged relation facts.
 
         # Until Task 19 adds GameState.state_revision, the signed request is the
@@ -288,13 +317,7 @@ class ContextProjector:
             "camp_id": spec.camp_id,
         }
         if "CAMP" in spec.visibility_namespaces:
-            facts["camp_members"] = tuple(
-                sorted(
-                    seat
-                    for seat, player in state.players.items()
-                    if player.camp == actor.camp
-                )
-            )
+            facts.update(_camp_facts(state, actor))
         resources = self._actor_resources(state, actor, spec.initial_resources)
         facts.update(
             self._actor_private_facts(

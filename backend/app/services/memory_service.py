@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from app.core.wolf_pack import actor_sees_pack, pack_seats
 from app.models.game import Camp, GameState
 from app.roles.seer import SEER_SPEC
 from app.roles.witch import WITCH_SPEC
@@ -74,10 +75,11 @@ class MemoryService:
         # The team follows the camp, never the role id: an id is free-form, and
         # matching "werewolf" inside it dropped the wolf beauty from every
         # teammate list (its own included) while every other wolf stayed.
-        if player.camp == Camp.WEREWOLF:
+        # Pack membership, not camp membership: a role declaring
+        # ``no_wolf_pack`` must neither list the pack nor be listed by it.
+        if actor_sees_pack(state, seat):
             knowledge["teammates"] = [
-                s for s, p in state.players.items()
-                if p.camp == Camp.WEREWOLF and s != seat
+                s for s in pack_seats(state) if s != seat
             ]
 
         # 与权威角色 id 相等，而不是按名字子串：子串判定会把任何取名相近的角色

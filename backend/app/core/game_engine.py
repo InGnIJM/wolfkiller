@@ -26,6 +26,7 @@ from app.roles.registry import builtin_registry
 from app.config import PipelineMode, config as app_config
 from app.core.effect_applier import CommitResult
 from app.core.night_settlement import resolve_delayed_deaths
+from app.core.wolf_pack import in_wolf_pack
 from app.core.vote_service import VoteService
 from app.core.sheriff_flow import (
     SheriffDirector,
@@ -521,7 +522,7 @@ class GameEngine:
         # its concrete role id, so camp-mates with extra powers join the chat.
         wolves = [
             seat for seat in sorted(state.players)
-            if state.players[seat].camp == Camp.WEREWOLF and state.players[seat].is_alive
+            if in_wolf_pack(state, seat) and state.players[seat].is_alive
         ]
 
         if pending.stage == 0:

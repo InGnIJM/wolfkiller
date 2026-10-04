@@ -161,6 +161,19 @@ def role_resource_view(state: GameState, seat: int) -> Mapping[str, int]:
         return MappingProxyType(dict(resources))
 
 
+def has_role_marker(state: GameState, seat: int, marker: str) -> bool:
+    """True when ``seat`` declares ``marker`` with a positive value.
+
+    Role capabilities that the shared contracts cannot express (the kill
+    contract is byte-identical across the pack, so a per-role difference must
+    travel as a resource) are read through this one helper. A seat with no
+    runtime, no resources, or the marker at zero reads as ``False``.
+    """
+    if type(marker) is not str or not marker:
+        raise ValueError("marker must be a non-empty string")
+    return role_resource_view(state, seat).get(marker, 0) > 0
+
+
 def role_private_data_view(state: GameState, seat: int) -> Mapping[str, object]:
     from app.core.effect_applier import EffectRejected
     if type(state) is not GameState: raise TypeError("state must be GameState")
