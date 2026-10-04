@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import theme from '../theme';
 import {
-  BACKDROP, BACKGROUNDS, CARD_BACK, INK, ROLE_ART, ROLE_COLORS,
+  BACKDROP, BACKGROUNDS, CARD_BACK, INK, ROLE_ART, ROLE_ART_BY_ID, ROLE_COLORS,
+  roleArt,
 } from '../theme/tokens';
 import type { RoleColorKey } from '../theme/tokens';
 
@@ -120,6 +121,40 @@ describe('血月剧场素材令牌', () => {
       const plate = plateOver(scrim);
       expect(contrastRatio(parseHex(INK.primary), plate)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(parseHex(INK.dim), plate)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+describe('roleArt', () => {
+  it('returns the role\'s own portrait when it has one', () => {
+    for (const [roleId, art] of Object.entries(ROLE_ART_BY_ID)) {
+      expect(roleArt(roleId)).toBe(art);
+    }
+  });
+
+  it('falls back to the card back for a role without a portrait', () => {
+    // 这五个角色还没有立绘。以前它们借用配色相近角色的图（狼王显示成白狼王、
+    // 恶夜骑士和石像鬼显示成狼人），现在一律回退卡背。
+    for (const roleId of [
+      'wolf-killer-wolf-king', 'wolf-killer-evil-knight',
+      'wolf-killer-dream-weaver', 'wolf-killer-gargoyle',
+      'wolf-killer-gravekeeper',
+    ]) {
+      expect(roleArt(roleId)).toBe(CARD_BACK);
+    }
+  });
+
+  it('falls back for a missing or unknown id', () => {
+    expect(roleArt(null)).toBe(CARD_BACK);
+    expect(roleArt(undefined)).toBe(CARD_BACK);
+    expect(roleArt('')).toBe(CARD_BACK);
+    expect(roleArt('wolf-killer-not-a-role')).toBe(CARD_BACK);
+  });
+
+  it('never borrows another role\'s portrait', () => {
+    const own = new Set(Object.values(ROLE_ART_BY_ID));
+    for (const roleId of Object.keys(ROLE_ART_BY_ID)) {
+      expect(own.has(roleArt(roleId))).toBe(true);
     }
   });
 });

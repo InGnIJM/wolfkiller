@@ -112,6 +112,39 @@ export const ROLE_ART: Record<RoleColorKey, string> = {
 /** 未揭晓身份 / 翻牌演出用的卡背。 */
 export const CARD_BACK = cardBack;
 
+/**
+ * 角色立绘，键是**角色 id**。
+ *
+ * 与 `ROLE_ART`（键是配色键）的区别：配色键只有 11 个，多个角色共用一个配色键
+ * 就必然共用一张图 —— 狼王会显示成白狼王、恶夜骑士和石像鬼会显示成狼人。
+ * 这里按角色 id 登记，没有登记的角色由 `roleArt()` 回退到卡背，等立绘补齐后
+ * **只在这里加一行**，不必改任何组件。
+ */
+export const ROLE_ART_BY_ID: Record<string, string> = {
+  'wolf-killer-werewolf': artWerewolf,
+  'wolf-killer-villager': artVillager,
+  'wolf-killer-seer': artSeer,
+  'wolf-killer-witch': artWitch,
+  'wolf-killer-hunter': artHunter,
+  'wolf-killer-guard': artGuard,
+  'wolf-killer-idiot': artIdiot,
+  'wolf-killer-werewolf-king': artWerewolfKing,
+  'wolf-killer-knight': artKnight,
+  'wolf-killer-wolf-beauty': artWolfBeauty,
+  'wolf-killer-old-drunkard': artOldDrunkard,
+};
+
+/**
+ * 取一个角色的立绘地址。
+ *
+ * 没有立绘的角色回退到卡背，而不是借用别人的图 —— 后续还有 19 个角色要加，
+ * 借图会让「这个角色长什么样」彻底失真。
+ */
+export function roleArt(roleId: string | null | undefined): string {
+  if (!roleId) return CARD_BACK;
+  return ROLE_ART_BY_ID[roleId] ?? CARD_BACK;
+}
+
 /** 头像底色的深色宝石盘（保证浅墨文字 ≥4.5:1 对比度，按座位取色） */
 export const AVATAR_PALETTE = [
   '#7A1E2B', '#7A5A1E', '#2E5670', '#553D78', '#3E5A39',
