@@ -2,7 +2,18 @@
 
 > 基线：`main` @ `f07b706`，后端 `pytest tests app --cov=app --cov-branch` 100%（statement + branch）
 > 目标：把项目从「11 角色 / 6 预设」扩到「覆盖网易高校赛 17 个官方赛制板型 + 假面舞会」
-> 状态：**已批准，阶段 0 实施中**
+> 状态：**已批准。阶段 0（狼美人骑士预设 + 狼美人决斗口径 + 女巫自救开关）已完成；
+> 阶段 1（狼王、恶夜骑士 + 两个预设）已完成。累计 13 角色 / 9 预设。**
+>
+> 实施偏差记录（相对本文档初稿）：
+> 1. 狼王的 `wolf_king_shot` 契约**不声明** `required_resources`（`wolf_claw` 由 `is_applicable`
+>    与 `resource_equals` 前置条件把关）——照抄猎人已有的可用模式，避免引入无人用过的路径。
+> 2. 恶夜骑士**没有**新增 `EVIL_KNIGHT_REFLECT` 观众事件：死因 `reflect` 的死亡公告已承载
+>    「谁被反伤出局」，再加事件要动 8 个文件而信息增量为零。
+> 3. 恶夜骑士「不能被狼队选为刀口」**没有**走契约校验：共享狼刀契约是 `aggregate`，注册表
+>    明确禁止 aggregate 契约读 per-target facts（`registry.py:223`）。改为
+>    `NightDirector._night_immune_clause()` 在讨论与投票提示词里点名 + 结算侧 `night_immune`
+>    兜底——投给它是浪费一夜而不是击杀，与官方「不能选」的差异已记录在 AGENTS.md。
 
 ---
 
