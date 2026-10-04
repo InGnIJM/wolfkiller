@@ -95,6 +95,19 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "发动时不需要翻牌；被带走的猎人仍然可以开枪反击。",
         ],
     },
+    "wolf-killer-evil-knight": {
+        "name_zh": "恶夜骑士", "icon": "evil_knight",
+        "description": "狼人，永久免疫夜间伤害；被查验或下毒时反伤一次",
+        "rules": [
+            "夜晚与狼队共用同一次狼刀，按阵营合并计票。",
+            "永久免疫一切夜间伤害：狼刀与女巫的毒药都杀不死你，狼队也不能把你选为刀口。",
+            "不能自爆，也不能自刀。",
+            "只有一次反伤机会：被预言家查验则预言家当夜出局，被女巫下毒则女巫当夜出局；"
+            "同一夜两者都命中只发动一次，先动手的那一位出局，之后反伤永久消失。",
+            "守卫的守护可以挡住反伤；女巫的解药救不活被反伤出局的预言家。",
+            "旧称「恶灵骑士」，是同一张牌。",
+        ],
+    },
     "wolf-killer-knight": {
         "name_zh": "骑士", "icon": "knight",
         "description": "发言结束后投票前翻牌决斗一名玩家，是狼人则白天立即结束",
@@ -249,6 +262,24 @@ STANDARD_PRESETS: list[dict] = [
         "role_counts": {
             "wolf-killer-werewolf": 3,
             "wolf-killer-wolf-king": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Evil Knight" tournament board.
+        "id": "twelve-player-evil-knight",
+        "name": "十二人恶夜骑士",
+        "description": "3狼 1恶夜骑士 4民 1预言家 1女巫 1猎人 1守卫",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-evil-knight": 1,
             "wolf-killer-villager": 4,
             "wolf-killer-seer": 1,
             "wolf-killer-witch": 1,
