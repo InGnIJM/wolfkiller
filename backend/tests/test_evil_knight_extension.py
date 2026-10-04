@@ -121,8 +121,8 @@ def test_instructions_never_promise_the_guard_blocks_a_reflect() -> None:
 
 # ── settlement side: permanent immunity ───────────────────────────────────
 
-@pytest.mark.parametrize("cause", ["wolf_kill", "poison", "hunter_shot", "reflect"])
-def test_night_immunity_survives_every_lethal_cause(cause: str) -> None:
+@pytest.mark.parametrize("cause", ["wolf_kill", "poison", "reflect", "dream_death"])
+def test_night_immunity_survives_every_lethal_night_cause(cause: str) -> None:
     deaths, alive, delayed = settle(
         ({"target": 2, "amount": 1, "cause": cause},), (), {1, 2},
         {1: True, 2: True}, 1, {2: {NIGHT_IMMUNE_RESOURCE: 1}},
@@ -131,6 +131,35 @@ def test_night_immunity_survives_every_lethal_cause(cause: str) -> None:
     assert alive == {1: True, 2: True}
     # No death and no delayed mark either: the hit simply does not land.
     assert delayed == {}
+
+
+def test_the_hunters_gun_is_the_one_thing_that_takes_it_down() -> None:
+    """官方把免疫限定在夜间，并明说猎枪是例外。
+
+    官方卡牌：「**无法在夜间出局**」——限定的是夜间。官网 2018 攻略与官方手册
+    都写：「除了**猎枪**，恶灵骑士对其他神牌的功能有免疫力」。猎枪在白天公布
+    死讯时开，所以它不在免疫范围内。
+    """
+    deaths, alive, _ = settle(
+        ({"target": 2, "amount": 1, "cause": "hunter_shot"},), (), {1, 2},
+        {1: True, 2: True}, 1, {2: {NIGHT_IMMUNE_RESOURCE: 1}},
+    )
+    assert [death["cause"] for death in deaths] == ["hunter_shot"]
+    assert alive[2] is False
+
+
+def test_a_knife_and_a_gun_in_the_same_settlement_still_leave_it_alive() -> None:
+    """被刀又被枪时，枪那一笔生效 —— 免疫只挡夜间那部分。"""
+    deaths, alive, _ = settle(
+        (
+            {"target": 2, "amount": 1, "cause": "wolf_kill"},
+            {"target": 2, "amount": 1, "cause": "hunter_shot"},
+        ),
+        (), {1, 2}, {1: True, 2: True}, 1, {2: {NIGHT_IMMUNE_RESOURCE: 1}},
+    )
+    assert len(deaths) == 1
+    assert deaths[0]["cause"] == "hunter_shot"
+    assert alive[2] is False
 
 
 def test_without_the_marker_the_same_hit_kills() -> None:

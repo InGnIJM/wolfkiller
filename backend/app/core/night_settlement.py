@@ -34,6 +34,26 @@ _PROTECTION_SOURCES = _WOLF_ONLY_SOURCES | _ANY_DAMAGE_SOURCES
 #: ``delayable`` it leaves no mark and never dies later: the hit simply does not
 #: land. The Evil Knight is the only built-in holder.
 NIGHT_IMMUNE_RESOURCE = "night_immune"
+#: Lethal causes the ``night_immune`` marker does **not** shrug off.
+#:
+#: The official card limits the immunity to 「**无法在夜间出局**」 — the night —
+#: and both the official 2018 guide and the official handbook spell out the one
+#: exception: 「除了**猎枪**，恶灵骑士对其他神牌的功能有免疫力」. The gun fires
+#: at dawn when the night's deaths are announced, so it is not a night effect.
+#:
+#: Exempting by *cause* rather than by "which settlement call is this" matters:
+#: a gunshot triggered by a night death is settled by the response window's
+#: follow-up batch, which runs inside the night pipeline — a phase flag would
+#: have misread it as a night effect and swallowed it.
+#:
+#: The gun is the only one the official text names, but the marker's own wording
+#: is what decides the rest: 「无法**在夜间**出局」. The daytime causes reach
+#: ``settle()`` through the day windows, so they are not night effects either.
+#: (Only the gun is observable on an official board — the Evil Knight boards
+#: carry no Knight and no White Wolf King.)
+_NIGHT_IMMUNE_EXEMPT_CAUSES = frozenset({
+    "hunter_shot", "knight_duel", "self_explode",
+})
 # Causes whose lethal hit leaves a visible poisoned / wounded mark. Anything
 # else (a wolf kill) kills the delayable seat on the spot, as the rules require.
 _POISON_CAUSES = frozenset({"poison"})
@@ -132,6 +152,10 @@ def settle(
     causes: dict[int, str] = {}
     first_wolf_cause: dict[int, str] = {}
     first_other_cause: dict[int, str] = {}
+    # The non-night slice of the non-wolf total, tracked apart so an immune seat
+    # can be judged per damage class instead of as one lump.
+    exempt_totals: dict[int, int] = {}
+    first_exempt_cause: dict[int, str] = {}
     damage_causes: dict[int, set[str]] = {}
     for record in damage:
         target, amount = _record(record, seats, frozenset({"target", "amount", "cause"}))
@@ -148,6 +172,9 @@ def settle(
         else:
             _add(other_totals, target, amount)
             first_other_cause.setdefault(target, cause)
+            if cause in _NIGHT_IMMUNE_EXEMPT_CAUSES:
+                _add(exempt_totals, target, amount)
+                first_exempt_cause.setdefault(target, cause)
     for record in protection:
         target, amount = _record(record, seats, frozenset({"target", "amount"}))
         # Amounts are kept per source, not pooled: a dream weave and a guard
@@ -181,17 +208,26 @@ def settle(
         lethal_other = other_totals.get(target, 0) > any_shields
         if not resulting_alive[target] or not (lethal_wolf or lethal_other):
             continue
-        if role_resources.get(target, {}).get(NIGHT_IMMUNE_RESOURCE, 0) > 0:
-            # Permanent immunity: no death and no delayed mark either. Checked
-            # before the delayable branch so a seat holding both markers still
-            # takes nothing from the settlement.
-            continue
         if lethal_wolf and lethal_other:
             cause = causes[target]
         elif lethal_wolf:
             cause = first_wolf_cause[target]
         else:
             cause = first_other_cause[target]
+        if role_resources.get(target, {}).get(NIGHT_IMMUNE_RESOURCE, 0) > 0:
+            # Permanent immunity against *night* effects: no death and no
+            # delayed mark either. Checked before the delayable branch so a seat
+            # holding both markers still takes nothing from the settlement.
+            #
+            # Judged per damage class rather than as one lump: the knife is
+            # always a night effect, and the non-wolf side only counts the
+            # exempt slice. A seat knifed *and* shot in one settlement therefore
+            # still dies — to the gun.
+            lethal_wolf = False
+            lethal_other = exempt_totals.get(target, 0) > any_shields
+            if not lethal_other:
+                continue
+            cause = first_exempt_cause[target]
         if role_resources.get(target, {}).get(DELAYABLE_RESOURCE, 0) > 0:
             # The seat survives this settlement and dies on the next day; the
             # caller applies the returned marks so the delay is observable.
