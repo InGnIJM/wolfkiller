@@ -24,7 +24,8 @@ export type DeathCause =
   | 'knight_duel'
   | 'charm'
   | 'wolf_king_shot'
-  | 'reflect';
+  | 'reflect'
+  | 'dream_death';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'
@@ -232,6 +233,7 @@ export interface NightThoughtPayload {
   action_type:
     | 'hunter_reasoning'
     | 'wolf_king_reasoning'
+    | 'dream_weaver_reasoning'
     | 'witch_reasoning'
     | 'seer_reasoning'
     | 'guard_reasoning'

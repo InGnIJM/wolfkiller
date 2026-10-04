@@ -22,6 +22,7 @@ const ROLE_ORDER: readonly string[] = [
   'wolf-killer-werewolf-king',
   'wolf-killer-wolf-king',
   'wolf-killer-evil-knight',
+  'wolf-killer-dream-weaver',
   'wolf-killer-wolf-beauty',
   'wolf-killer-seer',
   'wolf-killer-witch',

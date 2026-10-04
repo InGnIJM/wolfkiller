@@ -28,6 +28,7 @@ const CAUSE_CASES: Array<[DeathCause, string]> = [
   ['charm', '殉情'],
   ['wolf_king_shot', '狼王带走'],
   ['reflect', '反伤'],
+  ['dream_death', '摄梦'],
 ];
 
 describe('DeathAnnouncement', () => {

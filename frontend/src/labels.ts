@@ -45,6 +45,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   charm: '殉情',
   wolf_king_shot: '狼王带走',
   reflect: '反伤',
+  dream_death: '摄梦',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   seer_reasoning: '预言家思考',
   hunter_reasoning: '猎人思考',
   wolf_king_reasoning: '狼王思考',
+  dream_weaver_reasoning: '摄梦人思考',
   guard_reasoning: '守卫思考',
   werewolf_king_reasoning: '白狼王思考',
   knight_reasoning: '骑士思考',
@@ -125,6 +127,7 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   seer_reasoning: '预言家',
   hunter_reasoning: '猎人',
   wolf_king_reasoning: '狼王',
+  dream_weaver_reasoning: '摄梦人',
   guard_reasoning: '守卫',
   werewolf_king_reasoning: '白狼王',
   knight_reasoning: '骑士',
@@ -273,6 +276,7 @@ export const ROLE_LABELS: Record<string, string> = {
   'wolf-killer-old-drunkard': '老酒鬼',
   'wolf-killer-wolf-king': '狼王',
   'wolf-killer-evil-knight': '恶夜骑士',
+  'wolf-killer-dream-weaver': '摄梦人',
 };
 
 /** 记忆里 `private_knowledge` 的键（存档 JSON，键开放）。 */
