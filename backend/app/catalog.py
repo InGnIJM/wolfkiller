@@ -216,6 +216,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-idiot": 1,
         },
         "enable_sheriff": True,
+        "witch_self_save": "never",
         "recommended_timeout_seconds": 7200,
     },
     {
@@ -232,6 +233,7 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-guard": 1,
         },
         "enable_sheriff": True,
+        "witch_self_save": "never",
         "recommended_timeout_seconds": 7200,
     },
     {

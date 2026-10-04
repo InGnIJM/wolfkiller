@@ -179,8 +179,16 @@ def test_wolf_king_and_white_wolf_king_are_distinct_role_ids() -> None:
 
 
 def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
-    """Every other preset keeps the long-standing first-night allowance."""
+    """Every other preset keeps the long-standing first-night allowance.
+
+    The NetEase set is every preset that reproduces an official board. The
+    official card text is flat: "女巫在每天晚上最多使用一瓶药，女巫不可自救" —
+    there is no first-night exception, so ``twelve-player-idiot`` (the official
+    12-player standard board) and ``twelve-player-wolf-king`` (the official
+    12-player white-wolf-king board) must both pin ``never``.
+    """
     netease = {
+        "twelve-player-idiot", "twelve-player-wolf-king",
         "twelve-player-wolf-beauty-knight", "twelve-player-wolf-king-guard",
         "twelve-player-evil-knight", "twelve-player-wolf-king-dream",
         "twelve-player-gargoyle-gravekeeper",

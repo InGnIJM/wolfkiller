@@ -51,11 +51,14 @@ class SheriffOfficeState:
 
 #: When the witch may save herself with the antidote.
 #:
-#: ``first_night_only`` is the ruling the original (Jiamian) boards use and the
-#: project's long-standing behaviour; ``never`` is the official NetEase ruling
-#: that every college-tournament board is played under. The policy travels in
-#: ``GameConfig`` and is projected into the witch's action context, so the role
-#: hook stays free of any board-specific branch.
+#: The official card text is flat — "女巫在每天晚上最多使用一瓶药，女巫不可自救" —
+#: with no first-night exception, so ``never`` is the base ruling and **every
+#: preset that reproduces an official board must say so explicitly**. The
+#: default stays ``first_night_only`` because the original (Jiamian) boards and
+#: the project's long-standing behaviour use it; a preset that omits the key
+#: silently inherits that, which is exactly how the NetEase boards drifted.
+#: The policy travels in ``GameConfig`` and is projected into the witch's action
+#: context, so the role hook stays free of any board-specific branch.
 DEFAULT_WITCH_SELF_SAVE = "first_night_only"
 WITCH_SELF_SAVE_POLICIES = ("first_night_only", "never")
 
