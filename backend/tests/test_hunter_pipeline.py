@@ -55,8 +55,9 @@ def test_spec_declares_bounded_death_response_and_gun() -> None:
     assert contract.action_types == ("shoot", "pass")
     assert contract.actions_requiring_target == {"shoot"}
     assert contract.response_event_types == {"PLAYER_DIED"}
-    assert contract.response_reasons == {
-        "wolf_kill", "exile", "hunter_shot", "self_explode", "wolf_king_shot"}
+    # 官方卡牌：「**当且仅当**猎人被狼人出局**或**被投票放逐时，猎人可以亮出
+    # 自己的身份牌并指定猎捕一名玩家。」「当且仅当」+ 只列两种 → 白名单两项。
+    assert contract.response_reasons == {"wolf_kill", "exile"}
     assert contract.per_window_limit == contract.per_game_limit == 1
 
 
@@ -71,8 +72,12 @@ def test_spec_instructions_state_shooting_is_optional() -> None:
 def test_applicable_requires_bound_allowed_own_death_and_gun() -> None:
     assert hunter_applicable(context()) is True
     assert hunter_applicable(context(reason="exile")) is True
-    assert hunter_applicable(context(reason="hunter_shot")) is True
+    # 官方没写这两种，所以枪不能响。
+    assert hunter_applicable(context(reason="hunter_shot")) is False
     assert hunter_applicable(context(reason="poison")) is False
+    assert hunter_applicable(context(reason="self_explode")) is False
+    assert hunter_applicable(context(reason="wolf_king_shot")) is False
+    assert hunter_applicable(context(reason="charm")) is False
     assert hunter_applicable(context(gun=0)) is False
     assert hunter_applicable(replace(context(), source_event_id=None, trigger_event=None)) is False
     assert hunter_applicable(replace(context(), trigger_event={

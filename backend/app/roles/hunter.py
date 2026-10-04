@@ -10,13 +10,19 @@ from app.models.pipeline import (
 )
 
 
-# Ways out that still let the hunter fire. Deliberately absent: "poison" (the
-# rules forbid it) and "charm", because a hunter dragged along by Wolf Beauty's
-# charm may not shoot either. A hunter the Wolf King's claw takes along *does*
-# fire back, so "wolf_king_shot" is included.
-_SHOOT_REASONS = frozenset({
-    "wolf_kill", "exile", "hunter_shot", "self_explode", "wolf_king_shot",
-})
+# Ways out that still let the hunter fire — the official card is explicit and
+# exclusive:
+#
+#   「**当且仅当**猎人被狼人出局**或**被投票放逐时，猎人可以亮出自己的身份牌并
+#     指定猎捕一名玩家。」
+#
+# "被狼人出局" is read strictly as the pack's own kill, so the set is exactly
+# these two. Everything else stays out, including causes this set used to carry
+# with no authority behind them: ``self_explode`` (dragged along by the White
+# Wolf King), ``wolf_king_shot`` (the Wolf King's claw), and ``hunter_shot`` (a
+# second hunter's gun) — plus ``poison`` and ``charm``, which the rules never
+# allowed anyway.
+_SHOOT_REASONS = frozenset({"wolf_kill", "exile"})
 
 
 def hunter_applicable(context: ActionContext) -> bool:

@@ -224,12 +224,18 @@ def _engine(tmp_path, provider, game_id: str = "king-day") -> GameEngine:
 
 
 @pytest.mark.asyncio
-async def test_explode_interrupts_the_speech_round_and_lets_the_hunter_react(tmp_path) -> None:
+async def test_explode_interrupts_the_speech_round_and_the_hunter_cannot_react(tmp_path) -> None:
+    """A hunter dragged along by the self-explosion does **not** fire back.
+
+    Official card text for the hunter: 「**当且仅当**猎人被狼人出局**或**被投票
+    放逐时，猎人可以亮出自己的身份牌并指定猎捕一名玩家。」 Being taken along by
+    the White Wolf King's self-explosion is neither, so the gun stays holstered.
+    """
     asked: list[str] = []
 
     def provider(request, projected, attempt):
         if request.contract.contract_id == "hunter_shoot":
-            return command("shoot", 4, "带走一个")
+            raise AssertionError("the hunter must not be asked to shoot")
         asked.append(projected.window_id)
         # Pass before seats 1 and 2 speak, explode before seat 3.
         return command("explode", 3, "带走猎人") if len(asked) == 3 else command("pass")
@@ -246,11 +252,12 @@ async def test_explode_interrupts_the_speech_round_and_lets_the_hunter_react(tmp
     assert [s for s in engine.state.speeches if s.phase == "last_words"] == []
     assert engine.state.current_speaker is None and engine.state.speaking_order == []
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [
-        (1, "self_explode"), (3, "self_explode"), (4, "hunter_shot")]
+        (1, "self_explode"), (3, "self_explode")]
     assert [(d.player_seat, d.cause) for d in engine.published] == [
-        (1, "self_explode"), (3, "self_explode"), (4, "hunter_shot")]
+        (1, "self_explode"), (3, "self_explode")]
     assert engine.state._pipeline_runtime.pending_damage == ()
-    assert [seat for seat, p in engine.state.players.items() if p.is_alive] == [2, 5, 6, 7]
+    # Seat 4 lives: the hunter never got a shot.
+    assert [seat for seat, p in engine.state.players.items() if p.is_alive] == [2, 4, 5, 6, 7]
     assert role_resource_view(engine.state, 1) == {"explode": 0}
     messages = [r.content for r in engine.conversation_log.get_public()]
     assert any("白天进程被中断" in m and "1号、3号" in m for m in messages)
@@ -258,9 +265,10 @@ async def test_explode_interrupts_the_speech_round_and_lets_the_hunter_react(tmp
                (tmp_path / "games" / "king-day" / "game.log").read_text("utf-8").splitlines()]
     audience = [r["data"]["event_type"] for r in records if r["operation"] == "audience_action"]
     assert audience.count("SELF_EXPLODE") == 1 and audience.count("DAY_INTERRUPTED") == 1
-    assert audience.count("WEREWOLF_KING_REASONING") == 3 and "HUNTER_REASONING" in audience
+    assert audience.count("WEREWOLF_KING_REASONING") == 3
+    assert "HUNTER_REASONING" not in audience
     deaths = [r for r in records if r["operation"] == "night_deaths"]
-    assert [d["player_seat"] for record in deaths for d in record["data"]["deaths"]] == [1, 3, 4]
+    assert [d["player_seat"] for record in deaths for d in record["data"]["deaths"]] == [1, 3]
 
 
 @pytest.mark.asyncio
