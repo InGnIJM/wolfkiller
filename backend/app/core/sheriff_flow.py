@@ -184,7 +184,7 @@ _ELECTION_ROUND = 1
 #: charmed victim with her before the election starts. `knight_duel` is absent
 #: because the duel only happens after the day's speeches.
 _PRE_ELECTION_DEATH_CAUSES = frozenset({
-    "wolf_kill", "poison", "hunter_shot", "charm",
+    "wolf_kill", "poison", "hunter_shot", "charm", "wolf_king_shot",
 })
 
 #: These causes begin at the election or the day after it. A death of one of

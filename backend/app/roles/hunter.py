@@ -12,8 +12,11 @@ from app.models.pipeline import (
 
 # Ways out that still let the hunter fire. Deliberately absent: "poison" (the
 # rules forbid it) and "charm", because a hunter dragged along by Wolf Beauty's
-# charm may not shoot either.
-_SHOOT_REASONS = frozenset({"wolf_kill", "exile", "hunter_shot", "self_explode"})
+# charm may not shoot either. A hunter the Wolf King's claw takes along *does*
+# fire back, so "wolf_king_shot" is included.
+_SHOOT_REASONS = frozenset({
+    "wolf_kill", "exile", "hunter_shot", "self_explode", "wolf_king_shot",
+})
 
 
 def hunter_applicable(context: ActionContext) -> bool:

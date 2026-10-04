@@ -20,7 +20,7 @@ _SUMMARY_FILENAME = "summary.json"
 # Audience events that carry decision information usable by benchmarks.
 _TRACKED_EVENTS = frozenset({
     "WEREWOLF_KILL", "SEER_CHECK", "WITCH_SAVE", "WITCH_POISON",
-    "HUNTER_SHOT", "GUARD_PROTECT",
+    "HUNTER_SHOT", "WOLF_KING_SHOT", "GUARD_PROTECT",
 })
 
 

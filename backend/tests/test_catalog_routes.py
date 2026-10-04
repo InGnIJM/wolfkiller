@@ -77,7 +77,7 @@ def test_catalog_item_empty_display_falls_back_to_role_id():
 def test_role_catalog_covers_all_registered_roles():
     items = role_catalog(builtin_registry.freeze())
 
-    assert len(items) == 11
+    assert len(items) == 12
     ids = {item["role_id"] for item in items}
     assert {
         "wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king",
@@ -100,7 +100,7 @@ def test_role_catalog_covers_all_registered_roles():
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 7
+    assert len(STANDARD_PRESETS) == 8
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -152,11 +152,39 @@ def test_wolf_beauty_knight_preset_matches_the_netease_tournament_board() -> Non
     assert board["witch_self_save"] == "never"
 
 
+def test_wolf_king_guard_preset_matches_the_netease_tournament_board() -> None:
+    """NetEase's official 12-player board: three wolves plus the Wolf King, four
+    villagers, Seer / Witch / Hunter / Guard."""
+    board = next(
+        p for p in STANDARD_PRESETS if p["id"] == "twelve-player-wolf-king-guard"
+    )
+    assert board["role_counts"] == {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-wolf-king": 1,
+        "wolf-killer-villager": 4,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-hunter": 1,
+        "wolf-killer-guard": 1,
+    }
+    assert sum(board["role_counts"].values()) == 12
+    assert board["enable_sheriff"] is True
+    assert board["witch_self_save"] == "never"
+
+
+def test_wolf_king_and_white_wolf_king_are_distinct_role_ids() -> None:
+    """The two ids differ only in word order, so pin them apart explicitly."""
+    assert ROLE_METADATA["wolf-killer-wolf-king"]["name_zh"] == "狼王"
+    assert ROLE_METADATA["wolf-killer-werewolf-king"]["name_zh"] == "白狼王"
+
+
 def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
     """Every other preset keeps the long-standing first-night allowance."""
+    netease = {
+        "twelve-player-wolf-beauty-knight", "twelve-player-wolf-king-guard",
+    }
     for preset in STANDARD_PRESETS:
-        expected = "never" if preset["id"] == "twelve-player-wolf-beauty-knight" \
-            else "first_night_only"
+        expected = "never" if preset["id"] in netease else "first_night_only"
         assert preset.get("witch_self_save", "first_night_only") == expected, preset["id"]
 
 
@@ -195,7 +223,7 @@ async def test_list_roles_endpoint_returns_every_registered_role():
 
     response = await catalog_routes.list_roles()
 
-    assert len(response.roles) == 11
+    assert len(response.roles) == 12
     assert response.roles[0].role_id
 
 
@@ -205,7 +233,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 7
+    assert len(response.presets) == 8
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
     assert response.presets[-1].recommended_timeout_seconds == 7200

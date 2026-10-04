@@ -41,6 +41,7 @@ class DeathCause(str, Enum):
     SELF_EXPLODE = "self_explode"
     KNIGHT_DUEL = "knight_duel"
     CHARM = "charm"
+    WOLF_KING_SHOT = "wolf_king_shot"
 
 
 class WinReason(str, Enum):

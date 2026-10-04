@@ -27,9 +27,9 @@ _CHARM_RELATION = "charmed_by"
 #   them at all, so they can never be the way out that triggers the revenge.
 # * ``knight_duel``: the official (NetEase) ruling is that a Wolf Beauty exiled
 #   by the Knight's duel does not flip and does not drag the charmed player
-#   along. A hunter's shot still does.
+#   along. A hunter's shot and the Wolf King's claw both still do.
 _REVENGE_REASONS = frozenset(
-    {"wolf_kill", "poison", "exile", "hunter_shot"}
+    {"wolf_kill", "poison", "exile", "hunter_shot", "wolf_king_shot"}
 )
 _WOLF_CAMP = "werewolf"
 

@@ -84,6 +84,17 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "被毒杀、被放逐或被枪杀时正常出局，不能带人。",
         ],
     },
+    "wolf-killer-wolf-king": {
+        "name_zh": "狼王", "icon": "wolf_king",
+        "description": "狼人，出局时可以发动一次狼王爪带走一名玩家",
+        "rules": [
+            "夜晚与所有狼队友共用同一次狼刀，按阵营合并计票。",
+            "出局时可以发动一次「狼王爪」带走一名存活玩家（也可以不发动）。",
+            "可以发动的出局方式：夜间被狼刀、白天被放逐、被猎人开枪带走。",
+            "不能发动的出局方式：自爆、被女巫毒杀、被狼美人殉情带走、被骑士决斗出局。",
+            "发动时不需要翻牌；被带走的猎人仍然可以开枪反击。",
+        ],
+    },
     "wolf-killer-knight": {
         "name_zh": "骑士", "icon": "knight",
         "description": "发言结束后投票前翻牌决斗一名玩家，是狼人则白天立即结束",
@@ -225,6 +236,24 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-guard": 1,
             "wolf-killer-knight": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Wolf King + Guard" tournament board.
+        "id": "twelve-player-wolf-king-guard",
+        "name": "十二人狼王守卫",
+        "description": "3狼 1狼王 4民 1预言家 1女巫 1猎人 1守卫",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-wolf-king": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",

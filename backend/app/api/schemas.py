@@ -153,7 +153,7 @@ PublicGamePhase = Literal[
 ]
 PublicDeathCause = Literal[
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-    "knight_duel", "charm",
+    "knight_duel", "charm", "wolf_king_shot",
 ]
 PublicWinningCamp = Literal["good", "werewolf"]
 PublicWinReason = Literal[
@@ -223,7 +223,7 @@ class PublicTechnicalAbstainResponse(_PublicResponse):
 
 PublicNightActionType = Literal[
     "werewolf_kill", "witch_save", "witch_poison", "seer_check", "hunter_shot",
-    "guard_protect",
+    "wolf_king_shot", "guard_protect",
 ]
 
 
@@ -256,6 +256,7 @@ class PublicWinnerResponse(_PublicResponse):
 
 PublicThoughtActionType = Literal[
     "hunter_reasoning",
+    "wolf_king_reasoning",
     "witch_reasoning",
     "seer_reasoning",
     "guard_reasoning",

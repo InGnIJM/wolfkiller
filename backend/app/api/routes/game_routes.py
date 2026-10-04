@@ -55,7 +55,7 @@ _CONFIRMATION_CODES = frozenset({
 # 枚举的第二处副本，两处要一起改；`tests/test_game_routes.py` 逐个取值钉住。
 _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-    "knight_duel", "charm",
+    "knight_duel", "charm", "wolf_king_shot",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
@@ -69,6 +69,7 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WITCH_POISON": frozenset({"target_seat"}),
     "SEER_CHECK": frozenset({"target_seat", "result"}),
     "HUNTER_SHOT": frozenset({"target_seat"}),
+    "WOLF_KING_SHOT": frozenset({"target_seat"}),
     "GUARD_PROTECT": frozenset({"target_seat"}),
     "WOLF_CHAT_MESSAGE": frozenset({"seat", "text"}),
     "WOLF_VOTE": frozenset({"seat", "target_seat", "reasoning"}),
@@ -124,6 +125,7 @@ _REASONING_EVENT_SCHEMA = frozenset(
 )
 _REASONING_EVENT_TYPES = {
     "HUNTER_REASONING": ("hunter_reasoning", frozenset({"shoot", "pass"})),
+    "WOLF_KING_REASONING": ("wolf_king_reasoning", frozenset({"shoot", "pass"})),
     "WITCH_REASONING": ("witch_reasoning", frozenset({"save", "poison", "pass"})),
     "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
     "GUARD_REASONING": ("guard_reasoning", frozenset({"guard", "pass"})),

@@ -110,7 +110,7 @@ def test_revenge_contract_excludes_the_forbidden_ways_out() -> None:
     assert revenge.schedule_point is SchedulePoint.DAWN_REACTION
     assert revenge.response_event_types == {"PLAYER_DIED"}
     assert revenge.response_reasons == {
-        "wolf_kill", "poison", "exile", "hunter_shot"}
+        "wolf_kill", "poison", "exile", "hunter_shot", "wolf_king_shot"}
     # Self-destruct and self-kill are forbidden, so they never drag anyone along.
     assert "self_explode" not in revenge.response_reasons
     # The official (NetEase) ruling: a duel by the Knight takes nobody with it.

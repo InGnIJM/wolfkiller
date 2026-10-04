@@ -47,10 +47,12 @@ _PUBLIC_ROLE_ACTIONS = {
     "WITCH_POISON": "witch_poison",
     "SEER_CHECK": "seer_check",
     "HUNTER_SHOT": "hunter_shot",
+    "WOLF_KING_SHOT": "wolf_king_shot",
     "GUARD_PROTECT": "guard_protect",
 }
 _PUBLIC_REASONING_EVENTS = {
     "HUNTER_REASONING": "hunter_reasoning",
+    "WOLF_KING_REASONING": "wolf_king_reasoning",
     "WITCH_REASONING": "witch_reasoning",
     "SEER_REASONING": "seer_reasoning",
     "GUARD_REASONING": "guard_reasoning",
