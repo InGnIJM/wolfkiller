@@ -2,8 +2,17 @@
 
 > 基线：`main` @ `f07b706`，后端 `pytest tests app --cov=app --cov-branch` 100%（statement + branch）
 > 目标：把项目从「11 角色 / 6 预设」扩到「覆盖网易高校赛 17 个官方赛制板型 + 假面舞会」
-> 状态：**已批准。阶段 0（狼美人骑士预设 + 狼美人决斗口径 + 女巫自救开关）已完成；
-> 阶段 1（狼王、恶夜骑士 + 两个预设）已完成。累计 13 角色 / 9 预设。**
+> 状态：**已批准。阶段 0、阶段 1（狼王、恶夜骑士）、阶段 2 的改造 B/C 与
+> 摄梦人 / 石像鬼 / 守墓人已完成。累计 16 角色 / 11 预设，后端 3940 passed / 100%。**
+>
+> **改造 D（多目标命令 schema）已推迟到阶段 3.5 之前。** 本文档 §2.4 的紧迫性理由
+> 经逐行核实不成立：`action_key` / `window_id` 由
+> `scheduler.py:313` 的 `_digest(game_id, round, point, seat, contract_id,
+> contract.schema_version, registry_digest, slot)` 生成，**与命令内容无关**；
+> `ActionCommand` 也**从不落盘**（`point_journal.PointCheckpoint` 与
+> `checkpoint_codec` 里只有 `VoteAction` / `NightAction`）。所以改 schema 对旧档
+> 续跑零风险，只影响 prompt digest（仅告警）。阶段 2 的三个角色全是单目标，
+> 用不上 D1。
 >
 > 实施偏差记录（相对本文档初稿）：
 > 1. 狼王的 `wolf_king_shot` 契约**不声明** `required_resources`（`wolf_claw` 由 `is_applicable`
@@ -14,6 +23,21 @@
 >    明确禁止 aggregate 契约读 per-target facts（`registry.py:223`）。改为
 >    `NightDirector._night_immune_clause()` 在讨论与投票提示词里点名 + 结算侧 `night_immune`
 >    兜底——投给它是浪费一夜而不是击杀，与官方「不能选」的差异已记录在 AGENTS.md。
+> 4. 摄梦人**没有**按 §6.1 写成 `action_types=("dream",)` + `fallback_action_type="dream"`：
+>    `registry.py:203` 明确禁止 fallback 动作要求目标，而 `Scheduler._fallback` 的兜底命令
+>    恒为 `target_seat=None`，两者相遇会 `PipelinePaused` 打死整局。改为保留 `pass` 作为
+>    引擎安全阀，提示词里写明「必须、不可放弃」；也**没有**做 §6.1 说的「resolve 里随机
+>    兜底选人」——角色 Hook 必须纯且确定，随机会破坏重放。
+> 5. §2.3 的算式 `lethal_wolf = double_save or wolf_totals > wolf_only` 会让梦盾挡不住
+>    狼刀，与摄梦人「梦游者免疫夜间伤害（含毒）」的规则矛盾。实现改为狼刀总额同时抵扣
+>    两个档（`wolf_shields + any_shields`）。
+> 6. 守墓人**没有**按 §6.2 的备选做「`action_types=("pass",)` 契约」：零契约 + 投影器
+>    特例更省一次模型调用，且 `last_exiled` 直接从 `death_history` 推导，
+>    **不需要给 `GameState` 加字段**（也就不会动精确匹配的检查点字段集）。
+> 7. 石像鬼的查验**没有**新增公开观众事件：查验结果随 `GARGOYLE_REASONING` 的思考文本
+>    进上帝视角，零新事件类型。
+> 8. 石像鬼**没有**声明 §6.2 提到的 `no_self_explode` 标记：警长竞选的自爆选项已改挂
+>    `in_wolf_pack`，隐狼天然不能自爆吞警徽；白天自爆本来就只有白狼王契约才有。
 
 ---
 

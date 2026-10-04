@@ -6,7 +6,7 @@ Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.
 
 ## 项目
 
-完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、狼王、骑士、狼美人、老酒鬼与恶夜骑士）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
+完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、狼王、骑士、狼美人、老酒鬼、恶夜骑士、摄梦人、石像鬼与守墓人）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
 
 ## 常用命令
 
@@ -46,7 +46,8 @@ npm run build
 | `core/action_resolver.py` | 调纯 Hook，产出 Effect 批次 |
 | `core/effect_applier.py` | **唯一写入口**：整批校验、CAS、原子应用 |
 | `core/scheduler.py` | 调度点、响应窗口、阶段门禁；`run_point(slot=)` 支持同阶段多次运行；聚合按 `contract_id` 分组（共享契约合并计票） |
-| `core/night_settlement.py` | pending damage/protection → 死亡 |
+| `core/night_settlement.py` | pending damage/protection → 死亡；保护按来源分档（`_WOLF_ONLY_SOURCES` / `_DOUBLE_SAVE_SOURCES` / `_ANY_DAMAGE_SOURCES`），未署名的保护保持旧的守护语义 |
+| `core/wolf_pack.py` | 狼阵营（判胜）与狼窝（讨论/投票/频道/队友名单）的唯一定义处：`no_wolf_pack` / `wolf_knows_pack` 标记 |
 | `agents/prompt_renderer.py` | 只从 Spec/Contract/Context 渲染 Prompt |
 
 夜晚由 `GameEngine._execute_staged_night()` 驱动，顺序固定：
@@ -72,6 +73,9 @@ npm run build
 - 狼美人：狼人阵营。夜晚与狼队共享 `werewolf_kill` 契约；另在 `NIGHT_WITCH_ACTION` 调度点（狼刀投票之后）可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）。出局时当晚被魅惑者殉情（死因 `charm`），但**被骑士决斗出局时不带走任何人**（网易官方口径，`_REVENGE_REASONS` 不含 `knight_duel`；被猎人带走仍发动）。不能自爆、不能自刀：自刀由 `WOLF_BEAUTY_SPEC.initial_resources={"self_kill_forbidden": 1}` + `validate_werewolf_action()` 拒绝（狼刀契约按阵营共享、必须字节一致，所以能力差异只能走资源标记，禁止在 `roles/werewolf.py` 里写角色名），狼队讨论/投票提示词对声明该标记的座位改写成「不能投自己」（`NightDirector._self_kill_clause()`），否则模型会白丢一票而不自知。被魅惑带走的猎人**不能开枪**。
 - 狼王：狼人阵营。夜晚与狼队共享 `werewolf_kill` 契约；出局时可用一次「狼王爪」带走一名存活玩家（死因 `wolf_king_shot`）。可发动的出局方式只有夜间被狼刀、被放逐、被猎人带走；**自爆、被毒、被殉情、被骑士决斗都不能发动**（`_CLAW_REASONS` 只含这三个死因）。不翻牌；被带走的猎人仍可开枪（猎人 `_SHOOT_REASONS` 含 `wolf_king_shot`），被带走的狼美人仍发动殉情。一局一次（`wolf_claw` 资源 + `resource_equals` 前置条件）。**注意 `wolf-killer-wolf-king`（狼王）与既有 `wolf-killer-werewolf-king`（白狼王）只差词序，两处都不许简写。**
 - 恶夜骑士：狼人阵营。**永久免疫一切夜间伤害**（`initial_resources={"night_immune": 1}`，`night_settlement` 在 delayable 判定之前 `continue`，既不死也不落延迟标记）。不能自爆（不声明 explode 契约）、不能自刀（`self_kill_forbidden`）。**一次性反伤**走 `core/reflect.py`：生产者侧（`roles/seer.py` / `roles/witch.py`）经 `selected_target.resource_labels` 看到 `reflect_check` / `reflect_poison`，把 `SUBMIT_DAMAGE(cause="reflect")` 打回自己并消费 `reflect_used`，`resource_equals` 前置条件保证原子；同夜两者都命中只发动一次，先动手的那位出局。`selected_target` 只投影给纯 hook、**不进模型 prompt**，所以不泄露身份。**狼队不能选它为刀口**：共享狼刀契约是 `aggregate`，注册表禁止 aggregate 契约读 per-target facts，因此改由 `NightDirector._night_immune_clause()` 在讨论与投票提示词里点名，结算侧免疫兜底（投给它是浪费一夜而不是击杀）。旧称「恶灵骑士」，是同一张牌。
+- 摄梦人：好人神职。每晚**必须**选一名自己以外的存活玩家为梦游者（`action_types=("dream","pass")`，`pass` 只是引擎安全阀——`registry.py:203` 禁止 fallback 动作要求目标，所以「不可放弃」只能在提示词里强制）。梦游者免疫**一切**夜间伤害（`SUBMIT_PROTECTION(source="dream")` 走 `night_settlement` 的 any-damage 档，普通守护挡不住毒）；梦游者不知情（只记私有事实，不发 PUBLIC 事件）。**连续两晚同一人则该人出局**（第二次改为 `SUBMIT_DAMAGE(cause="dream_death")`）。**摄梦人夜间出局时当夜梦游者同亡**（`DAWN_REACTION` 的 react 契约，`_DREAM_REVENGE_REASONS` 排除放逐/自爆/决斗等白天死因）。
+- 石像鬼：狼人阵营但**不属于狼窝**（`initial_resources={"no_wolf_pack": 1}`）。不参与狼队讨论与狼刀投票、不与其他狼互知身份（`camp_members` 对它是空的，只给 `wolf_pack_count` 存活狼数）、不进狼频道、不能自爆吞警徽；**狼窝全灭后**靠 `hidden_wolf_kill` 契约独自带刀（`aggregate`，多只隐狼仍只出一刀）。每晚查验一名存活玩家的**具体身份**（不能查自己、不能重复），走新增的 `selected_target` 命名空间 `role_label`——该 fact 只投影给纯 hook、**不进模型 prompt**，答案经 `RECORD_PRIVATE_FACT(namespace="role_checks")` 进它自己的提示词。被预言家查验仍显示狼人（camp 本来就是 werewolf，零改动）。
+- 守墓人：好人神职，**零契约**（规则不给它选择，每晚花一次模型调用答 pass 没有收益）。每晚自动获知上一个白天被放逐者的阵营：`context_projector._actor_private_facts` 的 `last_exiled` 特例从 `death_history` 推导座位与阵营（**不给 `GameState` 加字段**，因此不动精确匹配的检查点字段集），首夜无人被放逐时读作 `None`。被放逐的石像鬼显示为狼人。
 - 老酒鬼：好人平民。免疫魅惑（`initial_resources={"charm_immune": 1}`，经 `selected_target.resource_labels` 对狼美人可见）。被毒或枪杀时 `delayable` 资源让 `settle()` 跳过致死、落 `poisoned`/`wounded` + `delayed_death` 状态，**次日发言结束后投票前**由 `_resolve_delayed_deaths()` 结算；夜刀/放逐/自爆当夜即死。
 - 新增调度点 `POST_SPEECH_ACTION`（`post_speech_action`）承载「发言结束后」的白天技能；引擎的发言后窗口只在有角色声明该调度点时才跑（`_post_speech_action_enabled()`），跑完会 `_settle_and_publish()` 让 pending damage 立即生效、再结算延迟死亡，最后才 `SPEECHES_COMPLETE`。
 
