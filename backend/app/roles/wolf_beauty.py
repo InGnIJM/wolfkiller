@@ -21,10 +21,15 @@ from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 # Private relation name recorded on the charmed seat.
 _CHARM_RELATION = "charmed_by"
 # The charm drags the charmed player along on every way out of the game except
-# the two the rules forbid Wolf Beauty from using at all: self-destruct and
-# self-kill. ``self_explode`` is therefore deliberately absent.
+# the ones the rules exclude. Two groups are deliberately absent:
+#
+# * ``self_explode`` / ``self_kill``: the rules forbid Wolf Beauty from using
+#   them at all, so they can never be the way out that triggers the revenge.
+# * ``knight_duel``: the official (NetEase) ruling is that a Wolf Beauty exiled
+#   by the Knight's duel does not flip and does not drag the charmed player
+#   along. A hunter's shot still does.
 _REVENGE_REASONS = frozenset(
-    {"wolf_kill", "poison", "exile", "hunter_shot", "knight_duel"}
+    {"wolf_kill", "poison", "exile", "hunter_shot"}
 )
 _WOLF_CAMP = "werewolf"
 
@@ -239,7 +244,8 @@ WOLF_BEAUTY_SPEC = RoleSpec(
         "and a player who is immune to the charm cannot be charmed at all. When Wolf Beauty "
         "leaves the game, the player charmed that night is dragged along and dies too. Wolf "
         "Beauty can never self-destruct and can never be the wolf team's own kill target; "
-        "every other way out of the game still takes the charmed player along. Weigh every "
+        "every other way out of the game still takes the charmed player along, except being "
+        "struck down by the Knight's duel, which takes nobody. Weigh every "
         "charm against win probability: charming a suspected god forces the good camp to spend "
         "a day on Wolf Beauty or lose that god, while charming a plain villager is nearly "
         "worthless. Remember that the charm only pays off when Wolf Beauty actually leaves, so "

@@ -110,9 +110,11 @@ def test_revenge_contract_excludes_the_forbidden_ways_out() -> None:
     assert revenge.schedule_point is SchedulePoint.DAWN_REACTION
     assert revenge.response_event_types == {"PLAYER_DIED"}
     assert revenge.response_reasons == {
-        "wolf_kill", "poison", "exile", "hunter_shot", "knight_duel"}
+        "wolf_kill", "poison", "exile", "hunter_shot"}
     # Self-destruct and self-kill are forbidden, so they never drag anyone along.
     assert "self_explode" not in revenge.response_reasons
+    # The official (NetEase) ruling: a duel by the Knight takes nobody with it.
+    assert "knight_duel" not in revenge.response_reasons
     assert revenge.react is react_wolf_beauty_revenge and revenge.resolve is None
     assert revenge.per_window_limit == 1
     assert revenge.is_applicable is wolf_beauty_revenge_applicable
@@ -235,8 +237,14 @@ def test_revenge_drags_the_charmed_player_along() -> None:
 
 
 def test_revenge_covers_every_allowed_way_out() -> None:
-    for reason in ("wolf_kill", "poison", "exile", "hunter_shot", "knight_duel"):
+    for reason in ("wolf_kill", "poison", "exile", "hunter_shot"):
         assert react_wolf_beauty_revenge(revenge_context(reason=reason)) != (), reason
+
+
+def test_revenge_stays_silent_when_the_knight_wins_the_duel() -> None:
+    """NetEase ruling: a duel takes nobody along, so the hook must stay silent."""
+    assert "knight_duel" not in WOLF_BEAUTY_REVENGE_CONTRACT.response_reasons
+    assert react_wolf_beauty_revenge(revenge_context(reason="knight_duel")) == ()
 
 
 def test_revenge_stays_silent_for_the_forbidden_and_unrelated_cases() -> None:
