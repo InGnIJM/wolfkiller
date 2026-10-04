@@ -99,7 +99,7 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
         "rules": [
             "夜晚与狼队共用同一次狼刀；狼刀之后可以额外魅惑一名好人（也可以不魅）。",
             "不能连续两晚魅惑同一人，不能魅惑自己、狼队友或免疫魅惑的老酒鬼。",
-            "出局时把当晚被魅惑的玩家一起带走（殉情）；殉情者没有遗言，被带走的猎人也不能开枪。",
+            "出局时把当晚被魅惑的玩家一起带走（殉情）；被骑士决斗出局时不带走任何人。殉情者没有遗言，被带走的猎人也不能开枪。",
             "不能自爆，也不能成为狼队的刀口。",
         ],
     },
@@ -205,6 +205,29 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-guard": 1,
         },
         "enable_sheriff": True,
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Wolf Beauty + Knight" tournament board.
+        # Its rule set differs from the Jiamian boards above on two points: the
+        # witch may never save herself, and a duel by the Knight takes nobody
+        # along (``roles/wolf_beauty.py`` drops ``knight_duel`` from the revenge
+        # reasons for every board, which is safe because Knight and Wolf Beauty
+        # never share a Jiamian preset).
+        "id": "twelve-player-wolf-beauty-knight",
+        "name": "十二人狼美人骑士",
+        "description": "3狼 1狼美人 4民 1预言家 1女巫 1守卫 1骑士",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-wolf-beauty": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-guard": 1,
+            "wolf-killer-knight": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
         "recommended_timeout_seconds": 7200,
     },
 ]

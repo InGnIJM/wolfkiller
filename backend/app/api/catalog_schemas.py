@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -25,6 +27,10 @@ class PresetItem(BaseModel):
     description: str
     role_counts: dict[str, int]
     enable_sheriff: bool = False
+    # Rule-set knob the wizard forwards verbatim into ``CreateGameRequest``.
+    # The Jiamian boards allow a first-night self-save; NetEase's tournament
+    # boards forbid it outright.
+    witch_self_save: Literal["first_night_only", "never"] = "first_night_only"
     # Wall-clock budget the benchmark wizard seeds for this field: a twelve
     # player game needs roughly 136 model calls against 100-111 for nine or
     # ten, which is the difference between finishing and timing out.

@@ -100,7 +100,7 @@ def test_role_catalog_covers_all_registered_roles():
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 6
+    assert len(STANDARD_PRESETS) == 7
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -129,6 +129,35 @@ def test_presets_cover_nine_ten_and_twelve_player_fields():
     assert beauty["role_counts"]["wolf-killer-old-drunkard"] == 1
     assert beauty["role_counts"]["wolf-killer-guard"] == 1
     assert beauty["enable_sheriff"] is True
+
+
+def test_wolf_beauty_knight_preset_matches_the_netease_tournament_board() -> None:
+    """NetEase's official 12-player board: three wolves plus Wolf Beauty, four
+    villagers, Seer / Witch / Guard / Knight, played with the sheriff and with
+    the witch forbidden from saving herself."""
+    board = next(
+        p for p in STANDARD_PRESETS if p["id"] == "twelve-player-wolf-beauty-knight"
+    )
+    assert board["role_counts"] == {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-wolf-beauty": 1,
+        "wolf-killer-villager": 4,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-guard": 1,
+        "wolf-killer-knight": 1,
+    }
+    assert sum(board["role_counts"].values()) == 12
+    assert board["enable_sheriff"] is True
+    assert board["witch_self_save"] == "never"
+
+
+def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
+    """Every other preset keeps the long-standing first-night allowance."""
+    for preset in STANDARD_PRESETS:
+        expected = "never" if preset["id"] == "twelve-player-wolf-beauty-knight" \
+            else "first_night_only"
+        assert preset.get("witch_self_save", "first_night_only") == expected, preset["id"]
 
 
 def test_field_constraints_defaults():
@@ -176,7 +205,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 6
+    assert len(response.presets) == 7
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
     assert response.presets[-1].recommended_timeout_seconds == 7200
