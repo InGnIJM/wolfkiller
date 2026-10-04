@@ -5,21 +5,16 @@ import {
 } from '@mui/material';
 
 import { fetchConstraints, fetchPresets, fetchRoleCatalog } from '../../api/client';
-import { WINNING_CAMP_LABELS } from '../../labels';
 import type { FieldConstraints, GamePreset, RoleCatalogItem } from '../../store/types';
 import { BACKDROP, HAIRLINE } from '../../theme/tokens';
-import RoleIcon from '../shared/RoleIcon';
+import { rankOf, ROLE_ORDER } from '../shared/roleMeta';
 import RolePortrait from '../shared/RolePortrait';
-import { rankOf, ROLE_ORDER, roleMetaFor } from '../shared/roleMeta';
+import RoleBrowser from './RoleBrowser';
 import { RULES_SUBTITLE, RULE_SECTIONS } from './ruleSections';
 import type { RuleSection } from './ruleSections';
 
 /** 阵营阅读顺序：狼人在前，未知阵营垫底（后端新增阵营也不会漏渲染）。 */
 const CAMP_ORDER: readonly string[] = ['werewolf', 'good'];
-
-function campLabel(camp: string): string {
-  return camp === 'good' || camp === 'werewolf' ? WINNING_CAMP_LABELS[camp] : camp;
-}
 
 function groupByCamp(roles: RoleCatalogItem[]): { camp: string; roles: RoleCatalogItem[] }[] {
   const camps = [...new Set(roles.map((role) => role.camp))]
@@ -168,7 +163,7 @@ export default function RulesPage() {
                         border: '1px solid', borderColor: HAIRLINE.soft, borderRadius: 1,
                       }}
                     >
-                      <RoleIcon role={roleId} size={18} />
+                      <RolePortrait roleId={roleId} width={22} height={28} showLabel={false} />
                       <Typography variant="body2">{nameOf(roleId)}</Typography>
                       <Typography variant="body2" color="text.secondary">×{count}</Typography>
                     </Stack>
@@ -189,53 +184,17 @@ export default function RulesPage() {
             )}
           </Section>
 
-          <Section title="角色能力" intro="角色与规则条目来自后端角色目录，新增角色会自动出现在这里。">
-            {groups.length === 0 ? (
+          <Section
+            title="角色能力"
+            intro="角色与规则条目来自后端角色目录，新增角色会自动出现在这里。左侧索引、右侧详情。"
+          >
+            {error && groups.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                {error ? '角色数据读取失败，下方通用规则不受影响。' : '暂时没有可展示的角色数据。'}
+                角色数据读取失败，下方通用规则不受影响。
               </Typography>
-            ) : groups.map((group) => (
-              <Box key={group.camp} sx={{ mt: 1.5 }}>
-                <Typography variant="subtitle1" sx={{ color: 'secondary.main' }}>
-                  {campLabel(group.camp)}
-                </Typography>
-                <Box
-                  sx={{
-                    mt: 1, display: 'grid', gap: 1.5,
-                    gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-                  }}
-                >
-                  {group.roles.map((role) => (
-                    <Paper
-                      key={role.role_id}
-                      variant="outlined"
-                      data-testid={`role-card-${role.role_id}`}
-                      sx={{ p: 1.5, borderColor: HAIRLINE.soft }}
-                    >
-                      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                        <RolePortrait roleId={role.role_id} width={40} height={40} showLabel={false} />
-                        <RoleIcon role={role.role_id} size={22} />
-                        <Typography
-                          variant="subtitle1"
-                          sx={{ color: roleMetaFor(role.role_id)?.color ?? 'text.primary' }}
-                        >
-                          {role.name_zh}
-                        </Typography>
-                      </Stack>
-                      {(role.rules ?? []).length > 0 ? (
-                        <Box sx={{ mt: 0.5 }}>
-                          <RuleList items={role.rules ?? []} />
-                        </Box>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                          {role.description}
-                        </Typography>
-                      )}
-                    </Paper>
-                  ))}
-                </Box>
-              </Box>
-            ))}
+            ) : (
+              <RoleBrowser groups={groups} />
+            )}
           </Section>
 
           {RULE_SECTIONS.map((section: RuleSection) => (

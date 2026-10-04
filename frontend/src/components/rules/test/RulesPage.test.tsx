@@ -81,13 +81,12 @@ describe('规则介绍页', () => {
     expect(screen.getAllByText('×3')).toHaveLength(2);
     expect(screen.getByText(/自定义板子支持/)).toBeInTheDocument();
 
-    // 角色卡：有规则条目时按条目渲染，没有条目时退回一句话简介
+    // 角色区是左索引右详情：一次只渲染选中角色的详情卡，默认是列表第一个。
     expect(screen.getByTestId('role-card-wolf-killer-werewolf'))
       .toHaveTextContent('与狼队友共用同一次狼刀。');
-    expect(screen.getByTestId('role-card-wolf-killer-idiot'))
-      .toHaveTextContent('被放逐时翻牌免死');
-    // 未登记的角色 id 与阵营照常显示
-    expect(screen.getByText('神秘人')).toBeInTheDocument();
+    // 左索引列出全部角色（含未登记 id 与未知阵营），阵营分组标题照常显示。
+    expect(screen.getByRole('button', { name: '白痴' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '神秘人' })).toBeInTheDocument();
     expect(screen.getByText('third_party')).toBeInTheDocument();
     expect(screen.getByText('狼人阵营')).toBeInTheDocument();
     expect(screen.getByText('好人阵营')).toBeInTheDocument();
@@ -98,6 +97,33 @@ describe('规则介绍页', () => {
     }
     expect(screen.getByText(/守卫先睁眼/)).toBeInTheDocument();
     expect(screen.getByText(/先判狼人/)).toBeInTheDocument();
+  });
+
+  it('切换左侧索引后右侧详情跟着换', async () => {
+    render(<RulesPage />);
+    await screen.findByTestId('role-card-wolf-killer-werewolf');
+
+    fireEvent.click(screen.getByRole('button', { name: '白痴' }));
+
+    // 详情卡换成白痴，且它按 rules 条目渲染（不再退回 description）
+    expect(screen.getByTestId('role-card-wolf-killer-idiot'))
+      .toHaveTextContent('被放逐时翻牌免死');
+    expect(screen.queryByTestId('role-card-wolf-killer-werewolf')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '白痴' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('搜索角色索引，无结果时给引导而不是空白', async () => {
+    render(<RulesPage />);
+    await screen.findByTestId('role-card-wolf-killer-werewolf');
+
+    fireEvent.change(screen.getByLabelText('搜索角色规则'), { target: { value: '白痴' } });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '狼人' })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: '白痴' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('搜索角色规则'), { target: { value: '不存在' } });
+    await waitFor(() => expect(screen.getByText('没有匹配的角色')).toBeInTheDocument());
   });
 
   it('切换到另一套板子后构成与警长开关随之变化', async () => {
