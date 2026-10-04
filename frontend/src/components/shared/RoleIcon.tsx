@@ -1,5 +1,7 @@
 import Gavel from '@mui/icons-material/Gavel';
 import Bedtime from '@mui/icons-material/Bedtime';
+import Church from '@mui/icons-material/Church';
+import Fort from '@mui/icons-material/Fort';
 import NightsStay from '@mui/icons-material/NightsStay';
 import GpsFixed from '@mui/icons-material/GpsFixed';
 import Help from '@mui/icons-material/Help';
@@ -33,6 +35,8 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-wolf-king': { Icon: LocalFireDepartment, label: '狼王', color: ROLE_COLORS.werewolf_king.color },
   'wolf-killer-evil-knight': { Icon: NightsStay, label: '恶夜骑士', color: ROLE_COLORS.werewolf.color },
   'wolf-killer-dream-weaver': { Icon: Bedtime, label: '摄梦人', color: ROLE_COLORS.guard.color },
+  'wolf-killer-gargoyle': { Icon: Fort, label: '石像鬼', color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-gravekeeper': { Icon: Church, label: '守墓人', color: ROLE_COLORS.guard.color },
   'wolf-killer-knight': { Icon: Gavel, label: '骑士', color: ROLE_COLORS.knight.color },
   'wolf-killer-wolf-beauty': { Icon: Favorite, label: '狼美人', color: ROLE_COLORS.wolf_beauty.color },
   'wolf-killer-old-drunkard': { Icon: LocalBar, label: '老酒鬼', color: ROLE_COLORS.old_drunkard.color },

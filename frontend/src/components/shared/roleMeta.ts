@@ -22,6 +22,8 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-wolf-king', key: 'werewolf_king', label: '狼王' },
   { id: 'wolf-killer-evil-knight', key: 'werewolf', label: '恶夜骑士' },
   { id: 'wolf-killer-dream-weaver', key: 'guard', label: '摄梦人' },
+  { id: 'wolf-killer-gargoyle', key: 'werewolf', label: '石像鬼' },
+  { id: 'wolf-killer-gravekeeper', key: 'guard', label: '守墓人' },
   { id: 'wolf-killer-knight', key: 'knight', label: '骑士' },
   { id: 'wolf-killer-wolf-beauty', key: 'wolf_beauty', label: '狼美人' },
   { id: 'wolf-killer-old-drunkard', key: 'old_drunkard', label: '老酒鬼' },
