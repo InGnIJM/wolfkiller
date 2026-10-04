@@ -15,6 +15,7 @@ class CreateGameRequest(BaseModel):
     num_hunters: int = 1
     reveal_on_death: bool = False
     enable_sheriff: bool = False
+    witch_self_save: Literal["first_night_only", "never"] = "first_night_only"
     model_assignments: Optional[list[ModelAssignment]] = None
 
     @model_validator(mode="after")

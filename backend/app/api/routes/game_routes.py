@@ -185,6 +185,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
             game_id = await service.create_game(
                 role_counts=req.role_counts, reveal_on_death=req.reveal_on_death,
                 enable_sheriff=req.enable_sheriff,
+                witch_self_save=req.witch_self_save,
                 model_assignments=assignments,
             )
         else:
@@ -196,6 +197,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 num_hunters=req.num_hunters,
                 reveal_on_death=req.reveal_on_death,
                 enable_sheriff=req.enable_sheriff,
+                witch_self_save=req.witch_self_save,
                 model_assignments=assignments,
             )
     except ValueError as error:

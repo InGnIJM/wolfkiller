@@ -221,7 +221,8 @@ class TestGameService:
         kwargs = service._manifest.add_game.call_args.kwargs
         assert args == (
             game_id,
-            {"role_counts": counts, "reveal_on_death": False, "enable_sheriff": False},
+            {"role_counts": counts, "reveal_on_death": False, "enable_sheriff": False,
+             "witch_self_save": "first_night_only"},
         )
         assert kwargs["model_snapshot_version"] == 2
         assert kwargs["name"] is not None

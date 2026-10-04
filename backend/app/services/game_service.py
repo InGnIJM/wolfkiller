@@ -18,7 +18,9 @@ from typing import Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.config import config as app_config
-from app.models.game import GameState, GameConfig, GamePhase, PlayerState
+from app.models.game import (
+    DEFAULT_WITCH_SELF_SAVE, GameState, GameConfig, GamePhase, PlayerState,
+)
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import (
@@ -1205,6 +1207,7 @@ class GameService:
         role_counts: Optional[dict[str, int]] = None,
         reveal_on_death: bool = False,
         enable_sheriff: bool = False,
+        witch_self_save: str = DEFAULT_WITCH_SELF_SAVE,
         model_assignments: Optional[list[dict]] = None,
         *,
         game_id_override: str | None = None,
@@ -1232,6 +1235,7 @@ class GameService:
             num_hunters=num_hunters,
             reveal_on_death=reveal_on_death,
             enable_sheriff=enable_sheriff,
+            witch_self_save=witch_self_save,
         )
         if runtime_seed is not None and (type(runtime_seed) is not int or runtime_seed < 0):
             raise ValueError("runtime seed must be a non-negative integer")
@@ -1478,6 +1482,7 @@ class GameService:
                     "role_counts": dict(config.role_counts),
                     "reveal_on_death": config.reveal_on_death,
                     "enable_sheriff": config.enable_sheriff,
+                    "witch_self_save": config.witch_self_save,
                 },
                 model_snapshot=model_snapshot,
                 model_snapshot_version=2,
@@ -1502,6 +1507,7 @@ class GameService:
                         "role_counts": dict(config.role_counts),
                         "reveal_on_death": config.reveal_on_death,
                         "enable_sheriff": config.enable_sheriff,
+                        "witch_self_save": config.witch_self_save,
                         "model_runtime_version": 1,
                         "model_runtime": frozen_model_runtime,
                         "prompt_digest": _prompt_digest(),
@@ -1695,6 +1701,7 @@ class GameService:
                     "role_counts": dict(engine.state.config.role_counts),
                     "reveal_on_death": engine.state.config.reveal_on_death,
                     "enable_sheriff": engine.state.config.enable_sheriff,
+                    "witch_self_save": engine.state.config.witch_self_save,
                 },
             }
         elif (
