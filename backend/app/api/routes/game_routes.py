@@ -127,6 +127,7 @@ _REASONING_EVENT_TYPES = {
     "HUNTER_REASONING": ("hunter_reasoning", frozenset({"shoot", "pass"})),
     "WOLF_KING_REASONING": ("wolf_king_reasoning", frozenset({"shoot", "pass"})),
     "DREAM_WEAVER_REASONING": ("dream_weaver_reasoning", frozenset({"dream", "pass"})),
+    "GARGOYLE_REASONING": ("gargoyle_reasoning", frozenset({"check", "pass"})),
     "WITCH_REASONING": ("witch_reasoning", frozenset({"save", "poison", "pass"})),
     "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
     "GUARD_REASONING": ("guard_reasoning", frozenset({"guard", "pass"})),

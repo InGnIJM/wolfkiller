@@ -1077,7 +1077,7 @@ _REASONING_ACTIONS = {
     "WITCH_REASONING": "save", "SEER_REASONING": "check", "GUARD_REASONING": "guard",
     "KNIGHT_REASONING": "duel", "WEREWOLF_KING_REASONING": "explode",
     "WOLF_BEAUTY_REASONING": "charm", "HUNTER_REASONING": "shoot",
-    "WOLF_KING_REASONING": "shoot", "DREAM_WEAVER_REASONING": "dream",
+    "WOLF_KING_REASONING": "shoot", "DREAM_WEAVER_REASONING": "dream", "GARGOYLE_REASONING": "check",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 

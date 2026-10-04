@@ -60,7 +60,7 @@ _RESOURCE_ADAPTERS = {
 # whitelists stays private: a role learns only the target facts the game rules
 # make observable, never another seat's private resources or hidden statuses.
 _SELECTED_TARGET_NAMESPACES = frozenset(
-    {"camp_label", "status_labels", "resource_labels"}
+    {"camp_label", "status_labels", "resource_labels", "role_label"}
 )
 _PUBLIC_STATUSES = frozenset({"poisoned", "wounded"})
 #: Resources a contract may observe on its chosen target. These reach the pure
@@ -167,6 +167,13 @@ class ContextProjector:
                     for status in self._target_statuses(state, command.target_seat)
                     if status in _PUBLIC_STATUSES
                 )
+            )
+        if "role_label" in namespaces:
+            # Only the Gargoyle asks for this: its whole kit is learning one
+            # seat's exact identity. Like every selected-target fact it reaches
+            # the pure hooks only, never the model's prompt.
+            selected["role_label"] = self._token(
+                target.role, "selected target role", 128
             )
         if "resource_labels" in namespaces:
             selected["resource_labels"] = tuple(
@@ -553,6 +560,11 @@ class ContextProjector:
                     for result in (canonical or actor.check_results)[-20:]
                     if (projected := cls._project_check_result(result)) is not None
                 )
+            elif key == "last_exiled":
+                # The Gravekeeper's nightly brief. Derived from the death log
+                # rather than stored on GameState: the record already carries the
+                # cause and the round, so no checkpoint field set has to change.
+                facts["last_exiled"] = cls._project_last_exiled(state)
             elif key in {"wolf_kill_target", "last_wolf_kill_target"}:
                 # Declared private knowledge is independent of potion availability.
                 facts["wolf_kill_target"] = cls._optional_positive_int(
@@ -566,6 +578,31 @@ class ContextProjector:
                     else cls._copy_json_value(default)
                 )
         return facts
+
+    @classmethod
+    def _project_last_exiled(cls, state: GameState) -> dict[str, object] | None:
+        """The most recently exiled seat and its camp, or ``None`` before any.
+
+        A role that never voted anyone out yet reads ``None``, which is exactly
+        the Gravekeeper's "no information on the first night".
+        """
+        for death in reversed(state.death_history):
+            if death.cause != "exile":
+                continue
+            player = state.players.get(death.player_seat)
+            if player is None:
+                return None
+            camp = player.camp
+            return {
+                "seat": death.player_seat,
+                # ``PlayerState.camp`` may be the enum member rather than its
+                # value; the token validator only accepts a plain string.
+                "camp": cls._token(
+                    camp.value if isinstance(camp, Camp) else camp,
+                    "last exiled camp", 128,
+                ),
+            }
+        return None
 
     @staticmethod
     def _project_check_result(result: object) -> dict[str, object] | None:

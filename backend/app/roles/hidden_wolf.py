@@ -130,20 +130,29 @@ HIDDEN_WOLF_KILL_CONTRACT = ActionContract(
 def hidden_wolf_role_spec(
     role_id: str, display_name: str, *, instructions: str,
     extra_resources: Mapping[str, int] | None = None,
+    extra_contracts: tuple[ActionContract, ...] = (),
+    extra_effects: frozenset[EffectKind] = frozenset(),
+    initial_private_data: Mapping[str, object] | None = None,
 ) -> RoleSpec:
     """Build a hidden-wolf ``RoleSpec`` around the shared lone-kill contract.
 
-    ``extra_resources`` carries whatever else the concrete role declares — the
-    Gargoyle adds its role-check charges, the Eclipse Maid adds
-    ``wolf_knows_pack`` for the one-way variant.
+    The extras carry whatever else the concrete role declares — the Gargoyle
+    adds its identity check, the Eclipse Maid adds ``wolf_knows_pack`` for the
+    one-way variant.
     """
+    effects = (
+        frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT})
+        | extra_effects
+    )
     return RoleSpec(
         tags=frozenset({"wolf"}), role_id=role_id, display_name=display_name,
-        camp_id="werewolf", contracts=(HIDDEN_WOLF_KILL_CONTRACT,),
+        camp_id="werewolf",
+        contracts=(HIDDEN_WOLF_KILL_CONTRACT, *extra_contracts),
         initial_resources={
             "no_wolf_pack": 1, **dict(extra_resources or {}),
         },
-        allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+        initial_private_data=dict(initial_private_data or {}),
+        allowed_effects=effects,
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
         max_count=1, instructions=instructions,
     )

@@ -258,6 +258,7 @@ PublicThoughtActionType = Literal[
     "hunter_reasoning",
     "wolf_king_reasoning",
     "dream_weaver_reasoning",
+    "gargoyle_reasoning",
     "witch_reasoning",
     "seer_reasoning",
     "guard_reasoning",
