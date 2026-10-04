@@ -6,7 +6,7 @@ Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.
 
 ## 项目
 
-完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、骑士、狼美人与老酒鬼）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
+完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、狼王、骑士、狼美人、老酒鬼与恶夜骑士）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
 
 ## 常用命令
 
@@ -70,6 +70,8 @@ npm run build
 - 神职/平民归属**读 `RoleSpec.tags`（`god` / `villager` / `wolf`）**，不要用角色名子串匹配：`rule_engine._role_tags()` 从 registry 取 tag，未注册的角色不带任何 tag。历史上按 `"seer"/"villager"` 等子串计数会漏掉骑士，导致「骑士是最后一名存活神职」时提前判狼胜。
 - 骑士：好人神职。**全体发言结束后、放逐投票前**（`POST_SPEECH_ACTION` 调度点）翻牌决斗一名玩家；是狼人则该玩家立即死亡、**在进入夜晚前发表遗言**、当日发言投票取消直接入夜；是好人则骑士以死谢罪、**无遗言**、当日投票照常。一局一次（`duel` 资源）。两种死亡共用死因 `knight_duel`，遗言只发给被裁决者：中断路径给 `give_last_words` 传 `daytime=True`，夜间遗言路径不传，因此骑士本人不会被补发。
 - 狼美人：狼人阵营。夜晚与狼队共享 `werewolf_kill` 契约；另在 `NIGHT_WITCH_ACTION` 调度点（狼刀投票之后）可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）。出局时当晚被魅惑者殉情（死因 `charm`），但**被骑士决斗出局时不带走任何人**（网易官方口径，`_REVENGE_REASONS` 不含 `knight_duel`；被猎人带走仍发动）。不能自爆、不能自刀：自刀由 `WOLF_BEAUTY_SPEC.initial_resources={"self_kill_forbidden": 1}` + `validate_werewolf_action()` 拒绝（狼刀契约按阵营共享、必须字节一致，所以能力差异只能走资源标记，禁止在 `roles/werewolf.py` 里写角色名），狼队讨论/投票提示词对声明该标记的座位改写成「不能投自己」（`NightDirector._self_kill_clause()`），否则模型会白丢一票而不自知。被魅惑带走的猎人**不能开枪**。
+- 狼王：狼人阵营。夜晚与狼队共享 `werewolf_kill` 契约；出局时可用一次「狼王爪」带走一名存活玩家（死因 `wolf_king_shot`）。可发动的出局方式只有夜间被狼刀、被放逐、被猎人带走；**自爆、被毒、被殉情、被骑士决斗都不能发动**（`_CLAW_REASONS` 只含这三个死因）。不翻牌；被带走的猎人仍可开枪（猎人 `_SHOOT_REASONS` 含 `wolf_king_shot`），被带走的狼美人仍发动殉情。一局一次（`wolf_claw` 资源 + `resource_equals` 前置条件）。**注意 `wolf-killer-wolf-king`（狼王）与既有 `wolf-killer-werewolf-king`（白狼王）只差词序，两处都不许简写。**
+- 恶夜骑士：狼人阵营。**永久免疫一切夜间伤害**（`initial_resources={"night_immune": 1}`，`night_settlement` 在 delayable 判定之前 `continue`，既不死也不落延迟标记）。不能自爆（不声明 explode 契约）、不能自刀（`self_kill_forbidden`）。**一次性反伤**走 `core/reflect.py`：生产者侧（`roles/seer.py` / `roles/witch.py`）经 `selected_target.resource_labels` 看到 `reflect_check` / `reflect_poison`，把 `SUBMIT_DAMAGE(cause="reflect")` 打回自己并消费 `reflect_used`，`resource_equals` 前置条件保证原子；同夜两者都命中只发动一次，先动手的那位出局。`selected_target` 只投影给纯 hook、**不进模型 prompt**，所以不泄露身份。**狼队不能选它为刀口**：共享狼刀契约是 `aggregate`，注册表禁止 aggregate 契约读 per-target facts，因此改由 `NightDirector._night_immune_clause()` 在讨论与投票提示词里点名，结算侧免疫兜底（投给它是浪费一夜而不是击杀）。旧称「恶灵骑士」，是同一张牌。
 - 老酒鬼：好人平民。免疫魅惑（`initial_resources={"charm_immune": 1}`，经 `selected_target.resource_labels` 对狼美人可见）。被毒或枪杀时 `delayable` 资源让 `settle()` 跳过致死、落 `poisoned`/`wounded` + `delayed_death` 状态，**次日发言结束后投票前**由 `_resolve_delayed_deaths()` 结算；夜刀/放逐/自爆当夜即死。
 - 新增调度点 `POST_SPEECH_ACTION`（`post_speech_action`）承载「发言结束后」的白天技能；引擎的发言后窗口只在有角色声明该调度点时才跑（`_post_speech_action_enabled()`），跑完会 `_settle_and_publish()` 让 pending damage 立即生效、再结算延迟死亡，最后才 `SPEECHES_COMPLETE`。
 

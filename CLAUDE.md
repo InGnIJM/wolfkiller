@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、骑士、狼美人与老酒鬼）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
+Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、狼王、骑士、狼美人、老酒鬼与恶夜骑士）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
 
 ## 常用命令
 
@@ -148,6 +148,8 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - 白狼王：夜晚与狼队共享 `werewolf_kill` 契约；白天 SPEECH 阶段每位发言前可自爆带走一人，两人均无遗言，当日发言与投票取消直接入夜；被毒/放逐/枪杀时不能带人
 - 骑士：全体发言结束后、放逐投票前（`POST_SPEECH_ACTION`）翻牌决斗一人；狼人则立即死亡、**在进入夜晚前发表遗言**并直接入夜，好人则骑士以死谢罪、无遗言、投票照常；一局一次。两种死亡共用死因 `knight_duel`，遗言只发给被裁决者（中断路径传 `daytime=True`，夜间遗言路径不传）
 - 狼美人：与狼队共享狼刀；狼刀投票后可魅惑一名好人（不能连续两晚同一人、不能自指/魅狼队友/魅免疫者）；出局时被魅惑者殉情（死因 `charm`），但**被骑士决斗出局时不带走任何人**（网易官方口径，`_REVENGE_REASONS` 不含 `knight_duel`；被猎人带走仍发动），不能自爆；自刀由 `WOLF_BEAUTY_SPEC` 声明的 `self_kill_forbidden` 资源 + `validate_werewolf_action()` 拒绝（狼刀契约按阵营共享、必须字节一致，能力差异只能走资源标记，禁止在核心模块写角色名），狼队讨论/投票提示词对声明该标记的座位改写成「不能投自己」（`NightDirector._self_kill_clause()`），否则模型会白丢一票；被魅惑带走的猎人不能开枪
+- 狼王：与狼队共享狼刀；出局时可用一次「狼王爪」带走一名存活玩家（死因 `wolf_king_shot`）。可发动的出局方式只有夜间被狼刀、被放逐、被猎人带走，**自爆/被毒/被殉情/被骑士决斗都不能发动**。不翻牌；被带走的猎人仍可开枪、被带走的狼美人仍发动殉情。一局一次。**`wolf-killer-wolf-king`（狼王）与 `wolf-killer-werewolf-king`（白狼王）只差词序，不许简写。**
+- 恶夜骑士：狼人阵营。永久免疫一切夜间伤害（`night_immune` 标记）；不能自爆、不能自刀；一次性反伤走 `core/reflect.py`（生产者侧读 `selected_target.resource_labels`，`reflect_used` + `resource_equals` 去重，`selected_target` 不进 prompt）。狼队不能选它为刀口：共享狼刀契约是 `aggregate`、不能读 per-target facts，改由 `NightDirector._night_immune_clause()` 提示词点名 + 结算免疫兜底。旧称「恶灵骑士」。
 - 老酒鬼：好人平民（非神职），免疫魅惑；被毒或枪杀不当天死亡，落 `poisoned`/`wounded` 后于次日发言结束后、投票前死亡；夜刀/放逐/自爆当夜即死
 
 - **写入口不变式**：`runtime.statuses` / `runtime.relations` 的值一律是普通 `set`，不能写 `frozenset`（`_set_map` 归一化时两者等价，但 `_apply_one` 对既有值直接 `.add()`，frozenset 会 `AttributeError`）。`ADD_RELATION` 是集合成员关系：**跨批次重复写入是幂等的**（狼美人隔一晚重魅同一人合法，规则只禁连续两晚同一人），但同一批次内重复仍是批次完整性违规。**延迟死亡标记同样跨批次幂等**：同一夜两种延迟死因（女巫毒 + 猎人枪）命中同一 `delayable` 座位时，`settle_pending` 的后续批次整套跳过该标记、保首因、不报错 —— 它曾经抛 `EffectRejected`，而结算没有 fallback，直接把整局打成 `failed` 且恢复会重炸。

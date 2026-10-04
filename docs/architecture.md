@@ -74,7 +74,7 @@ WolfKiller/
 | `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / POST_SPEECH_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点，journal 键与请求 token 都用**对局冻结的** `registry_digest` 盖章（`core/registry_identity.py`），所以新增/修改角色不会让已完成的调度点被重放、也不会重复发起同一次模型请求 |
 | `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
-| `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king,knight,wolf_beauty,old_drunkard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王与狼美人复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴与狼美人殉情是仅 `react` 的无 LLM 契约，老酒鬼只有声明式标记（`charm_immune` / `delayable`）无契约 |
+| `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king,wolf_king,evil_knight,knight,wolf_beauty,old_drunkard}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王与狼美人复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴与狼美人殉情是仅 `react` 的无 LLM 契约，老酒鬼只有声明式标记（`charm_immune` / `delayable`）无契约；狼王复用猎人的死亡响应模式，恶夜骑士的免疫与反伤分别走 `night_settlement` 的 `night_immune` 与 `core/reflect.py` 的标记协议 |
 
 辅助模块：
 
