@@ -64,3 +64,14 @@ final_inspect_report.txt
 inspect_dbs.py
 run_inspection.py
 test_simple.py
+
+# Role portraits are NetEase's artwork and are only placeholders until hand-made
+# art replaces them, so they are not committed. Fetch them with
+#   pip install --target=/tmp/imgtool Pillow
+#   PYTHONPATH=/tmp/imgtool python3 scripts/fetch-official-role-art.py
+# `card-back.webp` stays tracked on purpose: the fallback has to exist for a
+# fresh clone to render anything, and the UI is built to run with zero portraits.
+frontend/src/assets/roles/role-*.webp
+# The Old Drunkard is a Masked Ball (Jingcheng Masters) role, not a NetEase one,
+# so there is no official portrait to fetch — its art is ours and must ship.
+!frontend/src/assets/roles/role-old_drunkard.webp
