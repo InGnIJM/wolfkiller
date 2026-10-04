@@ -108,6 +108,17 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "旧称「恶灵骑士」，是同一张牌。",
         ],
     },
+    "wolf-killer-dream-weaver": {
+        "name_zh": "摄梦人", "icon": "dream_weaver",
+        "description": "好人神职，每晚让一名玩家梦游，梦游者免疫夜间伤害",
+        "rules": [
+            "每晚必须指定一名自己以外的存活玩家为梦游者，不可放弃。",
+            "梦游者本人不会知道自己被摄梦，也看不到任何提示。",
+            "梦游者当夜免疫一切夜间伤害——狼刀和女巫的毒药都杀不死他。",
+            "连续两晚选择同一名玩家，该玩家会在第二夜出局（死因「摄梦」）。",
+            "摄梦人在夜间出局时，当夜的梦游者与之同亡；白天被放逐或被骑士决斗出局时梦游者不受影响。",
+        ],
+    },
     "wolf-killer-knight": {
         "name_zh": "骑士", "icon": "knight",
         "description": "发言结束后投票前翻牌决斗一名玩家，是狼人则白天立即结束",
@@ -285,6 +296,25 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
             "wolf-killer-guard": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Wolf King + Dream Weaver" board. No
+        # Guard: the dream weave replaces the nightly shield.
+        "id": "twelve-player-wolf-king-dream",
+        "name": "十二人狼王摄梦人",
+        "description": "3狼 1狼王 4民 1预言家 1女巫 1猎人 1摄梦人",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-wolf-king": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-dream-weaver": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",
