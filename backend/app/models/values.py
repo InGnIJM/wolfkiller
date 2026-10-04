@@ -43,6 +43,7 @@ class DeathCause(str, Enum):
     CHARM = "charm"
     WOLF_KING_SHOT = "wolf_king_shot"
     REFLECT = "reflect"
+    DREAM_DEATH = "dream_death"
 
 
 class WinReason(str, Enum):

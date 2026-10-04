@@ -320,7 +320,7 @@ class TestSchemas:
     @pytest.mark.parametrize(
         "cause",
         ["wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-         "knight_duel", "charm", "wolf_king_shot", "reflect"],
+         "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death"],
     )
     def test_game_detail_accepts_every_death_cause_the_engine_produces(self, cause):
         response = GameDetailResponse(

@@ -925,7 +925,7 @@ def test_public_replay_skips_date_only_timestamp_without_changing_other_event_st
 @pytest.mark.parametrize(
     "cause",
     ["wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-     "knight_duel", "charm", "wolf_king_shot", "reflect"],
+     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death"],
 )
 def test_public_replay_keeps_every_death_cause_the_engine_produces(cause):
     record = {
@@ -1077,7 +1077,7 @@ _REASONING_ACTIONS = {
     "WITCH_REASONING": "save", "SEER_REASONING": "check", "GUARD_REASONING": "guard",
     "KNIGHT_REASONING": "duel", "WEREWOLF_KING_REASONING": "explode",
     "WOLF_BEAUTY_REASONING": "charm", "HUNTER_REASONING": "shoot",
-    "WOLF_KING_REASONING": "shoot",
+    "WOLF_KING_REASONING": "shoot", "DREAM_WEAVER_REASONING": "dream",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 

@@ -53,6 +53,7 @@ _PUBLIC_ROLE_ACTIONS = {
 _PUBLIC_REASONING_EVENTS = {
     "HUNTER_REASONING": "hunter_reasoning",
     "WOLF_KING_REASONING": "wolf_king_reasoning",
+    "DREAM_WEAVER_REASONING": "dream_weaver_reasoning",
     "WITCH_REASONING": "witch_reasoning",
     "SEER_REASONING": "seer_reasoning",
     "GUARD_REASONING": "guard_reasoning",

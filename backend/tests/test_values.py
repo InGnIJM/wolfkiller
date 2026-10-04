@@ -51,7 +51,7 @@ def _production_modules() -> list[Path]:
 def test_death_causes_are_frozen() -> None:
     assert DEATH_CAUSES == {
         "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
-        "knight_duel", "charm", "wolf_king_shot", "reflect",
+        "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
     }
 
 

@@ -186,7 +186,7 @@ _ELECTION_ROUND = 1
 #: because the duel only happens after the day's speeches.
 _PRE_ELECTION_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "charm", "wolf_king_shot",
-    "reflect",
+    "reflect", "dream_death",
 })
 
 #: These causes begin at the election or the day after it. A death of one of
