@@ -150,6 +150,9 @@ export default function NewBenchmarkPage() {
         scenario_id: preset.id,
         role_counts: preset.role_counts,
         enable_sheriff: Boolean(preset.enable_sheriff),
+        // Frozen into the run, never re-read from the live catalog: a benchmark
+        // must keep replaying the rule set it was created under.
+        witch_self_save: preset.witch_self_save ?? 'first_night_only',
       },
       block_count: blocks,
       concurrency,

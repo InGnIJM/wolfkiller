@@ -39,6 +39,8 @@ const ROLES = [
   { role_id: 'wolf-killer-guard', display_name: 'Guard', name_zh: '守卫', camp: 'good', icon: 'guard', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
   { role_id: 'wolf-killer-idiot', display_name: 'Idiot', name_zh: '白痴', camp: 'good', icon: 'idiot', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
   { role_id: 'wolf-killer-werewolf-king', display_name: 'Werewolf King', name_zh: '白狼王', camp: 'werewolf', icon: 'wolf_king', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
+  { role_id: 'wolf-killer-wolf-beauty', display_name: 'Wolf Beauty', name_zh: '狼美人', camp: 'werewolf', icon: 'wolf_beauty', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
+  { role_id: 'wolf-killer-knight', display_name: 'Knight', name_zh: '骑士', camp: 'good', icon: 'knight', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
 ];
 
 const PRESETS: GamePreset[] = [
@@ -46,6 +48,7 @@ const PRESETS: GamePreset[] = [
   { id: 'ten-player-standard', name: '十人标准场', description: '含守卫', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-villager': 3, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 }, enable_sheriff: false },
   { id: 'twelve-player-idiot', name: '十二人预女猎白', description: '4狼 4民 预女猎白痴', role_counts: { 'wolf-killer-werewolf': 4, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-idiot': 1 }, enable_sheriff: true },
   { id: 'twelve-player-wolf-king', name: '十二人白狼王', description: '3狼 1白狼王 4民 预女猎守', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-werewolf-king': 1, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-hunter': 1, 'wolf-killer-guard': 1 }, enable_sheriff: true },
+  { id: 'twelve-player-wolf-beauty-knight', name: '十二人狼美人骑士', description: '3狼 1狼美人 4民 预女守骑', role_counts: { 'wolf-killer-werewolf': 3, 'wolf-killer-wolf-beauty': 1, 'wolf-killer-villager': 4, 'wolf-killer-seer': 1, 'wolf-killer-witch': 1, 'wolf-killer-guard': 1, 'wolf-killer-knight': 1 }, enable_sheriff: true, witch_self_save: 'never' },
 ];
 
 const CONSTRAINTS = { min_players: 4, max_players: 12, min_werewolves: 1, min_good: 1 };
@@ -177,10 +180,37 @@ describe('CreateGameWizard step 2 and submission', () => {
         role_counts: expect.objectContaining({ 'wolf-killer-werewolf': 3 }),
         reveal_on_death: false,
         enable_sheriff: false,
+        witch_self_save: 'first_night_only',
         model_assignments: [{ config_id: null, count: 9 }],
       }),
     );
     expect(navigateMock).toHaveBeenCalledWith('/game/g1');
+  });
+
+  it('forwards the preset witch self-save policy into the create call', async () => {
+    await renderStep1();
+    fireEvent.click(screen.getByText('十二人狼美人骑士'));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    await waitFor(() => expect(screen.getByText('环境默认 (.env)')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        enable_sheriff: true,
+        witch_self_save: 'never',
+      })),
+    );
+  });
+
+  it('falls back to the first-night policy for presets that predate the flag', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        witch_self_save: 'first_night_only',
+      })),
+    );
   });
 
   it('splits players across the env default and a stored config', async () => {

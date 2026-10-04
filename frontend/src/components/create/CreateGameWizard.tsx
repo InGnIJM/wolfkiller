@@ -8,7 +8,9 @@ import RoleStep from './RoleStep';
 import ModelStep from './ModelStep';
 import { createGame } from '../../api/client';
 import { useModelConfigStore } from '../../store/modelConfigStore';
-import type { FieldConstraints, ModelAssignment, RoleCatalogItem } from '../../store/types';
+import type {
+  FieldConstraints, ModelAssignment, RoleCatalogItem, WitchSelfSavePolicy,
+} from '../../store/types';
 import { BACKDROP } from '../../theme/tokens';
 
 export default function CreateGameWizard() {
@@ -21,6 +23,7 @@ export default function CreateGameWizard() {
   const [modelAssignmentsInitialized, setModelAssignmentsInitialized] = useState(false);
   const [revealOnDeath, setRevealOnDeath] = useState(false);
   const [enableSheriff, setEnableSheriff] = useState(false);
+  const [witchSelfSave, setWitchSelfSave] = useState<WitchSelfSavePolicy>('first_night_only');
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const modelConfigs = useModelConfigStore((state) => state.configs);
@@ -72,6 +75,7 @@ export default function CreateGameWizard() {
         role_counts: roleCounts,
         reveal_on_death: revealOnDeath,
         enable_sheriff: enableSheriff,
+        witch_self_save: witchSelfSave,
         model_assignments: modelAssignments.filter((assignment) => assignment.count > 0),
       });
       navigate(`/game/${res.game_id}`);
@@ -108,6 +112,8 @@ export default function CreateGameWizard() {
           onRevealOnDeathChange={setRevealOnDeath}
           enableSheriff={enableSheriff}
           onEnableSheriffChange={setEnableSheriff}
+          witchSelfSave={witchSelfSave}
+          onWitchSelfSaveChange={setWitchSelfSave}
         />
       )}
       {step === 1 && (

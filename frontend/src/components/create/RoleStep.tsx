@@ -5,7 +5,7 @@ import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 
 import { fetchConstraints, fetchPresets, fetchRoleCatalog } from '../../api/client';
-import type { FieldConstraints, GamePreset, RoleCatalogItem } from '../../store/types';
+import type { FieldConstraints, GamePreset, RoleCatalogItem, WitchSelfSavePolicy } from '../../store/types';
 import { roleMetaFor } from '../shared/roleMeta';
 import { CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
@@ -20,12 +20,15 @@ interface Props {
   onRevealOnDeathChange: (value: boolean) => void;
   enableSheriff: boolean;
   onEnableSheriffChange: (value: boolean) => void;
+  witchSelfSave: WitchSelfSavePolicy;
+  onWitchSelfSaveChange: (value: WitchSelfSavePolicy) => void;
 }
 
 export default function RoleStep({
   roleCounts, onRoleCountsChange, onConstraintsChange, onRolesChange,
   revealOnDeath, onRevealOnDeathChange,
   enableSheriff, onEnableSheriffChange,
+  witchSelfSave, onWitchSelfSaveChange,
 }: Props) {
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
@@ -48,6 +51,7 @@ export default function RoleStep({
           setSelectedPresetId(nine.id);
           onRoleCountsChange({ ...nine.role_counts });
           onEnableSheriffChange(Boolean(nine.enable_sheriff));
+          onWitchSelfSaveChange(nine.witch_self_save ?? 'first_night_only');
         }
       })
       .catch((error) => {
@@ -69,6 +73,7 @@ export default function RoleStep({
     setSelectedPresetId(preset.id);
     onRoleCountsChange({ ...preset.role_counts });
     onEnableSheriffChange(Boolean(preset.enable_sheriff));
+    onWitchSelfSaveChange(preset.witch_self_save ?? 'first_night_only');
   };
 
   const canIncrement = (role: RoleCatalogItem) => {
@@ -219,6 +224,11 @@ export default function RoleStep({
         />
         <Typography variant="body2" color="text.secondary">
           九人、十人预设默认关闭；十二人预设建议开启。关闭时提示词不出现警长，流程也不进入竞选。
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          女巫自救：{witchSelfSave === 'never'
+            ? '本板子全程禁止自救（网易官方赛制口径，随预设自动设定）。'
+            : '仅首夜可自救（假面官方口径，随预设自动设定）。'}
         </Typography>
       </Box>
     </Box>

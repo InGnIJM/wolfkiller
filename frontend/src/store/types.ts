@@ -496,12 +496,17 @@ export interface RoleCatalogItem {
   exclusions: string[];
 }
 
+/** 女巫自救规则：假面官方板子首夜可自救，网易官方赛制板子全程禁止。 */
+export type WitchSelfSavePolicy = 'first_night_only' | 'never';
+
 export interface GamePreset {
   id: string;
   name: string;
   description: string;
   role_counts: Record<string, number>;
   enable_sheriff?: boolean;
+  /** 女巫自救规则：假面板子首夜可自救，网易官方赛制板子全程禁止。 */
+  witch_self_save?: WitchSelfSavePolicy;
   /** 该板子建议的单局超时（秒）：9/10 人板 3600，12 人板 7200；旧响应可能没有这个字段。 */
   recommended_timeout_seconds?: number;
 }
