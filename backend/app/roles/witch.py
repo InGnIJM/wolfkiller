@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from app.models.game import GameState
+from app.models.game import DEFAULT_WITCH_SELF_SAVE, GameState
 from app.models.actions import NightAction
 from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
@@ -25,15 +25,18 @@ def validate_witch_action(
         return (RuleViolation("antidote_unavailable", "antidote is unavailable"),)
     if command.action_type == "save" and command.target_seat != context.facts.get("wolf_kill_target"):
         return (RuleViolation("invalid_save_target", "save target must be the wolf kill target"),)
-    if (
-        command.action_type == "save"
-        and command.target_seat == context.actor_seat
-        and context.round_number != 1
-    ):
-        return (RuleViolation(
-            "self_save_first_night_only",
-            "the witch can only save herself on the first night",
-        ),)
+    if command.action_type == "save" and command.target_seat == context.actor_seat:
+        # The policy travels in the context, so the hook carries no board branch.
+        if context.facts.get("witch_self_save", DEFAULT_WITCH_SELF_SAVE) == "never":
+            return (RuleViolation(
+                "witch_self_save_forbidden",
+                "the witch can never save herself in this game",
+            ),)
+        if context.round_number != 1:
+            return (RuleViolation(
+                "self_save_first_night_only",
+                "the witch can only save herself on the first night",
+            ),)
     if command.action_type == "poison" and context.resources.get("poison", 0) <= 0:
         return (RuleViolation("poison_unavailable", "poison is unavailable"),)
     return ()

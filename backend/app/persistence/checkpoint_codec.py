@@ -23,7 +23,10 @@ from app.core.point_journal import (
     PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal,
 )
 from app.models.actions import DeathReport, NightAction, SpeechRecord, VoteAction
-from app.models.game import GameConfig, GamePhase, GameState, PlayerState, SheriffOfficeState
+from app.models.game import (
+    DEFAULT_WITCH_SELF_SAVE, WITCH_SELF_SAVE_POLICIES, GameConfig, GamePhase, GameState,
+    PlayerState, SheriffOfficeState,
+)
 from app.models.pipeline import IssuedActionRequest, SchedulePoint
 from app.roles.registry import RegistrySnapshot
 
@@ -37,7 +40,9 @@ class CheckpointError(ValueError):
 
 _STATE_FIELDS = {field.name for field in fields(GameState)}
 _PLAYER_FIELDS = {field.name for field in fields(PlayerState)}
-_CONFIG_FIELDS = {"role_counts", "reveal_on_death", "enable_sheriff"}
+_CONFIG_FIELDS = {
+    "role_counts", "reveal_on_death", "enable_sheriff", "witch_self_save",
+}
 _OFFICE_FIELDS = {
     "candidates", "active", "pk_seats", "badge_destroyed",
     "skip_remaining_day", "speech_side", "step",
@@ -177,6 +182,7 @@ class CheckpointCodec:
                 "role_counts": dict(sorted(state.config.role_counts.items())),
                 "reveal_on_death": state.config.reveal_on_death,
                 "enable_sheriff": state.config.enable_sheriff,
+                "witch_self_save": state.config.witch_self_save,
             },
             "players": {
                 str(seat): {
@@ -326,6 +332,9 @@ class CheckpointCodec:
             raise CheckpointError("invalid phase") from error
         config_row = dict(_mapping(row["config"], "config"))
         config_row.setdefault("enable_sheriff", False)
+        # Archives written before the witch self-save policy existed fall back to
+        # the behaviour they were played under, so they keep resuming unchanged.
+        config_row.setdefault("witch_self_save", DEFAULT_WITCH_SELF_SAVE)
         config = _exact(config_row, _CONFIG_FIELDS, "config")
         role_counts = _mapping(config["role_counts"], "role_counts")
         if any(type(k) is not str or type(v) is not int or v < 0 for k, v in role_counts.items()):
@@ -334,6 +343,8 @@ class CheckpointCodec:
             raise CheckpointError("invalid reveal_on_death")
         if type(config["enable_sheriff"]) is not bool:
             raise CheckpointError("invalid enable_sheriff")
+        if config["witch_self_save"] not in WITCH_SELF_SAVE_POLICIES:
+            raise CheckpointError("invalid witch_self_save")
         players: dict[int, PlayerState] = {}
         for seat, raw in _seat_map(row["players"], "players").items():
             item = _exact(raw, _PLAYER_FIELDS, "player")
@@ -366,6 +377,7 @@ class CheckpointCodec:
                 role_counts=dict(role_counts),
                 reveal_on_death=config["reveal_on_death"],
                 enable_sheriff=config["enable_sheriff"],
+                witch_self_save=config["witch_self_save"],
             ),
             players=players,
             sheriff=_optional_integer(row["sheriff"], "sheriff", minimum=1),

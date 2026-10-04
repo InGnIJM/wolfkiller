@@ -321,6 +321,17 @@ def test_sheriff_enabled_fact_is_only_projected_when_config_is_on(
     assert on.facts["sheriff"] == 1
 
 
+def test_witch_self_save_fact_is_only_projected_for_a_non_default_policy(
+    state: GameState, registry: RegistrySnapshot
+) -> None:
+    projector = ContextProjector()
+    default = projector.project(state, _request(registry, 6, "villager"), registry)
+    assert "witch_self_save" not in default.facts
+    state.config.witch_self_save = "never"
+    strict = projector.project(state, _request(registry, 6, "villager"), registry)
+    assert strict.facts["witch_self_save"] == "never"
+
+
 def test_public_history_is_allowlisted_and_drops_reasoning_and_private_fields(
     state: GameState, registry: RegistrySnapshot
 ) -> None:

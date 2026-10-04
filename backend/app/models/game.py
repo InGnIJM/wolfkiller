@@ -49,11 +49,23 @@ class SheriffOfficeState:
     step: str = ""
 
 
+#: When the witch may save herself with the antidote.
+#:
+#: ``first_night_only`` is the ruling the original (Jiamian) boards use and the
+#: project's long-standing behaviour; ``never`` is the official NetEase ruling
+#: that every college-tournament board is played under. The policy travels in
+#: ``GameConfig`` and is projected into the witch's action context, so the role
+#: hook stays free of any board-specific branch.
+DEFAULT_WITCH_SELF_SAVE = "first_night_only"
+WITCH_SELF_SAVE_POLICIES = ("first_night_only", "never")
+
+
 @dataclass(init=False)
 class GameConfig:
     role_counts: dict[str, int] = field(default_factory=_default_role_counts)
     reveal_on_death: bool = False
     enable_sheriff: bool = False
+    witch_self_save: str = DEFAULT_WITCH_SELF_SAVE
 
     def __init__(
         self,
@@ -66,7 +78,10 @@ class GameConfig:
         num_hunters: Optional[int] = None,
         reveal_on_death: bool = False,
         enable_sheriff: bool = False,
+        witch_self_save: str = DEFAULT_WITCH_SELF_SAVE,
     ) -> None:
+        if witch_self_save not in WITCH_SELF_SAVE_POLICIES:
+            raise ValueError(f"unknown witch self-save policy: {witch_self_save!r}")
         legacy_counts = (
             ("wolf-killer-werewolf", num_werewolves, 3),
             ("wolf-killer-villager", num_villagers, 3),
@@ -89,6 +104,7 @@ class GameConfig:
             self.role_counts = _default_role_counts()
         self.reveal_on_death = bool(reveal_on_death)
         self.enable_sheriff = bool(enable_sheriff)
+        self.witch_self_save = witch_self_save
 
     @property
     def total_players(self) -> int:

@@ -60,6 +60,22 @@ def test_self_save_is_first_night_only() -> None:
     assert validate_witch_action(replace(context(), round_number=2), command("save", 2)) == ()
 
 
+def test_self_save_policy_can_forbid_even_the_first_night() -> None:
+    """The NetEase college boards are played with self-save forbidden outright."""
+
+    def with_policy(target: int, value: str) -> ActionContext:
+        base = context(target=target)
+        return replace(base, facts={**base.facts, "witch_self_save": value})
+
+    # Night 1 with the witch on the block: allowed by default, forbidden by policy.
+    assert validate_witch_action(context(target=1), command("save", 1)) == ()
+    assert validate_witch_action(
+        with_policy(1, "never"), command("save", 1),
+    )[0].code == "witch_self_save_forbidden"
+    # The policy never touches a save aimed at somebody else.
+    assert validate_witch_action(with_policy(2, "never"), command("save", 2)) == ()
+
+
 def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     saved = resolve_witch_action(context(), command("save", 2))
     poisoned = resolve_witch_action(context(), command("poison", 3))

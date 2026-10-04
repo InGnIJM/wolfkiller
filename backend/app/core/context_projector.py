@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 import re
 from types import MappingProxyType
 from app.models.actions import SpeechRecord, VoteAction
-from app.models.game import GameState, PlayerState
+from app.models.game import DEFAULT_WITCH_SELF_SAVE, GameState, PlayerState
 from app.models.pipeline import (
     ActionCommand, ActionContext, IssuedActionRequest, SchedulePoint,
 )
@@ -424,6 +424,11 @@ class ContextProjector:
         facts["sheriff"] = sheriff
         if getattr(state.config, "enable_sheriff", False):
             facts["sheriff_enabled"] = True
+        # Only the non-default policy is projected, so archives played under the
+        # original ruling keep rendering byte-identical prompts.
+        self_save = getattr(state.config, "witch_self_save", DEFAULT_WITCH_SELF_SAVE)
+        if self_save != DEFAULT_WITCH_SELF_SAVE:
+            facts["witch_self_save"] = self_save
         return facts
 
     @classmethod
