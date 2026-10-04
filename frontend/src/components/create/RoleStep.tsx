@@ -6,8 +6,8 @@ import RemoveIcon from '@mui/icons-material/Remove';
 
 import { fetchConstraints, fetchPresets, fetchRoleCatalog } from '../../api/client';
 import type { FieldConstraints, GamePreset, RoleCatalogItem, WitchSelfSavePolicy } from '../../store/types';
-import { roleMetaFor } from '../shared/roleMeta';
-import { CARD_BACK, HAIRLINE } from '../../theme/tokens';
+import RolePortrait from '../shared/RolePortrait';
+import { HAIRLINE } from '../../theme/tokens';
 
 const CUSTOM_PRESET_ID = 'custom';
 
@@ -139,17 +139,7 @@ export default function RoleStep({
                 borderRadius: 2,
               }}
             >
-              <Box sx={{ position: 'relative', width: 72, flexShrink: 0 }}>
-                <Box
-                  component="img"
-                  alt=""
-                  src={roleMetaFor(role.role_id)?.art ?? CARD_BACK}
-                  sx={{
-                    position: 'absolute', inset: 0, width: '100%', height: '100%',
-                    objectFit: 'cover', objectPosition: 'center 16%',
-                  }}
-                />
-              </Box>
+              <RolePortrait roleId={role.role_id} width={72} />
               <Box sx={{
                 flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
                 justifyContent: 'space-between', gap: 1.5, px: 1.5, py: 1,

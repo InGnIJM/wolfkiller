@@ -9,37 +9,13 @@ import { WINNING_CAMP_LABELS } from '../../labels';
 import type { FieldConstraints, GamePreset, RoleCatalogItem } from '../../store/types';
 import { BACKDROP, HAIRLINE } from '../../theme/tokens';
 import RoleIcon from '../shared/RoleIcon';
-import { roleMetaFor } from '../shared/roleMeta';
+import RolePortrait from '../shared/RolePortrait';
+import { rankOf, ROLE_ORDER, roleMetaFor } from '../shared/roleMeta';
 import { RULES_SUBTITLE, RULE_SECTIONS } from './ruleSections';
 import type { RuleSection } from './ruleSections';
 
 /** 阵营阅读顺序：狼人在前，未知阵营垫底（后端新增阵营也不会漏渲染）。 */
 const CAMP_ORDER: readonly string[] = ['werewolf', 'good'];
-
-/** 角色卡阅读顺序；不在表里的角色按后端顺序排在后面。 */
-const ROLE_ORDER: readonly string[] = [
-  'wolf-killer-werewolf',
-  'wolf-killer-werewolf-king',
-  'wolf-killer-wolf-king',
-  'wolf-killer-evil-knight',
-  'wolf-killer-dream-weaver',
-  'wolf-killer-gargoyle',
-  'wolf-killer-gravekeeper',
-  'wolf-killer-wolf-beauty',
-  'wolf-killer-seer',
-  'wolf-killer-witch',
-  'wolf-killer-hunter',
-  'wolf-killer-guard',
-  'wolf-killer-idiot',
-  'wolf-killer-knight',
-  'wolf-killer-old-drunkard',
-  'wolf-killer-villager',
-];
-
-function rankOf(value: string, order: readonly string[]): number {
-  const index = order.indexOf(value);
-  return index === -1 ? order.length : index;
-}
 
 function campLabel(camp: string): string {
   return camp === 'good' || camp === 'werewolf' ? WINNING_CAMP_LABELS[camp] : camp;
@@ -237,6 +213,7 @@ export default function RulesPage() {
                       sx={{ p: 1.5, borderColor: HAIRLINE.soft }}
                     >
                       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                        <RolePortrait roleId={role.role_id} width={40} height={40} showLabel={false} />
                         <RoleIcon role={role.role_id} size={22} />
                         <Typography
                           variant="subtitle1"

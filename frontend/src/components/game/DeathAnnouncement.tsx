@@ -15,9 +15,10 @@ import Science from '@mui/icons-material/Science';
 import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
 import type { DeathRecord } from '../../store/types';
+import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
 import { DEATH_CAUSE_LABELS } from '../../labels';
-import { BACKDROP, CARD_BACK, HAIRLINE } from '../../theme/tokens';
+import { BACKDROP, HAIRLINE } from '../../theme/tokens';
 
 interface Props {
   deaths: DeathRecord[];
@@ -45,7 +46,6 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
   const Icon = CAUSE_ICONS[latest.cause] ?? PersonOff;
   const revealed = roleMetaFor(revealedRole);
   const roleLabel = revealed?.label ?? revealedRole ?? null;
-  const art = revealed?.art ?? CARD_BACK;
 
   return (
     <Dialog open maxWidth="xs" fullWidth aria-label="死亡公告">
@@ -57,12 +57,7 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
             border: `1px solid ${HAIRLINE.strong}`,
           }}
         >
-          <Box
-            component="img"
-            alt=""
-            src={art}
-            sx={{ display: 'block', width: '100%', height: 116, objectFit: 'cover', objectPosition: 'center 15%' }}
-          />
+          <RolePortrait roleId={revealedRole} width={86} height={116} />
           <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '46%', background: BACKDROP.cardScrim }} />
         </Box>
         <Box
