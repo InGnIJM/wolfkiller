@@ -107,6 +107,8 @@ export interface SheriffBadgePayload {
   round_number: number;
   from_seat: number;
   to_seat: number | null;
+  /** 警长的交/撕徽理由（上帝视角）；旧档没有这个字段。 */
+  reasoning?: string | null;
 }
 
 export type SheriffRunChoice = 'run' | 'pass';

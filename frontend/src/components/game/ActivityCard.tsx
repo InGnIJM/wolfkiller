@@ -415,19 +415,22 @@ function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['paylo
   );
 }
 
-// 白天裁决卡：白痴翻牌免于放逐 / 白狼王自爆带人
+// 白天裁决卡：白痴翻牌免于放逐 / 白狼王自爆带人 / 警长交徽撕徽
 function DayVerdictView({
   title,
   subtitle,
   seat,
   tone,
   tag,
+  detail,
 }: {
   title: string;
   subtitle: string;
   seat?: number | null;
   tone: string;
   tag: string;
+  /** 补充说明（目前只有警长的交/撕徽理由），没有就不占位。 */
+  detail?: string | null;
 }) {
   return (
     <ActivityFrame tone={tone}>
@@ -460,6 +463,15 @@ function DayVerdictView({
           <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
             {subtitle}
           </Typography>
+          {detail ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ display: 'block', mt: 0.5, lineHeight: 1.4 }}
+            >
+              警长思考：{detail}
+            </Typography>
+          ) : null}
         </Box>
         <LiveTag label={tag} />
       </Box>
@@ -646,6 +658,7 @@ export default function ActivityCard() {
           subtitle={`第${entry.payload.round_number}轮`}
           tone="#E8C887"
           tag="BADGE"
+          detail={entry.payload.reasoning ?? null}
         />
       );
     case 'sheriff_run':

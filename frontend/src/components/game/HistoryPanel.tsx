@@ -286,6 +286,7 @@ function EventCard({
           {event.payload.to_seat == null
             ? `${event.payload.from_seat}号撕毁警徽 · 第${event.payload.round_number}轮`
             : `${event.payload.from_seat}号将警徽移交给${event.payload.to_seat}号 · 第${event.payload.round_number}轮`}
+          {event.payload.reasoning ? `（警长思考：${event.payload.reasoning}）` : ''}
         </Typography>
       );
       break;
