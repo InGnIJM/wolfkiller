@@ -291,3 +291,150 @@ def test_a_plain_seat_still_dies_to_the_knife_on_the_same_night() -> None:
     assert [(item["seat"], item["cause"]) for item in deaths] == [(2, "wolf_kill")]
     assert alive[2] is False
     assert delayed == {}
+
+
+def _pool(statuses: dict, camps: dict, alive: dict | None = None, round_number: int = 2):
+    from app.core.night_settlement import settle_pool
+
+    return settle_pool(statuses, camps, alive or {seat: True for seat in camps}, round_number)
+
+
+def test_the_pool_verdict_only_kills_the_minority_camp() -> None:
+    from app.core.night_settlement import MASKED_STATUS
+
+    # 2 good + 1 wolf: the wolf is the minority and dies.
+    deaths, cleared = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "good", 2: "good", 3: "werewolf"},
+    )
+    assert deaths == ({"seat": 3, "cause": "dance", "round_number": 2},)
+    # Only the marks a seat actually holds are swept.
+    assert cleared == {1: ("in_pool",), 2: ("in_pool",), 3: ("in_pool",)}
+    # 1 good + 2 wolves: the good seat is the minority.
+    deaths, _ = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "good", 2: "werewolf", 3: "werewolf"},
+    )
+    assert deaths == ({"seat": 1, "cause": "dance", "round_number": 2},)
+    # The mask flips one seat's camp *for this comparison only*. Masking the
+    # lone wolf makes the pool single-camp, so nobody dies at all.
+    deaths, cleared = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool", MASKED_STATUS}},
+        {1: "good", 2: "good", 3: "werewolf"},
+    )
+    assert deaths == ()
+    assert cleared[3] == ("in_pool", "masked")
+    # Masking one of two wolves makes the OTHER wolf the minority instead.
+    deaths, _ = _pool(
+        {1: {"in_pool"}, 2: {"in_pool", MASKED_STATUS}, 3: {"in_pool"}},
+        {1: "good", 2: "werewolf", 3: "werewolf"},
+    )
+    assert deaths == ({"seat": 3, "cause": "dance", "round_number": 2},)
+    # A mask on a good seat makes the pool look wolf-majority, so the *other*
+    # good seat becomes the lonely minority.
+    deaths, _ = _pool(
+        {1: {"in_pool", MASKED_STATUS}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "good", 2: "werewolf", 3: "werewolf"},
+    )
+    assert deaths == ()
+    deaths, _ = _pool(
+        {1: {"in_pool", MASKED_STATUS}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "good", 2: "good", 3: "werewolf"},
+    )
+    assert deaths == ({"seat": 2, "cause": "dance", "round_number": 2},)
+
+
+def test_a_single_camp_pool_kills_nobody() -> None:
+    deaths, cleared = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "good", 2: "good", 3: "good"},
+    )
+    assert deaths == ()
+    assert sorted(cleared) == [1, 2, 3]
+    all_wolves, _ = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "werewolf", 2: "werewolf", 3: "werewolf"},
+    )
+    assert all_wolves == ()
+
+
+def test_a_pool_that_is_not_three_seats_is_skipped() -> None:
+    two, cleared = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}},
+        {1: "good", 2: "werewolf"},
+    )
+    assert two == ()
+    assert sorted(cleared) == [1, 2]
+    dead_member, _ = _pool(
+        {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool"}},
+        {1: "good", 2: "good", 3: "werewolf"},
+        alive={1: True, 2: True, 3: False},
+    )
+    assert dead_member == ()
+    assert _pool({}, {1: "good"}) == ((), {})
+
+
+def test_a_masked_seat_is_swept_even_when_it_never_entered_the_pool() -> None:
+    from app.core.night_settlement import MASKED_STATUS
+
+    deaths, cleared = _pool({4: {MASKED_STATUS}}, {4: "good"})
+    assert deaths == ()
+    assert cleared == {4: ("masked",)}
+
+
+def test_settle_pool_rejects_malformed_input() -> None:
+    import pytest as _pytest
+
+    from app.core.night_settlement import settle_pool
+
+    with _pytest.raises(ValueError):
+        settle_pool({1: {"in_pool"}}, {1: "good"}, {1: True}, -1)
+    with _pytest.raises(ValueError):
+        settle_pool(
+            {1: {"in_pool"}, 2: {"in_pool"}, 3: {"in_pool"}},
+            {1: "good", 2: "good", 3: 7}, {1: True, 2: True, 3: True}, 1,
+        )
+    with _pytest.raises(TypeError):
+        settle_pool("not a mapping", {1: "good"}, {1: True}, 1)
+    with _pytest.raises(ValueError):
+        settle_pool({0: {"in_pool"}}, {}, {}, 1)
+
+
+def test_the_dance_veil_shields_the_knife_without_a_breach() -> None:
+    """舞池盾只挡狼刀、不参与对穿：与解药同落一人时该玩家仍然死亡。"""
+    from app.core.night_settlement import settle
+
+    deaths, alive, _ = settle(
+        ({"target": 2, "amount": 1, "cause": "wolf_kill"},),
+        ({"target": 2, "amount": 1, "source": "dance_veil"},),
+        {1, 2}, {1: True, 2: True}, 2,
+    )
+    assert deaths == () and alive[2] is True
+    # 对穿只由「守卫 + 解药」这一对触发：舞池盾不是守卫，所以它压在解药上
+    # 也不会把人送走 —— 与真正的守卫形成对照。
+    deaths, alive, _ = settle(
+        ({"target": 2, "amount": 1, "cause": "wolf_kill"},),
+        (
+            {"target": 2, "amount": 1, "source": "dance_veil"},
+            {"target": 2, "amount": 1, "source": "witch_antidote"},
+        ),
+        {1, 2}, {1: True, 2: True}, 2,
+    )
+    assert deaths == () and alive[2] is True
+    deaths, alive, _ = settle(
+        ({"target": 2, "amount": 1, "cause": "wolf_kill"},),
+        (
+            {"target": 2, "amount": 1, "source": "guard"},
+            {"target": 2, "amount": 1, "source": "witch_antidote"},
+        ),
+        {1, 2}, {1: True, 2: True}, 2,
+    )
+    assert [(item["seat"], item["cause"]) for item in deaths] == [(2, "wolf_kill")]
+    assert alive[2] is False
+    # ... and it never stops the vial.
+    deaths, _, _ = settle(
+        ({"target": 2, "amount": 1, "cause": "poison"},),
+        ({"target": 2, "amount": 1, "source": "dance_veil"},),
+        {1, 2}, {1: True, 2: True}, 2,
+    )
+    assert [(item["seat"], item["cause"]) for item in deaths] == [(2, "poison")]

@@ -4,8 +4,8 @@ import math
 import re
 from dataclasses import dataclass, field; from types import MappingProxyType
 from typing import Mapping
-from app.models.game import GameState; from app.models.pipeline import EffectKind, GameEffect
-from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, settle, settlement_key, state_digest as _digest
+from app.models.game import Camp, GameState; from app.models.pipeline import EffectKind, GameEffect
+from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, NIGHT_SCOPED_STATUSES, settle, settle_pool, settlement_key, state_digest as _digest
 from app.core.role_runtime import clone_action_counts, initialize_role_resources, record_accepted_action, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -406,18 +406,65 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
         alive[target] = False
         events.append({"event_type": "PLAYER_DIED", "payload": {"seat": target, "cause": payload["cause"]}, "visibility": effect.visibility})
 class EffectApplier:
-    def settle_pending(self, state: GameState, *, round_number: int, batch: int = 0) -> CommitResult | None:
+    def commit_night(self, state: GameState, *, round_number: int) -> CommitResult | None:
+        """The night's single atomic closing batch.
+
+        Runs the Masquerade pool verdict, folds the settlement, and sweeps every
+        status whose lifetime is that one night (the seal, the pool marks). The
+        daytime paths keep calling :meth:`settle_pending` without the sweep: the
+        Crimson Envoy applies its seal during the day and it has to survive into
+        the night it applies to.
+        """
+        return self.settle_pending(
+            state, round_number=round_number, night_end=True,
+        )
+
+    def settle_pending(self, state: GameState, *, round_number: int, batch: int = 0,
+                       night_end: bool = False) -> CommitResult | None:
         if type(state) is not GameState: raise TypeError("state must be GameState")  # pragma: no branch
         action_key = settlement_key(state.game_id, round_number, batch)
         with state_transaction_lock(state):
             current = _runtime(state); simulated = current.clone()
             if action_key in current.commits: return current.commits[action_key]  # pragma: no branch
-            if not simulated.pending_damage and not simulated.pending_protection: return None  # pragma: no branch
             if type(state.death_history) is not list: raise EffectRejected("invalid death history")  # pragma: no branch
             alive = {seat: player.is_alive for seat, player in state.players.items()}
+            pool_deaths: tuple[dict[str, object], ...] = ()
+            swept: dict[int, tuple[str, ...]] = {}
+            if night_end:
+                camps = {
+                    seat: (player.camp.value if isinstance(player.camp, Camp) else player.camp)
+                    for seat, player in state.players.items()
+                }
+                try: pool_deaths, swept = settle_pool(simulated.statuses, camps, alive, round_number)
+                except (TypeError, ValueError) as error: raise EffectRejected("invalid masquerade pool") from error
+                # The pool marks are swept even on a night the verdict never ran
+                # (a mask with no full pool), and the one-night seal goes with
+                # the night that applied it. A daytime settlement sweeps
+                # nothing: the Crimson Envoy's seal is applied during the day
+                # and has to survive into the night it applies to.
+                for seat in sorted(simulated.statuses):
+                    held = frozenset(simulated.statuses[seat])
+                    stale = tuple(
+                        status for status in NIGHT_SCOPED_STATUSES
+                        if status in held and status not in swept.get(seat, ())
+                    )
+                    if stale:
+                        swept[seat] = tuple(swept.get(seat, ())) + stale
+            if (not simulated.pending_damage and not simulated.pending_protection
+                    and not pool_deaths and not swept): return None  # pragma: no branch
             try: deaths, resulting_alive, delayed = settle(simulated.pending_damage, simulated.pending_protection, set(state.players), alive, round_number, simulated.role_resources)
             except (TypeError, ValueError) as error: raise EffectRejected("invalid pending damage or protection") from error
+            # The pool speaks first: a seat killed by both the knife and the
+            # dance dies once, announced with the dance's cause.
+            merged = list(pool_deaths)
+            seen = {death["seat"] for death in pool_deaths}
+            merged.extend(death for death in deaths if death["seat"] not in seen)
+            deaths = tuple(merged)
             simulated.pending_damage = (); simulated.pending_protection = (); simulated.revision += 1
+            for seat in sorted(swept):
+                # Plain ``set``: the runtime declares plain sets and the next
+                # clone would reject an immutable variant.
+                simulated.statuses[seat] = set(simulated.statuses.get(seat, ())) - set(swept[seat])
             events = tuple({"event_type": "PLAYER_DIED", "payload": death, "visibility": ("PUBLIC",)} for death in deaths)
             # A seat the settlement spared because it is delayable keeps the
             # marks that explain the pending death, so the engine can finalise it

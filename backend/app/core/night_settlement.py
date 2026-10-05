@@ -18,10 +18,11 @@ WOUNDED_STATUS = "wounded"
 #: Shields that cancel the wolf kill — the long-standing "guard" semantics. An
 #: unnamed protection keeps that meaning, so a shield that declares no source
 #: still stops the knife.
-_WOLF_ONLY_SOURCES = frozenset({"guard", "witch_antidote"})
+_WOLF_ONLY_SOURCES = frozenset({"guard", "witch_antidote", "dance_veil"})
 #: Shields that count towards the "guard and antidote on the same target" breach.
 #: Deliberately narrower than the wolf-kill tier: a dream weave is not a guard,
-#: so dreaming a target the witch also saves does not breach it.
+#: so dreaming a target the witch also saves does not breach it — and neither is
+#: the Masquerade's dance veil.
 _DOUBLE_SAVE_SOURCES = frozenset({"guard", "witch_antidote"})
 #: Shields that cancel *any* lethal night damage, the poison included. A dream
 #: weave is the first of these. Such a shield also stops the knife, so the wolf
@@ -142,6 +143,74 @@ def resolve_delayed_deaths(
             if status in _DELAYED_DEATH_CAUSES or status == DELAYED_DEATH_STATUS
         ))
     return tuple(deaths), cleared
+
+
+#: Masquerade pool marks. ``in_pool`` sits on the three seats the Dancer chose
+#: for that night, ``masked`` on the seat the Mask flipped for the comparison.
+DANCE_POOL_STATUS = "in_pool"
+MASKED_STATUS = "masked"
+DANCE_CAUSE = "dance"
+
+
+def settle_pool(
+    statuses: Mapping[int, object], camps: Mapping[int, str],
+    alive: Mapping[int, bool], round_number: int,
+) -> tuple[tuple[dict[str, object], ...], dict[int, tuple[str, ...]]]:
+    """Resolve the masquerade pool: the minority camp among the pooled seats dies.
+
+    A masked seat counts as the opposite camp *for this comparison only*. The
+    mask never changes the seat's real camp, so it cannot move the win check,
+    the seer's reading or any other camp-based rule.
+
+    The three seats were all alive when they were chosen, and the wolf kill and
+    the witch's vial are settled in this very call, so the comparison uses the
+    pool exactly as it was formed: a member knifed tonight still counts, and its
+    death is merged (once) by the caller.
+    """
+    if not isinstance(statuses, Mapping) or not isinstance(camps, Mapping):
+        raise TypeError("statuses and camps must be mappings")
+    if not isinstance(alive, Mapping):
+        raise TypeError("alive must be a mapping")
+    if type(round_number) is not int or not 0 <= round_number <= _INT32:
+        raise ValueError("round_number out of range")
+    held_by: dict[int, frozenset[object]] = {}
+    cleared: dict[int, tuple[str, ...]] = {}
+    for seat, held in statuses.items():
+        if type(seat) is not int or seat <= 0:
+            raise ValueError("invalid status seat")
+        frozen = frozenset(held if isinstance(held, (set, frozenset, tuple, list)) else ())
+        held_by[seat] = frozen
+        stale = tuple(
+            status for status in (DANCE_POOL_STATUS, MASKED_STATUS)
+            if status in frozen
+        )
+        if stale:
+            cleared[seat] = stale
+    pooled = sorted(
+        seat for seat, frozen in held_by.items()
+        if DANCE_POOL_STATUS in frozen and alive.get(seat, False)
+    )
+    if len(pooled) != 3:
+        return (), cleared
+
+    def effective_camp(seat: int) -> str:
+        camp = camps.get(seat)
+        if type(camp) is not str:
+            raise ValueError("invalid camp for pooled seat")
+        if MASKED_STATUS in held_by[seat]:
+            return "werewolf" if camp == "good" else "good"
+        return camp
+
+    good = [seat for seat in pooled if effective_camp(seat) == "good"]
+    wolves = [seat for seat in pooled if effective_camp(seat) != "good"]
+    if not good or not wolves:
+        return (), cleared
+    losers = wolves if len(wolves) < len(good) else good
+    deaths = tuple(
+        {"seat": seat, "cause": DANCE_CAUSE, "round_number": round_number}
+        for seat in losers
+    )
+    return deaths, cleared
 
 
 def settlement_key(game_id: str, round_number: int, batch: int = 0) -> str:

@@ -12,6 +12,7 @@ from app.core.effect_applier import (
     EffectApplier,
     EffectPermission,
     EffectRejected,
+    _Runtime,
     derive_effect_id,
     initialize_role_resources,
     role_resource_view,
@@ -1105,3 +1106,89 @@ def test_settle_pending_rejects_bad_batch(batch) -> None:
     with pytest.raises((TypeError, ValueError)):
         EffectApplier().settle_pending(s, round_number=1, batch=batch)
     assert not hasattr(s, "_pipeline_runtime")
+
+
+def _night_state(seat2: set | None = None, seat3: set | None = None) -> GameState:
+    """A state whose runtime already carries the given per-seat statuses."""
+    s = state()
+    s._pipeline_runtime = _Runtime()
+    for seat, held in ((2, seat2), (3, seat3)):
+        if held is not None:
+            s._pipeline_runtime.statuses[seat] = set(held)
+    return s
+
+
+def test_commit_night_settles_the_pool_even_without_any_damage() -> None:
+    """平安夜也要结算舞池：早退条件必须把「池里有人」算成待办事项。"""
+    from app.core.night_settlement import DANCE_POOL_STATUS, MASKED_STATUS
+
+    s = _night_state(seat2={DANCE_POOL_STATUS})
+    s._pipeline_runtime.statuses[2] = {DANCE_POOL_STATUS}
+    s._pipeline_runtime.statuses[3] = {DANCE_POOL_STATUS, MASKED_STATUS}
+    applier = EffectApplier()
+
+    result = applier.commit_night(s, round_number=2)
+
+    assert result is not None
+    deaths = [
+        (event["payload"]["seat"], event["payload"]["cause"])
+        for event in result.events if event["event_type"] == "PLAYER_DIED"
+    ]
+    # 2 good + 1 masked wolf: the mask makes the pool single-camp, so nobody dies,
+    # but the marks are swept and the revision moved.
+    assert deaths == []
+    assert s._pipeline_runtime.statuses[2] == set()
+    assert s._pipeline_runtime.statuses[3] == set()
+    assert result.revision == 1
+
+
+def test_commit_night_kills_the_minority_and_merges_the_knife_once() -> None:
+    from app.core.night_settlement import DANCE_POOL_STATUS
+
+    s = _night_state(seat2={DANCE_POOL_STATUS}, seat3={DANCE_POOL_STATUS})
+    s._pipeline_runtime.statuses[1] = {DANCE_POOL_STATUS}
+    s._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "wolf_kill"},
+    )
+    applier = EffectApplier()
+
+    result = applier.commit_night(s, round_number=2)
+
+    deaths = [
+        (event["payload"]["seat"], event["payload"]["cause"])
+        for event in result.events if event["event_type"] == "PLAYER_DIED"
+    ]
+    # Whichever way the camps split, every death appears exactly once and the
+    # pool's own cause wins for a doubly-hit seat.
+    seats = [seat for seat, _ in deaths]
+    assert len(seats) == len(set(seats))
+    assert {cause for _, cause in deaths} <= {"dance", "wolf_kill"}
+    assert s._pipeline_runtime.pending_damage == ()
+
+
+def test_commit_night_sweeps_the_one_night_seal_only_when_the_night_ends() -> None:
+    from app.core.night_settlement import SILENCED_STATUS
+
+    sealed = _night_state(seat2={SILENCED_STATUS})
+    applier = EffectApplier()
+
+    # A daytime settlement leaves the seal alone: the Crimson Envoy applies it
+    # during the day and it has to survive into the night it applies to.
+    assert applier.settle_pending(sealed, round_number=2) is None
+    assert sealed._pipeline_runtime.statuses[2] == {SILENCED_STATUS}
+
+    result = applier.commit_night(sealed, round_number=2)
+    assert result is not None
+    assert sealed._pipeline_runtime.statuses[2] == set()
+
+
+def test_commit_night_is_a_noop_when_nothing_is_pending_or_sweepable() -> None:
+    s = _night_state()
+    assert EffectApplier().commit_night(s, round_number=1) is None
+    assert EffectApplier().commit_night(s, round_number=1) is None
+
+
+def test_commit_night_rejects_a_corrupt_pool_status_mapping() -> None:
+    s = _night_state(seat2={object()})  # type: ignore[arg-type]
+    with pytest.raises(EffectRejected):
+        EffectApplier().commit_night(s, round_number=1)

@@ -643,7 +643,9 @@ class Scheduler:
         for index in range(saved.cursor.index if saved.cursor.kind == "main" else len(work), len(work)):
             kind, members = work[index]; before = len(commits)
             if kind == "settlement":
-                revision = self._revision(state); settlement = self.applier.settle_pending(state, round_number=state.round_number)
+                # NIGHT_COMMIT is the night's closing batch: the pool verdict and
+                # the one-night status sweep belong to the same atomic commit.
+                revision = self._revision(state); settlement = self.applier.commit_night(state, round_number=state.round_number)
                 if settlement is not None and settlement.revision > revision:
                     commits.append(settlement); events.extend(settlement.events)
             elif kind == "normal":
