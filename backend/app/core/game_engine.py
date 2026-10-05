@@ -1398,9 +1398,14 @@ class GameEngine:
                     f":{self.state.vote_round}:0:{self._seat_list(post_speech)}"
                 )
         # Then finalise any death the settlement delayed: the rules put it right
-        # after the speeches and before the exile vote.
+        # after the speeches and before the exile vote. A delayed death can end
+        # the game (the last god dying of a vial, the Crimson Envoy's lingering
+        # exile removing the last wolf), and the day must not carry on to a vote
+        # nobody needs — so the verdict is read here, exactly as it is after a
+        # ballot.
         await self._resolve_delayed_deaths()
-        self.sm.transition(SM_Event.SPEECHES_COMPLETE)
+        if not await self._check_game_over():
+            self.sm.transition(SM_Event.SPEECHES_COMPLETE)
         await self._broadcast_phase_change()
         return False
 

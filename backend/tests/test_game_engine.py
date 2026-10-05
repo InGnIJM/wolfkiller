@@ -15,7 +15,7 @@ from app.core.night_flow import DiscussionTurn, NightBriefing, WolfVote
 from app.models.conversation import ConversationScope
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
-from app.core.effect_applier import CommitResult
+from app.core.effect_applier import CommitResult, _Runtime
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import SchedulePoint
 
@@ -829,6 +829,40 @@ async def test_a_silenced_pack_skips_discussion_and_records_no_votes(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_a_delayed_death_that_ends_the_game_stops_the_day(tmp_path) -> None:
+    """延迟死亡落地后立刻判胜：不再为「已经没有人可投」的残局多走一轮投票。
+
+    此前判胜要等到放逐投票之后，因此一个只差延迟死亡就结束的局面会多投一轮。
+    """
+    engine = GameEngine("delayed-over", pipeline_scheduler=None, director=_FakeDirector(), data_dir=str(tmp_path))
+    engine.state.players = {
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+        6: PlayerState(6, "wolf-killer-seer", "good"),
+    }
+    engine.state.round_number = 2
+    engine.sm.set_state(GamePhase.SPEECH); engine.state.phase = GamePhase.SPEECH
+    engine.memory_service = MagicMock()
+    engine._broadcast_phase_change = AsyncMock()
+    engine._publish_deaths = AsyncMock()
+    from app.models.actions import WinResult
+
+    engine.rule_engine.check_win = MagicMock(
+        return_value=WinResult("werewolf", "all_villagers_dead"),
+    )
+    runtime = _Runtime()
+    runtime.statuses[4] = {"delayed_death", "poisoned"}
+    engine.state._pipeline_runtime = runtime
+
+    interrupted = await engine._execute_speech_round()
+
+    assert interrupted is False
+    assert engine.state.players[4].is_alive is False
+    assert engine.sm.get_state() is GamePhase.GAME_OVER
+    assert engine.state.win_result is not None
+    engine._publish_deaths.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
     class OrderScheduler:
         def __init__(self): self.calls = []
@@ -1496,6 +1530,9 @@ class TestGameEngine:
         engine._assign_roles()
         engine.sm.set_state(GamePhase.SPEECH)
         engine.state.phase = GamePhase.SPEECH
+        # The fixture seats no werewolf, so the real rule engine would end the
+        # game as soon as the speeches finish and the vote would never run.
+        engine.rule_engine.check_win = MagicMock(return_value=None)
 
         await engine._execute_speech_round()
         await engine._execute_vote_casting()
@@ -2039,6 +2076,7 @@ class TestGameEngine:
             1: PlayerState(1, "wolf-killer-villager", "good"),
             2: PlayerState(2, "wolf-killer-villager", "good"),
         }
+        engine.rule_engine.check_win = MagicMock(return_value=None)
         engine.state.round_number = 1
         engine.state.speeches = [
             SpeechRecord(player_seat=1, text="already said", round_number=1),
@@ -2752,6 +2790,9 @@ class TestGameEngine:
             1: PlayerState(1, "wolf-killer-villager", "good"),
             2: PlayerState(2, "wolf-killer-villager", "good"),
         }
+        # Seats no werewolf: the real rule engine would declare a good-camp win
+        # as soon as the speeches end, and this test asserts the transition.
+        engine.rule_engine.check_win = MagicMock(return_value=None)
         engine.sm.set_state(GamePhase.SPEECH)
         engine.state.phase = GamePhase.SPEECH
 

@@ -37,6 +37,7 @@ from app.roles.gravekeeper import GRAVEKEEPER_SPEC, Gravekeeper
 from app.roles.pure_white import PURE_WHITE_SPEC, PureWhite
 from app.roles.wolf_witch import WOLF_WITCH_SPEC, WolfWitch
 from app.roles.demon_hunter import DEMON_HUNTER_SPEC, DemonHunter
+from app.roles.crimson_envoy import CRIMSON_ENVOY_SPEC, CrimsonEnvoy
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
 from app.roles.witch import WITCH_SPEC, Witch
@@ -475,6 +476,7 @@ builtin_registry.register_pipeline(GRAVEKEEPER_SPEC)
 builtin_registry.register_pipeline(PURE_WHITE_SPEC)
 builtin_registry.register_pipeline(WOLF_WITCH_SPEC)
 builtin_registry.register_pipeline(DEMON_HUNTER_SPEC)
+builtin_registry.register_pipeline(CRIMSON_ENVOY_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -616,6 +618,9 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-demon-hunter", Camp.GOOD, DemonHunter, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-crimson-envoy", Camp.WEREWOLF, CrimsonEnvoy, ())
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-gargoyle", Camp.WEREWOLF, Gargoyle, ())

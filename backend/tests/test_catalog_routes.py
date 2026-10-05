@@ -77,7 +77,7 @@ def test_catalog_item_empty_display_falls_back_to_role_id():
 def test_role_catalog_covers_all_registered_roles():
     items = role_catalog(builtin_registry.freeze())
 
-    assert len(items) == 19
+    assert len(items) == 20
     ids = {item["role_id"] for item in items}
     assert {
         "wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king",
@@ -253,7 +253,7 @@ async def test_list_roles_endpoint_returns_every_registered_role():
 
     response = await catalog_routes.list_roles()
 
-    assert len(response.roles) == 19
+    assert len(response.roles) == 20
     assert response.roles[0].role_id
 
 

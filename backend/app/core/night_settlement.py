@@ -86,6 +86,9 @@ _DELAY_CAUSES = _POISON_CAUSES | _WOUND_CAUSES
 #: declaring ``delayable``). So this cause delays on its own.
 HUNTED_STATUS = "hunted"
 HUNT_CAUSE = "hunt"
+#: The Crimson Envoy's exile reprieve: the exile stands, but the death lands
+#: after the next day's speeches instead of on the spot.
+LINGERING_EXILE_STATUS = "lingering_exile"
 #: Causes that delay *any* seat, even one declaring no ``delayable`` mark. The
 #: poison and the gunshot are deliberately absent: those still need the seat's
 #: own mark, so the Old Drunkard keeps dying on the spot to everything else.
@@ -94,6 +97,7 @@ _DELAYED_DEATH_CAUSES = {
     POISONED_STATUS: "poison",
     WOUNDED_STATUS: "hunter_shot",
     HUNTED_STATUS: HUNT_CAUSE,
+    LINGERING_EXILE_STATUS: "exile",
 }
 
 
