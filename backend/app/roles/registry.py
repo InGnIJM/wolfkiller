@@ -34,6 +34,7 @@ from app.roles.dream_weaver import DREAM_WEAVER_SPEC, DreamWeaver
 from app.roles.evil_knight import EVIL_KNIGHT_SPEC, EvilKnight
 from app.roles.gargoyle import GARGOYLE_SPEC, Gargoyle
 from app.roles.gravekeeper import GRAVEKEEPER_SPEC, Gravekeeper
+from app.roles.pure_white import PURE_WHITE_SPEC, PureWhite
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
 from app.roles.witch import WITCH_SPEC, Witch
@@ -469,6 +470,7 @@ builtin_registry.register_pipeline(EVIL_KNIGHT_SPEC)
 builtin_registry.register_pipeline(DREAM_WEAVER_SPEC)
 builtin_registry.register_pipeline(GARGOYLE_SPEC)
 builtin_registry.register_pipeline(GRAVEKEEPER_SPEC)
+builtin_registry.register_pipeline(PURE_WHITE_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -601,6 +603,9 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-gravekeeper", Camp.GOOD, Gravekeeper, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-pure-white", Camp.GOOD, PureWhite, ())
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-gargoyle", Camp.WEREWOLF, Gargoyle, ())
