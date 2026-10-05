@@ -22,6 +22,8 @@ export type DeathCause =
   | 'exile'
   | 'self_explode'
   | 'crimson_explode'
+  | 'dance_pool'
+  | 'mask_granted'
   | 'knight_duel'
   | 'charm'
   | 'wolf_king_shot'
@@ -99,6 +101,21 @@ export interface SelfExplodePayload {
   round_number: number;
   seat: number;
   target_seat: number;
+}
+
+/** 舞者的舞池：当晚被邀请共舞的三名玩家（裁决在结算时给出）。 */
+export interface DancePoolPayload {
+  round_number: number;
+  seat: number;
+  pool_seats: number[];
+}
+
+/** 假面给某人戴面具，并附上「对方是否在舞池中」的查验结论。 */
+export interface MaskGrantedPayload {
+  round_number: number;
+  seat: number;
+  target_seat: number;
+  in_pool: boolean;
 }
 
 /** 赤月使徒自爆：不带走任何人，改为封印当晚全部好人技能。 */
@@ -258,7 +275,9 @@ export interface NightThoughtPayload {
     | 'wolf_witch_reasoning'
     | 'demon_hunter_reasoning'
     | 'crimson_envoy_reasoning'
-    | 'nightmare_reasoning';
+    | 'nightmare_reasoning'
+    | 'dancer_reasoning'
+    | 'mask_reasoning';
   target_seat: number | null;
   reasoning: string;
 }
@@ -319,6 +338,8 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'exile_cancelled', ExileCancelledPayload>
   | PublicReplayEnvelope<'self_explode', SelfExplodePayload>
   | PublicReplayEnvelope<'crimson_explode', CrimsonExplodePayload>
+  | PublicReplayEnvelope<'dance_pool', DancePoolPayload>
+  | PublicReplayEnvelope<'mask_granted', MaskGrantedPayload>
   | PublicReplayEnvelope<'knight_duel', KnightDuelPayload>
   | PublicReplayEnvelope<'wolf_beauty_charm', WolfBeautyCharmPayload>
   | PublicReplayEnvelope<'wolf_beauty_revenge', WolfBeautyRevengePayload>

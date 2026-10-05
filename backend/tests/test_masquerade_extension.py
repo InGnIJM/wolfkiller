@@ -7,6 +7,8 @@ declare, which seats are legal, and what the pool shield does and does not do.
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
 from app.core.action_resolver import ActionResolver
@@ -292,3 +294,222 @@ def test_a_dancer_in_the_pool_shields_its_members_through_the_write_boundary() -
     assert deaths == ({"seat": 3, "cause": "dance", "round_number": 2},)
     assert sorted(cleared) == [1, 2, 3]
     assert EffectRejected is not None
+
+
+def mask_registry() -> RegistrySnapshot:
+    from app.roles.mask import MASK_SPEC
+
+    registry = RoleRegistry()
+    for spec in (WEREWOLF_SPEC, VILLAGER_SPEC, DANCER_SPEC, MASK_SPEC):
+        registry.register_pipeline(spec)
+    return registry.freeze()
+
+
+def mask_command(action_type: str = "mask", target: int | None = 2) -> ActionCommand:
+    return ActionCommand(action_type=action_type, target_seat=target, reasoning="戴面具")
+
+
+def mask_context(
+    *, target: int | None = 2, in_pool: bool = True, last_masked: object = None,
+    checks: tuple = (), round_number: int = 2, with_fact: bool = True,
+) -> ActionContext:
+    from app.roles.mask import MASK_GRANT_CONTRACT
+
+    facts: dict[str, object] = {
+        "alive_seats": (1, 2, 3, 4), "last_masked": last_masked,
+        "pool_checks": checks,
+    }
+    if with_fact and target is not None:
+        labels: list[str] = ["in_pool"] if in_pool else []
+        facts["selected_target"] = {"seat": target, "status_labels": tuple(labels)}
+    return ActionContext(
+        "g", 11, facts, config_version="a" * 64,
+        contract_id=MASK_GRANT_CONTRACT.contract_id,
+        contract_version=MASK_GRANT_CONTRACT.schema_version,
+        contract_digest=MASK_GRANT_CONTRACT.stable_digest(),
+        round_number=round_number, phase="night", window_id="w",
+        schedule_point=MASK_GRANT_CONTRACT.schedule_point, actor_seat=1,
+        actor_role_id="wolf-killer-mask", actor_alive=True,
+        resources={"poison_immune": 1}, action_key="mask:1",
+        source_event_id="event:" + "a" * 16,
+    )
+
+
+def test_mask_spec_reads_the_pool_and_runs_after_the_dancer() -> None:
+    from app.roles.mask import (
+        LAST_MASKED_KEY, MASK_GRANT_CONTRACT, MASK_SPEC, POOL_CHECKS_KEY,
+    )
+    from app.core.night_settlement import POISON_IMMUNE_RESOURCE
+
+    assert MASK_SPEC.camp_id == "werewolf"
+    assert MASK_SPEC.tags == frozenset({"wolf"})
+    assert MASK_SPEC.max_count == 1
+    assert MASK_SPEC.initial_resources == {POISON_IMMUNE_RESOURCE: 1}
+    assert MASK_SPEC.initial_private_data == {LAST_MASKED_KEY: None, POOL_CHECKS_KEY: ()}
+    assert MASK_SPEC.contracts[0].to_json() == WEREWOLF_SPEC.contracts[0].to_json()
+    assert MASK_GRANT_CONTRACT.schedule_point is SchedulePoint.NIGHT_ACTION
+    assert MASK_GRANT_CONTRACT.order == 30
+    assert DANCE_POOL_CONTRACT.order == 20 < MASK_GRANT_CONTRACT.order
+    assert MASK_GRANT_CONTRACT.selected_target_fact_namespaces == frozenset(
+        {"status_labels"}
+    )
+
+
+def test_mask_starts_on_the_second_night_and_forbids_two_nights_in_a_row() -> None:
+    from app.roles.mask import mask_applicable, validate_mask_action
+
+    assert mask_applicable(mask_context(round_number=1)) is False
+    assert mask_applicable(mask_context(round_number=2)) is True
+    assert validate_mask_action(
+        mask_context(last_masked=3), mask_command(target=2),
+    ) == ()
+    violations = validate_mask_action(mask_context(last_masked=2), mask_command(target=2))
+    assert [item.code for item in violations] == ["consecutive_mask_forbidden"]
+    assert validate_mask_action(
+        mask_context(last_masked=2), mask_command("pass", None),
+    ) == ()
+
+
+def test_mask_learns_whether_its_target_is_dancing() -> None:
+    from app.roles.mask import MASK_GRANT_CONTRACT, resolve_mask_action
+
+    def masked(command_seats):
+        from app.models.pipeline import ActionCommand
+
+        return resolve_mask_action(
+            mask_context(),
+            ActionCommand(
+                action_type="mask", target_seat=command_seats,
+                target_seats=None, reasoning="戴面具",
+            ),
+        )
+
+    inside = masked(2)
+    assert [effect.kind.value for effect in inside] == [
+        "set_private_data", "set_private_data", "add_status", "emit_event", "emit_event",
+    ]
+    assert inside[0].payload == {"target": 1, "key": "last_masked", "value": 2}
+    # Frozen payloads: the appended record lands as a tuple of proxies.
+    assert dict(inside[1].payload) == {
+        "target": 1, "key": "pool_checks",
+        "value": (MappingProxyType({"target": 2, "in_pool": True}),),
+    }
+    assert inside[2].payload == {"target": 2, "status": "masked"}
+    assert inside[2].preconditions == {
+        "status_present": {"status": "masked", "present": False},
+    }
+    assert dict(inside[3].payload) == {
+        "event_type": "MASK_GRANTED",
+        "payload": {"seat": 1, "target_seat": 2, "in_pool": True, "round_number": 2},
+    }
+    assert "正在舞池中" in inside[4].payload["payload"]["thought"]
+
+    outside = resolve_mask_action(
+        mask_context(in_pool=False, checks=({"target": 3, "in_pool": True},)),
+        __import__("app.models.pipeline", fromlist=["ActionCommand"]).ActionCommand(
+            action_type="mask", target_seat=2, reasoning="盲给",
+        ),
+    )
+    assert outside[1].payload["value"] == (
+        MappingProxyType({"target": 3, "in_pool": True}),
+        MappingProxyType({"target": 2, "in_pool": False}),
+    )
+    assert dict(outside[3].payload)["payload"]["in_pool"] is False
+    assert MASK_GRANT_CONTRACT.allowed_effects
+
+
+def test_mask_passing_and_malformed_facts() -> None:
+    from dataclasses import replace
+
+    from app.models.pipeline import ActionCommand
+    from app.roles.mask import resolve_mask_action
+
+    passed = resolve_mask_action(
+        mask_context(target=None),
+        ActionCommand(action_type="pass", target_seat=None, reasoning="观望"),
+    )
+    assert [effect.kind.value for effect in passed] == ["emit_event"]
+    assert "不发动面具" in passed[0].payload["payload"]["thought"]
+
+    with pytest.raises(ValueError):
+        resolve_mask_action(
+            mask_context(with_fact=False),
+            ActionCommand(action_type="mask", target_seat=2, reasoning="x"),
+        )
+    broken = replace(
+        mask_context(),
+        facts={"selected_target": {"seat": 2, "status_labels": 7},
+               "pool_checks": (), "last_masked": None},
+    )
+    with pytest.raises(TypeError):
+        resolve_mask_action(
+            broken, ActionCommand(action_type="mask", target_seat=2, reasoning="x"),
+        )
+    broken_checks = replace(
+        mask_context(),
+        facts={"selected_target": {"seat": 2, "status_labels": ()},
+               "pool_checks": 7, "last_masked": None},
+    )
+    with pytest.raises(TypeError):
+        resolve_mask_action(
+            broken_checks,
+            ActionCommand(action_type="mask", target_seat=2, reasoning="x"),
+        )
+
+
+def test_the_mask_runs_after_the_pool_and_flips_its_verdict() -> None:
+    """端到端：舞者(20) 先选池、假面(30) 再读池并戴面具，结算时少数方换人。"""
+    from app.core.night_settlement import MASKED_STATUS
+    from app.roles.mask import Mask
+
+    registry = mask_registry()
+    state = GameState(
+        "g", config=GameConfig(role_counts={DANCER: 1}), phase=GamePhase.NIGHT,
+        round_number=2,
+        players={
+            1: PlayerState(1, DANCER, Camp.GOOD),
+            2: PlayerState(2, "wolf-killer-mask", Camp.WEREWOLF),
+            3: PlayerState(3, VILLAGER, Camp.GOOD),
+            4: PlayerState(4, WOLF, Camp.WEREWOLF),
+        },
+    )
+    state._pipeline_runtime = _Runtime()
+    calls: list[str] = []
+
+    def provider(request, context_, attempt):
+        calls.append(request.contract.contract_id)
+        if request.contract.contract_id == "dance_pool":
+            return ActionCommand(
+                action_type="pool", target_seat=None, target_seats=(1, 2, 3),
+                reasoning="两好一狼",
+            )
+        if request.contract.contract_id == "mask_grant":
+            # Mask the wolf inside the pool so the comparison turns single-camp.
+            return ActionCommand(
+                action_type="mask", target_seat=2, reasoning="罩队友",
+            )
+        return ActionCommand(action_type="kill", target_seat=1, reasoning="刀")
+
+    scheduler = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(),
+        EffectApplier(), provider,
+    )
+    scheduler.run_point(state, SchedulePoint.NIGHT_ACTION, slot="r2")
+
+    runtime = state._pipeline_runtime
+    assert calls == ["dance_pool", "mask_grant"]
+    assert runtime.statuses[2] == {DANCE_POOL_STATUS, MASKED_STATUS}
+    assert runtime.private_data[2]["pool_checks"] == (
+        MappingProxyType({"target": 2, "in_pool": True}),
+    )
+
+    deaths, _ = settle_pool(
+        runtime.statuses,
+        {seat: (player.camp.value if hasattr(player.camp, "value") else player.camp)
+         for seat, player in state.players.items()},
+        {seat: player.is_alive for seat, player in state.players.items()},
+        2,
+    )
+    # 1 good + (masked wolf counted good) + 1 good = single camp, nobody dies.
+    assert deaths == ()
+    assert Mask.__name__ == "Mask"

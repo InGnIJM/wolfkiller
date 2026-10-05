@@ -128,6 +128,10 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-dream-weaver': 'role-dream-weaver',
   'wolf-killer-gargoyle': 'role-gargoyle',
   'wolf-killer-gravekeeper': 'role-gravekeeper',
+  // 假面舞会是京城大师赛原创板，官方卡牌表里没有这两张牌：登记文件名是为了
+  // 将来补图时不必再动取图代码，磁盘上没有文件时 roleArt() 仍回退卡背。
+  'wolf-killer-dancer': 'role-dancer',
+  'wolf-killer-mask': 'role-mask',
   'wolf-killer-pure-white': 'role-pure-white',
   'wolf-killer-wolf-witch': 'role-wolf-witch',
   'wolf-killer-demon-hunter': 'role-demon-hunter',

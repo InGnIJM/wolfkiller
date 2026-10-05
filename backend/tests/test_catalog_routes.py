@@ -77,7 +77,7 @@ def test_catalog_item_empty_display_falls_back_to_role_id():
 def test_role_catalog_covers_all_registered_roles():
     items = role_catalog(builtin_registry.freeze())
 
-    assert len(items) == 22
+    assert len(items) == 23
     ids = {item["role_id"] for item in items}
     assert {
         "wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king",
@@ -97,6 +97,26 @@ def test_role_catalog_covers_all_registered_roles():
     assert by_id["wolf-killer-wolf-beauty"]["max_count"] == 1
     assert by_id["wolf-killer-old-drunkard"]["camp"] == "good"
     assert by_id["wolf-killer-old-drunkard"]["max_count"] == 1
+
+
+def test_masquerade_preset_matches_the_jiangcheng_board() -> None:
+    """十二人假面舞会：3狼 1假面 4民 预女白痴 舞者；女巫保留首夜自救（非网易板）。"""
+    preset = next(
+        item for item in STANDARD_PRESETS if item["id"] == "twelve-player-masquerade"
+    )
+    assert preset["role_counts"] == {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-mask": 1,
+        "wolf-killer-villager": 4,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-idiot": 1,
+        "wolf-killer-dancer": 1,
+    }
+    assert sum(preset["role_counts"].values()) == 12
+    assert "witch_self_save" not in preset
+    assert preset["enable_sheriff"] is True
+    assert preset["recommended_timeout_seconds"] == 7200
 
 
 def test_nightmare_preset_matches_the_netease_tournament_board() -> None:
@@ -161,7 +181,7 @@ def test_pure_white_preset_matches_the_netease_tournament_board() -> None:
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 14
+    assert len(STANDARD_PRESETS) == 15
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -295,7 +315,7 @@ async def test_list_roles_endpoint_returns_every_registered_role():
 
     response = await catalog_routes.list_roles()
 
-    assert len(response.roles) == 22
+    assert len(response.roles) == 23
     assert response.roles[0].role_id
 
 
@@ -305,7 +325,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 14
+    assert len(response.presets) == 15
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
     assert response.presets[-1].recommended_timeout_seconds == 7200

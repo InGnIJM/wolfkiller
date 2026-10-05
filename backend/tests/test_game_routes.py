@@ -1060,6 +1060,10 @@ _LOG_PAYLOAD_OVERRIDES: dict[str, dict] = {
     "CRIMSON_EXPLODE": {
         "seat": 1, "silenced_seats": [2, 3], "round_number": 1,
     },
+    "DANCE_POOL": {"seat": 1, "pool_seats": [2, 3, 4], "round_number": 1},
+    "MASK_GRANTED": {
+        "seat": 1, "target_seat": 2, "in_pool": True, "round_number": 1,
+    },
 }
 
 _DEFAULT_VALUES: dict[str, object] = {
@@ -1083,7 +1087,7 @@ _REASONING_ACTIONS = {
     "WOLF_KING_REASONING": "shoot", "DREAM_WEAVER_REASONING": "dream", "GARGOYLE_REASONING": "check",
     "PURE_WHITE_REASONING": "check", "WOLF_WITCH_REASONING": "check",
     "DEMON_HUNTER_REASONING": "hunt", "CRIMSON_ENVOY_REASONING": "explode",
-    "NIGHTMARE_REASONING": "fear",
+    "NIGHTMARE_REASONING": "fear", "DANCER_REASONING": "pool", "MASK_REASONING": "mask",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 
@@ -1139,6 +1143,36 @@ def test_crimson_explode_replay_requires_a_usable_sealed_list() -> None:
                 "event_type": "CRIMSON_EXPLODE", "payload": payload,
             }, phase="speech")
         ) == [], payload
+
+
+def test_masquerade_replay_branches_validate_their_payloads() -> None:
+    """舞池与面具的旧档回放：座位必须是正整数，in_pool 必须是布尔。"""
+    def replay(payload):
+        return game_routes._public_operation_events(
+            _replay_record("audience_action", {
+                "event_type": "DANCE_POOL" if "pool_seats" in payload else "MASK_GRANTED",
+                "payload": payload,
+            }, phase="night", round_number=3)
+        )
+
+    assert replay({"seat": 1, "pool_seats": [2, 3, 4], "round_number": 3}) == [{
+        "event_type": "dance_pool",
+        "payload": {"round_number": 3, "seat": 1, "pool_seats": [2, 3, 4]},
+    }]
+    assert replay({
+        "seat": 1, "target_seat": 2, "in_pool": False, "round_number": 3,
+    }) == [{
+        "event_type": "mask_granted",
+        "payload": {"round_number": 3, "seat": 1, "target_seat": 2, "in_pool": False},
+    }]
+    for payload in (
+        {"seat": 1, "pool_seats": [], "round_number": 3},
+        {"seat": 1, "pool_seats": [0], "round_number": 3},
+        {"seat": 0, "pool_seats": [2], "round_number": 3},
+        {"seat": 1, "target_seat": 2, "in_pool": "yes", "round_number": 3},
+        {"seat": 1, "target_seat": 0, "in_pool": True, "round_number": 3},
+    ):
+        assert replay(payload) == [], payload
 
 
 def test_every_public_audience_action_type_has_a_replay_branch() -> None:

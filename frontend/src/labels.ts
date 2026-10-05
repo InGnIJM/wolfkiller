@@ -113,6 +113,8 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   demon_hunter_reasoning: '猎魔人思考',
   crimson_envoy_reasoning: '赤月使徒思考',
   nightmare_reasoning: '噩梦之影思考',
+  dancer_reasoning: '舞者思考',
+  mask_reasoning: '假面思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -147,6 +149,8 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   demon_hunter_reasoning: '猎魔人',
   crimson_envoy_reasoning: '赤月使徒',
   nightmare_reasoning: '噩梦之影',
+  dancer_reasoning: '舞者',
+  mask_reasoning: '假面',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────
@@ -164,6 +168,8 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
   exile_cancelled: '翻牌',
   self_explode: '自爆',
   crimson_explode: '自爆',
+  dance_pool: '舞池',
+  mask_granted: '假面',
   knight_duel: '决斗',
   wolf_beauty_charm: '魅惑',
   wolf_beauty_revenge: '殉情',

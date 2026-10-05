@@ -25,6 +25,8 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-wolf-witch', 'werewolf', '狼巫'],
   ['wolf-killer-crimson-envoy', 'werewolf', '赤月使徒'],
   ['wolf-killer-nightmare', 'werewolf', '噩梦之影'],
+  ['wolf-killer-mask', 'werewolf', '假面'],
+  ['wolf-killer-dancer', 'guard', '舞者'],
   ['wolf-killer-demon-hunter', 'hunter', '猎魔人'],
 ];
 

@@ -638,6 +638,26 @@ export default function ActivityCard() {
           tag="SELF EXPLODE"
         />
       );
+    case 'dance_pool':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={`${entry.payload.seat}号起舞：${entry.payload.pool_seats.join('、')}号共舞`}
+          subtitle={`人数少的一方当夜出局 · 第${entry.payload.round_number}轮`}
+          tone="#C9A7E8"
+          tag="DANCE POOL"
+        />
+      );
+    case 'mask_granted':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={`${entry.payload.seat}号给 ${entry.payload.target_seat}号戴上面具`}
+          subtitle={`目标${entry.payload.in_pool ? '在' : '不在'}舞池中，本次阵营比较被翻转 · 第${entry.payload.round_number}轮`}
+          tone="#C9A7E8"
+          tag="MASK"
+        />
+      );
     case 'crimson_explode':
       return (
         <DayVerdictView

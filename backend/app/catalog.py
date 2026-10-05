@@ -183,6 +183,17 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "没有自保能力，也没有其他证明手段：验出的信息只能靠白天发言传递。",
         ],
     },
+    "wolf-killer-mask": {
+        "name_zh": "假面", "icon": "mask",
+        "description": "狼人（假面舞会板），免疫女巫毒药；第二夜起可给一人戴面具，改变其在舞池中的阵营",
+        "rules": [
+            "属于狼人阵营，夜晚与所有狼队友共用同一次狼刀、共同讨论并投票；**免疫女巫的毒药**。",
+            "从**第二夜**起，在舞者之后单独行动：给一名存活玩家戴上面具，并同时得知对方**是否正在舞池中**（这个答案只有你知道）。",
+            "面具只作用于**当晚舞池的阵营比较**：被戴面具的人在比较中被算作对立方，因此可以取消裁决（让整个舞池看起来同一阵营）或把少数方出局名额转移给另一个人。",
+            "面具**不改变真实阵营**：不影响屠边判胜、预言家查验、狼刀与任何其他按阵营判定的规则。",
+            "不能连续两晚给同一个人戴面具。",
+        ],
+    },
     "wolf-killer-dancer": {
         "name_zh": "舞者", "icon": "dancer",
         "description": "好人神职（假面舞会板），第二夜起每晚指定三人共舞，人数少的一方出局；免疫女巫毒药",
@@ -412,6 +423,24 @@ STANDARD_PRESETS: list[dict] = [
         },
         "enable_sheriff": True,
         "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # 京城大师赛原创板（非网易）：舞池的少数方裁决 + 假面的面具翻转。
+        # 女巫保持默认的首夜可自救 —— 这条规则覆盖只属于网易官方板。
+        "id": "twelve-player-masquerade",
+        "name": "十二人假面舞会",
+        "description": "3狼 1假面 4民 1预言家 1女巫 1白痴 1舞者",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-mask": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-idiot": 1,
+            "wolf-killer-dancer": 1,
+        },
+        "enable_sheriff": True,
         "recommended_timeout_seconds": 7200,
     },
     {

@@ -42,6 +42,11 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     # The Crimson Envoy takes nobody along: what the god view needs is which
     # seats it sealed for the coming night.
     "CRIMSON_EXPLODE": ("crimson_explode", frozenset({"seat", "silenced_seats", "round_number"})),
+    # The Masquerade's two nightly beats. The pool names the three seats so the
+    # god view can follow the verdict; the mask names its target and whether it
+    # landed inside the pool.
+    "DANCE_POOL": ("dance_pool", frozenset({"seat", "pool_seats", "round_number"})),
+    "MASK_GRANTED": ("mask_granted", frozenset({"seat", "target_seat", "in_pool", "round_number"})),
 }
 
 _PUBLIC_ROLE_ACTIONS = {
@@ -69,6 +74,8 @@ _PUBLIC_REASONING_EVENTS = {
     "DEMON_HUNTER_REASONING": "demon_hunter_reasoning",
     "CRIMSON_ENVOY_REASONING": "crimson_envoy_reasoning",
     "NIGHTMARE_REASONING": "nightmare_reasoning",
+    "DANCER_REASONING": "dancer_reasoning",
+    "MASK_REASONING": "mask_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

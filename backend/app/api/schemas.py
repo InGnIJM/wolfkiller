@@ -217,6 +217,23 @@ class PublicCrimsonExplodeResponse(_PublicResponse):
     silenced_seats: tuple[PositivePublicInt, ...] = ()
 
 
+class PublicDancePoolResponse(_PublicResponse):
+    """The Dancer's three guests for the night (the verdict comes later)."""
+
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    pool_seats: tuple[PositivePublicInt, ...] = ()
+
+
+class PublicMaskGrantedResponse(_PublicResponse):
+    """The Mask's target, and whether that seat was dancing tonight."""
+
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: PositivePublicInt
+    in_pool: bool = False
+
+
 class PublicVoteResultResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     exiled_seat: Optional[PositivePublicInt] = None
@@ -283,6 +300,8 @@ PublicThoughtActionType = Literal[
     "demon_hunter_reasoning",
     "crimson_envoy_reasoning",
     "nightmare_reasoning",
+    "dancer_reasoning",
+    "mask_reasoning",
 ]
 
 
@@ -518,6 +537,16 @@ class PublicSelfExplodeReplayEvent(_PublicReplayEvent):
     payload: PublicSelfExplodeResponse
 
 
+class PublicDancePoolReplayEvent(_PublicReplayEvent):
+    event_type: Literal["dance_pool"]
+    payload: PublicDancePoolResponse
+
+
+class PublicMaskGrantedReplayEvent(_PublicReplayEvent):
+    event_type: Literal["mask_granted"]
+    payload: PublicMaskGrantedResponse
+
+
 class PublicCrimsonExplodeReplayEvent(_PublicReplayEvent):
     event_type: Literal["crimson_explode"]
     payload: PublicCrimsonExplodeResponse
@@ -588,6 +617,8 @@ PublicReplayEvent = Annotated[
         PublicExileCancelledReplayEvent,
         PublicSelfExplodeReplayEvent,
         PublicCrimsonExplodeReplayEvent,
+        PublicDancePoolReplayEvent,
+        PublicMaskGrantedReplayEvent,
         PublicKnightDuelReplayEvent,
         PublicWolfBeautyCharmReplayEvent,
         PublicWolfBeautyRevengeReplayEvent,

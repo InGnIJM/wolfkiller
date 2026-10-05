@@ -271,6 +271,20 @@ function EventCard({
         </Typography>
       );
       break;
+    case 'dance_pool':
+      content = (
+        <Typography variant="caption" color="primary.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号起舞，邀请 {event.payload.pool_seats.join('、')}号共舞，人数少的一方当夜出局 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'mask_granted':
+      content = (
+        <Typography variant="caption" color="primary.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号给 {event.payload.target_seat}号戴上面具（目标{event.payload.in_pool ? '正在' : '不在'}舞池中，本次阵营比较被翻转） · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
     case 'crimson_explode':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>

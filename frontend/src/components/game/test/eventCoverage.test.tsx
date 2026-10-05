@@ -162,6 +162,24 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
+    what: '舞者起舞（三人舞池）',
+    event: {
+      ...at,
+      event_type: 'dance_pool',
+      payload: { seat: 5, pool_seats: [1, 2, 7], round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
+    what: '假面戴面具（含是否在舞池的查验）',
+    event: {
+      ...at,
+      event_type: 'mask_granted',
+      payload: { seat: 3, target_seat: 5, in_pool: true, round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '赤月使徒自爆（封印当晚好人技能）',
     event: {
       ...at,
@@ -305,7 +323,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(31);
+    expect(listed).toHaveLength(33);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];

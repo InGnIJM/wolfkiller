@@ -93,6 +93,8 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WOLF_BEAUTY_REVENGE": frozenset({"seat", "target_seat", "cause", "round_number"}),
     "STATUS_ADDED": frozenset({"seat", "status", "round_number"}),
     "CRIMSON_EXPLODE": frozenset({"seat", "silenced_seats", "round_number"}),
+    "DANCE_POOL": frozenset({"seat", "pool_seats", "round_number"}),
+    "MASK_GRANTED": frozenset({"seat", "target_seat", "in_pool", "round_number"}),
 }
 
 #: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
@@ -145,6 +147,8 @@ _REASONING_EVENT_TYPES = {
         "crimson_envoy_reasoning", frozenset({"explode", "pass"}),
     ),
     "NIGHTMARE_REASONING": ("nightmare_reasoning", frozenset({"fear", "pass"})),
+    "DANCER_REASONING": ("dancer_reasoning", frozenset({"pool", "pass"})),
+    "MASK_REASONING": ("mask_reasoning", frozenset({"mask", "pass"})),
 }
 
 
@@ -617,6 +621,28 @@ def _public_day_verdict_event(
             return []
         return [{"event_type": "self_explode", "payload": {
             "round_number": round_number, "seat": seat, "target_seat": target}}]
+    if event_type == "DANCE_POOL":
+        seat = payload.get("seat")
+        pool = payload.get("pool_seats")
+        if not _is_positive_int(seat):
+            return []
+        if not isinstance(pool, (list, tuple)) or not pool or any(
+            not _is_positive_int(item) for item in pool
+        ):
+            return []
+        return [{"event_type": "dance_pool", "payload": {
+            "round_number": round_number, "seat": seat,
+            "pool_seats": list(pool)}}]
+    if event_type == "MASK_GRANTED":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        in_pool = payload.get("in_pool")
+        if not _is_positive_int(seat) or not _is_positive_int(target):
+            return []
+        if type(in_pool) is not bool:
+            return []
+        return [{"event_type": "mask_granted", "payload": {
+            "round_number": round_number, "seat": seat,
+            "target_seat": target, "in_pool": in_pool}}]
     if event_type == "CRIMSON_EXPLODE":
         seat = payload.get("seat")
         silence = payload.get("silenced_seats")
@@ -796,7 +822,7 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             return []
         return _public_role_skill_event(event_type, payload, round_number)
     if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "CRIMSON_EXPLODE",
-                      "PLAYER_REVEALED",
+                      "DANCE_POOL", "MASK_GRANTED", "PLAYER_REVEALED",
                       "SHERIFF_ELECTED", "SHERIFF_BADGE",
                       "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE"):
         if not _payload_matches(event_type, payload):

@@ -333,6 +333,14 @@ function EventSummary({
       text = `${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
+    case 'dance_pool':
+      text = `${entry.payload.seat}号起舞，舞池：${entry.payload.pool_seats.join('、')}号`;
+      tone = '#C9A7E8';
+      break;
+    case 'mask_granted':
+      text = `${entry.payload.seat}号给${entry.payload.target_seat}号戴面具（${entry.payload.in_pool ? '在' : '不在'}舞池）`;
+      tone = '#C9A7E8';
+      break;
     case 'crimson_explode':
       text = `${entry.payload.seat}号自爆，封印${entry.payload.silenced_seats.length}个好人技能`;
       tone = '#F4B3B6';
