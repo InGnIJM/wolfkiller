@@ -44,6 +44,8 @@ class DeathCause(str, Enum):
     WOLF_KING_SHOT = "wolf_king_shot"
     REFLECT = "reflect"
     DREAM_DEATH = "dream_death"
+    #: 纯白之女 / 狼巫「验中即出局」：查验命中特定身份后由查验者当夜处决。
+    VERIFY_KILL = "verify_kill"
 
 
 class WinReason(str, Enum):
