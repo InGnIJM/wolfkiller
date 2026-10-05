@@ -25,7 +25,7 @@ from app.core.game_logger import GameLogger
 from app.roles.registry import builtin_registry
 from app.config import PipelineMode, config as app_config
 from app.core.effect_applier import CommitResult
-from app.core.night_settlement import resolve_delayed_deaths
+from app.core.night_settlement import is_silenced, resolve_delayed_deaths
 from app.core.wolf_pack import in_wolf_pack
 from app.core.vote_service import VoteService
 from app.core.sheriff_flow import (
@@ -566,7 +566,15 @@ class GameEngine:
             pending = replace(pending, stage=3); self._pending_night_batch = pending
 
         if pending.stage == 3:
-            if len(wolves) > 1:
+            if self._pack_sealed(wolves):
+                # One silenced pack member seals the whole camp for the night.
+                # The marks are applied during this night's first point, so the
+                # check happens here, after it ran. Stage 5 still executes: with
+                # no collected votes every wolf degrades to its fallback action
+                # and the aggregate produces no damage at all.
+                title, text = director.narration("pack_sealed")
+                await self._narrate(title, text)
+            elif len(wolves) > 1:
                 history = list(pending.discussion_history)
                 leads = dict(pending.discussion_leads)
                 if pending.wolf_random_hint is None and not history:
@@ -624,7 +632,7 @@ class GameEngine:
             pending = replace(pending, stage=4); self._pending_night_batch = pending
 
         if pending.stage == 4:
-            if wolves:
+            if wolves and not self._pack_sealed(wolves):
                 discussion = tuple(line for line in pending.discussion_history if not line.endswith("（跳过）"))
                 # Resume-safe sequential voting: each wolf sees all earlier
                 # votes from this same night before casting its own vote.
@@ -719,6 +727,19 @@ class GameEngine:
         self._pending_night_completion = _PendingNightCompletion(result)
         self._pending_night_batch = None
         await self._resume_pipeline_night()
+
+    def _pack_sealed(self, wolves: list[int]) -> bool:
+        """True when this night's silence mark covers any living pack member.
+
+        The rule is 「恐惧到狼人则整个狼人阵营当夜无法袭击」, so the whole camp is
+        withheld from the kill whenever one member carries the mark. Deliberately
+        role-agnostic: the engine only reads the same durable runtime status the
+        settlement sweeps, never which skill applied it.
+        """
+        runtime = getattr(self.state, "_pipeline_runtime", None)
+        if runtime is None:
+            return False
+        return any(is_silenced(runtime.statuses, seat) for seat in wolves)
 
     async def _execute_v2_point(self, point: SchedulePoint) -> PointResult:
         pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)

@@ -1403,3 +1403,60 @@ def test_shared_contract_aggregates_across_roles_by_contract_id():
     result = scheduler(registry).run_point(game, SchedulePoint.NIGHT_ACTION)
     assert len(result.requests) == 3 and len(result.commits) == 1
     assert result.events[0]["payload"]["count"] == 3
+
+
+def test_silenced_actor_is_skipped_and_recorded_as_a_fault() -> None:
+    """被封印的座位当夜不行动：不发命令、不产出效果，但留下可分析的故障行。"""
+    first, second = contract("first", 1), contract("second", 2)
+    registry = snapshot(spec("low", first), spec("high", second))
+    game = state("low", "high")
+    game.players[1].is_alive = True
+    runtime = _Runtime()
+    runtime.statuses[1] = {"silenced"}
+    game._pipeline_runtime = runtime
+    calls: list[str] = []
+
+    def provider(request, context, attempt):
+        calls.append(request.contract.contract_id)
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+
+    result = scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+
+    # Both windows were issued, but only the un-silenced seat acted: the
+    # skipped request never reaches the accepted list.
+    assert [request.contract.contract_id for request in result.requests] == ["second"]
+    assert calls == ["second"]
+    assert len(result.commits) == 1
+    assert [event["payload"]["target_seat"] for event in result.events] == [2]
+    assert [fault["code"] for fault in result.faults] == ["actor_silenced"]
+    assert result.faults[0]["seat"] == 1
+    assert result.faults[0]["contract"] == "first"
+
+
+def test_silenced_gate_reads_the_durable_status_not_the_issue_time_snapshot() -> None:
+    """封印必须按**执行期**的状态判断，否则同调度点内先手恐惧挡不住后手。
+
+    ``issue`` 在整点运行前一次性发放请求，先手的恐惧要到执行期才落状态；
+    若门禁读的是发放时的快照，被恐惧的座位就照常行动了。
+    """
+    fear, guard = contract("fear", 10), contract("guard", 50)
+    registry = snapshot(spec("nightmare", fear), spec("guardian", guard))
+    game = state("nightmare", "guardian")
+    calls: list[str] = []
+
+    def provider(request, context, attempt):
+        calls.append(request.contract.contract_id)
+        if request.contract.contract_id == "fear":
+            # 先手在自己的批次里直接落状态：模拟 ADD_STATUS(target,"silenced")。
+            runtime = getattr(game, "_pipeline_runtime", None) or _Runtime()
+            runtime.statuses.setdefault(2, set()).add("silenced")
+            game._pipeline_runtime = runtime
+        return ActionCommand(action_type="act", target_seat=None, reasoning="ok")
+
+    result = scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+
+    assert calls == ["fear"]
+    assert len(result.commits) == 1
+    assert [event["payload"]["target_seat"] for event in result.events] == [1]
+    assert [fault["code"] for fault in result.faults] == ["actor_silenced"]
+    assert result.faults[0]["seat"] == 2

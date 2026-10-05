@@ -34,6 +34,24 @@ _PROTECTION_SOURCES = _WOLF_ONLY_SOURCES | _ANY_DAMAGE_SOURCES
 #: ``delayable`` it leaves no mark and never dies later: the hit simply does not
 #: land. The Evil Knight is the only built-in holder.
 NIGHT_IMMUNE_RESOURCE = "night_immune"
+#: Runtime status a seat carries while it may not act this night. Two roles
+#: apply it: the Nightmare (one feared seat, and the whole pack when it fears a
+#: wolf) and the Crimson Envoy (every living good seat after its self-destruct).
+#: It is read in two places, both role-agnostic: the scheduler skips the seat's
+#: contract requests, and the engine withholds the wolf pack's attack.
+SILENCED_STATUS = "silenced"
+#: Statuses whose lifetime is exactly one night. They are swept inside the
+#: same atomic batch as ``NIGHT_COMMIT``, so a seat can never carry yesterday's
+#: silence into a later night. Daytime settlements (an exile reaction, a day
+#: interruption) must never sweep: the Crimson Envoy's silence is applied
+#: during the day and has to survive into the night it applies to.
+NIGHT_SCOPED_STATUSES = frozenset({SILENCED_STATUS})
+
+
+def is_silenced(statuses: Mapping[int, object], seat: int) -> bool:
+    """True when ``seat`` carries the one-night silence mark."""
+    return SILENCED_STATUS in frozenset(statuses.get(seat, ()))
+
 #: Lethal causes the ``night_immune`` marker does **not** shrug off.
 #:
 #: The official card limits the immunity to 「**无法在夜间出局**」 — the night —

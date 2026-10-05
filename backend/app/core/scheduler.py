@@ -21,7 +21,7 @@ from app.core.effect_applier import (
     EffectConflict,
     CommitResult, EffectApplier, EffectPermission, initialize_role_resources,
 )
-from app.core.night_settlement import settlement_key
+from app.core.night_settlement import is_silenced, settlement_key
 from app.core.registry_identity import frozen_registry_digest
 from app.core.state_transaction import state_transaction_lock
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
@@ -552,6 +552,33 @@ class Scheduler:
                 return batch
         return Scheduler._FOLLOWUP_CAP + 1
 
+    @staticmethod
+    def _silenced(state: GameState, seat: int) -> bool:
+        """Whether ``seat`` is barred from acting this night.
+
+        Reads the same durable runtime the settlement sweeps, so the mark can
+        only ever come from a role that declared it (the Nightmare, the Crimson
+        Envoy) — the scheduler itself has no opinion about which role that is.
+        """
+        runtime = getattr(state, "_pipeline_runtime", None)
+        if runtime is None:
+            return False
+        return is_silenced(runtime.statuses, seat)
+
+    def _record_silenced(self, state: GameState, member: IssuedActionRequest) -> None:
+        """Persist the skipped window so the benchmark can count it."""
+        if (faults := self._faults.get()) is None:
+            return
+        logger.info(
+            "Skipping silenced seat: game=%s seat=%s contract=%s",
+            state.game_id, member.actor_seat, member.contract.contract_id,
+        )
+        faults.append({
+            "code": "actor_silenced",
+            "seat": member.actor_seat,
+            "contract": member.contract.contract_id,
+        })
+
     def settle_pending(self, state: GameState) -> CommitResult | None:
         """Settle all pending damage/protection immediately (e.g. after a
         daytime exile reaction) using the next unused same-round settlement
@@ -621,19 +648,30 @@ class Scheduler:
                     commits.append(settlement); events.extend(settlement.events)
             elif kind == "normal":
                 member = members[0]; contract = member.contract; role = self.registry.require(member.role_id)
-                request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
-                command, rule_context = self.apply_collected_results(
-                    state,
-                    self.collect_model_results(
-                        self.prepare_next_work(state, request, context)
-                    ),
-                )
-                effects = self._resolve_with_fallback(state, request, rule_context, role, command)
-                actual.append(request)
-                self._apply_or_degrade(
-                    state, rule_context, role, contract, effects, commits, events, request,
-                    retry=self._fallback_effects(state, request, role, contract),
-                )
+                if self._silenced(state, member.actor_seat):
+                    # A seat silenced for this night never gets its model call
+                    # or its effects. The check is deliberately made here, in
+                    # execution order, rather than while issuing requests: the
+                    # Nightmare acts first inside this very point, so the
+                    # status it just applied has to reach the roles ordered
+                    # after it. The status is durable and the item is not
+                    # journaled as accepted, so a resume replays the same
+                    # decision without re-running the model.
+                    self._record_silenced(state, member)
+                else:
+                    request = self._bind(member, state); context = self.projector.project(state, request, self.registry)
+                    command, rule_context = self.apply_collected_results(
+                        state,
+                        self.collect_model_results(
+                            self.prepare_next_work(state, request, context)
+                        ),
+                    )
+                    effects = self._resolve_with_fallback(state, request, rule_context, role, command)
+                    actual.append(request)
+                    self._apply_or_degrade(
+                        state, rule_context, role, contract, effects, commits, events, request,
+                        retry=self._fallback_effects(state, request, role, contract),
+                    )
             else:
                 contract = members[0].contract; role = self.registry.require(members[0].role_id)
                 bound = tuple(self._bind(member, state) for member in members)

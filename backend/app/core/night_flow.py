@@ -156,6 +156,9 @@ _NARRATIONS: dict[str, tuple[str, str]] = {
     "guard_open": ("守卫请睁眼", "请选择今晚要守护的玩家。"),
     "wolf_open": ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。"),
     "seer_open": ("预言家请睁眼", "请查验一名玩家的身份。"),
+    # The pack is silenced for the night (a feared wolf). Worded without any
+    # role name so the engine never has to know which skill caused it.
+    "pack_sealed": ("狼人阵营被封印", "今晚整个狼人阵营无法发动袭击。"),
 }
 
 

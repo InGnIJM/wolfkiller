@@ -220,3 +220,17 @@ def test_protection_amount_overflow_is_rejected() -> None:
             ),
             {1, 2}, {1: True, 2: True}, 1,
         )
+
+
+def test_silenced_status_is_read_from_plain_sets() -> None:
+    """封印标记的读取路径：普通 set 与 frozenset 等价，缺座位即未封印。"""
+    from app.core.night_settlement import (
+        NIGHT_SCOPED_STATUSES, SILENCED_STATUS, is_silenced,
+    )
+
+    assert SILENCED_STATUS in NIGHT_SCOPED_STATUSES
+    assert is_silenced({1: {"silenced"}, 2: {"poisoned"}}, 1) is True
+    assert is_silenced({1: frozenset({"silenced"})}, 1) is True
+    assert is_silenced({1: {"poisoned"}}, 1) is False
+    assert is_silenced({}, 1) is False
+    assert is_silenced({1: ()}, 1) is False

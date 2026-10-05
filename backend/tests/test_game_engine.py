@@ -772,6 +772,63 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_silenced_pack_skips_discussion_and_records_no_votes(tmp_path) -> None:
+    """「恐惧到狼人 → 整个狼人阵营当夜无法袭击」的门禁。
+
+    只要狼窝里有一人带封印标记，讨论与逐票都不再发生，``record_votes`` 收到空元组；
+    stage 5 照跑（由 provider 降级为 pass），因此不会有任何狼刀伤害。
+    """
+    class RecordingScheduler:
+        def __init__(self): self.points = []
+        def run_point(self, state, point):
+            self.points.append(point)
+            return PointResult((), (), (), point.value)
+
+        def settle_pending(self, state): return None
+
+    class NarrationRecorder(_FakeDirector):
+        def __init__(self):
+            super().__init__()
+            self.narrations: list[str] = []
+
+        def narration(self, kind):
+            self.narrations.append(kind)
+            return super().narration(kind)
+
+    director = NarrationRecorder()
+    scheduler = RecordingScheduler()
+    engine = GameEngine(
+        "sealed", pipeline_scheduler=scheduler, director=director, data_dir=str(tmp_path),
+    )
+    engine.state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf"),
+        2: PlayerState(2, "wolf-killer-werewolf", "werewolf"),
+        4: PlayerState(4, "wolf-killer-villager", "good"),
+        6: PlayerState(6, "wolf-killer-seer", "good"),
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    from app.core.effect_applier import _Runtime
+    runtime = _Runtime()
+    runtime.statuses[2] = {"silenced"}
+    engine.state._pipeline_runtime = runtime
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(engine.state.round_number, 0, (), (), ())
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._broadcast_phase_change = AsyncMock()
+    await engine._execute_staged_night()
+
+    assert director.vote_calls == []
+    assert director.discussion_briefings == []
+    assert director.votes == []
+    assert SchedulePoint.NIGHT_WOLF_VOTE in scheduler.points
+    assert engine.state.death_history == []
+    # The sealed branch announces itself instead of opening the wolf channel.
+    assert "pack_sealed" in director.narrations
+    assert "wolf_open" in director.narrations
+
+
+@pytest.mark.asyncio
 async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
     class OrderScheduler:
         def __init__(self): self.calls = []
