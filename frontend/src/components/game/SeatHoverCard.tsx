@@ -1,6 +1,7 @@
 import { Box, Typography } from '@mui/material';
 
 import type { SeatModelInfo } from '../../store/seatModels';
+import RolePortrait from '../shared/RolePortrait';
 import { providerProfileLabel } from '../models/providerProfiles';
 import { BACKDROP, BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
 
@@ -43,7 +44,7 @@ export default function SeatHoverCard({
   badgeSide,
   accent,
   model,
-  art,
+  roleId,
 }: {
   seat: number;
   roman: string;
@@ -57,7 +58,8 @@ export default function SeatHoverCard({
   badgeSide?: 'on' | 'off';
   accent: string;
   model?: SeatModelInfo;
-  art?: string;
+  /** 已揭晓的身份；缺省（旧档 / 未揭晓）由 `RolePortrait` 回退到卡背。 */
+  roleId?: string;
 }) {
   const identity = [roleLabel, campLabel(camp)].filter(Boolean).join(' · ');
   return (
@@ -74,17 +76,10 @@ export default function SeatHoverCard({
         pointerEvents: 'none',
       }}
     >
-      {art ? (
-        <Box sx={{ position: 'relative', mx: -1.5, mt: -1.25, mb: 1, overflow: 'hidden' }}>
-          <Box
-            component="img"
-            alt=""
-            src={art}
-            sx={{ display: 'block', width: '100%', height: 108, objectFit: 'cover', objectPosition: 'center 15%' }}
-          />
-          <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 42, background: BACKDROP.cardScrim }} />
-        </Box>
-      ) : null}
+      <Box sx={{ position: 'relative', mx: -1.5, mt: -1.25, mb: 1, overflow: 'hidden' }}>
+        <RolePortrait roleId={roleId} height={108} showLabel={false} />
+        <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 42, background: BACKDROP.cardScrim }} />
+      </Box>
       <Typography
         sx={{
           fontFamily: '"Cinzel","Noto Serif SC",serif',

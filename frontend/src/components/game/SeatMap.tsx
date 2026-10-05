@@ -3,7 +3,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GamePhase, ModelSnapshotEntry, PublicPlayerState } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
-import { ROLE_COLORS, BLOOD_MOON, CANVAS, CARD_BACK, HAIRLINE } from '../../theme/tokens';
+import { ROLE_COLORS, BLOOD_MOON, CANVAS, HAIRLINE } from '../../theme/tokens';
+import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
 import SeatHoverCard from './SeatHoverCard';
 
@@ -127,7 +128,7 @@ function PublicSeat({
                 : BLOOD_MOON.gold
           )}
           model={model}
-          art={badge?.art ?? CARD_BACK}
+          roleId={player.role}
         />
       )}
       placement="top"
@@ -232,19 +233,9 @@ function PublicSeat({
       >
         <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
           <Box sx={{ position: 'relative', flex: 1, minWidth: 0 }}>
-            <Box
-              component="img"
-              alt=""
-              src={badge?.art ?? CARD_BACK}
-              sx={{
-                position: 'absolute',
-                inset: 0,
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                objectPosition: 'center 14%',
-              }}
-            />
+            <Box sx={{ position: 'absolute', inset: 0 }}>
+              <RolePortrait roleId={player.role} width="100%" height="100%" showLabel={false} />
+            </Box>
             {isCurrentSpeaker && (
               <Box
                 aria-hidden="true"

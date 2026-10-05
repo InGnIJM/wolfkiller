@@ -96,7 +96,7 @@ describe('SeatHoverCard', () => {
         isSheriff={false}
         isCurrentSpeaker={false}
         accent={ROLE_COLORS.werewolf.color}
-        art={roleArt('wolf-killer-werewolf')}
+        roleId="wolf-killer-werewolf"
       />,
     );
     expect(container.querySelector('img'))
@@ -113,7 +113,6 @@ describe('SeatHoverCard', () => {
         isSheriff={false}
         isCurrentSpeaker={false}
         accent={ROLE_COLORS.villager.color}
-        art={CARD_BACK}
       />,
     );
     expect(container.querySelector('img')).toHaveAttribute('src', CARD_BACK);
