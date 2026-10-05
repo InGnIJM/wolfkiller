@@ -588,10 +588,22 @@ def test_array_coercion_accepts_json_and_bare_comma_lists():
         assert coerce_payload_to_schema(
             {"target_seats": raw}, schema
         ) == {"target_seats": [3, 5, 7]}
-    # Unparseable values stay untouched so schema validation rejects them.
-    assert coerce_payload_to_schema(
-        {"target_seats": "three"}, schema
-    ) == {"target_seats": "three"}
+    # A nullable field reads the empty spellings as "no targets at all" ...
+    for raw in ("", "   ", "null", "none"):
+        assert coerce_payload_to_schema(
+            {"target_seats": raw}, schema
+        ) == {"target_seats": None}, raw
+    # ... and unparseable values stay untouched so schema validation rejects them.
+    for raw in ("[not json", "[[1,2]]", "[true, 3]", '[{"a":1}]', "three"):
+        assert coerce_payload_to_schema(
+            {"target_seats": raw}, schema
+        ) == {"target_seats": raw}, raw
+    # A non-nullable array leans on the same helper: "" is simply not converted.
+    bare = {"properties": {"target_seats": {"type": "array"}}}
+    for raw in ("", "   ", "three"):
+        assert coerce_payload_to_schema(
+            {"target_seats": raw}, bare
+        ) == {"target_seats": raw}, raw
     assert coerce_payload_to_schema(
         {"target_seats": None}, schema
     ) == {"target_seats": None}

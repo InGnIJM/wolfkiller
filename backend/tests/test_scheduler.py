@@ -1460,3 +1460,17 @@ def test_silenced_gate_reads_the_durable_status_not_the_issue_time_snapshot() ->
     assert [event["payload"]["target_seat"] for event in result.events] == [1]
     assert [fault["code"] for fault in result.faults] == ["actor_silenced"]
     assert result.faults[0]["seat"] == 2
+
+
+def test_recording_a_silenced_skip_without_a_fault_collector_only_logs(caplog) -> None:
+    """没有 faults 收集器时也要留下日志：区块外调用不能静默丢掉窗口。"""
+    registry = snapshot(spec("low", contract("first", 1)))
+    game = state("low")
+    sch = scheduler(registry)
+    member = sch.issue(game, SchedulePoint.NIGHT_ACTION, registry)[0]
+
+    with caplog.at_level(logging.INFO):
+        sch._record_silenced(game, member)
+
+    assert sch._faults.get() is None
+    assert any("Skipping silenced seat" in record.message for record in caplog.records)

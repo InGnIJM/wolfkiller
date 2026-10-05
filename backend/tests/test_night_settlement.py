@@ -396,6 +396,8 @@ def test_settle_pool_rejects_malformed_input() -> None:
         )
     with _pytest.raises(TypeError):
         settle_pool("not a mapping", {1: "good"}, {1: True}, 1)
+    with _pytest.raises(TypeError):
+        settle_pool({1: {"in_pool"}}, {1: "good"}, "not a mapping", 1)
     with _pytest.raises(ValueError):
         settle_pool({0: {"in_pool"}}, {}, {}, 1)
 

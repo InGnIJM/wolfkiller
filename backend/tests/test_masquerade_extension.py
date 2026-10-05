@@ -171,6 +171,18 @@ def test_joining_the_pool_shields_all_three_from_the_knife() -> None:
     assert "三人免疫狼刀" in effects[-1].payload["payload"]["thought"]
 
 
+def test_a_malformed_alive_list_is_a_programming_error() -> None:
+    from dataclasses import replace
+
+    broken = replace(context(), facts={"alive_seats": "nope", "pooled_seats": ()})
+    with pytest.raises(TypeError):
+        dancer_applicable(broken)
+
+
+def test_the_daytime_dancer_reports_no_skill() -> None:
+    assert object.__new__(Dancer).get_skills() == []
+
+
 def test_passing_only_records_a_reason() -> None:
     effects = resolve_dance_pool(context(), command(None, action="pass"))
     assert kinds(effects) == ["emit_event"]
@@ -512,4 +524,4 @@ def test_the_mask_runs_after_the_pool_and_flips_its_verdict() -> None:
     )
     # 1 good + (masked wolf counted good) + 1 good = single camp, nobody dies.
     assert deaths == ()
-    assert Mask.__name__ == "Mask"
+    assert object.__new__(Mask).get_skills() == ["kill", "mask"]

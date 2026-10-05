@@ -176,8 +176,7 @@ def _coerce_array(value: str) -> list[int] | None:
             parsed = json.loads(text)
         except (TypeError, ValueError):
             return None
-        if not isinstance(parsed, list):
-            return None
+        # A value that starts with ``[`` and parses at all is a JSON array.
         items = parsed
     else:
         items = [part for part in re.split(r"[,\s]+", text) if part]

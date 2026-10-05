@@ -236,6 +236,23 @@ def test_the_linger_only_fires_for_the_last_wolf_exiled_tonight() -> None:
     ) is False
 
 
+def test_a_malformed_roster_keeps_the_linger_silent() -> None:
+    """名册不是序列时只当作「不是最后一个狼」，绝不能抛给响应窗口。"""
+    from dataclasses import replace
+
+    broken = replace(
+        context(trigger_seat=1, trigger_reason="exile", with_source=True,
+                members=(1,), alive_seats=(1,)),
+        facts={"camp_members": "nope", "alive_seats": (1,)},
+    )
+    assert crimson_linger_applicable(broken) is False
+    assert react_crimson_linger(broken) == ()
+
+
+def test_the_daytime_envoy_reports_both_skills() -> None:
+    assert object.__new__(CrimsonEnvoy).get_skills() == ["kill", "explode"]
+
+
 def test_the_linger_survives_the_exile_and_schedules_the_death() -> None:
     effects = react_crimson_linger(context(
         trigger_seat=1, trigger_reason="exile", with_source=True,

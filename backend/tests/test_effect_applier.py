@@ -1192,6 +1192,13 @@ def test_commit_night_rejects_a_corrupt_pool_status_mapping() -> None:
     s = _night_state(seat2={object()})  # type: ignore[arg-type]
     with pytest.raises(EffectRejected):
         EffectApplier().commit_night(s, round_number=1)
+    # A full pool containing a seat whose camp is neither a string nor a Camp
+    # member cannot be compared, so the verdict is refused instead of guessing.
+    broken_camp = _night_state(seat2={"in_pool"}, seat3={"in_pool"})
+    broken_camp._pipeline_runtime.statuses[1] = {"in_pool"}
+    broken_camp.players[3] = PlayerState(3, "villager", 7)  # type: ignore[arg-type]
+    with pytest.raises(EffectRejected, match="invalid masquerade pool"):
+        EffectApplier().commit_night(broken_camp, round_number=1)
 
 
 @pytest.mark.parametrize("source", ["guard", "witch_antidote", "dream", "dance_veil"])

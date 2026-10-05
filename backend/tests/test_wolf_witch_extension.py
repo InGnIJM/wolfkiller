@@ -174,6 +174,10 @@ def test_missing_facts_are_programming_errors() -> None:
         resolve_wolf_witch_action(context(identity=None), command())
 
 
+def test_the_daytime_wolf_witch_reports_both_skills() -> None:
+    assert object.__new__(WolfWitch).get_skills() == ["kill", "check"]
+
+
 def test_mutual_checks_kill_both_sides_in_one_settlement() -> None:
     """同夜互验：两笔 verify_kill 同批结算，纯白之女与狼巫同归于尽。"""
     from app.core.scheduler import Scheduler

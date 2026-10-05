@@ -128,10 +128,10 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-dream-weaver': 'role-dream-weaver',
   'wolf-killer-gargoyle': 'role-gargoyle',
   'wolf-killer-gravekeeper': 'role-gravekeeper',
-  // 假面舞会是京城大师赛原创板，官方卡牌表里没有这两张牌：登记文件名是为了
-  // 将来补图时不必再动取图代码，磁盘上没有文件时 roleArt() 仍回退卡背。
-  'wolf-killer-dancer': 'role-dancer',
-  'wolf-killer-mask': 'role-mask',
+  // 假面舞会的舞者与假面（京城大师赛原创板）**故意不登记**：官方卡牌表里没有
+  // 这两张牌，也就没有官方立绘，而 `theme.test.ts` 要求「磁盘上有立绘时，登记过的
+  // 角色都能取到自己的图」——登记了却没图会让那条门禁变红。补图时再登记即可，
+  // 未登记的 id 本来就回退卡背。
   'wolf-killer-pure-white': 'role-pure-white',
   'wolf-killer-wolf-witch': 'role-wolf-witch',
   'wolf-killer-demon-hunter': 'role-demon-hunter',

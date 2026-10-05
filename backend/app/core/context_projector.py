@@ -640,9 +640,9 @@ class ContextProjector:
 
         Malformed records are dropped rather than raised: the namespace is
         written by role hooks, and a resumed archive must still be readable.
+        Every record arrives as a mapping (``role_private_facts_view`` rebuilds
+        each one), so only the field types need checking here.
         """
-        if type(result) not in (dict, MappingProxyType):
-            return None
         target = result.get("target", result.get("target_seat"))
         role = result.get("role", result.get("role_id"))
         if type(target) is not int or target <= 0 or target > _MAX_INT:

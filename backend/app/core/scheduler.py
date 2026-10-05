@@ -567,17 +567,16 @@ class Scheduler:
 
     def _record_silenced(self, state: GameState, member: IssuedActionRequest) -> None:
         """Persist the skipped window so the benchmark can count it."""
-        if (faults := self._faults.get()) is None:
-            return
         logger.info(
             "Skipping silenced seat: game=%s seat=%s contract=%s",
             state.game_id, member.actor_seat, member.contract.contract_id,
         )
-        faults.append({
-            "code": "actor_silenced",
-            "seat": member.actor_seat,
-            "contract": member.contract.contract_id,
-        })
+        if (faults := self._faults.get()) is not None:
+            faults.append({
+                "code": "actor_silenced",
+                "seat": member.actor_seat,
+                "contract": member.contract.contract_id,
+            })
 
     def settle_pending(self, state: GameState) -> CommitResult | None:
         """Settle all pending damage/protection immediately (e.g. after a
