@@ -666,3 +666,9 @@
   `test_a_created_game_flushes_the_pipeline_chain`）。症状是全量 `4014 passed` 但
   `--cov-fail-under=100` 红在 `game_service.py` 的 3 个 flush 体上；`coverage report
   --show-missing --include='app/services/game_service.py'` 一条命令就能定位。
+- Trigger: `npx vitest run` 全绿就以为前端门禁过了。Action: vitest/esbuild **只剥类型、
+  不检查类型**，prop 类型错误它一律放过 —— 只有 `npm run build`（`tsc -b && vite build`）
+  会红。实例：给 `RolePortrait` 传 `width="100%"` 而它的 prop 声明是 `width?: number`，
+  测试与 lint 全绿、build 报 `TS2322`。放宽共享组件的 prop 类型时按向后兼容走
+  （`number | string`），并检查依赖该值的推导（这里是
+  `aspectRatio: width && !height ? '3 / 4' : undefined`）。
