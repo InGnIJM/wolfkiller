@@ -70,6 +70,12 @@ PUBLIC_REPLAY_EVENTS = [
     {"event_type": "sheriff_badge", "payload": {
         "round_number": 2, "from_seat": 2, "to_seat": None,
     }},
+    # 新档带警长的决策理由；旧档没有这个键，两条都必须能过 DTO
+    # （`_PublicResponse` 是 `extra="forbid", strict=True`，字段不同步就是 500）。
+    {"event_type": "sheriff_badge", "payload": {
+        "round_number": 2, "from_seat": 2, "to_seat": 9,
+        "reasoning": "9号是金水，警徽交给他",
+    }},
     {"event_type": "sheriff_run", "payload": {
         "round_number": 1, "seat": 2, "choice": "run",
     }},

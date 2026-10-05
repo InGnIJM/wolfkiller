@@ -603,6 +603,16 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
         engine, "00000005f:sheriff_badge:2:1:tear",
     )[0]
     assert torn["payload"]["to_seat"] is None
+    # 交/撕徽理由只存在于引擎的一次性槽位（label 里没有它），为空时不加键：
+    # 这正是旧档与「模型没给理由」两条路径共用同一份 payload 形状的原因。
+    engine._pending_badge_reasoning = "9号是金水"
+    assert GameService._checkpoint_domain_events(
+        engine, "00000005f:sheriff_badge:2:1:tear",
+    )[0]["payload"]["reasoning"] == "9号是金水"
+    engine._pending_badge_reasoning = None
+    assert "reasoning" not in GameService._checkpoint_domain_events(
+        engine, "00000005f:sheriff_badge:2:1:tear",
+    )[0]["payload"]
 
     assert GameService._checkpoint_domain_events(
         engine, "00000006:vote_received:2:2",
