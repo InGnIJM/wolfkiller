@@ -73,9 +73,9 @@ WolfKiller/
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
 | `core/effect_applier.py` | **唯一的写入口**：整批校验、CAS（revision 比较）、原子应用、幂等结果与审计事件 |
 | `core/scheduler.py` | 调度点（NIGHT_ACTION / NIGHT_WOLF_VOTE / NIGHT_WITCH_ACTION / NIGHT_SEER_ACTION / NIGHT_COMMIT / DAWN_REACTION / DAY_ACTION / POST_SPEECH_ACTION / EXILE_VERDICT 等）、稳定排序、请求收集、响应窗口队列与阶段门禁；`run_point(..., slot=)` 让同一阶段内多次运行同一调度点（`PointKey.phase` 为 `phase#slot`，请求 token 也混入 slot）；聚合按 `contract_id` 分组，跨角色共享的完全一致契约合并计票；`point_journal.py` 提供断点续跑检查点，journal 键与请求 token 都用**对局冻结的** `registry_digest` 盖章（`core/registry_identity.py`），所以新增/修改角色不会让已完成的调度点被重放、也不会重复发起同一次模型请求 |
-| `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次 |
+| `core/night_settlement.py` | 夜晚结算：pending damage/protection → 死亡批次；保护按来源分三档（`_WOLF_ONLY_SOURCES` / `_DOUBLE_SAVE_SOURCES` / `_ANY_DAMAGE_SOURCES`，`dance_veil` 只挡狼刀且不参与对穿）；按死因豁免的 `night_immune` 与 `poison_immune`、以及延到次日的 `delayable` / `hunt`；假面舞会的舞池裁决 `settle_pool()`（少数方出局，面具只在本次比较中折算阵营）。`PROTECTION_SOURCES` 是写入口共用的唯一来源清单 |
 | `agents/prompt_renderer.py` | 仅从 RoleSpec/Contract/Context 渲染通用 Prompt（历史以 Base64 不可执行注入） |
-| `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king,wolf_king,evil_knight,knight,wolf_beauty,old_drunkard,dream_weaver,gargoyle,gravekeeper,hidden_wolf}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王与狼美人复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴与狼美人殉情是仅 `react` 的无 LLM 契约，老酒鬼与守墓人只有声明式标记无契约（守墓人的 `last_exiled` 由投影器从死亡记录推导）；`hidden_wolf.py` 是隐狼共用的独狼刀契约（狼窝全灭才开）；狼王复用猎人的死亡响应模式，恶夜骑士的免疫与反伤分别走 `night_settlement` 的 `night_immune` 与 `core/reflect.py` 的标记协议，摄梦人的梦盾走 `night_settlement` 的 any-damage 分档 |
+| `roles/{werewolf,witch,seer,hunter,villager,guard,idiot,werewolf_king,wolf_king,evil_knight,knight,wolf_beauty,old_drunkard,dream_weaver,gargoyle,gravekeeper,pure_white,wolf_witch,demon_hunter,crimson_envoy,nightmare,dancer,mask,hidden_wolf}.py` | 内置角色：声明式 spec + 纯 Hook（`*_applicable` / `validate_*` / `resolve_*` / `react_*`）；白狼王与狼美人复用狼人导出的 `WEREWOLF_KILL_CONTRACT`，白痴与狼美人殉情是仅 `react` 的无 LLM 契约，老酒鬼与守墓人只有声明式标记无契约（守墓人的 `last_exiled` 由投影器从死亡记录推导）；`hidden_wolf.py` 是隐狼共用的独狼刀契约（狼窝全灭才开）；狼王复用猎人的死亡响应模式，恶夜骑士的免疫与反伤分别走 `night_settlement` 的 `night_immune` 与 `core/reflect.py` 的标记协议，摄梦人的梦盾走 `night_settlement` 的 any-damage 分档；纯白之女与狼巫的「具体身份」查验结果记进 `role_checks` 私有事实命名空间（投影器回读给本人提示词），验中即杀的 `verify_kill` 走普通伤害批次；猎魔人的狩猎是 `hunt` 死因的**无条件延迟**档；赤月使徒的自爆发 `DAY_INTERRUPTED` 并给全部存活好人落 `silenced`，最后一个狼被放逐时靠 `EXILE_VERDICT` 上的 pure react 发 `EXILE_CANCELLED`（与白痴同款通用窗口）；噩梦之影的恐惧是同名 `silenced` 状态，狼窝被封印时由引擎跳过讨论与逐票；舞者用 `multi_target_actions={"pool": 3}` 一次提交三个目标并由结算判定，假面用 `selected_target.status_labels` 读 `in_pool` |
 
 辅助模块：
 
@@ -90,18 +90,18 @@ WolfKiller/
 
 `GameEngine._execute_night()` 走分阶段 `_execute_staged_night()`，调度点顺序固定为：
 
-`NIGHT_ACTION`（守卫）→ 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_WITCH_ACTION` → `NIGHT_SEER_ACTION` → `NIGHT_COMMIT`
+`NIGHT_ACTION` → 狼队讨论/投票 → `NIGHT_WOLF_VOTE` → `NIGHT_SEER_ACTION` → `NIGHT_WITCH_ACTION` → `NIGHT_COMMIT`
 
-随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段；`enable_sheriff` 开局时发 `SHERIFF_ELECTION_START`，关局仍 `NIGHT_ACTIONS_COMPLETE → DAWN`。所有阶段点均持久化检查点，失败后精确续跑不重放。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；讨论预算为每狼 6 次、至少完整两圈（刀口共识也要等两圈后才能提前结束），发言与次日计划各 ≤400 字，狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。警长流程由 `SheriffDirector`（`core/sheriff_flow.py`）硬编码，Agent 只选当前步骤绑定的工具；竞选、退水与警长投票提示注入已上警座位、当前候选人与未上警（警下）选民名单；狼玩家的竞选、退水与警长投票提示会额外注入狼队成员名单与本夜狼队频道记录（含次日计划），好人视角永不注入。警上/警下名单同时进入竞选发言、白天发言、放逐投票与超时重试投票的权威状态（警上=`office.candidates`，警下=`off_badge_seats`：开选时存活且从未上警，排除开选前死亡，`office.candidates` 整局保留），竞选期再由 `PromptBuilder._format_badge_speaking_progress` 给出竞选发言顺序与已发言/尚未发言名单，避免模型把警下玩家误说成警上。
+随后 `_resume_pipeline_night()` 以分阶段检查点发布死亡、判定胜负、推进阶段；`enable_sheriff` 开局时发 `SHERIFF_ELECTION_START`，关局仍 `NIGHT_ACTIONS_COMPLETE → DAWN`。所有阶段点均持久化检查点，失败后精确续跑不重放。单个调度点内部按 `contract.order` **串行**执行，这是若干规则的实现基础：`NIGHT_ACTION` 里噩梦之影（10）先于守卫（50），所以被恐惧的守卫在同一次运行里就已经拿不到命令；舞者（20）先于假面（30），所以假面能读到当晚舞池名单。调度器在**执行期**（而非发放期）逐成员跳过带 `silenced` 的座位，并往 `stage_telemetry` 落 `actor_silenced`；狼窝里任一存活狼被封印时由引擎跳过讨论、`record_votes(())`，stage 5 照跑、全员降级 `pass`，因此不会产生任何狼刀伤害。`NIGHT_COMMIT` 的结算是 `EffectApplier.commit_night()`：同一原子批次里跑舞池裁决、合并伤害、清扫 `in_pool`/`masked`/`silenced` 这些「只活一夜」的状态；白天路径仍走 `settle_pending()` 且**不清扫**（赤月使徒的封印在白天落下，必须活到它生效的那一夜）。狼队讨论与逐票由 `NightDirector`（`core/night_flow.py`）驱动，不走角色 Hook；讨论预算为每狼 6 次、至少完整两圈（刀口共识也要等两圈后才能提前结束），发言与次日计划各 ≤400 字，狼队成员按 `camp == Camp.WEREWOLF` 识别（含白狼王），白狼王复用狼人导出的 `WEREWOLF_KILL_CONTRACT` 共享聚合。警长流程由 `SheriffDirector`（`core/sheriff_flow.py`）硬编码，Agent 只选当前步骤绑定的工具；竞选、退水与警长投票提示注入已上警座位、当前候选人与未上警（警下）选民名单；狼玩家的竞选、退水与警长投票提示会额外注入狼队成员名单与本夜狼队频道记录（含次日计划），好人视角永不注入。警上/警下名单同时进入竞选发言、白天发言、放逐投票与超时重试投票的权威状态（警上=`office.candidates`，警下=`off_badge_seats`：开选时存活且从未上警，排除开选前死亡，`office.candidates` 整局保留），竞选期再由 `PromptBuilder._format_badge_speaking_progress` 给出竞选发言顺序与已发言/尚未发言名单，避免模型把警下玩家误说成警上。
 
 ### 白天流水线窗口
 
-白天生命周期为角色开放两个与角色无关的窗口，引擎只认 `DAY_INTERRUPTED / EXILE_PENDING / EXILE_CANCELLED / PLAYER_REVEALED` 这些通用事件，不出现任何角色名：
+白天生命周期为角色开放三个与角色无关的窗口，引擎只认 `DAY_INTERRUPTED / EXILE_PENDING / EXILE_CANCELLED / PLAYER_REVEALED` 这些通用事件，不出现任何角色名：
 
-- **`DAY_ACTION`**（每位发言者开口前，`slot=f"{vote_round}:{seat}"`）：角色可提交行动；若提交事件含 `DAY_INTERRUPTED`，引擎 `_resolve_day_interruption()` 结算 pending damage、按 `death_history` 去重发布死亡、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点，随后判胜负或以 `WEREWOLF_EXPLODED` 转入 NIGHT。续跑时 `_journaled_day_interruption()` 从 journal 识别已发生的中断并幂等重放。白狼王自爆是当前唯一实现。
+- **`DAY_ACTION`**（每位发言者开口前，`slot=f"{vote_round}:{seat}"`）：角色可提交行动；若提交事件含 `DAY_INTERRUPTED`，引擎 `_resolve_day_interruption()` 结算 pending damage、按 `death_history` 去重发布死亡、以这些 PLAYER_DIED 跑 `DAWN_REACTION`、写 `day_interrupted:{round}:{seat}` 检查点，随后判胜负或以 `WEREWOLF_EXPLODED` 转入 NIGHT。续跑时 `_journaled_day_interruption()` 从 journal 识别已发生的中断并幂等重放。白狼王自爆与赤月使徒自爆是当前的两个实现（后者不带乘客，只把全部存活好人落 `silenced`）。
 
 - **`POST_SPEECH_ACTION`**（全体存活玩家发言完毕、放逐投票前，`slot="post_speech"`）：与 `DAY_ACTION` 同构的第二个白天窗口，只在有角色声明该调度点时运行（`_post_speech_action_enabled()`）。骑士翻牌决斗是当前唯一实现：是狼人则提交 `DAY_INTERRUPTED`（`cause="knight_duel"`）走同一条中断路径，被裁决者在转 NIGHT 前经 `give_last_words(..., daytime=True)` 发表遗言（骑士本人同为该 cause 但不走这条路，因此不会被补发遗言）；是好人则只提交自身伤害。窗口跑完引擎先 `_settle_and_publish()`（白天伤害立即生效、绝不带进夜里），再 `_resolve_delayed_deaths()`，最后才 `SPEECHES_COMPLETE`。`_journaled_day_interruption()` 按 slot 后缀匹配两个窗口的检查点，因此续跑时即使阶段已推进到 NIGHT 也能幂等重放。
-- **`EXILE_VERDICT`**（放逐前）：`_apply_exile(seat)` 先以 `EXILE_PENDING{target_seat, cause="exile"}` 跑该点；若提交事件含 `EXILE_CANCELLED`，则对随行 `PLAYER_REVEALED` 写 `revealed_role`、系统消息播报翻牌、`add_vote_result(..., cancelled_seat)` 记为无人出局并跳过遗言；否则走原 `mark_dead("exile")` 路径。白痴翻牌是当前唯一实现。
+- **`EXILE_VERDICT`**（放逐前）：`_apply_exile(seat)` 先以 `EXILE_PENDING{target_seat, cause="exile"}` 跑该点；若提交事件含 `EXILE_CANCELLED`，则对随行 `PLAYER_REVEALED` 写 `revealed_role`、系统消息播报翻牌、`add_vote_result(..., cancelled_seat)` 记为无人出局并跳过遗言；否则走原 `mark_dead("exile")` 路径。白痴翻牌与赤月使徒的「最后一个狼被放逐后延到次日」是当前的两个实现。延迟死亡落地后引擎**立即判胜**（`_execute_speech_round` 末尾），不再为残局多走一轮放逐投票。
 
 ### 放逐反应
 

@@ -6,7 +6,7 @@ Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.
 
 ## 项目
 
-完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、狼王、骑士、狼美人、老酒鬼、恶夜骑士、摄梦人、石像鬼与守墓人）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
+完全由 LLM 驱动的 AI 狼人杀。玩家（狼人、村民、预言家、女巫、猎人，十人局可选守卫，十二人板可选白痴、白狼王、狼王、骑士、狼美人、老酒鬼、恶夜骑士、摄梦人、石像鬼、守墓人、纯白之女、狼巫、猎魔人、赤月使徒、噩梦之影、舞者与假面）全部由创建对局时配置的模型控制。前端是时间轴观看/回放界面。
 
 ## 常用命令
 
@@ -46,13 +46,13 @@ npm run build
 | `core/action_resolver.py` | 调纯 Hook，产出 Effect 批次 |
 | `core/effect_applier.py` | **唯一写入口**：整批校验、CAS、原子应用 |
 | `core/scheduler.py` | 调度点、响应窗口、阶段门禁；`run_point(slot=)` 支持同阶段多次运行；聚合按 `contract_id` 分组（共享契约合并计票） |
-| `core/night_settlement.py` | pending damage/protection → 死亡；保护按来源分档（`_WOLF_ONLY_SOURCES` / `_DOUBLE_SAVE_SOURCES` / `_ANY_DAMAGE_SOURCES`），未署名的保护保持旧的守护语义 |
+| `core/night_settlement.py` | pending damage/protection → 死亡；保护按来源分档（`_WOLF_ONLY_SOURCES` / `_DOUBLE_SAVE_SOURCES` / `_ANY_DAMAGE_SOURCES`，`dance_veil` 只挡狼刀且不参与对穿），未署名的保护保持旧的守护语义；按死因豁免的 `night_immune` / `poison_immune`、延到次日的 `delayable` 与无条件延迟的 `hunt`；舞池裁决 `settle_pool()`。`PROTECTION_SOURCES` 是写入口共用的唯一来源清单 |
 | `core/wolf_pack.py` | 狼阵营（判胜）与狼窝（讨论/投票/频道/队友名单）的唯一定义处：`no_wolf_pack` / `wolf_knows_pack` 标记 |
 | `agents/prompt_renderer.py` | 只从 Spec/Contract/Context 渲染 Prompt |
 
 夜晚由 `GameEngine._execute_staged_night()` 驱动，顺序固定：
 
-`NIGHT_ACTION`（守卫）→ 狼队讨论/投票（`NightDirector`，`core/night_flow.py`）→ `NIGHT_WOLF_VOTE` → `NIGHT_SEER_ACTION` → `NIGHT_WITCH_ACTION` → `NIGHT_COMMIT`（**查验点在用药点之前**：同夜同验同毒时由查验消费一次性反伤标记，见恶夜骑士条）。开警长时随后进入 `SHERIFF_ELECTION`（`SheriffDirector`，`core/sheriff_flow.py`），再转 DAWN。
+`NIGHT_ACTION` → 狼队讨论/投票（`NightDirector`，`core/night_flow.py`）→ `NIGHT_WOLF_VOTE` → `NIGHT_SEER_ACTION` → `NIGHT_WITCH_ACTION` → `NIGHT_COMMIT`（**查验点在用药点之前**：同夜同验同毒时由查验消费一次性反伤标记，见恶夜骑士条）。**单个调度点内按 `contract.order` 串行执行**：`NIGHT_ACTION` 里噩梦之影（10）先于守卫（50）、舞者（20）先于假面（30），这是「被恐惧者当夜无法行动」与「假面读得到舞池」的实现基础；`NIGHT_COMMIT` 的结算是 `EffectApplier.commit_night()`，同一原子批次里跑舞池裁决并清扫 `in_pool`/`masked`/`silenced` 这些只活一夜的状态（白天路径仍 `settle_pending()` 且不清扫）。开警长时随后进入 `SHERIFF_ELECTION`（`SheriffDirector`，`core/sheriff_flow.py`），再转 DAWN。
 
 白天发言/投票/遗言是引擎内与角色无关的路径。投票经校验器后以 `EffectApplier` 的 `ACCEPT_ACTION` 落账。白天另有三个角色无关窗口：每位发言者前跑 `DAY_ACTION`（slot=`vote_round:seat`），全体发言结束后、投票前跑 `POST_SPEECH_ACTION`（slot=`post_speech`），放逐前跑 `EXILE_VERDICT`（事件含 `EXILE_CANCELLED` 则翻牌免死、不走遗言）。前两个窗口的事件含 `DAY_INTERRUPTED` 时都会结算双死、跑 `DAWN_REACTION`、以 `WEREWOLF_EXPLODED` 转 NIGHT。引擎只认这些通用事件，不出现角色名。
 
@@ -77,6 +77,13 @@ npm run build
 - 石像鬼：狼人阵营但**不属于狼窝**（`initial_resources={"no_wolf_pack": 1}`）。不参与狼队讨论与狼刀投票、不与其他狼互知身份（`camp_members` 对它是空的，只给 `wolf_pack_count` 存活狼数）、不进狼频道、不能自爆吞警徽；**狼窝全灭后**靠 `hidden_wolf_kill` 契约独自带刀（`aggregate`，多只隐狼仍只出一刀）。每晚查验一名存活玩家的**具体身份**（不能查自己、不能重复），走新增的 `selected_target` 命名空间 `role_label`——该 fact 只投影给纯 hook、**不进模型 prompt**，答案经 `RECORD_PRIVATE_FACT(namespace="role_checks")` 进它自己的提示词。被预言家查验仍显示狼人（camp 本来就是 werewolf，零改动）。
 - 守墓人：好人神职，**零契约**（规则不给它选择，每晚花一次模型调用答 pass 没有收益）。每晚自动获知上一个白天被放逐者的阵营：`context_projector._actor_private_facts` 的 `last_exiled` 特例从 `death_history` 推导座位与阵营（**不给 `GameState` 加字段**，因此不动精确匹配的检查点字段集），首夜无人被放逐时读作 `None`。被放逐的石像鬼显示为狼人。
 - 老酒鬼：好人平民。免疫魅惑（`initial_resources={"charm_immune": 1}`，经 `selected_target.resource_labels` 对狼美人可见）。被毒或枪杀时 `delayable` 资源让 `settle()` 跳过致死、落 `poisoned`/`wounded` + `delayed_death` 状态，**次日发言结束后投票前**由 `_resolve_delayed_deaths()` 结算；夜刀/放逐/自爆当夜即死。
+- 纯白之女 / 狼巫（纯白夜影板）：两者都每晚查验一人的**具体身份**，结果写进 `role_checks` 私有事实命名空间——它必须由 `context_projector._actor_private_facts` 的 `role_checks` 分支回读才能进本人提示词（石像鬼的旧缺口就是这条通道没接上）。**第二夜起**命中特定身份即当夜处决：纯白之女验中狼人、狼巫验中 `wolf-killer-pure-white`，死因 `verify_kill`，走普通伤害批次（守卫挡不住、只有 any-damage 档能挡）。狼巫用 CAMP 名册拒验队友，同夜互验则同归于尽。
+- 猎魔人：好人神职，`demon_hunt` 契约在 `NIGHT_ACTION` order=40，`is_applicable` 要求 `round_number >= 2`。目标为狼则伤害目标、为好人则伤害自己，两者都是 `hunt` 死因。`hunt` 在 `night_settlement._ALWAYS_DELAYED_CAUSES` 里——**与毒/枪不同，它不要求目标自带 `delayable` 标记**（猎魔人无法给目标加资源），无条件延到次日发言结束后以 `cause="hunt"` 落地。女巫毒药无效：`poison_immune` 在 `settle()` 里**按死因**过滤，且判在延迟档之前（免疫即什么都不落）。
+- 赤月使徒：狼人阵营，`crimson_explode` 契约在 `DAY_ACTION`（`actions_requiring_target` 为空，不带走任何人）。自爆当批消耗 `explode`、自伤 `self_explode`、对 `alive_seats - camp_members`（全部存活好人）逐座 `ADD_STATUS("silenced")` 并逐座发 `STATUS_ADDED`，再发 `CRIMSON_EXPLODE` 与 `DAY_INTERRUPTED` 走引擎已有的日中断路径。`silenced` 由调度器的**执行期**逐成员门禁生效，并在 `NIGHT_COMMIT` 的 `commit_night` 批次里清扫——白天结算**不清扫**，否则封印活不到它生效的那一夜。最后一个存活狼被放逐时，`crimson_linger` 契约（`EXILE_VERDICT` + `EXILE_PENDING` 的纯 react，白痴同款窗口）发 `EXILE_CANCELLED` 并落 `delayed_death` + `lingering_exile`，`_DELAYED_DEATH_CAUSES["lingering_exile"] = "exile"` 让次日落地时死因仍是 `exile`。
+- 噩梦之影：狼人阵营，`nightmare_fear` 契约 order=10（早于守卫 50，**同一个调度点内按 order 串行**，所以先手落的 `silenced` 当场就能挡住后手）。不能连续两晚恐惧同一人（`last_feared`），可以恐惧自己与狼队友。**恐惧到狼人 → 整个狼人阵营当夜无法袭击**：引擎 `_pack_sealed()` 读同一份 `silenced` 状态，命中就跳过讨论并 `record_votes(())`（stage 5 照跑、全员降级 `pass`、无伤害）并旁白 `pack_sealed`。首夜按普通狼处理（官方「首夜不互知身份」的降级，已记录）。
+- 舞者（假面舞会，非网易板）：好人神职，`dance_pool` 契约在 `NIGHT_ACTION` order=20，用 `multi_target_actions={"pool": 3}` 一次提交三个目标（`target_seat` 必须为空）。`fallback_action_type` 只能是 `pass`（`registry.py` 禁止要求目标的 fallback）。`validate` 拒「整局已入池」的座位（`pooled_seats` 私有数据累积），`is_applicable` 在可选存活座位 <3 时失效。resolve 只落 `in_pool` 状态与 `pooled_seats`，**裁决不在这里**：`night_settlement.settle_pool()` 在结算时读真实 camp 判定少数方（舞者看不到别人的阵营）。舞者在池内时三名成员各得一条 `dance_veil` 守护（只挡狼刀、**不参与对穿**）。免疫毒药。
+- 假面（假面舞会，非网易板）：狼人阵营，`mask_grant` 契约在 `NIGHT_ACTION` order=30（**舞者之后**），`selected_target_fact_namespaces={"status_labels"}` 让它读到目标的 `in_pool`（该状态在 `_PUBLIC_STATUSES` 里，且 selected_target 不进模型 prompt，答案只能经 `SET_PRIVATE_DATA(pool_checks)` 进它自己的提示词）。面具只写 `masked` 状态，**不改 camp**：屠边判胜、预言家查验、狼刀一律不受影响，只有 `settle_pool` 在本次比较中把它折算成对立方。不能连续两晚同一目标；免疫毒药。
+- 保护来源清单只有一份：`night_settlement.PROTECTION_SOURCES`，写入口 `effect_applier` 直接 import 它校验 `SUBMIT_PROTECTION(source=...)`。曾经两处各自硬编码，导致摄梦人的 `source="dream"` 在真跑局时被写入口拒掉（hook 级测试全绿、端到端没人跑过）——新增任何守护档都要改这一处，并补一条「写入口 + 结算」的端到端测试。
 - 新增调度点 `POST_SPEECH_ACTION`（`post_speech_action`）承载「发言结束后」的白天技能；引擎的发言后窗口只在有角色声明该调度点时才跑（`_post_speech_action_enabled()`），跑完会 `_settle_and_publish()` 让 pending damage 立即生效、再结算延迟死亡，最后才 `SPEECHES_COMPLETE`。
 
 - 写入口不变式（修复 EffectRejected 崩溃后固化）：`runtime.statuses` / `runtime.relations` 的值一律是普通 `set`，不能写 `frozenset`（`_set_map` 归一化时两者等价，但 `_apply_one` 对既有值直接 `.add()`，frozenset 会 `AttributeError`）；`ADD_RELATION` 是集合成员关系，**跨批次重复写入是幂等的**（狼美人隔一晚重魅同一人合法），但同一批次内重复仍是批次完整性违规。**延迟死亡标记同样跨批次幂等**：同一夜两种延迟死因（女巫毒 + 猎人枪）命中同一 `delayable` 座位时，`settle_pending` 的后续批次整套跳过该标记、保首因、不报错 —— 它曾经抛 `EffectRejected`，而结算没有 fallback，直接把整局打成 `failed` 且恢复会重炸。
@@ -101,7 +108,7 @@ npm run build
 - `tests/test_game_engine.py` 引擎禁词
 - `tests/test_action_resolver.py` 与 `tests/test_prompt_builder.py` 角色名禁词
 - `tests/test_prompt_renderer.py` 渲染器禁词
-- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`、`tests/test_knight_extension.py`、`tests/test_wolf_beauty_extension.py`、`tests/test_old_drunkard_extension.py`；`tests/test_catalog_routes.py` 断言 11 角色 6 预设，并要求每个已注册角色都有非空 `rules` 条目（新增角色漏写展示规则即红）
+- 角色扩展样例：`tests/test_guard_extension.py`、`tests/test_idiot_extension.py`、`tests/test_werewolf_king_extension.py`、`tests/test_knight_extension.py`、`tests/test_wolf_beauty_extension.py`、`tests/test_old_drunkard_extension.py`；`tests/test_catalog_routes.py` 断言 23 角色 15 预设，并要求每个已注册角色都有非空 `rules` 条目（新增角色漏写展示规则即红）；阶段 3（纯白之女 / 狼巫 / 猎魔人 / 赤月使徒 / 噩梦之影）与阶段 3.5（舞者 / 假面）的扩展样例在 `tests/test_pure_white_extension.py`、`test_wolf_witch_extension.py`、`test_demon_hunter_extension.py`、`test_crimson_envoy_extension.py`、`test_nightmare_extension.py`、`test_masquerade_extension.py`
 - 共享狼刀契约的角色差异：改 `roles/werewolf.py` 的 `validate_werewolf_action()` 或 `core/night_flow.py` 的 `_self_kill_clause()` 后，更新 `tests/test_wolf_beauty_extension.py`（自刀被拒 / 队友可切 / 其他狼不受限）与 `tests/test_night_flow.py`（三态提示词 + 常量与角色侧声明一致）
 - 观众事件类型：`app/services/audience_projector.py` 的 `_EVENTS` 增删类型后，同步四处 —— `tests/test_audience_projector.py` 的类型全集快照、**旧档回放**的公开 DTO（`api/schemas.py` 的 `PublicReplayEvent` 联合）与白名单/分支（`api/routes/game_routes.py` 的 `_AUDIENCE_ACTION_SCHEMAS`、`_REASONING_EVENT_TYPES`、`_public_day_verdict_event` / `_public_role_skill_event`）、前端 `components/game/test/eventCoverage.test.tsx` 的期望表、以及 `src/labels.ts`（`EVENT_TAGS`）。门禁：`tests/test_game_routes.py::test_every_public_audience_action_type_has_a_replay_branch` 会遍历投影器声明的每个类型，用规范 payload 要求回放路径产出对应事件 —— 漏一个分支即红；引擎写进 `game.log` 但投影器不声明公开的类型（`DAY_INTERRUPTED` / `EXILE_PENDING`）登记在 `game_routes._INTERNAL_AUDIENCE_ACTION_TYPES`，回放**静默跳过**、不计入丢弃计数
 - 取值目录（死因 / 胜因 / 阵营 / 阶段）：新增或改名要同步**五处**，缺一处就有门禁变红 —— `app/models/values.py` 的 `DeathCause`/`WinReason`/`WinningCamp`（与 `models/game.py` 的 `GamePhase`）是权威目录；`api/schemas.py` 的公开 DTO 必须等于目录（`tests/test_schemas.py`）；`api/routes/game_routes.py` 的三张旧档白名单必须等于公开 DTO（`tests/test_game_routes.py`）；前端 `store/types.ts` 的联合类型 + `src/labels.ts` 的文案必须覆盖目录里的每个值（后端 `tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读前端文案比对，前端 `src/test/labels.test.ts` 断言命名空间非空）。生产代码里的 `cause=` / `reason=` 字面量与各规则子集由 `tests/test_values.py` 扫描校验 —— 注意**目录只做门禁锚点**，不要把它传进检查点或 Effect 载荷（`checkpoint_codec` 与 `effect_applier` 用 `type(value) is not str` 精确校验，枚举成员会被拒）
