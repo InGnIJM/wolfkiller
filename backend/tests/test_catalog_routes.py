@@ -280,6 +280,46 @@ def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
         assert preset.get("witch_self_save", "first_night_only") == expected, preset["id"]
 
 
+def test_every_preset_names_registered_roles_with_publishable_metadata() -> None:
+    """预设里的角色 id 拼错只会在建局时炸；这里在目录层就把它挡住。
+
+    同时要求每个被预设用到的角色都有 `rules` 展示条目 —— 规则页与创建向导都读它，
+    漏写则新板子上线即残缺（这条门禁此前只覆盖「已注册角色」的全集）。
+    """
+    snapshot = builtin_registry.freeze()
+    for preset in STANDARD_PRESETS:
+        assert preset["role_counts"], preset["id"]
+        for role_id, count in preset["role_counts"].items():
+            assert role_id in snapshot.specs, (preset["id"], role_id)
+            assert role_id in ROLE_METADATA, (preset["id"], role_id)
+            assert count >= 1, (preset["id"], role_id)
+            assert ROLE_METADATA[role_id]["rules"], (preset["id"], role_id)
+            assert ROLE_METADATA[role_id]["name_zh"], (preset["id"], role_id)
+
+
+def test_masquerade_roles_are_playable_through_the_frozen_snapshot() -> None:
+    """假面舞会两张新牌必须能从冻结快照里拿到契约，且顺序是舞者在前。"""
+    snapshot = builtin_registry.freeze()
+    dancer = snapshot.require("wolf-killer-dancer")
+    mask = snapshot.require("wolf-killer-mask")
+    assert [c.contract_id for c in dancer.contracts] == ["dance_pool"]
+    contracts = {
+        contract.contract_id: contract
+        for spec in snapshot.specs.values() for contract in spec.contracts
+    }
+    pool = contracts["dance_pool"]
+    grant = contracts["mask_grant"]
+    assert pool.multi_target_actions == {"pool": 3}
+    assert pool.order < grant.order
+    assert grant.selected_target_fact_namespaces == frozenset({"status_labels"})
+    assert mask.initial_resources == dancer.initial_resources == {"poison_immune": 1}
+    # Every preset must be acceptable to the frozen snapshot's own validation.
+    for preset in STANDARD_PRESETS:
+        snapshot.validate_role_counts(
+            preset["role_counts"], sum(preset["role_counts"].values())
+        )
+
+
 def test_field_constraints_defaults():
     assert FIELD_CONSTRAINTS["min_players"] == 4
     assert FIELD_CONSTRAINTS["max_players"] == 12

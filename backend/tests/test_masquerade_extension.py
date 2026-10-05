@@ -246,15 +246,18 @@ def test_the_scheduler_runs_one_three_target_command_end_to_end() -> None:
     # No dancer in the pool, so no veil was submitted.
     assert runtime.pending_protection == ()
 
-    applier = EffectApplier()
-    commit = applier.commit_night(state, round_number=2)
-    assert commit is not None
+    # NIGHT_COMMIT is the point's own work item, so run it the way the engine
+    # does: the pool verdict has to surface as a PLAYER_DIED row in the point's
+    # events, because that list is what ``_pipeline_night_deaths`` walks to
+    # announce the night's deaths.
+    commit_result = scheduler.run_point(state, SchedulePoint.NIGHT_COMMIT)
+    assert [
+        dict(event["payload"]) for event in commit_result.events
+        if event["event_type"] == "PLAYER_DIED"
+    ] == [{"seat": 4, "cause": "dance", "round_number": 2}]
     assert [(death.player_seat, death.cause) for death in state.death_history] == [
         (4, "dance"),
     ]
-    assert commit.events[0]["payload"] == {
-        "seat": 4, "cause": "dance", "round_number": 2,
-    }
     assert state.players[4].is_alive is False
     # The commit installs a *new* runtime, so re-read it before the sweep.
     swept = state._pipeline_runtime
