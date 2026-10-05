@@ -12,6 +12,7 @@ import PageBackground from './components/shared/PageBackground';
 import GameList from './components/lobby/GameList';
 import GameBoard from './components/game/GameBoard';
 import ModelConfigPage from './components/models/ModelConfigPage';
+import SettingsPage from './components/settings/SettingsPage';
 import CreateGameWizard from './components/create/CreateGameWizard';
 import RulesPage from './components/rules/RulesPage';
 
@@ -105,6 +106,9 @@ export function AppShell() {
               <Button color="inherit" size="small" onClick={() => navigate('/models')}>
                 模型管理
               </Button>
+              <Button color="inherit" size="small" onClick={() => navigate('/settings')}>
+                设置
+              </Button>
             </Toolbar>
           </Container>
         </AppBar>
@@ -120,6 +124,7 @@ export function AppShell() {
               )}
             />
             <Route path="/models" element={<ModelConfigPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/create" element={<CreateGameWizard />} />
             <Route path="/game/:gameId" element={<GameRoute />} />
