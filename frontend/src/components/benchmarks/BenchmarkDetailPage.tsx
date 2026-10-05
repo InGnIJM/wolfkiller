@@ -38,6 +38,22 @@ function rate(value: number | null): string {
   return value === null ? '—' : `${(value * 100).toFixed(1)}%`;
 }
 
+// 决策质量由后端本轮新增，旧报告没有该键：取不到就返回 null，由页面降级为提示。
+function decisionSummary(report: BenchmarkReport | null): Record<string, unknown> | null {
+  const value = record(report?.summary).decision;
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+interface DecisionRow {
+  id: string;
+  label: string;
+  value: number | null;
+  sample: number | null;
+  count: boolean;
+}
+
 interface PerformanceRow {
   id: string;
   model: string;
@@ -144,6 +160,11 @@ export default function BenchmarkDetailPage() {
   const attempts = record(reportSummary.attempts);
   const tokenUsage = record(attempts.token_usage);
   const latency = record(attempts.latency_ms);
+  const averageRounds = numberAt(games, 'average_rounds');
+  const interruptionRate = numberAt(games, 'interruption_rate');
+  const decision = decisionSummary(report);
+  const decisionSamples = record(decision?.samples);
+  const decisionGames = numberAt(decision, 'samples', 'games');
   const status = current.status;
 
   return (
@@ -186,6 +207,8 @@ export default function BenchmarkDetailPage() {
           ['有效请求率', rate(numberAt(requests, 'success_rate'))],
           ['已知 token', numberAt(tokenUsage, 'known_total_tokens')?.toLocaleString() ?? '—'],
           ['调用延迟 p95', numberAt(latency, 'p95') === null ? '—' : `${numberAt(latency, 'p95')} ms`],
+          ['平均轮次', averageRounds === null ? '—' : averageRounds.toFixed(1)],
+          ['中断率', rate(interruptionRate)],
         ].map(([label, value]) => (
           <Card key={label} variant="outlined"><CardContent><Typography color="text.secondary">{label}</Typography><Typography variant="h5" sx={{ mt: 1, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography></CardContent></Card>
         ))}
@@ -201,6 +224,48 @@ export default function BenchmarkDetailPage() {
             <Table sx={{ minWidth: 640 }} aria-label="模型表现表">
               <TableHead><TableRow><TableCell>模型</TableCell><TableCell>维度</TableCell><TableCell>分组</TableCell><TableCell sortDirection={sort === 'samples' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'samples' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('samples')}>样本数</Button></TableCell><TableCell sortDirection={sort === 'value' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'value' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('value')}>胜率</Button></TableCell></TableRow></TableHead>
               <TableBody>{rows.map((row) => <TableRow key={row.id}><TableCell>{row.model}</TableCell><TableCell>{row.dimension === 'role' ? '角色' : '阵营'}</TableCell><TableCell>{row.group}</TableCell><TableCell>{row.samples}</TableCell><TableCell>{rate(row.value)}</TableCell></TableRow>)}</TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+
+      <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
+        <Box sx={{ mb: 2 }}>
+          <Typography component="h2" variant="h6">决策质量</Typography>
+          <Typography variant="body2" color="text.secondary">
+            跨局池化口径，见 docs/benchmark.md；{decisionGames === null ? '' : `基于 ${decisionGames} 局有决策明细的对局。`}狼票集中度不在此展示：跨局池化后不可解读（需按轮次重算）。
+          </Typography>
+        </Box>
+        {decision === null ? (
+          <Alert severity="info">本次报告没有决策质量数据（旧版本报告，或这些对局缺少 summary.json 明细）。</Alert>
+        ) : (
+          <TableContainer sx={{ overflowX: 'auto' }}>
+            <Table sx={{ minWidth: 520 }} aria-label="决策质量表">
+              <TableHead>
+                <TableRow><TableCell>指标</TableCell><TableCell>取值</TableCell><TableCell>样本</TableCell></TableRow>
+              </TableHead>
+              <TableBody>
+                {([
+                  { id: 'seer-check', label: '预言家验中狼率', value: numberAt(decision, 'seer_check_hit_rate'), sample: numberAt(decisionSamples, 'seer_checks'), count: false },
+                  { id: 'witch-poison', label: '女巫毒中狼率', value: numberAt(decision, 'witch_poison_hit_rate'), sample: numberAt(decisionSamples, 'witch_poisons'), count: false },
+                  { id: 'hunter-shot', label: '猎人带狼率', value: numberAt(decision, 'hunter_shot_hit_rate'), sample: numberAt(decisionSamples, 'hunter_shots'), count: false },
+                  { id: 'wolf-kill', label: '狼刀命中神职率', value: numberAt(decision, 'wolf_kill_god_rate'), sample: numberAt(decisionSamples, 'wolf_kills'), count: false },
+                  { id: 'good-vote', label: '好人投票命中狼率', value: numberAt(decision, 'good_vote_hit_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
+                  { id: 'good-abstain', label: '好人弃票率', value: numberAt(decision, 'good_vote_abstain_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
+                  { id: 'exile-wolf', label: '放逐命中狼率', value: numberAt(decision, 'exile_wolf_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
+                  { id: 'exile-misfire', label: '放逐误伤神职率', value: numberAt(decision, 'exile_god_misfire_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
+                  { id: 'witch-save-uses', label: '女巫用解药', value: numberAt(decision, 'witch_save_uses'), sample: null, count: true },
+                  { id: 'witch-poison-uses', label: '女巫用毒', value: numberAt(decision, 'witch_poison_uses'), sample: null, count: true },
+                ] as DecisionRow[]).map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell>{row.label}</TableCell>
+                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {row.count ? (row.value === null ? '—' : row.value.toLocaleString()) : rate(row.value)}
+                    </TableCell>
+                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.sample === null ? '—' : row.sample.toLocaleString()}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
             </Table>
           </TableContainer>
         )}

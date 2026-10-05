@@ -30,6 +30,132 @@ async function showDetail(
   });
 }
 
+const DECISION_MISSING_ALERT = '本次报告没有决策质量数据（旧版本报告，或这些对局缺少 summary.json 明细）。';
+
+const decisionSamples = {
+  games: 12, seer_checks: 20, witch_poisons: 4, hunter_shots: 3,
+  wolf_kills: 18, good_votes: 96, exiles: 12,
+};
+
+// 后端本轮新增的形状；集中度两项刻意保留在 fixture 里，确保页面绝不把它们渲染出来。
+const decisionBlock = {
+  seer_check_hit_rate: 0.5,
+  witch_save_uses: 3,
+  witch_poison_uses: 2,
+  witch_poison_hit_rate: 1.0,
+  hunter_shot_hit_rate: 0.3333,
+  wolf_kill_god_rate: 0.25,
+  good_vote_hit_rate: 0.4,
+  good_vote_abstain_rate: 0.05,
+  exile_wolf_rate: 0.6,
+  exile_god_misfire_rate: 0.1,
+  wolf_vote_concentration: 0.9,
+  wolf_vote_distinct_targets: 7,
+  samples: decisionSamples,
+};
+
+function rowCells(table: HTMLElement, label: string): string[] {
+  const row = within(table).getByText(label).closest('tr') as HTMLElement;
+  return Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '');
+}
+
+function decisionTable(): HTMLElement {
+  return screen.getByRole('table', { name: '决策质量表' });
+}
+
+describe('benchmark decision quality', () => {
+  it('renders the eight decision ratios with sample sizes and both witch use counts', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false, summary: { decision: decisionBlock },
+    });
+    await showDetail();
+    const table = decisionTable();
+    expect(rowCells(table, '预言家验中狼率')).toEqual(['预言家验中狼率', '50.0%', '20']);
+    expect(rowCells(table, '女巫毒中狼率')).toEqual(['女巫毒中狼率', '100.0%', '4']);
+    expect(rowCells(table, '猎人带狼率')).toEqual(['猎人带狼率', '33.3%', '3']);
+    expect(rowCells(table, '狼刀命中神职率')).toEqual(['狼刀命中神职率', '25.0%', '18']);
+    expect(rowCells(table, '好人投票命中狼率')).toEqual(['好人投票命中狼率', '40.0%', '96']);
+    expect(rowCells(table, '好人弃票率')).toEqual(['好人弃票率', '5.0%', '96']);
+    expect(rowCells(table, '放逐命中狼率')).toEqual(['放逐命中狼率', '60.0%', '12']);
+    expect(rowCells(table, '放逐误伤神职率')).toEqual(['放逐误伤神职率', '10.0%', '12']);
+    expect(rowCells(table, '女巫用解药')).toEqual(['女巫用解药', '3', '—']);
+    expect(rowCells(table, '女巫用毒')).toEqual(['女巫用毒', '2', '—']);
+  });
+
+  it('falls back to an info alert for older reports without a decision block', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false, summary: { games: { total: 2, completed: 2 } },
+    });
+    await showDetail();
+    expect(screen.getByText(DECISION_MISSING_ALERT)).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: '决策质量表' })).not.toBeInTheDocument();
+    expect(screen.getByText('模型表现')).toBeInTheDocument();
+  });
+
+  it('treats a non-object decision block as missing instead of crashing', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false, summary: { decision: 'oops' },
+    });
+    await showDetail();
+    expect(screen.getByText(DECISION_MISSING_ALERT)).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: '决策质量表' })).not.toBeInTheDocument();
+  });
+
+  it('names the games with decision detail and why concentration stays hidden', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false, summary: { decision: decisionBlock },
+    });
+    await showDetail();
+    const subtitle = screen.getByText(/跨局池化口径，见 docs\/benchmark\.md/);
+    expect(subtitle).toHaveTextContent('基于 12 局有决策明细的对局。');
+    expect(subtitle).toHaveTextContent('狼票集中度不在此展示：跨局池化后不可解读（需按轮次重算）。');
+  });
+
+  it('omits the game-count clause when samples.games is missing', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false,
+      summary: { decision: { ...decisionBlock, samples: { seer_checks: 20 } } },
+    });
+    await showDetail();
+    expect(screen.queryByText(/基于 \d+ 局有决策明细的对局/)).not.toBeInTheDocument();
+    expect(screen.getByText(/狼票集中度不在此展示/)).toBeInTheDocument();
+    expect(rowCells(decisionTable(), '预言家验中狼率')).toEqual(['预言家验中狼率', '50.0%', '20']);
+  });
+
+  it('never renders the pooled wolf vote concentration or its distinct target count', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false, summary: { decision: decisionBlock },
+    });
+    await showDetail();
+    expect(within(decisionTable()).queryByText('狼票集中度')).not.toBeInTheDocument();
+    expect(screen.queryByText('90.0%')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.9')).not.toBeInTheDocument();
+    const section = screen.getByText('决策质量').closest('section') as HTMLElement;
+    expect(within(section).queryByText('7')).not.toBeInTheDocument();
+    expect(screen.queryByText('wolf_vote_concentration')).not.toBeInTheDocument();
+    expect(screen.queryByText('wolf_vote_distinct_targets')).not.toBeInTheDocument();
+  });
+
+  it('adds average rounds and interruption rate KPI cards', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false,
+      summary: { games: { total: 4, completed: 3, average_rounds: 5.25, interruption_rate: 0.25 } },
+    });
+    await showDetail();
+    expect(screen.getByText('平均轮次').parentElement).toHaveTextContent('平均轮次5.3');
+    expect(screen.getByText('中断率').parentElement).toHaveTextContent('中断率25.0%');
+  });
+
+  it('shows a dash for both new KPI cards when the report omits them', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false, summary: { games: { total: 1 } },
+    });
+    await showDetail();
+    expect(screen.getByText('平均轮次').parentElement).toHaveTextContent('平均轮次—');
+    expect(screen.getByText('中断率').parentElement).toHaveTextContent('中断率—');
+  });
+});
+
 describe('benchmark report completion', () => {
   it('does not overlap slow report polling requests', async () => {
     let finish!: (value: { status: string }) => void;
