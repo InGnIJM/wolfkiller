@@ -55,6 +55,7 @@ def test_main_exposes_app_routes_and_services():
     assert "/api/catalog/constraints" in paths
     assert "/api/benchmarks" in paths
     assert "/api/folders" in paths
+    assert "/api/settings/prompt-capture" in paths
     assert "/api/games/{game_id}/snapshot" in paths
 
 
