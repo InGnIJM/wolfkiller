@@ -278,6 +278,11 @@ class GameEngine:
         # The narration the last ``_narrate`` wrote, for the same reason: the
         # step that publishes it commits immediately after this assignment.
         self._pending_narration: dict[str, object] | None = None
+        # The dying sheriff's own reason for transferring or tearing the badge,
+        # carried to the ``sheriff_badge:`` step the same way a narration is.
+        # Deliberately not part of the engine checkpoint codec: it is always
+        # written immediately before its own commit and never survives a restart.
+        self._pending_badge_reasoning: str | None = None
         self._night_task: asyncio.Task | None = None
         self._rng = random.Random()
         self._checkpoint_hook = checkpoint_hook
@@ -343,6 +348,7 @@ class GameEngine:
         self._pending_night_batch = None
         self._pending_point_events = ()
         self._pending_narration = None
+        self._pending_badge_reasoning = None
         self._checkpoint_counter = 0
 
         self.sm.transition(SM_Event.START)
@@ -1156,7 +1162,7 @@ class GameEngine:
         if dead_sheriff is None:
             return
         targets = badge_targets(self.state, dead_sheriff)
-        action, target = await asyncio.to_thread(
+        action, target, reasoning = await asyncio.to_thread(
             self._sheriff_director.badge_turn, self.state, dead_sheriff, targets,
         )
         apply_badge(self.state, dead_sheriff, action, target)
@@ -1164,16 +1170,24 @@ class GameEngine:
             message = f"{dead_sheriff}号撕毁警徽，本局不再有警长。"
         else:
             message = f"{dead_sheriff}号将警徽移交给{self.state.sheriff}号。"
-        self.conversation_log.add_system_message(message, self.state.round_number, "public")
-        self._log_sheriff_audience("SHERIFF_BADGE", {
+        payload: dict[str, object] = {
             "round_number": self.state.round_number,
             "from_seat": dead_sheriff,
             "to_seat": self.state.sheriff,
-        })
+        }
+        if reasoning:
+            payload["reasoning"] = reasoning
+        self.conversation_log.add_system_message(message, self.state.round_number, "public")
+        self._log_sheriff_audience("SHERIFF_BADGE", payload)
+        # The reason reaches the audience through the one-shot slot, not the
+        # label: the step key below must keep its exact shape or every
+        # in-flight game would stop resuming.
+        self._pending_badge_reasoning = reasoning or None
         await self._durable_checkpoint(
             f"sheriff_badge:{self.state.round_number}:{dead_sheriff}:"
             f"{self.state.sheriff or 'tear'}"
         )
+        self._pending_badge_reasoning = None
 
     async def _choose_speech_side(self) -> None:
         if not sheriff_active(self.state) or self.state.sheriff_office.speech_side:

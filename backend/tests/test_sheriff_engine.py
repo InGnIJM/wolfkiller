@@ -17,13 +17,14 @@ import app.core.game_engine as game_engine_module
 class ScriptedSheriff:
     def __init__(
         self, campaign=(), withdraw=(), votes=(), side=SHERIFF_LEFT,
-        badge=("tear", None),
+        badge=("tear", None), badge_reason="",
     ):
         self.campaign = list(campaign)
         self.withdraw = list(withdraw)
         self.votes = list(votes)
         self.side = side
         self.badge = badge
+        self.badge_reason = badge_reason
 
     def campaign_turn(self, state, seat, *, wolf):
         return self.campaign.pop(0) if self.campaign else "pass"
@@ -38,7 +39,7 @@ class ScriptedSheriff:
         return self.side if self.side in sides else sides[0]
 
     def badge_turn(self, state, seat, targets):
-        return self.badge
+        return (*self.badge, self.badge_reason)
 
 
 def _engine(*, seats=4, wolves=1, enable=True) -> GameEngine:
@@ -338,6 +339,47 @@ async def test_badge_transfer_tear_and_skip_when_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_badge_reason_is_handed_to_the_step_and_then_cleared() -> None:
+    """理由是一次性槽位：提交那一刻在，提交后必须清空。
+
+    观众流里的 `sheriff_badge` 事件靠这个槽位拿到理由（与旁白同理），
+    所以「提交时在读」与「提交后清掉」两半都要钉住。
+    """
+    engine = _engine()
+    set_sheriff(engine.state, 2)
+    engine.state.players[2].mark_dead("wolf_kill")
+    engine._sheriff_director = ScriptedSheriff(
+        badge=("transfer", 3), badge_reason="9号是金水，警徽交给他",
+    )
+    seen: list[str | None] = []
+
+    async def hook(step_key: str) -> None:
+        seen.append(engine._pending_badge_reasoning)
+
+    engine._checkpoint_hook = hook
+    await engine._maybe_reassign_badge()
+    assert seen == ["9号是金水，警徽交给他"]
+    assert engine._pending_badge_reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_a_reasonless_badge_leaves_the_slot_empty() -> None:
+    engine = _engine()
+    set_sheriff(engine.state, 2)
+    engine.state.players[2].mark_dead("wolf_kill")
+    engine._sheriff_director = ScriptedSheriff(badge=("tear", None))
+    seen: list[str | None] = []
+
+    async def hook(step_key: str) -> None:
+        seen.append(engine._pending_badge_reasoning)
+
+    engine._checkpoint_hook = hook
+    await engine._maybe_reassign_badge()
+    assert seen == [None]
+    assert engine.state.sheriff is None
+
+
+@pytest.mark.asyncio
 async def test_speech_side_and_order_and_half_votes() -> None:
     engine = _engine()
     set_sheriff(engine.state, 3)
@@ -498,6 +540,7 @@ class RecordingSheriff:
         self.votes = list(votes)
         self.side = SHERIFF_LEFT
         self.badge = ("tear", None)
+        self.badge_reason = ""
         self.humans: list[str] = []
 
     def _record(self, messages):
@@ -519,7 +562,7 @@ class RecordingSheriff:
         return self.side if self.side in sides else sides[0]
 
     def badge_turn(self, state, seat, targets):
-        return self.badge
+        return (*self.badge, self.badge_reason)
 
 
 _last_messages: dict[str, list[dict[str, str]]] = {}

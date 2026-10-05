@@ -1804,6 +1804,11 @@ class GameService:
                 "from_seat": int(parts[2]) if len(parts) > 2 else 0,
                 "to_seat": None if to_raw == "tear" else int(to_raw),
             }
+            # The reason is not in the label: like a narration's text it lives in
+            # the engine's one-shot slot, written just before this very step.
+            badge_reason = getattr(engine, "_pending_badge_reasoning", None)
+            if isinstance(badge_reason, str) and badge_reason:
+                payload["reasoning"] = badge_reason
         elif label.startswith("sheriff_explode:"):
             seat = int(label.split(":")[-1])
             deaths = [item for item in engine.state.death_history if item.player_seat == seat]
