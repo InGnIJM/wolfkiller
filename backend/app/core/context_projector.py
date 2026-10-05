@@ -62,7 +62,7 @@ _RESOURCE_ADAPTERS = {
 _SELECTED_TARGET_NAMESPACES = frozenset(
     {"camp_label", "status_labels", "resource_labels", "role_label"}
 )
-_PUBLIC_STATUSES = frozenset({"poisoned", "wounded"})
+_PUBLIC_STATUSES = frozenset({"poisoned", "wounded", "in_pool"})
 #: Resources a contract may observe on its chosen target. These reach the pure
 #: ``validate`` / ``resolve`` hooks only — ``selected_target`` is never part of
 #: the context handed to the model, so a producer learns what the rules make
@@ -560,6 +560,21 @@ class ContextProjector:
                     for result in (canonical or actor.check_results)[-20:]
                     if (projected := cls._project_check_result(result)) is not None
                 )
+            elif key == "role_checks":
+                # A role that learns another seat's *exact* identity (the
+                # Gargoyle, and later the Pure White and the Wolf Witch) records
+                # it under this namespace. Without this branch the record is
+                # written and never read back — the actor's own prompt kept
+                # showing the empty declared default, so its nightly check
+                # answer never reached the model that made it.
+                canonical = role_private_facts_view(
+                    state, actor.seat_number, "role_checks"
+                )
+                facts["role_checks"] = tuple(
+                    projected
+                    for result in canonical[-20:]
+                    if (projected := cls._project_role_check_result(result)) is not None
+                )
             elif key == "last_exiled":
                 # The Gravekeeper's nightly brief. Derived from the death log
                 # rather than stored on GameState: the record already carries the
@@ -618,6 +633,25 @@ class ContextProjector:
         ):
             return None
         return {"target": target, "camp": camp}
+
+    @classmethod
+    def _project_role_check_result(cls, result: object) -> dict[str, object] | None:
+        """One ``role_checks`` record: the seat and the identity it showed.
+
+        Malformed records are dropped rather than raised: the namespace is
+        written by role hooks, and a resumed archive must still be readable.
+        """
+        if type(result) not in (dict, MappingProxyType):
+            return None
+        target = result.get("target", result.get("target_seat"))
+        role = result.get("role", result.get("role_id"))
+        if type(target) is not int or target <= 0 or target > _MAX_INT:
+            return None
+        try:
+            label = cls._token(role, "role_checks role", 128)
+        except (TypeError, ValueError):
+            return None
+        return {"target": target, "role": label}
 
     @classmethod
     def _project_trigger_event(

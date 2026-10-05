@@ -233,6 +233,26 @@ def test_role_label_reaches_the_hook_but_the_answer_stays_private() -> None:
     assert "selected_target" not in base.facts
 
 
+def test_the_gargoyle_prompt_now_carries_its_own_check_results() -> None:
+    """回归：石像鬼记的 ``role_checks`` 以前没有任何读取者。
+
+    它每晚把查验到的具体身份写进这个命名空间，但投影器只读 ``private_checks``，
+    于是它自己的提示词一直显示空元组 —— 查验结果等于白验。修好之后，结果必须出现在
+    它本人的上下文里，且只有它本人能看到。
+    """
+    game, snapshot = state(), registry()
+    from app.core.effect_applier import _Runtime
+
+    game._pipeline_runtime = _Runtime()
+    game._pipeline_runtime.private_facts[2] = [
+        {"namespace": "role_checks", "fact": {"target": 4, "role": SEER_SPEC.role_id}},
+    ]
+    facts = _gargoyle_context(game, snapshot).facts
+    assert facts["role_checks"] == ({"target": 4, "role": SEER_SPEC.role_id},)
+    # The Seer's own context (seat 4) never sees the Gargoyle's channel.
+    assert "role_checks" not in _facts(game, 4, snapshot)
+
+
 def test_gravekeeper_reads_none_before_anyone_is_exiled() -> None:
     game, snapshot = state(gravekeeper=True), registry()
     assert _facts(game, 5, snapshot)["last_exiled"] is None

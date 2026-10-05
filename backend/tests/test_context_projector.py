@@ -1685,7 +1685,7 @@ def test_selected_target_projects_only_whitelisted_statuses_and_resources(
 
     initialize_role_resources(state, registry.specs, "a" * 64)
     state._pipeline_runtime.statuses[1] = {
-        "poisoned", "wounded", "no_vote", "exile_immune",
+        "poisoned", "wounded", "no_vote", "exile_immune", "in_pool",
     }
     state._pipeline_runtime.role_resources[1] = {
         "charm_immune": 1, "gun": 1, "poison": 1,
@@ -1700,8 +1700,10 @@ def test_selected_target_projects_only_whitelisted_statuses_and_resources(
     )
     selected = projected.facts["selected_target"]
     assert selected["seat"] == 1
-    # Private statuses and private resources never leave the projector.
-    assert selected["status_labels"] == ("poisoned", "wounded")
+    # Private statuses and private resources never leave the projector;
+    # ``in_pool`` is observable because the Masquerade board's Mask has to read
+    # whether its target is dancing tonight.
+    assert selected["status_labels"] == ("in_pool", "poisoned", "wounded")
     assert selected["resource_labels"] == ("charm_immune",)
     assert "camp_label" not in selected
 
@@ -1734,3 +1736,43 @@ def test_selected_target_rejects_an_unknown_label_namespace(
             ActionCommand(action_type="act", target_seat=1, reasoning="check"),
             selected_registry,
         )
+
+
+def test_role_checks_reach_the_declaring_actor_and_nobody_else(
+    state: GameState, registry: RegistrySnapshot,
+) -> None:
+    """``role_checks`` 是「具体身份」查验的唯一回读通道。
+
+    石像鬼写这个命名空间却从来没人读（actor 的提示词一直显示空默认值），纯白之女与
+    狼巫也依赖同一条通道 —— 这条测试把它钉死：声明的座位拿得到，其他座位拿不到，
+    坏记录被丢弃而不是抛错。
+    """
+    from app.core.effect_applier import _Runtime
+    from app.roles.gargoyle import GARGOYLE_SPEC
+
+    state._pipeline_runtime = _Runtime()
+    snapshot = RegistrySnapshot(
+        specs={**registry.specs, GARGOYLE_SPEC.role_id: GARGOYLE_SPEC},
+        digest=registry.digest,
+    )
+    assert state.players[1].role != GARGOYLE_SPEC.role_id
+    state.players[1] = PlayerState(1, GARGOYLE_SPEC.role_id, "werewolf")
+    state._pipeline_runtime.private_facts[1] = [
+        {"namespace": "role_checks", "fact": {"target": 4, "role": "wolf-killer-seer"}},
+        {"namespace": "role_checks", "fact": {"target": 5, "role": "wolf-killer-villager"}},
+        # Malformed records are dropped, never raised: resumes must stay readable.
+        {"namespace": "role_checks", "fact": {"target": 6}},
+        {"namespace": "role_checks", "fact": {"target": 0, "role": "wolf-killer-seer"}},
+        {"namespace": "role_checks", "fact": {"target": 7, "role": "bad role label"}},
+        {"namespace": "private_checks", "fact": {"target": 4, "camp": "good"}},
+    ]
+    projector = ContextProjector()
+    project_request = _request(snapshot, 1, GARGOYLE_SPEC.role_id)
+    context = projector.project(state, project_request, snapshot)
+    assert context.facts["role_checks"] == (
+        {"target": 4, "role": "wolf-killer-seer"},
+        {"target": 5, "role": "wolf-killer-villager"},
+    )
+    # The Seer declares no such namespace, so it never sees this channel.
+    seer_context = projector.project(state, _request(registry, 3, "seer"), registry)
+    assert "role_checks" not in seer_context.facts
