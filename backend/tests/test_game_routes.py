@@ -1164,6 +1164,36 @@ def test_wolf_chat_carries_the_day_plan_and_accepts_records_without_it() -> None
     assert not game_routes._DROPPED_REPLAY_ROWS
 
 
+def test_sheriff_badge_carries_the_reason_and_accepts_records_without_it() -> None:
+    """警长的交/撕徽理由要进旧档回放；**已有旧记录没有该字段，不能被丢掉**。
+
+    理由只在观众流（投影器的 schema 已含 `reasoning`）与 `game.log` 里，而旧档回放
+    走的是后者的字段集判定。把它写进必填集，本仓库里所有早于它的警徽记录都会从
+    「少一个字段」变成「整条丢弃」——那正是当年 `day_plan` 踩过的坑。
+    """
+    with_reason = _replay_record("audience_action", {
+        "event_type": "SHERIFF_BADGE",
+        "payload": {"from_seat": 1, "to_seat": None, "round_number": 3,
+                    "reasoning": "9号是金水，警徽本应传给他"},
+    }, phase="night")
+    without_reason = _replay_record("audience_action", {
+        "event_type": "SHERIFF_BADGE",
+        "payload": {"from_seat": 1, "to_seat": None, "round_number": 3},
+    }, phase="night")
+
+    events = game_routes._public_operation_events(with_reason)
+    assert events == [{"event_type": "sheriff_badge", "payload": {
+        "round_number": 1, "from_seat": 1, "to_seat": None,
+        "reasoning": "9号是金水，警徽本应传给他",
+    }}]
+
+    legacy = game_routes._public_operation_events(without_reason)
+    assert legacy == [{"event_type": "sheriff_badge", "payload": {
+        "round_number": 1, "from_seat": 1, "to_seat": None,
+    }}]
+    assert not game_routes._DROPPED_REPLAY_ROWS
+
+
 @pytest.mark.parametrize(("event_type", "payload", "code"), [
     ("KNIGHT_DUEL", {"seat": 0, "target_seat": 2, "camp": "good", "round_number": 1}, "invalid_duel"),
     ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "camp": "third_party", "round_number": 1}, "invalid_duel"),

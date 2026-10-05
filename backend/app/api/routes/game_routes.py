@@ -102,6 +102,8 @@ _INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING"}
 #: 所有旧记录都会从「少一个字段」变成「整条丢弃」。
 _AUDIENCE_ACTION_OPTIONAL = {
     "WOLF_CHAT_MESSAGE": frozenset({"day_plan"}),
+    # `reasoning`（警长的交/撕徽理由）同理：本仓库里早于它的警徽记录都没有这个键。
+    "SHERIFF_BADGE": frozenset({"reasoning"}),
 }
 
 
@@ -621,8 +623,14 @@ def _public_day_verdict_event(
             return []
         if to_seat is not None and not _is_positive_int(to_seat):
             return []
-        return [{"event_type": "sheriff_badge", "payload": {
-            "round_number": round_number, "from_seat": from_seat, "to_seat": to_seat}}]
+        public_payload: dict[str, Any] = {
+            "round_number": round_number, "from_seat": from_seat, "to_seat": to_seat,
+        }
+        reasoning = payload.get("reasoning")
+        if isinstance(reasoning, str) and reasoning and _is_reasoning_text(reasoning):
+            # 警长为什么交徽/撕徽：观众流一直带它，早于它的日志记录没有这个键。
+            public_payload["reasoning"] = reasoning
+        return [{"event_type": "sheriff_badge", "payload": public_payload}]
     if event_type == "SHERIFF_RUN":
         seat = payload.get("seat"); choice = payload.get("choice")
         if not _is_positive_int(seat) or choice not in _SHERIFF_RUN_CHOICES:
