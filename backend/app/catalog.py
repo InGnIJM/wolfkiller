@@ -183,6 +183,17 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "没有自保能力，也没有其他证明手段：验出的信息只能靠白天发言传递。",
         ],
     },
+    "wolf-killer-nightmare": {
+        "name_zh": "噩梦之影", "icon": "nightmare",
+        "description": "狼人，在所有夜间行动之前恐惧一人使其当夜无法行动；恐惧到狼人则整队当夜不能袭击",
+        "rules": [
+            "属于狼人阵营，夜晚与所有狼队友共用同一次狼刀、共同讨论并投票。",
+            "每夜**最先行动**：恐惧一名存活玩家，使其**当夜无法使用任何技能**（守卫不能守、预言家不能验、女巫不能用药等）。",
+            "不能连续两晚恐惧同一名玩家；可以恐惧自己或狼队友。",
+            "**若恐惧到狼人，则整个狼人阵营当夜无法发动袭击** —— 对好人来说那一夜是平安夜，所以选错对象代价很大。",
+            "没有自爆能力；首夜与其他狼不互知身份的差异在本作中按普通狼处理。",
+        ],
+    },
     "wolf-killer-crimson-envoy": {
         "name_zh": "赤月使徒", "icon": "crimson_envoy",
         "description": "狼人，白天可自爆封印当晚所有好人技能；作为最后一个狼被放逐时可延到次日才出局",
@@ -381,6 +392,25 @@ STANDARD_PRESETS: list[dict] = [
         "role_counts": {
             "wolf-killer-werewolf": 3,
             "wolf-killer-wolf-king": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-dream-weaver": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Nightmare" board: the dream weave stands
+        # in for the guard's shield.
+        "id": "twelve-player-nightmare",
+        "name": "十二人噩梦之影",
+        "description": "3狼 1噩梦之影 4民 1预言家 1女巫 1猎人 1摄梦人",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-nightmare": 1,
             "wolf-killer-villager": 4,
             "wolf-killer-seer": 1,
             "wolf-killer-witch": 1,

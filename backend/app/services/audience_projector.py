@@ -66,6 +66,9 @@ _PUBLIC_REASONING_EVENTS = {
     "WOLF_BEAUTY_REASONING": "wolf_beauty_reasoning",
     "PURE_WHITE_REASONING": "pure_white_reasoning",
     "WOLF_WITCH_REASONING": "wolf_witch_reasoning",
+    "DEMON_HUNTER_REASONING": "demon_hunter_reasoning",
+    "CRIMSON_ENVOY_REASONING": "crimson_envoy_reasoning",
+    "NIGHTMARE_REASONING": "nightmare_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

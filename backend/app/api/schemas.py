@@ -280,6 +280,9 @@ PublicThoughtActionType = Literal[
     "wolf_beauty_reasoning",
     "pure_white_reasoning",
     "wolf_witch_reasoning",
+    "demon_hunter_reasoning",
+    "crimson_envoy_reasoning",
+    "nightmare_reasoning",
 ]
 
 

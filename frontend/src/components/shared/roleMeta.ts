@@ -23,6 +23,7 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-wolf-beauty',
   'wolf-killer-wolf-witch',
   'wolf-killer-crimson-envoy',
+  'wolf-killer-nightmare',
   'wolf-killer-seer',
   'wolf-killer-witch',
   'wolf-killer-hunter',
@@ -59,6 +60,7 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-pure-white', key: 'seer', label: '纯白之女' },
   { id: 'wolf-killer-wolf-witch', key: 'werewolf', label: '狼巫' },
   { id: 'wolf-killer-crimson-envoy', key: 'werewolf', label: '赤月使徒' },
+  { id: 'wolf-killer-nightmare', key: 'werewolf', label: '噩梦之影' },
   { id: 'wolf-killer-demon-hunter', key: 'hunter', label: '猎魔人' },
 ];
 

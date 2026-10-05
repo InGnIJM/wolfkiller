@@ -140,6 +140,11 @@ _REASONING_EVENT_TYPES = {
     "WOLF_BEAUTY_REASONING": ("wolf_beauty_reasoning", frozenset({"charm", "pass"})),
     "PURE_WHITE_REASONING": ("pure_white_reasoning", frozenset({"check", "pass"})),
     "WOLF_WITCH_REASONING": ("wolf_witch_reasoning", frozenset({"check", "pass"})),
+    "DEMON_HUNTER_REASONING": ("demon_hunter_reasoning", frozenset({"hunt", "pass"})),
+    "CRIMSON_ENVOY_REASONING": (
+        "crimson_envoy_reasoning", frozenset({"explode", "pass"}),
+    ),
+    "NIGHTMARE_REASONING": ("nightmare_reasoning", frozenset({"fear", "pass"})),
 }
 
 

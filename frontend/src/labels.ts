@@ -112,6 +112,7 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   wolf_witch_reasoning: '狼巫思考',
   demon_hunter_reasoning: '猎魔人思考',
   crimson_envoy_reasoning: '赤月使徒思考',
+  nightmare_reasoning: '噩梦之影思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -145,6 +146,7 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   wolf_witch_reasoning: '狼巫',
   demon_hunter_reasoning: '猎魔人',
   crimson_envoy_reasoning: '赤月使徒',
+  nightmare_reasoning: '噩梦之影',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────
