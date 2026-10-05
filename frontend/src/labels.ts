@@ -47,6 +47,8 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   reflect: '反伤',
   dream_death: '摄梦',
   verify_kill: '验杀',
+  hunt: '狩猎出局',
+  dance: '舞池出局',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────

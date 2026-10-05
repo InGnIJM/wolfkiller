@@ -56,7 +56,7 @@ _CONFIRMATION_CODES = frozenset({
 _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-    "verify_kill",
+    "verify_kill", "hunt", "dance",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({

@@ -46,6 +46,10 @@ class DeathCause(str, Enum):
     DREAM_DEATH = "dream_death"
     #: 纯白之女 / 狼巫「验中即出局」：查验命中特定身份后由查验者当夜处决。
     VERIFY_KILL = "verify_kill"
+    #: 猎魔人狩猎：命中狼人则目标次日出局，命中好人则猎魔人自己次日出局。
+    HUNT = "hunt"
+    #: 假面舞会的舞池裁决：三人中人数少的一方当夜出局。
+    DANCE = "dance"
 
 
 class WinReason(str, Enum):
