@@ -40,12 +40,12 @@ WolfKiller/
 │   │   ├── api/                 # REST 路由（routes/）+ WebSocket 处理（websocket/）
 │   │   ├── persistence/         # SQLite repository、检查点编解码、恢复兼容性判定、引擎恢复
 │   │   ├── services/            # 游戏/benchmark 服务、公开投影、派生任务
-│   │   └── stores/              # 模型配置持久化 + API Key 加密存储
+│   │   └── stores/              # 模型配置持久化 + API Key 加密存储 + 应用级设置（settings.json）
 │   └── tests/                   # pytest 测试（statement/branch 100% 覆盖门禁）
 ├── frontend/
 │   └── src/
 │       ├── api/                 # REST 客户端 + WebSocket hook
-│       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store
+│       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store + 应用设置 store
 │       ├── labels.ts            # 取值→文案唯一来源（19 个命名空间，键类型为联合）
 │       ├── theme/               # 设计令牌（tokens.ts 为色值唯一来源）
 │       └── components/
@@ -54,6 +54,7 @@ WolfKiller/
 │           ├── create/          # 创建游戏向导（人数身份 → 模型配置）
 │           ├── game/            # 游戏（座位图、时间轴、历史面板、胜利画面）
 │           ├── models/          # 模型配置页与编辑对话框
+│           ├── settings/        # 应用设置页（训练语料采集开关，路由 /settings）
 │           └── shared/          # 共享组件（头像、角色图标、发言气泡）
 │       └── e2e/                 # Playwright 浏览器验收
 └── docs/                        # 本文档库
@@ -145,11 +146,22 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - 前端：`components/create/CreateGameWizard.tsx` 两步向导；`ModelStep.tsx` 以数量分配环境默认与已存配置；`components/models/ModelConfigPage.tsx` 管理页；`store/modelConfigStore.ts`
 - 规则介绍页：`components/rules/RulesPage.tsx`（右上角「规则介绍」，路由 `/rules`）只消费 `/api/catalog/*` 的公开字段——板子构成与警长开关来自 presets，角色卡来自 roles 的 `name_zh` / `camp` / `rules`，所以新增角色会自动出现；流程、遗言、票制、胜负与可选规则的叙述文案在 `components/rules/ruleSections.ts`，与 `docs/gameplay.md` 同一套规则
 
+## 应用设置
+
+- `stores/app_settings_store.py` + `api/settings_schemas.py` + `api/routes/settings_routes.py`：**应用级**（不是对局级、也不是模型级）的操作开关，落在 `data/settings.json`（与 `models.json` 并列，刻意不合并：那个文件存 `api_key_encrypted`，混进设置项还会让设置以「一条模型配置」的身份出现在 `GET /api/models` 里）。落盘形状 `{"version": 1, "settings": {...}}`，键缺失即「没设置过」——四种损坏（文件缺失 / JSON 坏 / 根非对象 / `settings` 非对象）一律回落「未设置」并告警，写盘走 tmp + `os.replace`，**永不对调用方抛异常**
+- **不做通用 KV**：每个设置一对类型化方法（现在是 `get/set_prompt_capture_enabled`），新增一个设置是一次显式评审，而不是往一个桶里塞键
+- **唯一裁决链**：`core/prompt_capture.py` 的 `resolve_capture_setting(stored)` = UI（`stored` 是布尔就短路）> 环境变量 `PROMPT_CAPTURE_ENABLED` > 内建默认（**开**）；失败闭合（`maybe` → 关）。路由与 `GameService` 调的是同一个函数，有交叉断言测试，所以界面显示的值与引擎采取的值不可能分叉
+- **端点闭集**：`GET/PATCH /api/settings/prompt-capture` 的响应**只有** `enabled` + `source`（`default` / `env` / `ui`），请求体是严格布尔（`"yes"` / `1` 一律 422）；`PATCH` 传 `null`（或缺省）= 清除界面设置、回落 env/default。响应模型带 `extra="forbid", strict=True`，往响应里加 `game_id` / 文件路径 / prompt 片段会直接 422 而不是静默泄漏
+- **生效时机是「下一局」**：`GameService._latch_capture_request()` 只在建局时解析一次开关并记进 `_capture_requests`；`_prompt_capture()` 按 `capture_enabled_for_game(requested, marker_exists)` 决定是否开文件，即 `effective = requested_at_start or games/<id>/llm_prompts.jsonl 存在`。**恢复路径不解析开关**，所以中断期间把开关打开不会让旧局从半局开始采集；关掉开关后正在跑的对局仍会写到自己结束（一局要么全采要么不采）。`llm_prompts.jsonl` 本身既是语料文件也是这个闩锁，且**不依赖 checkpoint**
+- **三条红线**：采集开关**不进** `GameConfig` / checkpoint / `PointKey` / `_MODEL_PARAMETER_FIELDS`；恢复路径不读开关；开关端点响应是闭集。`data/settings.json` 与 `data/games/<id>/llm_prompts.jsonl` 都由 `backend/.gitignore` 的 `data/*` 覆盖，不入库
+- 前端：`store/appSettingsStore.ts` + `components/settings/SettingsPage.tsx`（AppBar「设置」，路由 `/settings`）。它与模型配置 UI 一样**不在覆盖率白名单**内，但有自己的测试；页面按 `source` 三态渲染副标题，并在 `source === 'ui'` 时提供「恢复为跟随环境变量」（即 `setEnabled(null)`）
+
 ## 持久化与存档
 
 - **事实源**：`backend/data/wolfkiller.sqlite3` 保存对局、版本化检查点、领域事件、公开事件/快照、模型请求/尝试、运行时计时、benchmark 计划/条目/报告、大厅扁平文件夹（`game_folders` / `game_folder_items`）与派生任务。schema 版本 2 起支持增量迁移；`game_folder_items.game_id` 不外键到 `games`，以便 JSONL 旧档也能归档。外键开启，写入由单写线程串行化；每次规则步骤以 `BEGIN IMMEDIATE` 事务同时提交检查点、事件、消费的模型请求和派生任务，`step_key` 与 digest 提供幂等冲突检测。
 - **WAL**：连接使用 SQLite WAL，`synchronous=FULL`，并设置 5 秒 busy timeout。WAL 提升并发读取能力，但 `-wal` 不是独立备份；运行时只复制主 `.sqlite3` 文件可能漏掉尚未 checkpoint 的已提交事务。
 - **兼容数据**：`GameLogger` 的 JSONL 日志、`GameManifest` 的 `games/index.json`、对话日志和逐座位记忆仍服务于旧格式/审计链。新运行时的恢复判断以 SQLite 检查点及其 SHA-256 digest 为准，不能用旧 JSON 文件覆盖数据库事实。
+- **训练语料采集**（默认开，见「应用设置」）：`data/games/<id>/llm_prompts.jsonl` 每行一条 `(prompt, completion)` 记录（`build_prompt_record` 的 `data.messages` 是模型真实收到的 system + user 原文），与 `game.log` / `llm_calls.log` 同目录、只追加、不自动清理；四条链路（speech / contract_action / pipeline_action / night）在耐久提交之后、且**只在本次不是重放**时 flush 一次，所以断点续跑不会重复写语料。落盘只有 prompt 正文与轮次/阶段/座位/模型名/请求 ID 等元数据，**API Key 与自定义请求头从不进入该文件**。`data/settings.json` 只存应用级开关的值，不进快照、不进任何 DTO。
 - **启动恢复**：进程启动会把原先 `running` 的执行标为 `interrupted`，把 `in_flight` 模型尝试标为 `unknown`；不会假定外部模型请求未执行。只有可恢复且版本兼容的对局/benchmark 才能通过显式 resume 继续，恢复重试也受持久化次数约束。
 - **恢复兼容性**（`persistence/recovery_compat.py`）：检查点里的 `registry_digest` 是**冻结身份**，不是"当前代码"的副本——journal 键（`PointKey`）、请求 token（`window_id` / `action_key`）与角色资源 setup marker 都用建局时的 digest 盖章（`core/registry_identity.py` 的 `frozen_registry_digest()`），所以之后新增或修改角色**不会**把已提交的工作重新编号。编解码器因此只校验文档**自洽**（根 digest 与 `state.registry_digest` 一致、每个 journal 键与根 digest 一致；不一致才是真损坏），"代码变了还算不算同一局"交给恢复入口一次性裁决 `assess(document, state, registry)`，四个等级：
   - `exact`：注册表与建局时一致。
@@ -182,6 +194,6 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 
 ## 关键设计约束
 
-- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
+- **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问。开关状态本身**不是**私有字段（它描述进程配置，不是任何座位的隐藏信息），但 `/api/settings/prompt-capture` 的响应体仍然闭集（`enabled` + `source`），不允许携带 prompt 内容 / `game_id` / 文件路径
 - **测试门禁**：后端 pytest 全量（`tests` + `app/` 内嵌测试）+ `--cov-fail-under=100`（statement/branch）。六个扩展样例（`test_guard_extension.py` / `test_idiot_extension.py` / `test_werewolf_king_extension.py` / `test_knight_extension.py` / `test_wolf_beauty_extension.py` / `test_old_drunkard_extension.py`；`test_catalog_routes.py` 断言 11 角色 6 预设）；`test_guard_extension.py` **不再**校验五个核心文件的 blob 哈希。
 - **核心源码门禁**：修改 `game_engine.py` / `action_validator.py` / `action_resolver.py` / `prompt_builder.py` / `state_filter.py` 后需同步更新禁词/角色名测试：`tests/test_game_engine.py`、`tests/test_action_resolver.py`、`tests/test_prompt_builder.py`、`tests/test_prompt_renderer.py`。

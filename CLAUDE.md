@@ -100,6 +100,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - `GameService` 将环境默认与已存配置按数量独立随机落座，并为每个座位创建一个稳定客户端；角色工厂、Scheduler、`NightDirector`（`core/night_flow.py`）及其重试都按行为发起座位路由
 - `GET /api/games/{id}` 与观众 `GET /api/games/{id}/snapshot` 返回无密钥 v2 `model_snapshot`；前端 `SeatMap` 悬停卡按座位展示所用模型（旧档无 `seats` 时显示「未知」），不把模型字段打进 `PublicPlayerState`
 - 前端：`components/create/CreateGameWizard.tsx` 两步向导（人数身份配置 → 多模型数量分配）；`components/models/ModelConfigPage.tsx` 管理页（`ModelConfigDialog.tsx` 含「接口协议」选择器，选项清单在 `providerProfiles.ts`，需与后端 `model_schemas.ProviderProfileId` 同步）；`store/modelConfigStore.ts`
+- **应用设置（`stores/app_settings_store.py` + `data/settings.json`）**：应用级操作开关，与模型配置分开存（`models.json` 存 `api_key_encrypted`，混进去还会让设置项以「一条模型配置」的身份出现在 `GET /api/models`）。落盘 `{"version": 1, "settings": {...}}`，四种损坏回落「未设置」+ 告警，写盘 tmp + `os.replace`，**永不对调用方抛异常**；**不做通用 KV**（每个设置一对类型化方法）。现有唯一开关是**训练语料采集**：`GET/PATCH /api/settings/prompt-capture`（`api/settings_schemas.py` + `api/routes/settings_routes.py`，响应闭集 `enabled` + `source`，严格布尔，`null` = 清除界面设置），裁决链只有一份实现 —— `core/prompt_capture.py` 的 `resolve_capture_setting(stored)` = UI > `PROMPT_CAPTURE_ENABLED` > 默认（开），路由与 `GameService` 各有一处调用并互相断言。前端 `store/appSettingsStore.ts` + `components/settings/SettingsPage.tsx`（AppBar「设置」→ `/settings`），与模型配置 UI 一样不进覆盖率白名单但有自己的测试
 
 ### 大厅与评测隔离
 
@@ -139,7 +140,8 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 ## 注意事项
 
 - `backend/.env` 含 API key，已被 `backend/.gitignore` 忽略、**未提交到仓库**；保持该状态，不要提交或推送
-- 游戏数据存储在 `backend/data/`：SQLite 事实库 `wolfkiller.sqlite3`，以及 `games/<id>/` 下的 JSONL 日志和角色记忆
+- 游戏数据存储在 `backend/data/`：SQLite 事实库 `wolfkiller.sqlite3`，以及 `games/<id>/` 下的 JSONL 日志和角色记忆。训练语料采集写 `games/<id>/llm_prompts.jsonl`，应用设置写 `data/settings.json`（两者都被 `backend/.gitignore` 的 `data/*` 覆盖）
+- **训练语料采集开关的三条红线**：(a) 开关**不进** `GameConfig` / checkpoint / `PointKey` / `_MODEL_PARAMETER_FIELDS`（它是进程配置，不是对局状态）；(b) 生效时机是**下一局** —— `GameService._latch_capture_request()` 只在建局时解析一次开关，**恢复路径不解析**，`games/<id>/llm_prompts.jsonl` 的存在与否就是那个耐久闩锁（所以关掉开关后正在跑的对局仍会写到自己结束，这是故意的，不是 bug）；(c) `/api/settings/prompt-capture` 的响应是**闭集**（只有 `enabled` + `source`），不得携带 prompt 内容 / `game_id` / 文件路径，请求体是严格布尔（`"yes"` / `1` → 422）
 - 后端 Python 需要 >= 3.11；前端 Node.js >= 20.19
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断。运行时备份请用 SQLite `.backup`，不要只拷主 `.sqlite3` 文件
 - 环境默认 LLM 配置在 `backend/.env`（含 API key、model、temperature 等），已存模型由模型管理页维护；`LLM_MODELS` 仅兼容首个非空值且已弃用
