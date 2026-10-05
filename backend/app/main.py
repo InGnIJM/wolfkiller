@@ -59,6 +59,7 @@ benchmark_service = BenchmarkService(
     game_pauser=benchmark_game_executor.pause,
     game_canceller=benchmark_game_executor.cancel,
     owned_game_deleter=game_service.delete_benchmark_owned_game,
+    data_dir=str(data_dir),
 )
 ws_handler = WSHandler(ws_manager=ws_manager, event_bus=event_bus)
 

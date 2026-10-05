@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import random
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -15,6 +16,7 @@ from app.persistence.repository import (
     GameReferencedByBenchmark, GameRepository, InvalidExecutionTransition,
 )
 from app.services.benchmark_metrics import BenchmarkMetrics
+from app.services.game_summary import read_game_summary
 
 
 ItemExecutor = Callable[[Mapping[str, object]], Awaitable[tuple[str, str, str | None]]]
@@ -56,8 +58,12 @@ class BenchmarkService:
         game_pauser: GameControl | None = None,
         game_canceller: GameControl | None = None,
         owned_game_deleter: OwnedGameDeleter | None = None,
+        data_dir: str | None = None,
     ) -> None:
         self._repository = repository
+        # Where the per-game ``summary.json`` files live. Explicit in production;
+        # the environment default keeps test constructions working.
+        self._data_dir = data_dir or os.getenv("WOLFKILLER_DATA_DIR", "data")
         self._item_executor = item_executor
         self._game_pauser = game_pauser
         self._game_canceller = game_canceller
@@ -460,9 +466,18 @@ class BenchmarkService:
             })
             requests.extend(self._repository.list_model_requests(game_id))
             attempts.extend(self._repository.list_model_attempts(game_id))
+        # Decision quality lives in each game's ``summary.json`` (the durable log
+        # digest), not in the fact tables: read them best-effort so a game without
+        # one degrades to "no samples" instead of failing the whole report.
+        summaries = [
+            summary for summary in (
+                read_game_summary(self._data_dir, str(game.get("game_id")))
+                for game in games
+            ) if summary is not None
+        ]
         report = BenchmarkMetrics.compute(
             games=games, items=items, model_requests=requests,
-            model_attempts=attempts,
+            model_attempts=attempts, summaries=summaries,
         )
         report["input_digest"] = hashlib.sha256(_canonical({
             "metrics_digest": report["input_digest"], "run_status": run["status"],
@@ -516,6 +531,8 @@ class BenchmarkService:
                 "paired_latency_ms": report["summary"]["paired_latency_ms"],
             },
             "data_quality": {
+                "summaries_available": len(summaries),
+                "summaries_missing": len(games) - len(summaries),
                 "unknown_token_attempts": unknown_tokens,
                 "known_token_attempts": len(attempts) - unknown_tokens,
                 "interruptions": sum(

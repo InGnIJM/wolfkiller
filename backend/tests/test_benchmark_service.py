@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import Counter, defaultdict
 from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
@@ -220,7 +221,7 @@ def test_report_uses_frozen_database_facts_and_is_reproducible(tmp_path) -> None
         report2 = service.generate_report(run["run_id"])
         assert report2 == report1
         assert report1["input_digest"] == report2["input_digest"]
-        assert report1["metric_version"] == "v2"
+        assert report1["metric_version"] == "v3"
         assert report1["planned_count"] == 1
         assert report1["terminal_count"] == 1
         assert report1["completed_count"] == 1
@@ -230,6 +231,88 @@ def test_report_uses_frozen_database_facts_and_is_reproducible(tmp_path) -> None
         assert report1["metrics"]["interruption_rate"] == 0.0
         assert report1["uncertainty"]["mixed_arena"] == []
         assert report1["uncertainty"]["paired_latency_ms"]["pair_count"] == 0
+    finally:
+        repository.close()
+
+
+def _write_game_summary(tmp_path, game_id: str = "game") -> None:
+    """Write the per-game ``summary.json`` the decision metrics read."""
+    directory = tmp_path / "games" / game_id
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "summary.json").write_text(json.dumps({
+        # 与真实 summary.json 同形：座位 → {role, camp}
+        "roles": {
+            "1": {"role": "wolf-killer-werewolf", "camp": "werewolf"},
+            "2": {"role": "wolf-killer-seer", "camp": "good"},
+            "3": {"role": "wolf-killer-villager", "camp": "good"},
+        },
+        "rounds": {
+            "1": {
+                "night_actions": [
+                    {"event": "SEER_CHECK", "target_seat": 1, "result": "werewolf"},
+                    {"event": "WEREWOLF_KILL", "target_seat": 3},
+                ],
+                "votes": [{"seat": 3, "target": 1}],
+                "exiled": 1,
+            },
+        },
+    }), encoding="utf-8")
+
+
+def _completed_run(tmp_path, *, client_request_id: str):
+    """A one-game run whose single item is already attached and finished."""
+    repository = GameRepository(tmp_path)
+    service = BenchmarkService(repository, data_dir=str(tmp_path))
+    run = service.create_run({
+        "name": "arena", "mode": "mixed_arena", "seed": 7, "games": 1,
+        "scenario": {"scenario_id": "tiny", "role_counts": {"villager": 1}},
+        "models": [{"model_config_id": "model-a"}],
+    }, client_request_id=client_request_id)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="completed",
+        source="benchmark", benchmark_run_id=run["run_id"], model_snapshot=[],
+    )
+    repository.transition_benchmark(run["run_id"], expected=("draft",), target="running")
+    item = repository.claim_next_benchmark_item(run["run_id"])
+    repository.attach_benchmark_game(run["run_id"], item["item_index"], "game")
+    repository.finish_benchmark_item(
+        run["run_id"], item["item_index"], status="completed", terminal_reason=None,
+    )
+    return repository, service, run["run_id"]
+
+
+def test_report_carries_decision_quality_from_the_game_summaries(tmp_path) -> None:
+    _write_game_summary(tmp_path)
+    repository, service, run_id = _completed_run(tmp_path, client_request_id="decision")
+    try:
+        report = service.generate_report(run_id)
+
+        decision = report["summary"]["decision"]
+        assert decision["seer_check_hit_rate"] == 1.0   # 验中唯一的狼
+        assert decision["wolf_kill_god_rate"] == 0.0    # 刀口是平民
+        assert decision["exile_wolf_rate"] == 1.0       # 放逐了那条狼
+        assert decision["samples"]["games"] == 1
+        assert decision["samples"]["good_votes"] == 1
+        assert report["data_quality"]["summaries_available"] == 1
+        assert report["data_quality"]["summaries_missing"] == 0
+    finally:
+        repository.close()
+
+
+def test_report_degrades_when_a_summary_is_missing_or_corrupt(tmp_path) -> None:
+    directory = tmp_path / "games" / "game"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "summary.json").write_text("{not json", encoding="utf-8")
+    repository, service, run_id = _completed_run(tmp_path, client_request_id="broken")
+    try:
+        report = service.generate_report(run_id)
+
+        decision = report["summary"]["decision"]
+        # 坏明细既不能让报告失败，也不能冒充「有样本」。
+        assert decision["seer_check_hit_rate"] is None
+        assert decision["samples"]["games"] == 0
+        assert report["data_quality"]["summaries_available"] == 0
+        assert report["data_quality"]["summaries_missing"] == 1
     finally:
         repository.close()
 
@@ -290,6 +373,8 @@ def test_report_digest_tracks_late_usage_and_recovery_quality(tmp_path) -> None:
         assert after["input_digest"] != before["input_digest"]
         assert after["summary"]["attempts"]["token_usage"]["known_total_tokens"] == 12
         assert after["data_quality"] == {
+            "summaries_available": 0,
+            "summaries_missing": 1,
             "unknown_token_attempts": 0,
             "known_token_attempts": 1,
             "interruptions": 1,
