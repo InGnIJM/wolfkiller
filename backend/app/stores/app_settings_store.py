@@ -65,6 +65,10 @@ class JsonAppSettingsStore:
         try:
             with open(self._path, "r", encoding="utf-8") as handle:
                 raw = json.load(handle)
+        except FileNotFoundError:
+            # Normal state, not a problem: nobody has set anything yet. Warning
+            # here would put a scary line in the log of every fresh install.
+            return {}
         except OSError as error:
             logger.warning("Failed to load app settings, starting empty: %s", error)
             return {}

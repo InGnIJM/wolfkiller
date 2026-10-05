@@ -36,13 +36,24 @@ def _reset_singleton(monkeypatch):
 # ── 读写 ────────────────────────────────────────────────────────
 
 
-def test_missing_file_reads_as_unset(tmp_path, caplog):
+def test_missing_file_reads_as_unset_without_a_warning(tmp_path, caplog):
     store = JsonAppSettingsStore(str(tmp_path / "settings.json"))
 
     with caplog.at_level(logging.WARNING):
         assert store.get_prompt_capture_enabled() is None
 
-    assert caplog.records, "a missing file must not fail silently"
+    # 全新安装就是这个状态；在这里告警等于每局都在日志里吓人一跳。
+    assert caplog.records == []
+
+
+def test_unreadable_file_warns_and_still_reads_as_unset(tmp_path, caplog):
+    path = tmp_path / "settings.json"
+    path.mkdir()  # 目录冒充文件：OSError 但不是「还没建文件」
+
+    with caplog.at_level(logging.WARNING):
+        assert JsonAppSettingsStore(str(path)).get_prompt_capture_enabled() is None
+
+    assert caplog.records
 
 
 def test_roundtrip_true_then_false_lands_on_disk(tmp_path):
