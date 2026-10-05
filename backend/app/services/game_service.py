@@ -27,6 +27,7 @@ from app.agents.llm_client import (
     LLMClient, LLMClientConfig, derive_strict_base_url, env_default_client_config,
 )
 from app.agents.providers.registry import ProviderRegistry
+from app.stores.app_settings_store import get_app_settings_store
 from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
@@ -42,6 +43,7 @@ from app.core.prompt_capture import (
     PromptCapture,
     PromptSink,
     build_prompt_record,
+    capture_enabled_for_game,
     prompt_capture_marker_exists,
     resolve_capture_setting,
 )
@@ -580,6 +582,10 @@ class GameService:
         # never reach a checkpoint, because the orchestration codec matches field
         # sets exactly and any extra field stops old games from resuming.
         self._prompt_captures: dict[str, PromptCapture | None] = {}
+        # What the operator switch said when this game was created. Recovery
+        # paths never write here, which is what keeps an interrupted game from
+        # starting to capture in the middle (see ``_latch_capture_request``).
+        self._capture_requests: dict[str, bool] = {}
         # The pipeline provider runs on an ``asyncio.to_thread`` worker while the
         # speech and vote paths run on the event loop, so this map is touched from
         # two threads. Two handles for one game would mean two descriptors and two
@@ -1535,6 +1541,9 @@ class GameService:
                     engine, model_snapshot,
                 )
 
+            # Resolve the training-corpus switch once, for this new game only.
+            # Recovery paths never latch, so they cannot start capturing mid-way.
+            self._latch_capture_request(game_id)
             task = asyncio.create_task(engine.start())
             self._tasks[game_id] = task
             if self.repository is not None:
@@ -2123,31 +2132,41 @@ class GameService:
     def _prompt_capture_setting(self) -> object:
         """Stored operator override for prompt capture, or ``None``.
 
-        The settings store is wired in a later change; until then the environment
-        switch is the only input, which is also the documented fallback.
+        Read when a game is created, never on the recovery paths — see
+        :meth:`_latch_capture_request`. The environment switch remains the
+        fallback whenever no interface setting exists.
         """
-        return None
+        return get_app_settings_store().get_prompt_capture_enabled()
+
+    def _latch_capture_request(self, game_id: str) -> None:
+        """Resolve the operator switch for a brand-new game and latch it.
+
+        Only the creation path calls this. A recovered game keeps whatever its
+        marker says, so flipping the switch cannot make an interrupted game
+        start capturing half-way through.
+        """
+        enabled, _source = resolve_capture_setting(self._prompt_capture_setting())
+        with self._prompt_captures_lock:
+            self._capture_requests[game_id] = enabled
 
     def _prompt_capture(self, game_id: str) -> PromptCapture | None:
         """Return this game's capture handle, deciding the switch once per game.
 
-        Capture latches at the game's first decision: a game that started with
-        capture on keeps capturing across a resume even if the switch is later
-        flipped off, and a game that started with it off never starts mid-way.
-        Re-reading the live switch would produce half-captured games, which
-        cannot be turned into complete training pairs.
+        Capture latches at game creation: a game that started with capture on
+        keeps capturing across a resume even if the switch is later flipped off,
+        and a game that started with it off never starts mid-way. The latched
+        request plus the on-disk marker are the two halves of that decision.
         """
         # The whole check-then-create runs under the lock: two threads racing here
         # would otherwise each open their own descriptor on the same file.
         with self._prompt_captures_lock:
             if game_id in self._prompt_captures:
                 return self._prompt_captures[game_id]
-            enabled, _source = resolve_capture_setting(self._prompt_capture_setting())
-            capture = (
-                PromptCapture(self.data_dir, game_id)
-                if enabled or prompt_capture_marker_exists(self.data_dir, game_id)
-                else None
+            requested = self._capture_requests.get(game_id, False)
+            enabled = capture_enabled_for_game(
+                requested, prompt_capture_marker_exists(self.data_dir, game_id),
             )
+            capture = PromptCapture(self.data_dir, game_id) if enabled else None
             self._prompt_captures[game_id] = capture
             return capture
 
@@ -2155,6 +2174,9 @@ class GameService:
         """Release this game's capture descriptor. Idempotent."""
         with self._prompt_captures_lock:
             capture = self._prompt_captures.pop(game_id, None)
+            # The latch is runtime-only too: once the handle is gone, the on-disk
+            # marker is the only thing that may still turn capture on.
+            self._capture_requests.pop(game_id, None)
         if capture is not None:
             capture.close()
 

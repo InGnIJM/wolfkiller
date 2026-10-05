@@ -13,7 +13,9 @@ matters here is the *wiring*:
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -21,12 +23,15 @@ import app.services.game_service as service_module
 from app.agents.llm_client import env_default_client_config
 from app.api.websocket.ws_handler import WSManager
 from app.core.event_bus import EventBus
+from app.core.night_flow import NightDirector
 from app.core.prompt_capture import PromptSink
 from app.models.contracts import (
     AcceptedAction, ActionCommand, ActionContract, ActionRequest,
 )
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+from app.models.pipeline import IssuedActionRequest
 from app.persistence.repository import GameRepository
+from app.roles.registry import builtin_registry
 from app.services.game_service import GameService
 from app.services.model_invocation_service import InvocationResult
 
@@ -107,6 +112,9 @@ def test_prompt_capture_handle_latches_per_game_and_closes_once(tmp_path, monkey
     monkeypatch.setenv(CAPTURE_ENV, "1")
     service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
     try:
+        # The switch is read when the game is created, which is what this call
+        # stands in for; recovery paths never resolve it.
+        service._latch_capture_request("game")
         capture = service._prompt_capture("game")
         assert capture is not None
         assert (tmp_path / "games" / "game" / "llm_prompts.jsonl").exists()
@@ -165,6 +173,7 @@ async def test_speech_and_action_flush_respects_capture_and_replay(
     service = GameService(
         WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
     )
+    service._latch_capture_request("game")
     service._durable_contexts["game"] = {
         "storage_revision": 0, "execution_generation": 2,
     }
@@ -235,17 +244,24 @@ async def test_speech_and_action_flush_respects_capture_and_replay(
 
 
 @pytest.mark.parametrize(
-    ("capture_enabled", "reused", "expected_lines"),
+    ("capture_enabled", "marker_lines", "reused", "expected_lines"),
     [
-        ("0", False, None),
-        ("1", True, 0),
-        ("1", False, 1),
+        ("0", 0, False, None),   # 恢复路径没有 marker：不开文件
+        ("1", 0, False, None),   # 开关开着也一样 —— 恢复只认 marker（R16 回归网）
+        ("0", 1, True, 1),       # 有 marker：重放不新增行，旧行原样保留
+        ("0", 1, False, 2),      # 有 marker：新请求追加一行
     ],
 )
 def test_recovered_night_command_flush_respects_capture_and_replay(
-    tmp_path, monkeypatch, capture_enabled, reused, expected_lines,
+    tmp_path, monkeypatch, capture_enabled, marker_lines, reused, expected_lines,
 ) -> None:
     monkeypatch.setenv(CAPTURE_ENV, capture_enabled)
+    if marker_lines:
+        # A game that started capturing owns its corpus file; the file itself is
+        # the only signal a resumed game consults.
+        path = tmp_path / "games" / "game" / "llm_prompts.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"earlier": true}\n' * marker_lines, encoding="utf-8")
     service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
     state = _state_with_players()
     state.registry_digest = service._registry_snapshot.digest
@@ -303,5 +319,102 @@ def test_recovered_night_command_flush_respects_capture_and_replay(
         )
         assert _capture_lines(tmp_path) == expected_lines
         assert set(clients) == {1, 2}
+    finally:
+        asyncio.run(service.aclose())
+
+
+# ── 建局路径的两条链路（不靠默认开顺带覆盖） ──────────────────────
+#
+# 这两条以前是「顺带」被覆盖的：开关默认开，于是任何驱动夜间/流水线链路的
+# 用例都会写一个语料文件。采集改成「建局时闩锁」以后，flush 体必须由显式
+# 闩锁过的用例负责。
+
+
+class _FreshInvocations:
+    """Durable facade: run the provider inline and report a fresh result."""
+
+    @staticmethod
+    def request_digest(_request):
+        return "abcdef0123456789"
+
+    @staticmethod
+    def invoke_sync(**kwargs):
+        normalized, _usage = kwargs["provider_call"]()
+        return InvocationResult(
+            normalized_result=normalized, reused=False, attempt_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_created_game_flushes_the_night_chain(tmp_path, monkeypatch):
+    monkeypatch.setenv(CAPTURE_ENV, "1")
+    repository = GameRepository(tmp_path)
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    service._model_invocations = _FreshInvocations()
+    fake_llm = MagicMock()
+    fake_llm.invoke_json.return_value = SimpleNamespace(payload={"speak": False})
+    monkeypatch.setattr(
+        service_module, "LLMClient",
+        lambda model=None, temperature=None, config=None: fake_llm,
+    )
+    monkeypatch.setattr(service_module.GameEngine, "start", AsyncMock())
+    try:
+        game_id = await service.create_game(num_werewolves=1, num_villagers=3)
+
+        service._engines[game_id]._director._invoke(
+            [{"role": "user", "content": "x"}], "test_night", {"type": "object"}, 1,
+        )
+
+        record = json.loads(
+            (tmp_path / "games" / game_id / "llm_prompts.jsonl")
+            .read_text(encoding="utf-8"),
+        )
+        assert record["data"]["call_kind"] == "night"
+        assert record["data"]["tool_name"] == "test_night"
+        # 夜间是唯一把 messages 摘要成 request_digest 的链路，采到它就是
+        # 「训练对可以独立复核」的那条证据。
+        assert record["data"]["request_digest"]
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+def test_a_created_game_flushes_the_pipeline_chain(tmp_path, monkeypatch):
+    monkeypatch.setenv(CAPTURE_ENV, "1")
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+    service._model_invocations = _FreshInvocations()
+    service._latch_capture_request("game")
+    service._durable_contexts["game"] = {
+        "storage_revision": 0, "execution_generation": 1,
+    }
+    snapshot = builtin_registry.freeze()
+    renderer = MagicMock()
+    renderer.render.return_value = "prompt"
+    llm = MagicMock()
+    llm.invoke_action.return_value = SimpleNamespace(
+        payload={"action_type": "check", "target_seat": 2, "reasoning": "x"},
+    )
+    director = NightDirector(snapshot, lambda messages: None)
+    provider = service._command_provider(
+        snapshot, renderer, lambda seat: llm, director,
+    )
+    contract = snapshot.require("wolf-killer-seer").contracts[0]
+    request = IssuedActionRequest(
+        1, "wolf-killer-seer", contract, 0, 1, "night", "w", "k",
+    )
+    try:
+        command = provider(request, MagicMock(game_id="game"), 0)
+
+        assert command.action_type == "check"
+        record = json.loads(
+            (tmp_path / "games" / "game" / "llm_prompts.jsonl")
+            .read_text(encoding="utf-8"),
+        )
+        assert record["data"]["call_kind"] == "pipeline"
+        assert record["data"]["tool_name"] == contract.resolved_tool_name
+        # 流水线链路没有可复核的 messages 摘要，宁缺勿假。
+        assert record["data"]["request_digest"] is None
     finally:
         asyncio.run(service.aclose())
