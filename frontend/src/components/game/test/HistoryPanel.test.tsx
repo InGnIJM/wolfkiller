@@ -238,7 +238,10 @@ describe('HistoryPanel staged night event cards', () => {
       {
         ...replayEventMeta,
         event_type: 'sheriff_badge',
-        payload: { round_number: 2, from_seat: 5, to_seat: null },
+        payload: {
+          round_number: 2, from_seat: 5, to_seat: null,
+          reasoning: '9号是金水，但场上已无合适人选',
+        },
       },
     ];
     useGameStore.setState({ timeline });
@@ -248,6 +251,8 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText(/警长竞选结束，警徽流失 · 第1轮/)).toBeVisible();
     expect(screen.getByText(/2号将警徽移交给5号 · 第2轮/)).toBeVisible();
     expect(screen.getByText(/5号撕毁警徽 · 第2轮/)).toBeVisible();
+    // 警长的思考是上帝视角信息：有理由才追加，旧档没有这个字段
+    expect(screen.getByText(/（警长思考：9号是金水，但场上已无合适人选）/)).toBeVisible();
 
     fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
     expect(screen.getByText(/2号当选警长 · 第1轮/)).toBeVisible();

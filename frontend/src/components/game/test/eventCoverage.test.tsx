@@ -194,8 +194,15 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
-    what: '警徽移交',
-    event: { ...at, event_type: 'sheriff_badge', payload: { from_seat: 2, to_seat: 5, round_number: 2 } },
+    what: '警徽移交（带警长思考）',
+    event: {
+      ...at,
+      event_type: 'sheriff_badge',
+      payload: {
+        from_seat: 2, to_seat: 5, round_number: 2,
+        reasoning: '9号是金水，警徽交给他',
+      },
+    },
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {

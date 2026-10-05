@@ -302,6 +302,22 @@ describe('ActivityCard', () => {
     expect(screen.getByText('5号撕毁警徽')).toBeInTheDocument();
     cleanup();
 
+    // 有理由时多出一行「警长思考」；没有理由的旧档不能凭空多出这一行
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'sheriff_badge',
+        payload: {
+          round_number: 3, from_seat: 1, to_seat: null,
+          reasoning: '9号是金水，但场上已无合适人选',
+        },
+      },
+    ]);
+    render(<ActivityCard />);
+    expect(screen.getByText('1号撕毁警徽')).toBeInTheDocument();
+    expect(screen.getByText(/警长思考：9号是金水，但场上已无合适人选/)).toBeInTheDocument();
+    cleanup();
+
     setTimeline([
       {
         ...replayEventMeta,
