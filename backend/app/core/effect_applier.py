@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field; from types import MappingProxyType
 from typing import Mapping
 from app.models.game import Camp, GameState; from app.models.pipeline import EffectKind, GameEffect
-from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, NIGHT_SCOPED_STATUSES, settle, settle_pool, settlement_key, state_digest as _digest
+from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, NIGHT_SCOPED_STATUSES, PROTECTION_SOURCES, settle, settle_pool, settlement_key, state_digest as _digest
 from app.core.role_runtime import clone_action_counts, initialize_role_resources, record_accepted_action, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -311,7 +311,12 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
     elif kind in {EffectKind.SUBMIT_DAMAGE, EffectKind.SUBMIT_PROTECTION}:
         _int_field(payload, "amount", positive=True)
         if kind is EffectKind.SUBMIT_DAMAGE: _token_field(payload, "cause")
-        if kind is EffectKind.SUBMIT_PROTECTION and "source" in payload and payload["source"] not in {"guard", "witch_antidote"}:
+        if (kind is EffectKind.SUBMIT_PROTECTION and "source" in payload
+                and payload["source"] not in PROTECTION_SOURCES):
+            # One source of truth with ``night_settlement``: this list used to be
+            # a local copy of two names, so the Dream Weaver's ``dream`` shield —
+            # and later the Masquerade's ``dance_veil`` — was rejected at the
+            # write boundary while its settlement tier happily understood it.
             raise EffectRejected("invalid protection source")
     else:
         try:
@@ -460,6 +465,11 @@ class EffectApplier:
             seen = {death["seat"] for death in pool_deaths}
             merged.extend(death for death in deaths if death["seat"] not in seen)
             deaths = tuple(merged)
+            # The pool verdict is not part of ``settle``'s damage bookkeeping, so
+            # its dead have to be folded into the alive map the caller applies —
+            # otherwise the seat has a death report and is still standing.
+            for death in pool_deaths:
+                resulting_alive[death["seat"]] = False
             simulated.pending_damage = (); simulated.pending_protection = (); simulated.revision += 1
             for seat in sorted(swept):
                 # Plain ``set``: the runtime declares plain sets and the next

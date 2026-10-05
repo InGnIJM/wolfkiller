@@ -240,3 +240,53 @@ def test_legacy_dream_weaver_has_no_daytime_skill() -> None:
 def test_spec_allows_every_effect_the_hooks_produce(kind: EffectKind) -> None:
     assert kind in DREAM_WEAVER_SPEC.allowed_effects
     assert kind in DREAM_CONTRACT.allowed_effects
+
+
+def test_the_weave_lands_through_a_real_scheduler_run() -> None:
+    """端到端回归：摄梦人的守护必须真的写进 pending_protection 并能挡毒。
+
+    此前没有任何测试把 `source="dream"` 送过 `EffectApplier`，而写入口的来源白名单
+    漏了它 —— 真跑一局时摄梦人第一夜就会把调度点打成失败。
+    """
+    from app.core.action_resolver import ActionResolver
+    from app.core.action_validator import ActionValidator
+    from app.core.context_projector import ContextProjector
+    from app.core.effect_applier import EffectApplier
+    from app.core.night_settlement import settle
+    from app.core.scheduler import Scheduler
+    from app.models.game import GamePhase, GameState, PlayerState
+    from app.models.pipeline import ActionCommand, SchedulePoint
+    from app.roles.registry import RegistrySnapshot, RoleRegistry
+    from app.roles.villager import VILLAGER_SPEC
+
+    registry = RoleRegistry()
+    for spec in (DREAM_WEAVER_SPEC, VILLAGER_SPEC):
+        registry.register_pipeline(spec)
+    snapshot: RegistrySnapshot = registry.freeze()
+    game = GameState(
+        "g", phase=GamePhase.NIGHT, round_number=1,
+        players={
+            1: PlayerState(1, DREAM_WEAVER_SPEC.role_id, "good"),
+            2: PlayerState(2, VILLAGER_SPEC.role_id, "good"),
+        },
+    )
+
+    def provider(request, context, attempt):
+        return ActionCommand(action_type="dream", target_seat=2, reasoning="护一手")
+
+    scheduler = Scheduler(
+        snapshot, ContextProjector(), ActionValidator(), ActionResolver(),
+        EffectApplier(), provider,
+    )
+    scheduler.run_point(game, SchedulePoint.NIGHT_ACTION)
+
+    assert game._pipeline_runtime.pending_protection == (
+        {"target": 2, "amount": 1, "source": "dream"},
+    )
+    deaths, alive, _ = settle(
+        game._pipeline_runtime.pending_damage,
+        game._pipeline_runtime.pending_protection,
+        set(game.players), {seat: player.is_alive for seat, player in game.players.items()},
+        1, game._pipeline_runtime.role_resources,
+    )
+    assert deaths == () and alive[1] is True

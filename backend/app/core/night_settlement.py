@@ -28,7 +28,10 @@ _DOUBLE_SAVE_SOURCES = frozenset({"guard", "witch_antidote"})
 #: weave is the first of these. Such a shield also stops the knife, so the wolf
 #: total is measured against both tiers together.
 _ANY_DAMAGE_SOURCES = frozenset({"dream"})
+#: Public alias: the effect write boundary validates against this list, so
+#: a shield tier added here can never be rejected as an unknown source.
 _PROTECTION_SOURCES = _WOLF_ONLY_SOURCES | _ANY_DAMAGE_SOURCES
+PROTECTION_SOURCES = _PROTECTION_SOURCES
 
 #: A seat that declares this marker shrugs off *every* lethal night effect —
 #: the wolf kill, the poison and anything else that settles here. Unlike

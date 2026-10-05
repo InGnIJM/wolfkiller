@@ -1192,3 +1192,30 @@ def test_commit_night_rejects_a_corrupt_pool_status_mapping() -> None:
     s = _night_state(seat2={object()})  # type: ignore[arg-type]
     with pytest.raises(EffectRejected):
         EffectApplier().commit_night(s, round_number=1)
+
+
+@pytest.mark.parametrize("source", ["guard", "witch_antidote", "dream", "dance_veil"])
+def test_every_settlement_shield_tier_is_accepted_at_the_write_boundary(source) -> None:
+    """写入边界与结算档共用同一份来源清单。
+
+    这里曾经是两份：`effect_applier` 自己写了 `{guard, witch_antidote}`，而
+    `night_settlement` 的 any-damage 档还有 `dream` —— 于是摄梦人的守护在真正跑局时
+    被写入口拒掉（hook 级测试全绿，端到端没人跑过）。现在两处共用一个常量。
+    """
+    s = state()
+    effects = batch([
+        (EffectKind.SUBMIT_PROTECTION, {"target": 2, "amount": 1, "source": source}, 2),
+    ], visibility=("PUBLIC",))
+    EffectApplier().apply(s, effects, permission())
+    assert s._pipeline_runtime.pending_protection == (
+        {"target": 2, "amount": 1, "source": source},
+    )
+
+
+def test_an_unknown_shield_source_is_still_rejected() -> None:
+    s = state()
+    effects = batch([
+        (EffectKind.SUBMIT_PROTECTION, {"target": 2, "amount": 1, "source": "bogus"}, 2),
+    ], visibility=("PUBLIC",))
+    with pytest.raises(EffectRejected, match="invalid protection source"):
+        EffectApplier().apply(s, effects, permission())
