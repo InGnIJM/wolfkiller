@@ -456,6 +456,24 @@
   chat card and the chronicle both print the plan (and the absent case is
   asserted too).
 
+## 决策提示词缺上下文，与「理由被解析后丢掉」是一对
+- Trigger: 一个模型决策事后看起来毫无道理（实战里预言家验出 9 号金水、六秒后却
+  撕了警徽，全场按「撕徽＝查杀」把金水读成狼）。Action: 分两半查，不要只补提示词。
+  (1) **提示词里有没有做这个决策所需的事实**：`badge_prompt` 是唯一不调
+  `_context_block` 的警长提示词，出局警长因此看不到 `你的私有事实：查验9号：好人`，
+  规则里「预言家可以用交徽方向传递查验结果」就落不了地 —— 用真实 `EffectApplier`
+  记一条 `private_checks` 再渲染提示词，是唯一能钉住这行的测试写法。
+  (2) **模型给的理由有没有落盘**：工具 schema 把 `reasoning` 列为必填，但
+  `parse_badge` 只读 `action_type`/`target_seat`，理由解析完就丢，所以事后完全无法
+  追溯。只修 (2) 能看到原因却治不好决策，只修 (1) 治好了决策但下次出问题依旧查不到
+  原因 —— 两半要一起做，并且理由只进观众流（进玩家提示词等于直接公开验人结果）。
+- Trigger: 要把只存在于引擎内存的一次性文本送进观众流。Action: 照 `_pending_narration`
+  的样子做 —— 提交前写槽位、`_checkpoint_domain_events` 的 label 分支读槽位、槽位
+  **不进**编排编解码器（字段集精确匹配），且**不要把内容塞进 step label**：label 是
+  续跑键，形状一变在跑的对局全部作废。payload 按「存在才加键」写（可选字段），并在
+  `_AUDIENCE_ACTION_OPTIONAL` 与公开 DTO 同时按可选处理，否则精确字段集判定会把所有
+  旧记录整条丢掉。
+
 ## 持久化身份里不要放「当前代码」的 digest
 - Trigger: any durable key or idempotency token (journal key, request
   `window_id`/`action_key`, a resource-setup marker) is derived from something
