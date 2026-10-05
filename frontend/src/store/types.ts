@@ -490,6 +490,15 @@ export interface ModelTestResult {
   error: string | null;
 }
 
+/**
+ * 「训练语料采集」开关的生效值与来源。
+ * `ui` = 本页开关覆盖；`env` = 环境变量 `PROMPT_CAPTURE_ENABLED`；`default` = 内建默认（开）。
+ */
+export interface PromptCaptureSetting {
+  enabled: boolean;
+  source: 'default' | 'env' | 'ui';
+}
+
 export interface RoleCatalogItem {
   role_id: string;
   display_name: string;

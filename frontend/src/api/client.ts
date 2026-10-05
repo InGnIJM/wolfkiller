@@ -3,7 +3,7 @@ import type {
   BenchmarkItemsPage, BenchmarkReport, BenchmarkRun, BenchmarkRunList,
   FieldConstraints, GameFolder, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
   ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
-  ModelTestResult, ProviderProfileId, PublicGameState, RoleCatalogItem,
+  ModelTestResult, PromptCaptureSetting, ProviderProfileId, PublicGameState, RoleCatalogItem,
   WitchSelfSavePolicy,
 } from '../store/types';
 
@@ -314,6 +314,26 @@ export async function updateModel(id: string, input: ModelConfigInput): Promise<
 export async function deleteModel(id: string): Promise<void> {
   const res = await fetch(`${getApiBase()}/api/models/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`Delete model failed: ${res.status}`);
+}
+
+/** 训练语料采集开关的生效值（`GET /api/settings/prompt-capture`）。 */
+export async function fetchPromptCaptureSetting(): Promise<PromptCaptureSetting> {
+  const res = await fetch(`${getApiBase()}/api/settings/prompt-capture`);
+  if (!res.ok) throw new Error(`Fetch prompt capture setting failed: ${res.status}`);
+  return res.json();
+}
+
+/** 写界面设置；`enabled = null` 表示清除界面覆盖，回落环境变量 / 内建默认。 */
+export async function updatePromptCaptureSetting(
+  enabled: boolean | null,
+): Promise<PromptCaptureSetting> {
+  const res = await fetch(`${getApiBase()}/api/settings/prompt-capture`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`Update prompt capture setting failed: ${res.status}`);
+  return res.json();
 }
 
 export async function testModelConnection(input: {
