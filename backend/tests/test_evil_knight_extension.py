@@ -99,13 +99,15 @@ def test_instructions_name_every_ability() -> None:
 
 
 def test_instructions_state_the_real_reflect_order() -> None:
-    """反伤是被动的：谁先动手谁出局，而引擎里女巫一定在预言家之前。
+    """同夜同验同毒时**查验先结算**，所以预言家出局、女巫不会出局。
 
-    模型必须知道这个顺序，否则算不清「毒我 = 换掉女巫」和「验我 = 换掉预言家」。
+    这是官方手册的确定结局（板子规则三处逐字重复）。模型必须知道它，否则算不清
+    「毒我 = 换掉女巫」和「验我 = 换掉预言家」这两笔账 —— 同夜命中时只有前者的
+    反面成立：被验才换得掉预言家，被毒要等到当夜没人验才换得掉女巫。
     """
     text = EVIL_KNIGHT_SPEC.instructions
-    assert "女巫在预言家之前" in text
-    assert "女巫先出局" in text
+    assert "查验先结算" in text
+    assert "预言家先出局、女巫不会出局" in text
     assert "自动触发" in text
 
 
