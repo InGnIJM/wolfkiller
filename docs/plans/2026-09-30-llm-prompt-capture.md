@@ -3,7 +3,7 @@
 > 目标：在现有日志机制之上，把「模型真实收到的 prompt 原文」落盘，形成 `(prompt, completion)` 训练对，用于后续基于 4060 8G 微调小模型替代 API 模型。
 > 硬约束：零行为影响 / 不破坏断点续跑 / 不改 `parameters_digest` / 不泄漏密钥 / 失败无害 / 可开关 / 不阻塞事件循环。
 >
-> 状态：**采集侧已实现，开关与 UI 未实现**（收尾时补记，见下方「实现现状」）。
+> 状态：**已全部实现**（采集链路 C1/C2′/C3/C4′/C5 → C7/C8/C9/C10 → C11/C12/C13 → C6/C14 文档同步）。实现现状见下方。
 > 所有行号基于 `main` @ `16810d0` 实测。
 
 ---
@@ -25,18 +25,33 @@
 `appSettingsStore.ts` / `SettingsPage.tsx` / `/settings` 路由，以及 `AGENTS.md` / `CLAUDE.md` /
 `docs/architecture.md` 三处文档同步。
 
-**当前开关只有环境变量**：`GameService._prompt_capture_setting()` 是返回 `None` 的桩，
-源码注释写明 *"The settings store is wired in a later change"*。因此
-「一局要么全采要么不采」目前由 `prompt_capture_marker_exists()` 这个闩锁保证：
-建局按 `resolve_capture_setting()` 决定，恢复时只要 `games/<id>/llm_prompts.jsonl` 存在就继续采。
+> ✅ **以上已全部补齐**（本轮收尾）：`app_settings_store.py`（`data/settings.json`，四种损坏回落、
+  原子写、惰性单例）、`settings_schemas.py` + `settings_routes.py`（`GET/PATCH /api/settings/prompt-capture`，
+  严格布尔、响应闭集 `{enabled, source}`）、`main.py` 挂载、前端 `appSettingsStore.ts` +
+  `components/settings/SettingsPage.tsx` + `/settings` 路由与 AppBar「设置」按钮，以及三份文档。
+  测试：`tests/test_app_settings_store.py`（17）、`tests/test_settings_routes.py`（17）、
+  `tests/test_game_service_prompt_capture_settings.py`（11）、前端 23 例。
+
+**开关语义（已按 §A.4.1 落地）**：`GameService._latch_capture_request()` 只在**建局**时解析
+`resolve_capture_setting()` 并记进 `_capture_requests`；`_prompt_capture()` 用
+`capture_enabled_for_game(requested, marker_exists)` 决定，即
+`effective = requested_at_start or llm_prompts.jsonl 存在`。**恢复路径不调 `_latch_capture_request`**，
+所以「中断期间把开关打开」不会让旧局从半局开始采集（§A.10 的 R16）；
+`_close_prompt_capture()` 连闩锁一起释放，长进程不会为跑过的每一局留字典项。
 
 **实现形状偏差**（相对本方案初稿）：
 
 1. C2′ 计划把 `resolve_capture_setting` / `capture_enabled` 放在 `app/config.py`，实际与采集模块
-   同住在 `app/core/prompt_capture.py`。
+   同住在 `app/core/prompt_capture.py`（**唯一实现**这条不变：路由与服务都调它，有交叉断言测试）。
 2. C4′ 计划让 `GameEngine` 持有采集句柄，实际句柄按对局缓存在
-   `GameService._prompt_captures`（`_prompt_capture()` 惰性创建、`_close_prompt_capture()` 释放）。
-3. C8 的「恢复一律传 `False`」没有实现成入参，语义由上面的 marker 闩锁承担。
+   `GameService._prompt_captures`（`_prompt_capture()` 惰性创建、`_close_prompt_capture()` 释放）；
+   §A.4.1 的 `requested_at_start` 由 `GameService._capture_requests` 承担。
+3. C8 的「恢复一律传 `prompt_capture_enabled=False`」没有做成入参，而是**缺省即 `False`**：
+   只有建局路径写闩锁，恢复路径天然拿不到 `True`，语义等价且少一个可以传错的参数。
+4. §A.7.3 表格里的 `followEnv()` 没有实现 —— 它只是 `setEnabled(null)` 的别名，
+   页面直接调后者（§A.7.3 结尾也是这么写的）。
+5. §A.8.4 说前端覆盖率白名单「恰好 9 个文件」：**现在是 10 个**（`labels.ts` 已入门禁）。
+   本轮按默认建议**不加** `appSettingsStore.ts`，白名单保持 10 个，两份规则文档的「10 个文件」无需改动。
 
 ---
 
@@ -803,7 +818,7 @@ marker 是**游戏目录里的一个文件**，不是 checkpoint 字段、不是
 
 > 1. **用途** —— 把每个座位实际发给模型的 prompt 原文（system + user 全文）和它的回复配成 `(prompt, completion)` 训练对，用于以后在本地微调小模型。它**只写文件**，不改变对局的任何逻辑。
 > 2. **写到哪** —— `backend/data/games/<对局 ID>/llm_prompts.jsonl`，一局一个文件，和 `game.log`、`llm_calls.log` 放在同一个目录。文件只追加，不覆盖、不自动清理。
-> 3. **占多大磁盘** —— 按本机已有 143 个对局实测（统计源：各局 `llm_calls.log` 的 `prompt_chars`）：典型一局约 **2 MB**（prompt 原文中位 136 万字符、约 111 条记录）；多数对局在 **1.4 ~ 2.9 MB**；调用次数多的长局可到 **6 ~ 12 MB**。磁盘紧张时请关闭本开关，或手动清理不再需要的 `data/games/<id>/`。
+> 3. **占多大磁盘** —— 按本机已有 163 个对局实测（统计源：各局 `llm_calls.log` 的 `prompt_chars`）：典型一局约 **2.3 MB**（prompt 原文中位 142 万字符、约 116 条记录）；多数对局在 **1.4 ~ 3.0 MB**；调用次数多的长局可到 **6 ~ 26 MB**。磁盘紧张时请关闭本开关，或手动清理不再需要的 `data/games/<id>/`。
 > 4. **生效时机** —— **只对新建的对局生效。** 已经在跑或已中断的对局按它开局时的设置跑完：开局时开着就采到本局结束，开局时关着就一直不采。这是故意的 —— 一局只采一半的语料是不完整的，训练时不好用。所以**关掉开关后，正在进行的对局仍会继续写**到本局结束。
 > 5. **关闭后有什么影响** —— 没有影响。发言、投票、夜间行动、断点续跑、回放全部照旧，只是不再产生新的采集文件（一个字节都不写）。
 > 6. **会不会写进密钥** —— 不会。落盘的只有 prompt 正文和少量元数据（轮次、阶段、座位、模型名、请求 ID）；API Key 与自定义请求头从不进入这些文件。
@@ -827,7 +842,10 @@ marker 是**游戏目录里的一个文件**，不是 checkpoint 字段、不是
 | 组件禁止硬编码色值 | 只用 MUI 组件（`Switch` / `Alert` / `Typography` / `List`）与 `theme/tokens.ts`；不写 hex |
 | 数字必须可追溯；不与实现打架 | §A.5.2 第 3 条自带口径与统计源并标注「实测」而非保证；第 4 条对应 §A.4.1 规则、第 5 条对应 §4.1 三层 best-effort +「flush 在响应之后」、第 6 条对应 §4.3 |
 
-**磁盘数字的推导（可复核）**：`data/games/*/llm_calls.log` 中 `prompt_chars` 逐局求和，得到 143 局的中位 = 1,368,670 字符、p75 = 1,872,504、p90 = 4,209,625、max = 7,943,894。字节换算用 1.6 字节/字符 —— 该系数由真实系统提示词实测（`DAY_SYSTEM_PROMPT` 1995 字符 / 3565 字节 = 1.787；`NIGHT_SYSTEM_PROMPT` 2037 / 3411 = 1.675；渲染出的 user 段 XML/JSON 占比更高，故取偏低的 1.6）。交叉验证：中位 1,368,670 ÷ 111 条 ≈ 12,330 字符/条，与原方案 §0.9 的「中位 10032 字符」同量级。🟡 系数是估算，量级可信。
+**磁盘数字的推导（可复核）**：`data/games/*/llm_calls.log` 中 `data.prompt_chars` 逐局求和，得到 143 局的中位 = 1,368,670 字符、p75 = 1,872,504、p90 = 4,209,625、max = 7,943,894。字节换算用 1.6 字节/字符 —— 该系数由真实系统提示词实测（`DAY_SYSTEM_PROMPT` 1995 字符 / 3565 字节 = 1.787；`NIGHT_SYSTEM_PROMPT` 2037 / 3411 = 1.675；渲染出的 user 段 XML/JSON 占比更高，故取偏低的 1.6）。交叉验证：中位 1,368,670 ÷ 111 条 ≈ 12,330 字符/条，与原方案 §0.9 的「中位 10032 字符」同量级。🟡 系数是估算，量级可信。
+
+> **2026-10-05 复核（实现收尾时）**：同一口径重跑，本机已有 **163 局**：中位 1,422,701、p75 1,872,504、p90 4,209,625、**max 16,381,957**（×1.6 ≈ 26 MB）。中位与 p75/p90 与初稿差 <4%，但**长尾翻倍** —— 4 局超过 12 MB、21 局超过 6 MB，所以 §A.5.2 第 3 条的上限已按复核值改成「6 ~ 26 MB」。
+
 
 ## A.6 隐私与 DTO 约束：新端点不会被现有扫描命中
 
