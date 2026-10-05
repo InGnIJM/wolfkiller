@@ -52,6 +52,10 @@ def is_silenced(statuses: Mapping[int, object], seat: int) -> bool:
     """True when ``seat`` carries the one-night silence mark."""
     return SILENCED_STATUS in frozenset(statuses.get(seat, ()))
 
+#: A seat that declares this marker is untouched by the witch's vial. Unlike
+#: ``night_immune`` it filters by cause, so the knife and every other lethal
+#: effect still land. The Demon Hunter is the first built-in holder.
+POISON_IMMUNE_RESOURCE = "poison_immune"
 #: Lethal causes the ``night_immune`` marker does **not** shrug off.
 #:
 #: The official card limits the immunity to 「**无法在夜间出局**」 — the night —
@@ -258,6 +262,12 @@ def settle(
             if not lethal_other:
                 continue
             cause = first_exempt_cause[target]
+        if cause == "poison" and (
+            role_resources.get(target, {}).get(POISON_IMMUNE_RESOURCE, 0) > 0
+        ):
+            # Judged per cause, unlike the blanket night immunity: the vial
+            # breaks on the mark, the knife does not.
+            continue
         if (
             role_resources.get(target, {}).get(DELAYABLE_RESOURCE, 0) > 0
             or cause in _ALWAYS_DELAYED_CAUSES
