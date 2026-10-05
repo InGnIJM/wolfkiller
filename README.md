@@ -1,6 +1,6 @@
 # Wolf Killer — AI 狼人杀
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Node](https://img.shields.io/badge/Node-20.19%2B-blueviolet)
+![License](https://img.shields.io/badge/license-MPL--2.0-blue) ![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Node](https://img.shields.io/badge/Node-20.19%2B-blueviolet)
 
 完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、骑士、狼美人与老酒鬼）均由大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整对局；创建游戏时可为环境默认或多个自定义模型分配人数，系统会随机落座并在整局中固定每个座位所用模型。
 
@@ -89,4 +89,7 @@ cd frontend && npm run test:e2e                 # Playwright 浏览器验收（�
 
 ## License
 
-[MIT](LICENSE)
+本项目采用 [Mozilla Public License 2.0](LICENSE)（MPL-2.0），版权归 金铭 所有（Copyright (c) 2026 金铭）。仓库早期版本曾以 MIT 授权。
+
+- 修改仓库内文件后再分发时，被修改的文件需继续以 MPL-2.0 提供源码；新增文件可采用其他许可。
+- 本许可证不授予商标权，项目名称与标识不随代码一并授权。
