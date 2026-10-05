@@ -261,7 +261,10 @@ if markers.get(DELAYABLE_RESOURCE, 0) > 0:      # 原有延迟逻辑
     ...
 ```
 
-**"无视保护"的死因**：`verify_kill`（纯白之女/狼巫验杀）官方明确"守卫守护无效、女巫不能救"。新增：
+**"无视保护"的死因**：~~`verify_kill`（纯白之女/狼巫验杀）官方明确"守卫守护无效、女巫不能救"~~
+—— **本条作废**：官方卡牌对纯白之女只写「查验到狼人，则狼人出局」、对狼巫只写
+「验到纯白之女，则纯白之女出局」，**都没说不可救**。`verify_kill` 不再进
+`_UNPROTECTABLE_CAUSES`，按普通死因结算。下面这段保留只为记录：
 
 ```python
 _UNPROTECTABLE_CAUSES = frozenset({"verify_kill", "hunt"})
