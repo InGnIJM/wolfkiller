@@ -11,7 +11,7 @@
 | 评测层（仓库内 `scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v2 JSON 不含决策质量**（验狼、毒中、放逐命中、狼票集中度等）。决策质量指标（验狼、毒中、放逐命中、狼票集中度等）的实现留在 `app/benchmark/`，但它**当前只被 `tests/test_benchmark_metrics.py` 引用**：生产代码与 `run_benchmark.py` 都没有接入，评测详情页也不展示。要得到这些口径目前需要手动调用该包。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v3 JSON 含决策质量**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（8 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
@@ -62,7 +62,7 @@ REST 资源为：`POST/GET /api/benchmarks`、`GET /api/benchmarks/{id}`、`DELE
 
 ## 指标定义
 
-API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 `v2`。digest 对四张冻结事实表做规范 JSON 排序后计算，因此数据库行顺序和字典键顺序不影响同一输入的报告；迟到的 token 用量写回会改变 digest 并生成新报告。
+API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 `v3`（v3 = 在 v2 基础上加入 `summary.decision` 决策质量段；命中率与样本量都进 digest，所以对局的决策明细变化会重算报告）。digest 对四张冻结事实表**加各局 summary**做规范 JSON 排序后计算，因此数据库行顺序、字典键顺序与 summary 传入顺序都不影响同一输入的报告；迟到的 token 用量写回会改变 digest 并生成新报告。
 
 ### 当前原生报告口径
 
@@ -92,6 +92,7 @@ API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 
 - 好人投票命中率 / 弃票率：好人阵营座位投票目标为狼人的比例 / 弃票比例。
 - 放逐命中狼率 / 误伤神职率：被放逐座位为狼人 / 神职的比例。
 - 狼队投票集中度：把**全部完成局**的狼票按目标座位号加总后，最多票目标的占比。混座局里座位号不代表同一身份，跨局值会接近均匀分布，**不能当协同度**。要看狼白天是否对齐，按每一轮、该轮存活狼的票面单独算集中度。
+  ⚠️ 因此**评测页刻意不展示** `wolf_vote_concentration` / `wolf_vote_distinct_targets`（API 报告里仍保留，Markdown 报告在用）；页面上那一节只给其余 8 个比率与 2 个计数。
 
 **规范性**
 - LLM fallback 率：`parse_result` 为 `fallback` / `parse_failed` 的调用占比。
