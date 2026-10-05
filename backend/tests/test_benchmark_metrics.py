@@ -9,6 +9,7 @@ from app.benchmark.metrics import (
     aggregate,
     compute_compliance_metrics,
     compute_decision_metrics,
+    compute_decision_samples,
     compute_llm_metrics,
     compute_outcome_metrics,
 )
@@ -138,6 +139,33 @@ def test_decision_metrics_pooled() -> None:
     assert decision["exile_god_misfire_rate"] == 0.0
     assert decision["wolf_vote_distinct_targets"] == 2
     assert decision["wolf_vote_concentration"] == 0.5
+
+
+def test_decision_samples_count_the_denominators() -> None:
+    # 页面上每个比率都要带样本量，否则 0/0 与 0/5 看起来一样。
+    samples = compute_decision_samples([_summary_g1(), _summary_g2()])
+
+    assert samples == {
+        "games": 2,
+        "seer_checks": 2,
+        "witch_poisons": 1,
+        "hunter_shots": 1,
+        "wolf_kills": 2,
+        "good_votes": 5,
+        "exiles": 2,
+    }
+
+
+def test_decision_samples_ignore_junk_entries() -> None:
+    assert compute_decision_samples([None, "nope", {"rounds": []}]) == {
+        "games": 0,
+        "seer_checks": 0,
+        "witch_poisons": 0,
+        "hunter_shots": 0,
+        "wolf_kills": 0,
+        "good_votes": 0,
+        "exiles": 0,
+    }
 
 
 def test_compliance_metrics_pooled() -> None:
@@ -381,13 +409,54 @@ def _native_metric_facts() -> dict:
     }
 
 
+def test_native_metrics_carry_decision_quality_when_summaries_are_given() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    facts = _native_metric_facts()
+    without = BenchmarkMetrics.compute(**facts)
+    with_summaries = BenchmarkMetrics.compute(
+        **facts, summaries=[_summary_g1(), _summary_g2()],
+    )
+
+    # 没有明细时这一节照样存在，只是全部「无样本」——页面据此提示旧报告。
+    empty = without["summary"]["decision"]
+    assert empty["seer_check_hit_rate"] is None
+    assert empty["samples"]["games"] == 0
+
+    decision = with_summaries["summary"]["decision"]
+    assert decision["seer_check_hit_rate"] == 0.5
+    assert decision["witch_poison_hit_rate"] == 0.0
+    assert decision["hunter_shot_hit_rate"] == 1.0
+    assert decision["exile_wolf_rate"] == 1.0
+    assert decision["samples"]["games"] == 2
+    assert decision["samples"]["good_votes"] == 5
+    # 池化口径的狼票集中度仍留在数据里（Markdown 报告在用），页面不展示它。
+    assert decision["wolf_vote_concentration"] == 0.5
+
+    # 明细是报告输入的一部分：同一批事实换了明细，digest 必须跟着变，
+    # 否则缓存会把旧报告当成新事实的结果返回。
+    assert with_summaries["input_digest"] != without["input_digest"]
+
+
+def test_native_metrics_report_the_same_digest_for_the_same_summaries() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    facts = _native_metric_facts()
+    first = BenchmarkMetrics.compute(**facts, summaries=[_summary_g1(), _summary_g2()])
+    shuffled = BenchmarkMetrics.compute(
+        **facts, summaries=[_summary_g2(), _summary_g1()],
+    )
+
+    assert first["input_digest"] == shuffled["input_digest"]
+
+
 def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None:
     from app.services.benchmark_metrics import BenchmarkMetrics
 
     facts = _native_metric_facts()
     report = BenchmarkMetrics.compute(**facts)
 
-    assert report["metric_version"] == "v2"
+    assert report["metric_version"] == "v3"
     assert len(report["input_digest"]) == 64
     summary = report["summary"]
     assert summary["games"] == {

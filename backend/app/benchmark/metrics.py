@@ -107,6 +107,27 @@ def _rounds_value(summary: dict) -> int:
     return value if type(value) is int else 0
 
 
+def _decision_pool(summaries: list[dict]) -> "_DecisionPool":
+    """Walk every summary once and accumulate the decision counters."""
+    pool = _DecisionPool()
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        roles = _roles_by_seat(summary)
+        buckets = _rounds(summary)
+        if buckets:
+            # 有明细的局数：分母为 0 的比率是 None，页面要靠这个数解释「无样本」。
+            pool._add("_summaries")
+        for bucket in buckets:
+            for action in bucket.get("night_actions") or []:
+                pool.add_night_action(action, roles)
+            for vote in bucket.get("votes") or []:
+                pool.add_vote(vote, roles)
+            exiled = bucket.get("exiled")
+            pool.add_exile(exiled, roles)
+    return pool
+
+
 def compute_decision_metrics(summaries: list[dict]) -> dict:
     """Pooled decision-quality rates across all games.
 
@@ -114,19 +135,25 @@ def compute_decision_metrics(summaries: list[dict]) -> dict:
     only whether the targeted seat actually was a werewolf (or, for wolf
     kills, a god role).
     """
-    pool = _DecisionPool()
-    for summary in summaries:
-        if not isinstance(summary, dict):
-            continue
-        roles = _roles_by_seat(summary)
-        for bucket in _rounds(summary):
-            for action in bucket.get("night_actions") or []:
-                pool.add_night_action(action, roles)
-            for vote in bucket.get("votes") or []:
-                pool.add_vote(vote, roles)
-            exiled = bucket.get("exiled")
-            pool.add_exile(exiled, roles)
-    return pool.to_metrics()
+    return _decision_pool(summaries).to_metrics()
+
+
+def compute_decision_samples(summaries: list[dict]) -> dict:
+    """The denominators behind :func:`compute_decision_metrics`.
+
+    A ``None`` rate means "no opportunity", which is not the same as ``0.0``
+    ("tried and missed"), so the interface shows both the rate and its sample.
+    """
+    counters = _decision_pool(summaries).counters
+    return {
+        "games": counters.get("_summaries", 0),
+        "seer_checks": counters.get("seer_checks", 0),
+        "witch_poisons": counters.get("witch_poisons", 0),
+        "hunter_shots": counters.get("hunter_shots", 0),
+        "wolf_kills": counters.get("wolf_kills", 0),
+        "good_votes": counters.get("good_votes", 0),
+        "exiles": counters.get("exiles", 0),
+    }
 
 
 class _DecisionPool:
