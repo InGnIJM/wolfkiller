@@ -46,6 +46,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   wolf_king_shot: '狼王带走',
   reflect: '反伤',
   dream_death: '摄梦',
+  verify_kill: '验杀',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────

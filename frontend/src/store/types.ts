@@ -25,7 +25,8 @@ export type DeathCause =
   | 'charm'
   | 'wolf_king_shot'
   | 'reflect'
-  | 'dream_death';
+  | 'dream_death'
+  | 'verify_kill';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'
