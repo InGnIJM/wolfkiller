@@ -67,11 +67,25 @@ VOTE_CONTRACT = ActionContract(
 
 _EVENT_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 
+# The check point resolves before the vial point, and the reason is the one-shot
+# bounce (``core/reflect.py``).
+#
+# When a single night delivers both a check and a vial to the same bouncing
+# seat, the official handbook fixes the outcome — the checker dies and the
+# vial-holder does not — and states it as a flat fact rather than as "whichever
+# came first". Ordering the check first makes the check claim the one-shot
+# ``reflect_used`` marker, so the vial's bounce never fires: the official
+# outcome falls out of the ordinary one-shot rule, with no board-specific
+# branch and no new scheduling machinery.
+#
+# Nothing else depends on the relative order — neither contract reads the
+# other's result — so outside the bounce this is observationally a no-op. The
+# stage numbers are unchanged, so checkpoints written before the swap resume.
 _NIGHT_POINTS = (
     SchedulePoint.NIGHT_ACTION,
     SchedulePoint.NIGHT_WOLF_VOTE,
-    SchedulePoint.NIGHT_WITCH_ACTION,
     SchedulePoint.NIGHT_SEER_ACTION,
+    SchedulePoint.NIGHT_WITCH_ACTION,
     SchedulePoint.NIGHT_COMMIT,
 )
 

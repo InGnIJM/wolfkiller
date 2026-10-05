@@ -164,11 +164,23 @@ async def test_execute_night_prepares_once_and_runs_staged_night() -> None:
 
 
 def test_night_points_run_guard_action_before_wolf_vote() -> None:
+    """The seer resolves **before** the witch.
+
+    The official handbook gives the same-night check-and-poison outcome as a flat
+    fact — 「若同一夜内预言家查验了恶灵骑士，女巫对恶灵骑士撒毒，则恶灵骑士免疫
+    夜间伤害，**预言家会出局，女巫不会出局**」 — with no "if the check came
+    first" qualifier, so the check is what claims the one-shot bounce. Resolving
+    the seer first reproduces that outcome through the ordinary
+    ``reflect_used`` one-shot rule; no board-specific branch is needed.
+
+    Nothing else depends on the relative order: neither role reads the other's
+    result, so this is observationally a no-op outside the reflect.
+    """
     assert list(game_engine_module._NIGHT_POINTS) == [
         SchedulePoint.NIGHT_ACTION,
         SchedulePoint.NIGHT_WOLF_VOTE,
-        SchedulePoint.NIGHT_WITCH_ACTION,
         SchedulePoint.NIGHT_SEER_ACTION,
+        SchedulePoint.NIGHT_WITCH_ACTION,
         SchedulePoint.NIGHT_COMMIT,
     ]
     assert game_engine_module._NIGHT_POINT_STAGES == (1, 5, 7, 9, 10)
