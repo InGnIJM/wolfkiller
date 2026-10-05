@@ -12,6 +12,7 @@ from app.core.prompt_capture import (
     PromptSink,
     build_prompt_record,
     capture_enabled,
+    capture_enabled_for_game,
     parse_capture_flag,
     prompt_capture_marker_exists,
     prompt_sha256,
@@ -264,6 +265,14 @@ def test_resolve_capture_setting_ignores_a_non_boolean_stored_value(monkeypatch)
     monkeypatch.delenv(PROMPT_CAPTURE_ENV, raising=False)
 
     assert resolve_capture_setting("yes") == (True, "default")
+
+
+def test_capture_enabled_for_game_latches_on_either_signal():
+    # The in-memory half decides a fresh game; the marker half is durable, so a
+    # game that already wrote one corpus line keeps capturing after a resume.
+    assert capture_enabled_for_game(True, False) is True
+    assert capture_enabled_for_game(False, True) is True
+    assert capture_enabled_for_game(False, False) is False
 
 
 # ── PromptCapture: disabled ───────────────────────────────────

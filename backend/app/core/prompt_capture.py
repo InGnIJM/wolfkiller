@@ -222,6 +222,17 @@ def prompt_capture_marker_exists(data_dir: str, game_id: str) -> bool:
     return os.path.exists(os.path.join(data_dir, "games", game_id, PROMPT_CAPTURE_FILENAME))
 
 
+def capture_enabled_for_game(requested: bool, marker_exists: bool) -> bool:
+    """Effective per-game switch: ``requested_at_start or marker_exists``.
+
+    ``requested`` is resolved once, when the game is created; recovery never
+    resolves the operator switch, so flipping it cannot make an interrupted game
+    start capturing in the middle. The marker then carries the decision forward
+    on its own.
+    """
+    return bool(requested) or bool(marker_exists)
+
+
 class PromptCapture:
     """Per-game JSONL writer: one persistent fd, one lock, best-effort."""
 
