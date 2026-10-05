@@ -370,6 +370,26 @@ STANDARD_PRESETS: list[dict] = [
         "recommended_timeout_seconds": 7200,
     },
     {
+        # NetEase's official 12-player "Pure White Night Shadow" tournament
+        # board: no Seer at all — the Pure White's exact-identity check and the
+        # Wolf Witch's mirrored one are the board's information engine.
+        "id": "twelve-player-pure-white",
+        "name": "十二人纯白夜影",
+        "description": "3狼 1狼巫 4民 1守卫 1女巫 1猎人 1纯白之女",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-wolf-witch": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-guard": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-pure-white": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
         # NetEase's official 12-player "Gargoyle + Gravekeeper" board.
         "id": "twelve-player-gargoyle-gravekeeper",
         "name": "十二人石像鬼守墓人",

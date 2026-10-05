@@ -108,6 +108,8 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   werewolf_king_reasoning: '白狼王思考',
   knight_reasoning: '骑士思考',
   wolf_beauty_reasoning: '狼美人思考',
+  pure_white_reasoning: '纯白之女思考',
+  wolf_witch_reasoning: '狼巫思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -137,6 +139,8 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   werewolf_king_reasoning: '白狼王',
   knight_reasoning: '骑士',
   wolf_beauty_reasoning: '狼美人',
+  pure_white_reasoning: '纯白之女',
+  wolf_witch_reasoning: '狼巫',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────

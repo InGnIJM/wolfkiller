@@ -245,7 +245,9 @@ export interface NightThoughtPayload {
     | 'guard_reasoning'
     | 'werewolf_king_reasoning'
     | 'knight_reasoning'
-    | 'wolf_beauty_reasoning';
+    | 'wolf_beauty_reasoning'
+    | 'pure_white_reasoning'
+    | 'wolf_witch_reasoning';
   target_seat: number | null;
   reasoning: string;
 }

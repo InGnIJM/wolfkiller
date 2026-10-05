@@ -21,6 +21,7 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-evil-knight',
   'wolf-killer-gargoyle',
   'wolf-killer-wolf-beauty',
+  'wolf-killer-wolf-witch',
   'wolf-killer-seer',
   'wolf-killer-witch',
   'wolf-killer-hunter',
@@ -29,6 +30,7 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-dream-weaver',
   'wolf-killer-gravekeeper',
   'wolf-killer-knight',
+  'wolf-killer-pure-white',
   'wolf-killer-old-drunkard',
   'wolf-killer-villager',
 ];
@@ -52,6 +54,8 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-knight', key: 'knight', label: '骑士' },
   { id: 'wolf-killer-wolf-beauty', key: 'wolf_beauty', label: '狼美人' },
   { id: 'wolf-killer-old-drunkard', key: 'old_drunkard', label: '老酒鬼' },
+  { id: 'wolf-killer-pure-white', key: 'seer', label: '纯白之女' },
+  { id: 'wolf-killer-wolf-witch', key: 'werewolf', label: '狼巫' },
 ];
 
 export const ROLE_META: Record<string, RoleMetaEntry> = Object.fromEntries(

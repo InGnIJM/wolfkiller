@@ -137,6 +137,8 @@ _REASONING_EVENT_TYPES = {
     "WEREWOLF_KING_REASONING": ("werewolf_king_reasoning", frozenset({"explode", "pass"})),
     "KNIGHT_REASONING": ("knight_reasoning", frozenset({"duel", "pass"})),
     "WOLF_BEAUTY_REASONING": ("wolf_beauty_reasoning", frozenset({"charm", "pass"})),
+    "PURE_WHITE_REASONING": ("pure_white_reasoning", frozenset({"check", "pass"})),
+    "WOLF_WITCH_REASONING": ("wolf_witch_reasoning", frozenset({"check", "pass"})),
 }
 
 
