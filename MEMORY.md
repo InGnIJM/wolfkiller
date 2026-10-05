@@ -657,3 +657,12 @@
   空串或哨兵值 —— 空串不是词汇表成员，会被响应模型拒绝成 500（`_reconstruct_state` 曾把清单
   里没有的胜因写成 `""`，只差一个没有 `game_over` 记录的旧档就会命中）。DTO 侧相应把字段设为
   可选，界面渲染不出文案时本来也只是少一行。
+- Trigger: 把一个「默认开」的进程级开关改成「建局时显式闩锁」（例如 prompt 采集：只有建局
+  路径调 `_latch_capture_request()`，恢复路径不解析开关，`llm_prompts.jsonl` 的存在与否是
+  耐久闩锁）。Action: 改完立刻跑全量覆盖率门禁 —— 那些**顺带**覆盖到的副作用分支会集体掉
+  到未覆盖：任何驱动夜间/流水线链路的用例，以前因为默认开会写语料文件，于是
+  `capture.flush(...)` 的四个调用点都是白捡的覆盖；闩锁化之后它们必须由**显式闩锁过**的用例
+  负责（`test_a_created_game_flushes_the_night_chain` /
+  `test_a_created_game_flushes_the_pipeline_chain`）。症状是全量 `4014 passed` 但
+  `--cov-fail-under=100` 红在 `game_service.py` 的 3 个 flush 体上；`coverage report
+  --show-missing --include='app/services/game_service.py'` 一条命令就能定位。
