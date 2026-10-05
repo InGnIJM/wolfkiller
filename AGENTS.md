@@ -116,4 +116,4 @@ npm run build
 
 **不要**再改 `test_guard_extension.py` 里已经不存在的 `CORE_BLOBS_BEFORE_GUARD`。
 
-前端覆盖率只卡 `vite.config.ts` 列出的 10 个文件；最复杂的 UI 不在门禁内，所以渲染面的事件覆盖由 `components/game/test/eventCoverage.test.tsx` 兜底（三个渲染面 × 全部观众事件类型逐项表态，漏 case 即红）。取值→文案表统一放 `frontend/src/labels.ts`（19 个命名空间按渲染语境划分，键类型尽量为联合），`src/test/labels.test.ts` 扫描组件源码，谁再写一张本地 `*_LABELS`/`*_TAGS` 即红。WSL 挂载 `/mnt/e` 上不要直接跑 vitest，做法见 `MEMORY.md`。
+前端覆盖率只卡 `vite.config.ts` 列出的 10 个文件；最复杂的 UI 不在门禁内，所以渲染面的事件覆盖由 `components/game/test/eventCoverage.test.tsx` 兜底（三个渲染面 × 全部观众事件类型逐项表态，漏 case 即红）。取值→文案表统一放 `frontend/src/labels.ts`（20 个命名空间按渲染语境划分，键类型尽量为联合），`src/test/labels.test.ts` 扫描组件源码，谁再写一张本地 `*_LABELS`/`*_TAGS` 即红。WSL 挂载 `/mnt/e` 上不要直接跑 vitest，做法见 `MEMORY.md`。

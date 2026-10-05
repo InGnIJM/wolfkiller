@@ -103,6 +103,41 @@ describe('CenterDisplay dramatic phase page', () => {
     expect(screen.getByText('黑夜 · 预言家')).toBeInTheDocument();
   });
 
+  it('names the dancer and the mask even though they have no night_action row', () => {
+    // 实测缺口：舞者/假面的载荷塞不进 night_action，于是它们行动时眉标曾经只剩
+    // 「黑夜」——观众以为这两张牌没跑。它们的公开事件类型各自带行动者短名。
+    useGameStore.setState({
+      phase: 'night' as never,
+      roundNumber: 3,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'dance_pool',
+          payload: { round_number: 3, seat: 4, pool_seats: [4, 8, 11] },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    render(<CenterDisplay />);
+    expect(screen.getByText('黑夜 · 舞者')).toBeInTheDocument();
+    cleanup();
+    useGameStore.getState().reset();
+
+    renderCenter({
+      phase: 'night',
+      roundNumber: 2,
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'mask_granted',
+          payload: { round_number: 2, seat: 3, target_seat: 5, in_pool: true },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('黑夜 · 假面')).toBeInTheDocument();
+  });
+
   it('shows a paused hint when paused with no event', () => {
     useGameStore.setState({ isPaused: true });
     render(<CenterDisplay />);

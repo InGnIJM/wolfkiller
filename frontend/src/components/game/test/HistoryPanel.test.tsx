@@ -532,6 +532,36 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.getAllByText('第3夜').length).toBeGreaterThan(0);
   });
 
+  it('files the dance pool and the mask under the night chronicle', () => {
+    // 两张牌只有自己的公开类型，没有 `night_action` 行：编年史必须照样把它们
+    // 归进「第N夜」，并出现在「夜晚行动」页签里。
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'dance_pool',
+          payload: { seat: 4, pool_seats: [4, 8, 11], round_number: 3 },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'mask_granted',
+          payload: { seat: 3, target_seat: 5, in_pool: true, round_number: 2 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/4号起舞，邀请 4、8、11号共舞/)).toBeVisible();
+    expect(screen.getByText(/3号给 5号戴上面具/)).toBeVisible();
+    expect(screen.getAllByText('第3夜').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('第2夜').length).toBeGreaterThan(0);
+
+    // 「夜晚 N」页签（第 5 个）里也要有它们，否则它们只存在于「全部」页签。
+    fireEvent.click(screen.getByRole('tab', { name: /^夜晚/ }));
+    expect(screen.getByText(/4号起舞，邀请 4、8、11号共舞/)).toBeVisible();
+    expect(screen.getByText(/3号给 5号戴上面具/)).toBeVisible();
+  });
+
   it('marks an archived charm entry as missing its target', () => {
     useGameStore.setState({
       timeline: [

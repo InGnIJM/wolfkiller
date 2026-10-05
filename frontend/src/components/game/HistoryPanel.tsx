@@ -27,7 +27,11 @@ function eventTone(event: PublicReplayEvent): string {
   if (event.event_type === 'narration') return '#7D7468';
   if (event.event_type.includes('vote')) return '#E8C887';
   if (event.event_type.includes('thought')) return '#C4B5FD';
-  if (event.event_type === 'night_action') return '#9DC8E8';
+  if (
+    event.event_type === 'night_action'
+    || event.event_type === 'dance_pool'
+    || event.event_type === 'mask_granted'
+  ) return '#9DC8E8';
   return '#D4A853';
 }
 
@@ -35,6 +39,7 @@ function eventTone(event: PublicReplayEvent): string {
 const NIGHT_TYPES = new Set([
   'night_action', 'wolf_vote', 'witch_thought', 'seer_thought',
   'night_thought', 'wolf_chat_message', 'narration', 'wolf_beauty_charm',
+  'dance_pool', 'mask_granted',
 ]);
 
 // A revenge lands in the phase of the exit that triggered it: an exile or a
@@ -543,7 +548,10 @@ export default function HistoryPanel({ onClose }: Props) {
   ));
   const deaths = indexedEvents.filter(({ event }) => event.event_type === 'death' || event.event_type === 'self_explode');
   const nightActions = indexedEvents.filter(({ event }) => (
-    event.event_type === 'night_action' || event.event_type === 'wolf_vote' || event.event_type === 'narration'
+    event.event_type === 'night_action' || event.event_type === 'wolf_vote'
+    || event.event_type === 'narration'
+    // 舞池/面具是夜间行动，只是各自带自己的载荷，所以有自己的事件类型。
+    || event.event_type === 'dance_pool' || event.event_type === 'mask_granted'
   ));
   const thoughts = indexedEvents.filter(({ event }) => (
     event.event_type === 'wolf_chat_message' || event.event_type === 'witch_thought' || event.event_type === 'seer_thought' || event.event_type === 'night_thought'

@@ -130,6 +130,17 @@ export const NIGHT_ACTION_ROLE_NAMES: Record<NightActionType, string> = {
   wolf_king_shot: '狼王',
 };
 
+/** 夜间独立事件 → 角色短名。
+ *
+ * 舞者与假面的载荷（三人舞池 / 目标是否在舞池里）塞不进封闭的 `night_action`，
+ * 所以它们走自己的公开事件类型。中央面板的「黑夜 · X」眉标与编年史的夜间分组
+ * 都要按事件类型认人，否则这两张牌行动时界面只剩一个「黑夜」。
+ */
+export const NIGHT_EVENT_ROLE_NAMES: Partial<Record<PublicEventType, string>> = {
+  dance_pool: '舞者',
+  mask_granted: '假面',
+};
+
 /** 思考事件 → 角色短名，和上表同为「正在行动的是谁」，共用同一套短名。 */
 export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   witch_thought: '女巫',

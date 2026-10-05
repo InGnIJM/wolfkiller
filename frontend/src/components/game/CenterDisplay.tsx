@@ -3,7 +3,7 @@ import { useGameStore } from '../../store/gameStore';
 import type { GamePhase, PublicReplayEvent } from '../../store/types';
 import {
   CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, NIGHT_ACTION_LABELS, NIGHT_ACTION_ROLE_NAMES,
-  PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
+  NIGHT_EVENT_ROLE_NAMES, PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
 } from '../../labels';
 import { BACKDROP } from '../../theme/tokens';
 
@@ -65,6 +65,9 @@ function ordinalEn(n: number): string {
 
 function nightRole(entry: PublicReplayEvent | null): string | null {
   if (!entry) return null;
+  // 舞者/假面没有 `night_action` 行（载荷形状不同），它们各自成事件类型。
+  const named = NIGHT_EVENT_ROLE_NAMES[entry.event_type];
+  if (named) return named;
   if (entry.event_type === 'night_action') {
     return NIGHT_ACTION_ROLE_NAMES[entry.payload.action_type] ?? null;
   }

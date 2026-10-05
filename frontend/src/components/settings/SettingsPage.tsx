@@ -8,7 +8,7 @@ import type { PromptCaptureSetting } from '../../store/types';
 import { BACKDROP } from '../../theme/tokens';
 
 /**
- * 开关行副标题随 `source` 三态变化。故意留在组件内：`labels.ts` 的 19 个命名空间按渲染语境划分，
+ * 开关行副标题随 `source` 三态变化。故意留在组件内：`labels.ts` 的 20 个命名空间按渲染语境划分，
  * 「应用设置」不属于其中任何一类（禁止本地 `*_LABELS` / `*_TAGS`，故用单数 `_LABEL`）。
  */
 const SOURCE_LABEL: Record<PromptCaptureSetting['source'], string> = {

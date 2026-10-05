@@ -553,6 +553,22 @@ describe('GameBoard public replay', () => {
     expect(seatMap).toHaveAttribute('data-vote-targets', JSON.stringify({ 6: 5, 7: 5 }));
   });
 
+  it('keeps the night ballots visible while the timeline sits on a dance pool', async () => {
+    // 舞池/面具没有 `night_action` 行，但它们就是当夜发生的事：时间轴停在
+    // dance_pool 上时座位图的狼票窗口必须仍然认得这一轮。
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'night', win_result: null });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 2, seat: 6, target_seat: 5, reasoning: '像神' } },
+      { ...replayEventMeta, event_type: 'wolf_vote', payload: { round_number: 2, seat: 7, target_seat: 5, reasoning: '跟票' } },
+      { ...replayEventMeta, event_type: 'dance_pool', payload: { round_number: 2, seat: 4, pool_seats: [4, 6, 8] } },
+    ]));
+
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    const seatMap = await screen.findByTestId('seat-map');
+    expect(seatMap).toHaveAttribute('data-vote-targets', JSON.stringify({ 6: 5, 7: 5 }));
+  });
+
   it('keeps night ballots out of the daytime vote branch', async () => {
     vi.mocked(fetchGameDetail).mockResolvedValueOnce({ ...detail, phase: 'vote_casting', win_result: null });
     vi.mocked(fetchGameLogs).mockResolvedValueOnce(electionLogs([

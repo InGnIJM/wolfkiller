@@ -66,10 +66,14 @@ function sheriffVoteTargets(
 // 所以窗口由「当前事件是不是夜间事件」界定，票只取与该事件同轮的那些。
 function nightRoundOf(event: PublicReplayEvent): number | null {
   switch (event.event_type) {
+    // 舞池与面具也是当夜发生的事（它们没有 night_action 行，各自成类型），
+    // 所以和狼票/夜间事件按同一轮归窗。
     case 'wolf_vote':
     case 'wolf_chat_message':
     case 'night_thought':
     case 'night_action':
+    case 'dance_pool':
+    case 'mask_granted':
       return event.payload.round_number;
     default:
       return null;
