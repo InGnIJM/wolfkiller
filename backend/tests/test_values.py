@@ -52,6 +52,7 @@ def test_death_causes_are_frozen() -> None:
     assert DEATH_CAUSES == {
         "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
         "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
+        "verify_kill",
     }
 
 
@@ -94,8 +95,11 @@ def test_pre_and_post_election_death_causes_partition_the_catalogue() -> None:
     权」，而所有子集断言依然全绿。骑士决斗只发生在全体发言之后，开选前不可能
     出现，因此显式排除。
     """
+    # 两个显式排除项都是「第 2 夜起才可能出现」的死因：竞选只发生在第 1 夜之后，
+    # 所以它们既不属于「昨夜死亡」也不属于「开选后死亡」，而是根本不可能出现。
     assert (
-        _PRE_ELECTION_DEATH_CAUSES | _POST_ELECTION_DEATH_CAUSES | {"knight_duel"}
+        _PRE_ELECTION_DEATH_CAUSES | _POST_ELECTION_DEATH_CAUSES
+        | {"knight_duel", "verify_kill"}
         == DEATH_CAUSES
     )
     assert not (_PRE_ELECTION_DEATH_CAUSES & _POST_ELECTION_DEATH_CAUSES)
