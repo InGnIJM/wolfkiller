@@ -1,7 +1,7 @@
 # 创建向导选人界面重设计
 
 > 日期：2026-10-05
-> 状态：**已实施** —— 阶段 A–D 落地，其中 D 的 `SeatMap` 有一处偏差，见下方「实施记录」。
+> 状态：**已实施** —— 阶段 A–D 全部落地，含 375px 窄屏堆叠与座位图的组件统一；验收记录见下方。
 > 范围：创建对局向导的「选择身份」步骤 + 对局中角色呈现 + 规则介绍页 `/rules`
 
 ---
@@ -13,22 +13,49 @@
 | A 数据模型 | ✅ | `ROLE_ART_BY_ID` + `roleArt()`（`theme/tokens.ts`）、`ROLE_ORDER` 上移到 `shared/roleMeta.ts`、`RolePortrait`（`1deabc0`、`9c36743`） |
 | B 创建向导 | ✅ | `PresetList`（搜索 + 按人数折叠）、`RoleStep` 主从布局、`RoleRow`、`AddRoleDialog`；`custom` 态以 `selectedPresetId` 为单一真源（`7c7973a`、`03c2bdd`） |
 | C 规则页 | ✅ | `RulesPage` + `RoleBrowser` 左索引右详情（`9924397`） |
-| D 对局中 | 🟡 | `DeathAnnouncement` 改用 `RolePortrait`（`57c7b09`）；**`SeatMap` 仍自绘 `<img>`**（`badge?.art ?? CARD_BACK`），未换成组件 |
+| D 对局中 | ✅ | `DeathAnnouncement`（`57c7b09`）以及 `SeatMap` 的座位格与悬停卡都改用 `RolePortrait`；`SeatMap` 的取图 prop 从 `art` 换成 `roleId`，卡背/未知身份回退交给组件自己处理 |
 
 **已知残留**：
 
-1. `SeatMap` 是本计划里唯一没换成 `RolePortrait` 的消费方。取图来源已经统一在 `roleArt()`
-   （`SeatMap` 经 `ROLE_META.art` 取同一张图、同一套卡背回退），所以「补一张图只改
-   `ROLE_ART_BY_ID` 一行」这条目标仍然成立，差异只在组件复用与卡背水印。
-2. `ROLE_ART_BY_ID` 已为阶段 3–6 的 14 个角色**预先登记**（`pure-white` / `wolf-witch` /
+1. `ROLE_ART_BY_ID` 已为阶段 3–6 的 14 个角色**预先登记**（`pure-white` / `wolf-witch` /
    `demon-hunter` / `crimson-envoy` / `nightmare` / `time-wolf` / `order-prince` /
    `miracle-merchant` / `lonely-girl` / `mirror-girl` / `awakened-hidden-wolf` /
    `awakened-wolf-king` / `eclipse-maid` / `radiance-earl`），角色落地时不用再动取图代码。
    **仍无图**：觉醒预言家、寻香魅影、觉醒狼美人、觉醒猎人（2023 年后新牌，官方卡牌表未收录）。
-3. Vite 侧门禁在收尾时跑过并全绿（ext4 镜像，做法见 `MEMORY.md` 的「WSL 下的前端验证」）：
-   `npx vitest run` **38 文件 / 589 用例 passed**、`npx vitest run --coverage` 十个受门禁文件 **100%**、
-   `npm run lint` 无告警、`npm run build` 成功。
-4. 375 / 768 / 1440 三宽度的人工目视验收本文档未留记录；需要时跑 `npm run dev` 按 §十二 逐条核对。
+
+---
+
+## 三宽度目视验收（收尾时补，2026-10-05）
+
+方法：ext4 镜像里 `npm run dev` + Playwright（无头 Chromium 需按 `MEMORY.md` 的
+「WSL 下的浏览器验收」用 `apt-get download` + `dpkg -x` 补齐 `libnspr4` / `libnss3` /
+`libasound2t64`，再带 `LD_LIBRARY_PATH` 运行）。后端指向 **`data/` 的副本**，绝不指向真实库
+（真实库当时还有 1 局 `running`，启动会把它标成 `interrupted`）。样本是 12 人完成局
+`a1ba3c33`（回放不需要模型）。
+
+| 宽度 | 创建向导 `/create` | 规则页 `/rules` | 设置页 `/settings` | 对局 `/game/:id` |
+| --- | --- | --- | --- | --- |
+| 375×812 | 0px 溢出（**修好后**，见下） | 0px | 0px | 0px |
+| 768×1024 | 0px | 0px | 0px | 0px |
+| 1440×900 | 0px | 0px | 0px | 0px |
+
+四个页面三宽度控制台零错误；**横向溢出全部为 0**。
+
+**验收当场发现并修掉一个真缺陷**：`/create` 在 375px 原本横向溢出 **65px**。根因是 §十
+风险表里那条「两栏在 `md` 以下断点改为上下堆叠」**从未实现** —— `PresetList` 是硬编码
+`width: 290, flexShrink: 0`，右栏被挤到 ~85px，内容（「添加角色」按钮右边缘 440px）溢出视口。
+修法：`RoleStep` 外层改 `flexDirection: { xs: 'column', md: 'row' }`，`PresetList` 宽度改
+`{ xs: '100%', md: 290 }`（分隔线从右边线换成下边线），并加一个只在窄屏显示的
+「选择板子」折叠入口（`aria-expanded` 可断言；桌面端由断点强制展开，不受该状态影响）。
+
+**座位图立绘的量化验收**（比"看着一样"更硬的证据）：375px 与 1440px 下逐个座位量测
+立绘元素与其容器的包围盒 —— 11 个座位**全部精确填满**（宽高差 <1px）、`object-fit: cover`、
+`object-position: 50% 16%`、`src` 指向正确角色图；悬停卡 tooltip 内含 1 张立绘。改动前后的
+整页像素差异只来自取景从 14% 移到 16%（共享组件的统一取景），无布局回归。
+
+截图留在 `.playwright-manual-data/seatmap-shots/`（该目录 gitignored，本地留存）：
+`baseline-*` / `after-*` 是改动前后三宽度，`seat-before-after.png` 是单座位放大对比，
+`page-create-*` / `page-settings-*` 是窄屏与宽屏的页面存档。
 
 > 立绘是本地资产：`frontend/src/assets/roles/role-*.webp` 在 `.gitignore` 里；
 > `card-back.webp` 与 `role-old_drunkard.webp` 是自有素材、随仓库发布，
