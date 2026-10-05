@@ -574,6 +574,13 @@ class RoleSpec(_FrozenValue):
     min_count: int = 0
     max_count: int | None = None
     instructions: str = ""
+    #: The role's own opening line for the night script: ``(title, text)``.
+    #: The engine narrates it when — and only when — the role actually receives
+    #: a command in the point it belongs to, so a skill that unlocks later is
+    #: never called early and a dead seat is never called at all. Empty means
+    #: this role has no separate beat (it acts silently, or its window is
+    #: announced by another role's line).
+    opening_narration: tuple[str, str] = ()
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
@@ -589,6 +596,13 @@ class RoleSpec(_FrozenValue):
             _require_str_frozenset(name, getattr(self, name))
         _require_int("min_count", self.min_count)
         _require_int("max_count", self.max_count, optional=True)
+        opening = self.opening_narration
+        if type(opening) is not tuple or len(opening) not in (0, 2):
+            raise TypeError("opening_narration must be an empty tuple or a (title, text) pair")
+        for index, item in enumerate(opening):
+            _require_str(f"opening_narration[{index}]", item)
+            if not item:
+                raise ValueError("opening_narration entries must not be empty")
         contracts = tuple(
             contract
             if isinstance(contract, ActionContract)
@@ -630,6 +644,9 @@ class RoleSpec(_FrozenValue):
             else contract
             for contract in contracts
         )
+        opening = converted.get("opening_narration")
+        if isinstance(opening, list):
+            converted["opening_narration"] = tuple(opening)
         for name in (
             "visibility_namespaces",
             "allowed_effects",

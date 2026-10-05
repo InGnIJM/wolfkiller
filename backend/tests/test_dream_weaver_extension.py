@@ -290,3 +290,8 @@ def test_the_weave_lands_through_a_real_scheduler_run() -> None:
         1, game._pipeline_runtime.role_resources,
     )
     assert deaths == () and alive[1] is True
+
+def test_the_dream_weaver_declares_its_opening_line() -> None:
+    assert DREAM_WEAVER_SPEC.opening_narration == ("摄梦人请睁眼", "请选择今晚要摄梦的玩家。")
+
+

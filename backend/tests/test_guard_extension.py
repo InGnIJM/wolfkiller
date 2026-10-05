@@ -192,3 +192,9 @@ def test_guard_night_action_point_issues_request_and_submits_protection() -> Non
     assert role_private_data_view(state, 1)["last_guarded"] == 2
     event_types = [event["event_type"] for event in commit.events]
     assert event_types == ["GUARD_REASONING", "GUARD_PROTECT"]
+
+def test_the_guard_declares_its_opening_line() -> None:
+    """守卫的开眼旁白现在由角色自己声明（引擎不再按 role_counts 判断）。"""
+    assert GUARD_SPEC.opening_narration == ("守卫请睁眼", "请选择今晚要守护的玩家。")
+
+

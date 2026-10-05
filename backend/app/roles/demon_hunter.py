@@ -121,6 +121,7 @@ DEMON_HUNTER_SPEC = RoleSpec(
     role_id="wolf-killer-demon-hunter",
     display_name="Demon Hunter",
     camp_id="good",
+    opening_narration=("猎魔人请睁眼", "请选择今晚要狩猎的玩家。"),
     contracts=(DEMON_HUNT_CONTRACT,),
     initial_resources={POISON_IMMUNE_RESOURCE: 1},
     allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),

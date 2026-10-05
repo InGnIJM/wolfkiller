@@ -9,6 +9,7 @@ import app.core.game_engine as game_engine_module
 from app.core.game_engine import GameEngine
 from app.models.game import GameState, GameConfig, GamePhase, PlayerState
 from app.models.actions import SpeechRecord, VoteAction, DeathReport, WinResult, is_last_words_eligible
+from app.roles.registry import builtin_registry
 from app.models.contracts import AcceptedAction, ActionCommand, ActionContract, ActionRequest
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.night_flow import DiscussionTurn, NightBriefing, WolfVote
@@ -17,7 +18,7 @@ from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult, _Runtime
 from app.core.scheduler import PipelinePaused, PointResult
-from app.models.pipeline import SchedulePoint
+from app.models.pipeline import ActionContract, IssuedActionRequest, SchedulePoint
 
 
 def test_engine_source_has_no_builtin_role_or_action_branches() -> None:
@@ -186,32 +187,70 @@ def test_night_points_run_guard_action_before_wolf_vote() -> None:
     assert game_engine_module._NIGHT_POINT_STAGES == (1, 5, 7, 9, 10)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("with_guard", [True, False])
-async def test_staged_night_narrates_guard_open_only_on_guard_boards(with_guard) -> None:
-    class RecordingDirector(_FakeDirector):
-        def __init__(self):
-            super().__init__()
-            self.narration_kinds = []
-        def narration(self, kind):
-            self.narration_kinds.append(kind)
-            return ("标题", "正文")
-        def witch_narration(self, kill_target):
-            self.narration_kinds.append("witch_open")
-            return ("标题", "正文")
+class _ScheduledPointTrace:
+    """A scheduler stand-in that returns a canned result and real role specs."""
 
-    role_counts = {
-        "wolf-killer-werewolf": 3, "wolf-killer-villager": 3,
-        "wolf-killer-seer": 1, "wolf-killer-witch": 1, "wolf-killer-hunter": 1,
+    def __init__(self, result, registry):
+        self.result, self.registry, self.calls = result, registry, []
+
+    def run_point(self, state, point):
+        self.calls.append((state, point))
+        return self.result
+
+    def settle_pending(self, state):
+        return None
+
+
+def _issued(spec_or_id, seat: int):
+    """One issued request; only ``role_id`` matters to the night script."""
+    role_id = spec_or_id if isinstance(spec_or_id, str) else spec_or_id.role_id
+    contracts = () if isinstance(spec_or_id, str) else spec_or_id.contracts
+    contract = contracts[0] if contracts else ActionContract(
+        contract_id=f"{role_id}_window",
+        schedule_point=SchedulePoint.NIGHT_ACTION,
+        order=1,
+        action_types=("pass",),
+        actions_requiring_target=frozenset(),
+        fallback_action_type="pass",
+    )
+    return IssuedActionRequest(seat, role_id, contract, 0, 2, "night", "w", "k")
+
+
+@pytest.mark.asyncio
+async def test_staged_night_narrates_the_openings_of_the_roles_that_acted() -> None:
+    """夜间开眼旁白按「今晚真的行动了的角色」播报，且由角色自己声明。
+
+    旧实现按 `role_counts` 判断有没有守卫：同板里守卫已经死了也会播，而且只有守卫
+    有这一句，其余夜间角色在时间轴上根本没有「请睁眼」这一拍。现在旁白来自
+    `RoleSpec.opening_narration`，播报条件就是调度点的 requests —— 死了、还没解锁、
+    或没有声明旁白的角色都不会被叫到。
+    """
+    snapshot = builtin_registry.freeze()
+    guard = snapshot.require("wolf-killer-guard")
+    dancer = snapshot.require("wolf-killer-dancer")
+
+    class _BareSpec:
+        contracts = ()
+        opening_narration = ()
+
+    specs = {
+        guard.role_id: guard,
+        dancer.role_id: dancer,
+        "wolf-killer-bare": _BareSpec(),
+        "wolf-killer-mock": MagicMock(),  # a malformed line must be skipped, not raised
     }
-    if with_guard:
-        role_counts["wolf-killer-guard"] = 1
-    scheduler = ScheduleStub(PointResult((), (), (), "d"))
-    director = RecordingDirector()
+    requests = (
+        _issued(dancer, 4),
+        _issued(guard, 7),
+        _issued(guard, 7),          # the same role twice is still one line
+        _issued("wolf-killer-bare", 9),
+        _issued("wolf-killer-mock", 10),
+        _issued("wolf-killer-absent", 11),  # not in this registry at all
+    )
+    result = PointResult(requests, (), (), "d")
+    scheduler = _ScheduledPointTrace(result, MagicMock(specs=specs, digest="d"))
     engine = GameEngine(
-        "guard-board" if with_guard else "no-guard-board",
-        config=GameConfig(role_counts=role_counts),
-        pipeline_scheduler=scheduler, director=director,
+        "script", pipeline_scheduler=scheduler, director=_FakeDirector(),
     )
     engine.state.players = {4: PlayerState(4, "wolf-killer-villager", "good")}
     engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
@@ -222,11 +261,32 @@ async def test_staged_night_narrates_guard_open_only_on_guard_boards(with_guard)
     engine.memory_service = MagicMock()
     engine.rule_engine.check_win = MagicMock(return_value=None)
     engine._resume_pipeline_night = AsyncMock()
+    engine._narrate = AsyncMock()
+
     await engine._execute_staged_night()
-    expected = (["guard_open", "wolf_open", "witch_open", "seer_open"]
-                if with_guard else ["wolf_open", "witch_open", "seer_open"])
-    assert director.narration_kinds == expected
+
+    # The night script opens the reported stream: the role lines come first, and
+    # only those (the director's own beats follow).
+    assert [call.args for call in engine._narrate.call_args_list][:2] == [
+        ("舞者请睁眼", "请邀请三名玩家共舞。"),
+        ("守卫请睁眼", "请选择今晚要守护的玩家。"),
+    ]
     assert [point for _, point in scheduler.calls] == list(game_engine_module._NIGHT_POINTS)
+
+
+@pytest.mark.asyncio
+async def test_the_night_script_is_silent_without_a_usable_registry() -> None:
+    """没有可读的注册表时只是不播旁白，绝不因为展示层的东西打断对局。"""
+    bare = GameEngine("no-scheduler")
+    bare._narrate = AsyncMock()
+    await bare._narrate_role_openings(())
+    assert bare._narrate.call_args_list == []
+
+    stub = ScheduleStub(PointResult((), (), (), "d"))
+    engine = GameEngine("mock-registry", pipeline_scheduler=stub)
+    engine._narrate = AsyncMock()
+    await engine._narrate_role_openings((_issued("wolf-killer-guard", 4),))
+    assert engine._narrate.call_args_list == []
 
 
 @pytest.mark.asyncio

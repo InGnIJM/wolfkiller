@@ -171,6 +171,7 @@ MASK_SPEC = RoleSpec(
     role_id="wolf-killer-mask",
     display_name="Mask",
     camp_id="werewolf",
+    opening_narration=("假面请睁眼", "请选择今晚要戴面具的玩家。"),
     contracts=(WEREWOLF_KILL_CONTRACT, MASK_GRANT_CONTRACT),
     initial_resources={POISON_IMMUNE_RESOURCE: 1},
     initial_private_data={LAST_MASKED_KEY: None, POOL_CHECKS_KEY: ()},

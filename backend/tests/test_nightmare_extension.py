@@ -216,3 +216,10 @@ def test_fearing_a_wolf_seals_the_whole_pack_through_the_engine_gate() -> None:
     assert engine._pack_sealed([1]) is False
     del state._pipeline_runtime
     assert engine._pack_sealed([1, 2]) is False
+
+def test_the_nightmare_declares_its_opening_line() -> None:
+    """它排在所有夜间角色之前，所以这一句是当晚的第一句开眼旁白。"""
+    assert NIGHTMARE_SPEC.opening_narration == ("噩梦之影请睁眼", "请选择今晚要恐惧的玩家。")
+    assert NIGHTMARE_FEAR_CONTRACT.order == 10
+
+

@@ -131,6 +131,8 @@ NIGHTMARE_SPEC = RoleSpec(
     role_id="wolf-killer-nightmare",
     display_name="Nightmare",
     camp_id="werewolf",
+    # 它排在所有夜间角色之前，所以这一句也是当晚的第一句开眼旁白。
+    opening_narration=("噩梦之影请睁眼", "请选择今晚要恐惧的玩家。"),
     contracts=(WEREWOLF_KILL_CONTRACT, NIGHTMARE_FEAR_CONTRACT),
     initial_private_data={FEARED_KEY: None},
     # The role-level set is the union of what its own contract needs and what

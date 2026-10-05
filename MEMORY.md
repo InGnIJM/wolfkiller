@@ -672,3 +672,19 @@
   测试与 lint 全绿、build 报 `TS2322`。放宽共享组件的 prop 类型时按向后兼容走
   （`number | string`），并检查依赖该值的推导（这里是
   `aspectRatio: width && !height ? '3 / 4' : undefined`）。
+
+## 展示层读取不能把对局挂死（引擎读注册表要两步兜底）
+- Trigger: the night script was moved from a `role_counts` check to reading
+  `RoleSpec.opening_narration` off `scheduler.registry`, and the first version
+  wrote `getattr(scheduler.registry, "specs", None)`. The inner
+  `scheduler.registry` is an *attribute access*, not a lookup, so a bare
+  `object()` scheduler (several engine tests pass one) raised `AttributeError`
+  inside the night owner task. The error surfaced as a **hang**, not a failure:
+  `_execute_night` shields the owner task and the second caller waited forever on
+  an `asyncio.Event` the owner never reached, so `pytest` sat there with 8 dots
+  printed and no timeout. Action: a presentation-only read must never be able to
+  kill the night — resolve the chain defensively (`getattr(scheduler, "registry",
+  None)` then `getattr(registry, "specs", None)` then `isinstance(specs,
+  Mapping)`), and when a test hangs with a partially printed progress line,
+  interrupt it (`timeout -s INT`) to get the owner task's traceback instead of
+  waiting.

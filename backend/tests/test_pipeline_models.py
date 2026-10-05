@@ -596,6 +596,34 @@ def test_role_mapping_fields_reject_every_non_mapping_shape(
         RoleSpec(role_id="role", **{field: bad_value})
 
 
+def test_role_opening_narration_is_an_optional_title_text_pair() -> None:
+    """开眼旁白是声明式展示文案：要么没有，要么正好 (标题, 正文) 两个非空字符串。"""
+    assert RoleSpec(role_id="role").opening_narration == ()
+    role = RoleSpec(
+        role_id="role", opening_narration=("舞者请睁眼", "请邀请三名玩家共舞。"),
+    )
+    assert role.opening_narration == ("舞者请睁眼", "请邀请三名玩家共舞。")
+    # JSON 往返：数组会被还原成元组（否则递归冻结会把它当可变值拒绝）。
+    restored = RoleSpec.from_json(role.to_json())
+    assert restored.opening_narration == role.opening_narration
+    assert type(restored.opening_narration) is tuple
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        ("只有标题",),
+        ("标题", "正文", "多余"),
+        "标题",
+        ("标题", 7),
+        ("标题", ""),
+    ],
+)
+def test_role_rejects_malformed_opening_narration(bad_value: object) -> None:
+    with pytest.raises((TypeError, ValueError), match="opening_narration"):
+        RoleSpec(role_id="role", opening_narration=bad_value)
+
+
 def test_role_with_hook_contract_serializes_descriptor_but_cannot_restore_it() -> None:
     role = RoleSpec(role_id="role", contracts=(_contract(resolve=module_level_hook),))
     encoded = json.loads(role.to_json())

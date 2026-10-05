@@ -172,6 +172,7 @@ DREAM_WEAVER_SPEC = RoleSpec(
     role_id="wolf-killer-dream-weaver",
     display_name="Dream Weaver",
     camp_id="good",
+    opening_narration=("摄梦人请睁眼", "请选择今晚要摄梦的玩家。"),
     contracts=(ActionContract(
         contract_id="dream_weaver_dream",
         schedule_point=SchedulePoint.NIGHT_ACTION,

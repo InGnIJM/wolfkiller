@@ -528,3 +528,12 @@ def test_the_mask_runs_after_the_pool_and_flips_its_verdict() -> None:
     # 1 good + (masked wolf counted good) + 1 good = single camp, nobody dies.
     assert deaths == ()
     assert object.__new__(Mask).get_skills() == ["kill", "mask"]
+
+def test_the_dancer_and_the_mask_declare_their_opening_lines() -> None:
+    from app.roles.mask import MASK_GRANT_CONTRACT, MASK_SPEC
+
+    assert DANCER_SPEC.opening_narration == ("舞者请睁眼", "请邀请三名玩家共舞。")
+    assert MASK_SPEC.opening_narration == ("假面请睁眼", "请选择今晚要戴面具的玩家。")
+    assert DANCE_POOL_CONTRACT.order < MASK_GRANT_CONTRACT.order
+
+

@@ -50,7 +50,7 @@ from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, Work
 from app.core.registry_identity import frozen_registry_digest
 from app.core.role_pipeline import PipelineResult, RolePipeline
 from app.core.scheduler import PipelinePaused, PointResult, Scheduler
-from app.models.pipeline import SchedulePoint
+from app.models.pipeline import IssuedActionRequest, SchedulePoint
 from app.models.vote import CastVoteArgs, VoteError, VoteStatus
 
 logger = logging.getLogger(__name__)
@@ -527,6 +527,34 @@ class GameEngine:
         }
         await self._durable_checkpoint(f"narration:{self.state.round_number}")
 
+    async def _narrate_role_openings(
+        self, requests: tuple[IssuedActionRequest, ...],
+    ) -> None:
+        """Read the night script off the roles that actually acted.
+
+        A role carries its own line (``RoleSpec.opening_narration``), so adding a
+        role with a window never means touching this file. One line per role, in
+        the point's execution order, and none for a role that was skipped: the
+        request list already proves liveness and tonight's applicability.
+        """
+        scheduler = self._pipeline_scheduler
+        registry = None if scheduler is None else getattr(scheduler, "registry", None)
+        specs = None if registry is None else getattr(registry, "specs", None)
+        if not isinstance(specs, Mapping):
+            return
+        seen: set[str] = set()
+        for request in requests:
+            if request.role_id in seen:
+                continue
+            seen.add(request.role_id)
+            spec = specs.get(request.role_id)
+            line = None if spec is None else getattr(spec, "opening_narration", None)
+            # Malformed or absent lines are skipped rather than raising: the
+            # script is presentation, and a stale archive must still play.
+            if type(line) is not tuple or len(line) != 2:
+                continue
+            await self._narrate(line[0], line[1])
+
     async def _log_stage_audience(self, result: PointResult) -> None:
         observation = RolePipeline.observe_v2(result)
         self._log_audience_events(
@@ -546,13 +574,16 @@ class GameEngine:
         ]
 
         if pending.stage == 0:
-            if state.config.role_counts.get("wolf-killer-guard", 0) > 0:
-                title, text = director.narration("guard_open")
-                await self._narrate(title, text)
+            # Kept as a barrier (old archives persist these stage numbers): the
+            # night's role openings are narrated in stage 1, once the first point
+            # has run. Its request list is the only thing that knows which roles
+            # are alive *and* unlocked tonight, so a skill that starts on a later
+            # night is never called early.
             pending = replace(pending, stage=1); self._pending_night_batch = pending
 
         if pending.stage == 1:
             raw = await self._execute_v2_point(_NIGHT_POINTS[0])
+            await self._narrate_role_openings(raw.requests)
             await self._log_stage_audience(raw)
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=2)
             self._pending_night_batch = pending

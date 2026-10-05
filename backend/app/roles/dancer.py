@@ -195,6 +195,7 @@ DANCER_SPEC = RoleSpec(
     role_id="wolf-killer-dancer",
     display_name="Dancer",
     camp_id="good",
+    opening_narration=("舞者请睁眼", "请邀请三名玩家共舞。"),
     contracts=(DANCE_POOL_CONTRACT,),
     initial_resources={POISON_IMMUNE_RESOURCE: 1},
     initial_private_data={POOLED_KEY: ()},

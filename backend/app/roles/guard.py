@@ -82,6 +82,7 @@ GUARD_SPEC = RoleSpec(
     role_id="wolf-killer-guard",
     display_name="Guard",
     camp_id="good",
+    opening_narration=("守卫请睁眼", "请选择今晚要守护的玩家。"),
     contracts=(ActionContract(
         contract_id="guard_action",
         schedule_point=SchedulePoint.NIGHT_ACTION,

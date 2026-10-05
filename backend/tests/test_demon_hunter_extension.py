@@ -243,3 +243,8 @@ def test_the_hunt_damage_settles_on_the_next_day(tmp_path) -> None:
     deaths, cleared = resolve_delayed_deaths(state._pipeline_runtime.statuses, 3)
     assert deaths == ({"seat": 2, "cause": "hunt", "round_number": 3},)
     assert cleared[2] == ("delayed_death", "hunted")
+
+def test_the_demon_hunter_declares_its_opening_line() -> None:
+    assert DEMON_HUNTER_SPEC.opening_narration == ("猎魔人请睁眼", "请选择今晚要狩猎的玩家。")
+
+

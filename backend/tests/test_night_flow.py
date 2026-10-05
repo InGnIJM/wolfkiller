@@ -920,7 +920,11 @@ def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
 
 def test_narration_known():
     assert NightDirector.narration("wolf_open") == ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。")
-    assert NightDirector.narration("guard_open") == ("守卫请睁眼", "请选择今晚要守护的玩家。")
+    assert NightDirector.narration("wolf_open") == ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。")
+    # 角色开眼旁白已改为声明式（RoleSpec.opening_narration），导演表里不再有它：
+    # 逐个角色断言，见各自的扩展测试。
+    with pytest.raises(ValueError):
+        NightDirector.narration("guard_open")
     assert NightDirector.narration("seer_open") == ("预言家请睁眼", "请查验一名玩家的身份。")
     with pytest.raises(ValueError):
         NightDirector.narration("witch_open")

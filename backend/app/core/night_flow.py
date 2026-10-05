@@ -153,7 +153,9 @@ def _night_notice(state: GameState) -> str:
     return _FIRST_NIGHT_NOTICE if state.round_number == 1 else ""
 
 _NARRATIONS: dict[str, tuple[str, str]] = {
-    "guard_open": ("守卫请睁眼", "请选择今晚要守护的玩家。"),
+    # Role openings are not here: each role declares its own line
+    # (``RoleSpec.opening_narration``) and the engine narrates the ones that
+    # actually act. This table only holds the beats the driver itself owns.
     "wolf_open": ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。"),
     "seer_open": ("预言家请睁眼", "请查验一名玩家的身份。"),
     # The pack is silenced for the night (a feared wolf). Worded without any
