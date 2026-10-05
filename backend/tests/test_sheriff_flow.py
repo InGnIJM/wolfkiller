@@ -12,6 +12,7 @@ from app.core.sheriff_flow import (
     SHERIFF_RIGHT,
     SheriffDirector,
     apply_badge,
+    badge_reasoning,
     badge_targets,
     ballot_weight,
     clear_office,
@@ -249,6 +250,22 @@ def test_director_prompts_include_sheriff_rules_and_only_current_tools() -> None
     assert "sheriff_left" in director.side_prompt(state, 2, (SHERIFF_LEFT, SHERIFF_RIGHT))[1]["content"]
     assert "撕毁" in director.badge_prompt(state, 2, (3, 4))[1]["content"]
     assert "无" in director.badge_prompt(state, 2, ())[1]["content"]
+    # 交/撕徽提示词过去是唯一不带上下的警长提示词：预言家因此不知道自己
+    # 刚验出的是金水还是查杀，也就无从用警徽去标记这次查验。
+    badge_human = director.badge_prompt(state, 2, (3, 4))[1]["content"]
+    assert "你是2号，身份：" in badge_human
+    assert "你的私有事实" in badge_human
+
+
+def test_badge_reasoning_keeps_only_a_bounded_string() -> None:
+    assert badge_reasoning({"reasoning": "  验出9号金水  "}) == "验出9号金水"
+    assert badge_reasoning({"reasoning": "x" * 600}) == "x" * 500
+    assert badge_reasoning({"reasoning": ""}) == ""
+    assert badge_reasoning({"reasoning": "   "}) == ""
+    assert badge_reasoning({"reasoning": 7}) == ""
+    assert badge_reasoning({"action_type": "tear"}) == ""
+    assert badge_reasoning("not an object") == ""
+    assert badge_reasoning(None) == ""
 
 
 def test_director_turns_use_invoke_and_fall_back() -> None:
@@ -264,7 +281,7 @@ def test_director_turns_use_invoke_and_fall_back() -> None:
             return '{"action_type":"vote","target_seat":2}'
         if tool_name == "sheriff_speech_side":
             return '{"action_type":"choose","side":"sheriff_right"}'
-        return '{"action_type":"transfer","target_seat":4}'
+        return '{"action_type":"transfer","target_seat":4,"reasoning":"9号是金水"}'
 
     director = SheriffDirector(invoke)
     state = _state()
@@ -272,7 +289,7 @@ def test_director_turns_use_invoke_and_fall_back() -> None:
     assert director.withdraw_turn(state, 2, wolf=False) == "stay"
     assert director.vote_turn(state, 4, (2, 3), wolf=False) == 2
     assert director.side_turn(state, 2, (SHERIFF_LEFT, SHERIFF_RIGHT)) == SHERIFF_RIGHT
-    assert director.badge_turn(state, 2, (3, 4)) == ("transfer", 4)
+    assert director.badge_turn(state, 2, (3, 4)) == ("transfer", 4, "9号是金水")
     assert calls[0] == "sheriff_campaign"
 
     empty = SheriffDirector()
@@ -280,7 +297,7 @@ def test_director_turns_use_invoke_and_fall_back() -> None:
     assert empty.withdraw_turn(state, 2, wolf=False) == "stay"
     assert empty.vote_turn(state, 4, (2, 3), wolf=False) is None
     assert empty.side_turn(state, 2, (SHERIFF_LEFT, SHERIFF_RIGHT)) == SHERIFF_LEFT
-    assert empty.badge_turn(state, 2, (3, 4)) == ("tear", None)
+    assert empty.badge_turn(state, 2, (3, 4)) == ("tear", None, "")
 
     def bad_invoke(messages, tool_name, schema, seat):
         if tool_name == "sheriff_campaign":
@@ -308,7 +325,21 @@ def test_director_turns_use_invoke_and_fall_back() -> None:
     assert wolves.withdraw_turn(state, 1, wolf=True) == "withdraw"
     assert wolves.vote_turn(state, 1, (2, 3), wolf=True) == "explode"
     assert wolves.side_turn(state, 2, (SHERIFF_LEFT, SHERIFF_RIGHT)) == SHERIFF_LEFT
-    assert wolves.badge_turn(state, 2, (3, 4)) == ("tear", None)
+    assert wolves.badge_turn(state, 2, (3, 4)) == ("tear", None, "")
+
+
+def test_a_refused_transfer_target_keeps_the_reason_but_logs_the_degrade(caplog) -> None:
+    """模型选了警徽不能去的座位时落账是撕徽：理由照发，但降级要在服务端留痕。"""
+
+    def invoke(messages, tool_name, schema, seat):
+        return '{"action_type":"transfer","target_seat":9,"reasoning":"把警徽交给9号"}'
+
+    director = SheriffDirector(invoke)
+    with caplog.at_level("WARNING"):
+        assert director.badge_turn(_state(), 2, (3, 4)) == (
+            "tear", None, "把警徽交给9号",
+        )
+    assert "sheriff badge transfer degraded seat=2 requested=9" in caplog.text
 
 
 def test_director_rejects_non_callable_invoke() -> None:
@@ -500,6 +531,51 @@ def test_campaign_prompt_shows_seer_private_check() -> None:
     human = Director().campaign_prompt(state, 5, wolf=False)[1]["content"]
     assert "查验" in human and "3号" in human
     assert "好人" in human
+
+
+def test_badge_prompt_shows_the_seer_own_last_check() -> None:
+    """出局警长的交/撕徽提示词必须带上他刚验出的结果。
+
+    这条门禁的由来：`badge_prompt` 从前是唯一不调 `_context_block` 的警长提示词。
+    实战里预言家验出 9 号是金水、六秒后被要求决定警徽去留，提示词里却没有这行，
+    于是他撕了徽；规则写着「预言家可以用交徽方向传递查验结果」，而全场按
+    「撕徽＝查杀」把金水读成了狼。没有这个上下文，那条规则就落不了地。
+    """
+    from app.core.sheriff_flow import SheriffDirector as Director
+    from app.core.effect_applier import (
+        EffectApplier, EffectPermission, EffectKind, derive_effect_id,
+    )
+    from app.models.pipeline import GameEffect
+    state = _rich_state()
+    effects = (
+        GameEffect(
+            derive_effect_id("seer:3:check", 0), EffectKind.ACCEPT_ACTION,
+            "seer:3:check", payload={}, visibility=("ACTOR",),
+            expected_revision=0, sort_key=(0,),
+        ),
+        GameEffect(
+            derive_effect_id("seer:3:check", 1), EffectKind.RECORD_PRIVATE_FACT,
+            "seer:3:check",
+            payload={"target": 5, "namespace": "private_checks",
+                     "fact": {"target": 9, "camp": "good"}},
+            visibility=("ACTOR",), expected_revision=0,
+            target_seat=5, sort_key=(1,),
+        ),
+    )
+    permission = EffectPermission(
+        5,
+        frozenset({EffectKind.RECORD_PRIVATE_FACT}),
+        frozenset({EffectKind.RECORD_PRIVATE_FACT}),
+        frozenset({5}),
+        frozenset({"ACTOR"}),
+    )
+    EffectApplier().apply(state, effects, permission)
+
+    human = Director().badge_prompt(state, 5, (1, 2, 3, 4, 6, 7, 8, 9))[1]["content"]
+    assert "你是5号，身份：" in human
+    assert "查验9号：好人" in human
+    # 交/撕徽的目标清单与工具约定不能被这次注入挤掉
+    assert "9号" in human and "撕毁" in human and "target_seat" in human
 
 
 def test_withdraw_prompt_carries_speeches_and_consequences() -> None:

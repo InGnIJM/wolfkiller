@@ -279,6 +279,24 @@ def parse_badge(raw: object, legal: set[int] | frozenset[int]) -> tuple[str, Opt
     return _TEAR, None
 
 
+#: The tool schema bounds a reason at 500 characters and the audience DTO shares
+#: that bound; a model can still overrun the schema, so the director clips it.
+_MAX_REASONING_CHARS = 500
+
+
+def badge_reasoning(raw: object) -> str:
+    """The dying sheriff's own explanation for the badge decision.
+
+    The tool schema requires this field, but ``parse_badge`` only reads the
+    action and its target: without this helper the model's reasoning is parsed
+    and then dropped, leaving a torn badge with no recorded cause.
+    """
+    value = _as_object(raw).get("reasoning")
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:_MAX_REASONING_CHARS]
+
+
 def _schema(action_types: Sequence[str], extra: dict[str, object] | None = None) -> dict[str, object]:
     properties: dict[str, object] = {
         "action_type": {"type": "string", "enum": list(action_types)},
@@ -493,7 +511,12 @@ class SheriffDirector:
     def badge_prompt(self, state: GameState, seat: int, targets: Sequence[int]) -> list[dict[str, str]]:
         listed = "、".join(f"{item}号" for item in targets) or "无"
         human = (
-            f"你是即将出局的警长{seat}号。可移交警徽给：{listed}，或撕毁警徽。"
+            f"你是即将出局的警长{seat}号。\n"
+            # 出局警长拿到与其他警长提示词同样的私有事实：没有它们，预言家无从
+            # 知道自己刚验出的是金水还是查杀，也就无法用警徽去标记这次查验。
+            # wolf=False 是刻意的：狼人分支那句「可自爆吞警徽」只属于竞选期。
+            f"{self._context_block(state, seat, wolf=False)}"
+            f"可移交警徽给：{listed}，或撕毁警徽。"
             "action_type 为 transfer 时必须给出 target_seat；tear 时 target_seat 为 null。"
         )
         return self._messages(self._system(), human)
@@ -577,7 +600,7 @@ class SheriffDirector:
 
     def badge_turn(
         self, state: GameState, seat: int, targets: Sequence[int],
-    ) -> tuple[str, Optional[int]]:
+    ) -> tuple[str, Optional[int], str]:
         try:
             value = self._invoke_json(
                 self.badge_prompt(state, seat, targets),
@@ -588,7 +611,17 @@ class SheriffDirector:
                 ),
                 seat=seat,
             )
-            return parse_badge(value, set(targets))
+            action, target = parse_badge(value, set(targets))
+            if action == _TEAR and _as_object(value).get("action_type") == _TRANSFER:
+                # The model named a seat the badge may not go to, so the ledger
+                # says tear. Keep the intent diagnosable in the server log: the
+                # published reason would otherwise read as contradicting the
+                # action that actually landed.
+                logger.warning(
+                    "sheriff badge transfer degraded seat=%s requested=%s",
+                    seat, _as_object(value).get("target_seat"),
+                )
+            return action, target, badge_reasoning(value)
         except Exception:
             logger.warning("sheriff badge failed seat=%s", seat, exc_info=True)
-            return _TEAR, None
+            return _TEAR, None, ""
