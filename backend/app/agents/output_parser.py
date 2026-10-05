@@ -160,6 +160,43 @@ def _last_balanced_json_object(text: str) -> object | None:
     return best
 
 
+def _coerce_array(value: str) -> list[int] | None:
+    """Turn a text-extracted target list into integers, or ``None``.
+
+    Reasoning models answer a multi-target action either as a real JSON array
+    (native tool call) or as prose that the XML/JSON fallback recovers as a
+    string. Only the parseable spellings are converted; anything else is left
+    for schema validation to reject so the failure stays visible.
+    """
+    text = value.strip()
+    if not text:
+        return None
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(parsed, list):
+            return None
+        items = parsed
+    else:
+        items = [part for part in re.split(r"[,\s]+", text) if part]
+    converted: list[int] = []
+    for item in items:
+        if isinstance(item, bool):
+            return None
+        if isinstance(item, int):
+            converted.append(item)
+            continue
+        if not isinstance(item, str):
+            return None
+        try:
+            converted.append(int(item))
+        except ValueError:
+            return None
+    return converted
+
+
 def coerce_payload_to_schema(payload: dict, schema: dict) -> dict:
     """Coerce string parameter values to the schema's primitive types.
 
@@ -181,6 +218,10 @@ def coerce_payload_to_schema(payload: dict, schema: dict) -> dict:
         normalized = value.strip().lower()
         if "null" in types and normalized in {"", "null", "none"}:
             coerced[key] = None
+        elif "array" in types:
+            converted = _coerce_array(value)
+            if converted is not None:
+                coerced[key] = converted
         elif "integer" in types or "number" in types:
             try:
                 coerced[key] = int(value)

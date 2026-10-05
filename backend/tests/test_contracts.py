@@ -172,6 +172,73 @@ class TestActionContracts:
             "schema_version", "action_type", "target_seat", "reasoning",
         ]
 
+    def test_multi_target_schema_pins_the_exact_item_count(self):
+        contract = _pipeline_contract(
+            action_types=("pool", "pass"),
+            actions_requiring_target=frozenset(),
+            multi_target_actions={"pool": 3},
+        )
+
+        schema = contract.json_schema()
+
+        assert schema["properties"]["target_seats"] == {
+            "type": ["array", "null"],
+            "items": {"type": "integer", "minimum": 1},
+            "minItems": 3,
+            "maxItems": 3,
+        }
+        # A multi-target contract still declares the nullable single target for
+        # its non-target actions, so `target_seat` stays a documented property.
+        assert schema["properties"]["target_seat"] == {"type": ["integer", "null"]}
+        assert schema["required"] == ["schema_version", "action_type", "reasoning"]
+        assert schema["properties"]["schema_version"] == {"type": "integer", "const": 1}
+
+    def test_single_target_schema_is_byte_identical_to_the_pre_multi_target_form(self):
+        schema = _pipeline_contract().json_schema()
+
+        assert "target_seats" not in schema["properties"]
+        assert schema["required"] == [
+            "schema_version", "action_type", "target_seat", "reasoning",
+        ]
+
+    @pytest.mark.parametrize("changes", [
+        {"multi_target_actions": {"unknown": 3}},
+        {"multi_target_actions": {"act": 1}},
+        {"multi_target_actions": {"act": 3}, "actions_requiring_target": frozenset({"act"})},
+        {"multi_target_actions": {"act": 2, "pass": 3}},
+        {"multi_target_actions": {"pass": 2}, "fallback_action_type": "pass"},
+    ])
+    def test_registry_rejects_invalid_multi_target_declarations(self, changes):
+        registry = RoleRegistry()
+        registry.register_pipeline(
+            _pipeline_spec(contracts=(_pipeline_contract(**changes),))
+        )
+        with pytest.raises(ValueError, match="multi.target"):
+            registry.freeze()
+
+    def test_registry_accepts_a_multi_target_contract(self):
+        contract = _pipeline_contract(
+            action_types=("pool", "pass"),
+            actions_requiring_target=frozenset(),
+            multi_target_actions={"pool": 3},
+        )
+        registry = RoleRegistry()
+        registry.register_pipeline(_pipeline_spec(contracts=(contract,)))
+        snapshot = registry.freeze()
+        assert snapshot.require("pipeline-role").contracts[0].multi_target_actions == {"pool": 3}
+
+    def test_multi_target_declaration_round_trips_through_json(self):
+        contract = _pipeline_contract(
+            action_types=("pool", "pass"),
+            actions_requiring_target=frozenset(),
+            multi_target_actions={"pool": 3},
+        )
+        document = json.loads(contract.to_json())
+        for hook in ("is_applicable", "validate", "resolve", "react", "aggregate"):
+            document[hook] = None
+        restored = PipelineActionContract.from_json(json.dumps(document))
+        assert restored.multi_target_actions == {"pool": 3}
+
     def test_selected_target_fact_namespaces_are_strict_and_stable(self):
         first = _pipeline_contract(selected_target_fact_namespaces=frozenset({"camp_label"}))
         second = _pipeline_contract()

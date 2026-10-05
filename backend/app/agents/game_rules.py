@@ -22,6 +22,9 @@ TARGET_SELECTION_RULE = (
 TARGET_SELECTION_RULE = (
     "Choose targets from the legal live seats in PROJECTED_CONTEXT. "
     "Use evidence or an existing team consensus whenever available. "
+    "When the contract declares a multi-target action (``target_seats``), give "
+    "exactly the required number of distinct live seats and leave ``target_seat`` "
+    "empty; a single-target action still uses ``target_seat``. "
     "RANDOM_HINT, when present, is an optional server-selected legal fallback "
     "for when you have no useful evidence or independent idea; it never requires "
     "you to use a skill or select that target. When it is absent, do not invent a "

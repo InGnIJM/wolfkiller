@@ -342,6 +342,39 @@ def test_action_command_is_strict_frozen_and_bounded() -> None:
         )
 
 
+def test_action_command_carries_multi_targets_strictly() -> None:
+    command = ActionCommand(
+        schema_version=1, action_type="pool", target_seat=None,
+        target_seats=(3, 5, 7), reasoning="三号、五号、七号共舞",
+    )
+    assert command.target_seats == (3, 5, 7)
+    assert json.loads(command.to_json())["target_seats"] == [3, 5, 7]
+    # The command schema version deliberately stays 1: multi-target support is
+    # an additive optional field, and the authority for "how many targets" is
+    # the contract's ``multi_target_actions``.
+    assert ActionCommand(
+        schema_version=1, action_type="pass", target_seat=None, reasoning="safe"
+    ).target_seats is None
+    # A JSON array is how a provider transports the list; only the *items* stay
+    # strict, so the seat numbers can never arrive as strings or booleans.
+    from_list = ActionCommand(
+        schema_version=1, action_type="pool", target_seat=None,
+        target_seats=[3, 5, 7], reasoning="from JSON",
+    )
+    assert from_list.target_seats == (3, 5, 7)
+    for bad in ((True,), ("3",), 3, (3, "5")):
+        with pytest.raises(ValidationError):
+            ActionCommand(
+                schema_version=1, action_type="pool", target_seat=None,
+                target_seats=bad, reasoning="strict",
+            )
+
+    # A multi-target payload may omit the single-target key entirely, but a
+    # single-target contract still fails validation when its target is missing.
+    omitted = ActionCommand(action_type="pool", target_seats=(3, 5, 7), reasoning="none")
+    assert omitted.target_seat is None
+
+
 def test_contract_role_request_violation_and_effect_are_frozen_values() -> None:
     contract = _contract()
     role = RoleSpec(

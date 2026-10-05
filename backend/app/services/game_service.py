@@ -32,6 +32,7 @@ from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.prompt_renderer import PromptRenderer
+from app.agents.output_parser import coerce_payload_to_schema
 from app.agents.game_rules import NIGHT_SYSTEM_PROMPT as _SYSTEM_PROMPT
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
@@ -183,6 +184,20 @@ def _model_failure_code(error: Exception, status_code: int | None) -> str:
 
 
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _pipeline_command(payload: object, contract) -> PipelineActionCommand:
+    """Validate one model payload into a pipeline command.
+
+    A contract that declares multi-target actions additionally gets the shared
+    schema coercion first: text-extracted payloads reach this boundary as
+    strings (``"3,5,7"`` / ``"[3,5,7]"``), and the strict command model would
+    reject them outright. Single-target contracts keep the historical path byte
+    for byte, so no existing behaviour moves.
+    """
+    if getattr(contract, "multi_target_actions", None):
+        payload = coerce_payload_to_schema(dict(payload), contract.json_schema())
+    return PipelineActionCommand.model_validate(payload)
 
 
 def _is_retryable_model_error(error: Exception) -> bool:
@@ -2587,7 +2602,7 @@ class GameService:
             try:
                 llm_client = client_provider(request.actor_seat)
                 result = llm_client.invoke_action(messages, request.contract)
-                command = PipelineActionCommand.model_validate(result.payload)
+                command = _pipeline_command(result.payload, request.contract)
             except Exception as error:
                 failure = error
                 if _is_retryable_model_error(error):
@@ -2596,7 +2611,7 @@ class GameService:
                     # silently forfeited on a single flaky call.
                     try:
                         result = llm_client.invoke_action(messages, request.contract)
-                        command = PipelineActionCommand.model_validate(result.payload)
+                        command = _pipeline_command(result.payload, request.contract)
                         failure = None
                     except Exception as retry_error:
                         failure = retry_error

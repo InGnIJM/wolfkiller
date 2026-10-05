@@ -159,6 +159,81 @@ def test_pipeline_validate_rejects_command_shape(validator, command, expected):
     )
 
 
+def multi_target_contract(**changes: object) -> PipelineActionContract:
+    values: dict[str, object] = {
+        "contract_id": "dance-pool",
+        "schedule_point": SchedulePoint.NIGHT_ACTION,
+        "order": 20,
+        "action_types": ("pool", "pass"),
+        "actions_requiring_target": frozenset(),
+        "fallback_action_type": "pass",
+        "multi_target_actions": {"pool": 3},
+    }
+    values.update(changes)
+    return PipelineActionContract(**values)
+
+
+def multi_target_command(
+    action_type: str = "pool", target_seats: tuple[int, ...] | None = (2, 3, 4)
+) -> PipelineActionCommand:
+    return PipelineActionCommand(
+        action_type=action_type, target_seat=None,
+        target_seats=target_seats, reasoning="reason",
+    )
+
+
+def test_pipeline_validate_accepts_exactly_the_declared_target_count(validator):
+    contract = multi_target_contract()
+    context = pipeline_context(
+        contract=contract, contract_id="dance-pool", facts={"alive_seats": (1, 2, 3, 4)}
+    )
+    assert validator.validate(context, contract, multi_target_command()) == ()
+    assert validator.validate(
+        context, contract, multi_target_command("pass", None)
+    ) == ()
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (multi_target_command(target_seats=(2, 3)), "target_count_invalid"),
+        (multi_target_command(target_seats=(2, 3, 4, 5)), "target_count_invalid"),
+        (multi_target_command(target_seats=(2, 3, 3)), "duplicate_targets"),
+        (multi_target_command(target_seats=(2, 3, 99)), "target_not_alive"),
+        (multi_target_command(target_seats=(2, 3, -1)), "invalid_target"),
+        (
+            PipelineActionCommand(
+                action_type="pool", target_seat=2, target_seats=(2, 3, 4),
+                reasoning="both",
+            ),
+            "target_forbidden",
+        ),
+        (
+            PipelineActionCommand(
+                action_type="pool", target_seat=None, target_seats=None,
+                reasoning="missing",
+            ),
+            "target_count_invalid",
+        ),
+    ],
+)
+def test_pipeline_validate_rejects_bad_multi_target_shapes(validator, command, expected):
+    contract = multi_target_contract()
+    context = pipeline_context(
+        contract=contract, contract_id="dance-pool", facts={"alive_seats": (1, 2, 3, 4, 5)}
+    )
+    assert expected in violation_codes(validator.validate(context, contract, command))
+
+
+def test_pipeline_validate_forbids_multi_targets_on_single_target_contracts(validator):
+    command = PipelineActionCommand(
+        action_type="kill", target_seat=2, target_seats=(2, 3), reasoning="both",
+    )
+    assert "multi_target_forbidden" in violation_codes(
+        validator.validate(pipeline_context(), pipeline_contract(), command)
+    )
+
+
 @pytest.mark.parametrize(
     ("counter", "value", "expected"),
     [

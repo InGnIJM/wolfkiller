@@ -107,16 +107,7 @@ class PromptRenderer:
             "accepted_command_summaries": context.accepted_command_summaries,
             "aggregate_result": context.aggregate_result,
         }
-        schema = {
-            "type": "object", "additionalProperties": False,
-            "required": ["schema_version", "action_type", "target_seat", "reasoning"],
-            "properties": {
-                "schema_version": {"const": 1},
-                "action_type": {"type": "string", "enum": list(contract.action_types)},
-                "target_seat": {"type": ["integer", "null"], "minimum": 1},
-                "reasoning": {"type": "string", "maxLength": 500},
-            },
-        }
+        schema = contract.json_schema()
         public_rules = {
             "rules": public_rules_for(enable_sheriff=enabled),
             "roles": context.facts.get("public_role_rules", ()),

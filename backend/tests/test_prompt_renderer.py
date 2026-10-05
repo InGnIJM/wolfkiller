@@ -39,6 +39,49 @@ def test_renderer_includes_anti_anchoring_target_rule() -> None:
     assert "target whitelist" not in rendered.lower()
 
 
+def test_renderer_emits_the_contract_schema_verbatim() -> None:
+    import json
+
+    spec, contract, context = values()
+    rendered = PromptRenderer().render(spec, contract, context, "")
+    line = next(
+        row for row in rendered.splitlines()
+        if row.startswith("OUTPUT_ACTION_COMMAND_SCHEMA=")
+    )
+    assert json.loads(line.split("=", 1)[1]) == contract.json_schema()
+
+
+def test_renderer_publishes_the_multi_target_schema() -> None:
+    import json
+
+    contract = ActionContract(
+        "dance_pool", SchedulePoint.NIGHT_ACTION, 20, ("pool", "pass"),
+        frozenset(), "pass", multi_target_actions={"pool": 3},
+        visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+    spec = RoleSpec(
+        "dancer", display_name="Dancer", camp_id="good", contracts=(contract,),
+        instructions="Pick three.", visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+    context = ActionContext(
+        "g", 1, {"alive_seats": (1, 2, 3, 4)},
+        config_version="a" * 64, contract_id=contract.contract_id,
+        contract_version=contract.schema_version, contract_digest=contract.stable_digest(),
+        round_number=2, phase="night", window_id="w",
+        schedule_point=contract.schedule_point, actor_seat=1,
+        actor_role_id=spec.role_id, actor_alive=True, action_key="k",
+    )
+    rendered = PromptRenderer().render(spec, contract, context, "")
+    line = next(
+        row for row in rendered.splitlines()
+        if row.startswith("OUTPUT_ACTION_COMMAND_SCHEMA=")
+    )
+    schema = json.loads(line.split("=", 1)[1])
+    assert schema == contract.json_schema()
+    assert schema["properties"]["target_seats"]["minItems"] == 3
+    assert schema["properties"]["target_seats"]["maxItems"] == 3
+
+
 def test_renderer_is_deterministic_closed_and_contains_only_projected_context() -> None:
     spec, contract, context = values(); renderer = PromptRenderer()
     first = renderer.render(spec, contract, context, "player said hello")

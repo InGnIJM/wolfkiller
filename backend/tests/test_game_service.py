@@ -3231,3 +3231,53 @@ class TestModelAssignmentIntegration:
         assert service._llm_clients == {}
         service._manifest.remove_game.assert_called_once()
         assert game_dirs[0].exists() is cleanup_fails
+
+
+def _multi_target_test_applicable(context):
+    return True
+
+
+def _multi_target_test_validate(context, command):
+    return ()
+
+
+def _multi_target_test_resolve(context, command):
+    return ()
+
+
+def test_pipeline_command_coerces_a_text_target_list_only_for_multi_target_contracts():
+    """The strict command model needs the string form repaired before it runs.
+
+    Multi-target actions are the only place a model answers with a list; text
+    transports deliver it as ``"3,5,7"`` or ``"[3,5,7]"``. Single-target
+    contracts keep the untouched historical path.
+    """
+    from app.models.pipeline import (
+        ActionContract as PipelineActionContract, SchedulePoint,
+    )
+    from app.services.game_service import _pipeline_command
+
+    contract = PipelineActionContract(
+        contract_id="dance_pool",
+        schedule_point=SchedulePoint.NIGHT_ACTION,
+        order=20,
+        action_types=("pool", "pass"),
+        actions_requiring_target=frozenset(),
+        fallback_action_type="pass",
+        multi_target_actions={"pool": 3},
+        is_applicable=_multi_target_test_applicable,
+        validate=_multi_target_test_validate,
+        resolve=_multi_target_test_resolve,
+    )
+    command = _pipeline_command(
+        {"action_type": "pool", "target_seats": "3,5,7", "reasoning": "共舞"},
+        contract,
+    )
+    assert command.target_seats == (3, 5, 7)
+    assert command.target_seat is None
+
+    single = builtin_registry.freeze().require("wolf-killer-werewolf").contracts[0]
+    with pytest.raises(Exception):
+        _pipeline_command(
+            {"action_type": "kill", "target_seat": "3", "reasoning": "x"}, single,
+        )

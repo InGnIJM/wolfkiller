@@ -207,6 +207,27 @@ class RoleRegistry:
             raise ValueError("fallback action cannot require a target")
         if not contract.actions_requiring_target <= actions:
             raise ValueError("target rule references an unknown action type")
+        counts = set(contract.multi_target_actions.values())
+        if len(counts) > 1:
+            raise ValueError("multi-target actions in one contract must share one count")
+        for action, count in contract.multi_target_actions.items():
+            if action not in actions:
+                raise ValueError(
+                    f"multi-target rule references an unknown action type: {action}"
+                )
+            if count < 2:
+                raise ValueError(
+                    f"multi-target action needs at least two targets: {action}"
+                )
+            if action in contract.actions_requiring_target:
+                raise ValueError(
+                    "multi-target action cannot also require a single target: "
+                    f"{action}"
+                )
+            if action == contract.fallback_action_type:
+                raise ValueError(
+                    f"fallback action cannot be a multi-target action: {action}"
+                )
         if contract.order < 0 or contract.order > _MAX_ORDER:
             raise ValueError("contract order is outside the supported range")
         for limit in (

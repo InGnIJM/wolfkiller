@@ -373,8 +373,27 @@ class ActionCommand(BaseModel):
 
     schema_version: Literal[1] = 1
     action_type: StrictStr
-    target_seat: StrictInt | None
+    #: A single-target action names its seat here. It defaults to ``None`` so a
+    #: multi-target payload may omit the key entirely; the contract's schema is
+    #: what forces the model to send it, and the validator still rejects a
+    #: missing target on an action that requires one.
+    target_seat: StrictInt | None = None
+    #: Exactly-one-target commands keep using ``target_seat``. A command whose
+    #: action is declared in the contract's ``multi_target_actions`` uses this
+    #: tuple instead and must leave ``target_seat`` empty — the contract, not
+    #: the wire version, is the authority for how many targets a skill needs.
+    #: The field is purely additive, so ``schema_version`` stays 1 and every
+    #: command written before it existed round-trips unchanged.
+    target_seats: tuple[StrictInt, ...] | None = None
     reasoning: StrictStr = Field(max_length=500)
+
+    @field_validator("target_seats", mode="before")
+    @classmethod
+    def _accept_json_seat_array(cls, value: object) -> object:
+        """Accept the JSON array form a provider transports an array in."""
+        if isinstance(value, list):
+            return tuple(value)
+        return value
 
     @field_validator("action_type", "reasoning")
     @classmethod
@@ -407,6 +426,13 @@ class ActionContract(_FrozenValue):
     required_resources: Mapping[str, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    #: Action type -> the exact number of targets it needs (>= 2). A contract
+    #: may declare several multi-target actions, but they must all need the
+    #: same count: the model gateway tool schema pins one ``minItems`` /
+    #: ``maxItems`` pair per contract.
+    multi_target_actions: Mapping[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     visibility_namespaces: frozenset[str] = frozenset()
     selected_target_fact_namespaces: frozenset[str] = frozenset()
     response_event_types: frozenset[str] = frozenset()
@@ -427,18 +453,33 @@ class ActionContract(_FrozenValue):
 
     def json_schema(self) -> dict[str, object]:
         """Return the provider-neutral schema for one pipeline action."""
+        properties: dict[str, object] = {
+            "schema_version": {"type": "integer", "const": self.schema_version},
+            "action_type": {"type": "string", "enum": list(self.action_types)},
+            "target_seat": {"type": ["integer", "null"]},
+            "reasoning": {"type": "string", "maxLength": 500},
+        }
+        required = ["schema_version", "action_type"]
+        if self.multi_target_actions:
+            # The registry guarantees one shared count per contract, so the
+            # exact item range is expressible as a plain JSON-Schema bound.
+            count = min(self.multi_target_actions.values())
+            properties["target_seats"] = {
+                "type": ["array", "null"],
+                "items": {"type": "integer", "minimum": 1},
+                "minItems": count,
+                "maxItems": count,
+            }
+        else:
+            # A single-target contract keeps its historical shape byte for
+            # byte: the model is still forced to name the target field.
+            required.append("target_seat")
+        required.append("reasoning")
         return {
             "type": "object",
             "additionalProperties": False,
-            "properties": {
-                "schema_version": {"type": "integer", "const": self.schema_version},
-                "action_type": {"type": "string", "enum": list(self.action_types)},
-                "target_seat": {"type": ["integer", "null"]},
-                "reasoning": {"type": "string", "maxLength": 500},
-            },
-            "required": [
-                "schema_version", "action_type", "target_seat", "reasoning",
-            ],
+            "properties": properties,
+            "required": required,
         }
 
     def __post_init__(self) -> None:
@@ -476,6 +517,10 @@ class ActionContract(_FrozenValue):
         object.__setattr__(self, "allowed_effects", effects)
         object.__setattr__(
             self, "required_resources", _freeze_int_mapping(self.required_resources, path="required_resources")
+        )
+        object.__setattr__(
+            self, "multi_target_actions",
+            _freeze_int_mapping(self.multi_target_actions, path="multi_target_actions"),
         )
         object.__setattr__(self, "visibility_namespaces", frozenset(self.visibility_namespaces))
         object.__setattr__(self, "selected_target_fact_namespaces", frozenset(self.selected_target_fact_namespaces))

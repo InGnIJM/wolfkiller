@@ -576,3 +576,54 @@ def test_xml_boolean_coercion_leaves_invalid_values_for_schema_validation():
     payload = {"a": " TRUE ", "b": "false", "c": "yes"}
     assert coerce_payload_to_schema(payload, schema) == {"a": True, "b": False, "c": "yes"}
     assert payload["a"] == " TRUE "
+
+
+def test_array_coercion_accepts_json_and_bare_comma_lists():
+    from app.agents.output_parser import coerce_payload_to_schema
+
+    schema = {"properties": {"target_seats": {
+        "type": ["array", "null"], "items": {"type": "integer"},
+    }}}
+    for raw in ("[3, 5, 7]", " 3,5,7 ", "3 5 7", "[3,5,7]"):
+        assert coerce_payload_to_schema(
+            {"target_seats": raw}, schema
+        ) == {"target_seats": [3, 5, 7]}
+    # Unparseable values stay untouched so schema validation rejects them.
+    assert coerce_payload_to_schema(
+        {"target_seats": "three"}, schema
+    ) == {"target_seats": "three"}
+    assert coerce_payload_to_schema(
+        {"target_seats": None}, schema
+    ) == {"target_seats": None}
+
+
+def test_legacy_action_parser_rejects_a_pipeline_only_target_list():
+    """The daytime (legacy) contract path has no multi-target notion.
+
+    Legacy contracts and commands live in ``app/models/contracts.py`` and are
+    only used for speech/vote decisions. A payload that carries ``target_seats``
+    is therefore an extra field there, and stays rejected — multi-target skills
+    run through the pipeline scheduler instead (`app/models/pipeline.py`).
+    """
+    contract = builtin_registry.require("wolf-killer-werewolf").contracts[0]
+    from app.models.contracts import ActionContract as LegacyContract
+    from app.models.game import GamePhase
+
+    legacy = LegacyContract(
+        contract_id="legacy_choice",
+        phase=GamePhase.NIGHT,
+        action_types=("kill", "pass"),
+        actions_requiring_target=frozenset({"kill"}),
+        resolution_priority=10,
+        fallback_action_type="pass",
+    )
+    with pytest.raises(ToolCallError) as error:
+        OutputParser().parse_action_payload(
+            {"action_type": "kill", "target_seat": 3, "target_seats": [3, 5], "reasoning": "x"},
+            legacy,
+        )
+    assert error.value.code == "action_payload_extra_field"
+    # The built-in werewolf contract is a legacy contract too: it declares no
+    # multi-target action, and the pipeline contract is a different class.
+    assert not hasattr(contract, "multi_target_actions")
+

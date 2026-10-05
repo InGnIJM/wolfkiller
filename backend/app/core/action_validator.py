@@ -81,19 +81,28 @@ class ActionValidator:
             violations.append(self._violation(
                 "action_not_allowed", "action type is not allowed by contract"
             ))
-        requires_target = command.action_type in contract.actions_requiring_target
-        if requires_target and command.target_seat is None:
-            violations.append(self._violation(
-                "target_required", "action requires a target"
-            ))
-        if not requires_target and command.target_seat is not None:
-            violations.append(self._violation(
-                "target_forbidden", "action does not allow a target"
-            ))
-        if command.target_seat is not None and command.target_seat <= 0:
-            violations.append(self._violation(
-                "invalid_target", "target seat must be a positive integer"
-            ))
+        multi_count = contract.multi_target_actions.get(command.action_type)
+        if multi_count is not None:
+            self._validate_multi_target(context, command, multi_count, violations)
+        else:
+            if command.target_seats is not None:
+                violations.append(self._violation(
+                    "multi_target_forbidden",
+                    "action does not accept a target list",
+                ))
+            requires_target = command.action_type in contract.actions_requiring_target
+            if requires_target and command.target_seat is None:
+                violations.append(self._violation(
+                    "target_required", "action requires a target"
+                ))
+            if not requires_target and command.target_seat is not None:
+                violations.append(self._violation(
+                    "target_forbidden", "action does not allow a target"
+                ))
+            if command.target_seat is not None and command.target_seat <= 0:
+                violations.append(self._violation(
+                    "invalid_target", "target seat must be a positive integer"
+                ))
 
         alive_seats = context.facts.get("alive_seats")
         valid_alive_seats = (
@@ -104,6 +113,13 @@ class ActionValidator:
             violations.append(self._violation(
                 "invalid_alive_seats", "alive_seats must be a tuple of positive integers"
             ))
+        elif multi_count is not None:
+            for seat in command.target_seats or ():
+                if seat not in alive_seats:
+                    violations.append(self._violation(
+                        "target_not_alive", "target must exist and be alive"
+                    ))
+                    break
         elif command.target_seat is not None and command.target_seat not in alive_seats:
             violations.append(self._violation(
                 "target_not_alive", "target must exist and be alive"
@@ -124,6 +140,41 @@ class ActionValidator:
     @staticmethod
     def _violation(code: str, message: str) -> RuleViolation:
         return RuleViolation(code=code, message=message)
+
+    @classmethod
+    def _validate_multi_target(
+        cls,
+        context: ActionContext,
+        command: PipelineActionCommand,
+        count: int,
+        violations: list[RuleViolation],
+    ) -> None:
+        """A declared multi-target action needs exactly ``count`` distinct seats.
+
+        The shape is checked here as well as in the output parser because the
+        validator is the last gate before a hook runs: a hand-built command from
+        any other caller must be rejected the same way.
+        """
+        if command.target_seat is not None:
+            violations.append(cls._violation(
+                "target_forbidden", "a multi-target action must not name target_seat"
+            ))
+        # ``ActionCommand`` is strict, so the seats are already a tuple of ints
+        # (or absent): only absence and the declared cardinality are checked.
+        seats = command.target_seats or ()
+        if len(seats) != count:
+            violations.append(cls._violation(
+                "target_count_invalid",
+                f"action requires exactly {count} targets",
+            ))
+        if len(set(seats)) != len(seats):
+            violations.append(cls._violation(
+                "duplicate_targets", "target seats must be distinct"
+            ))
+        if any(seat <= 0 for seat in seats):
+            violations.append(cls._violation(
+                "invalid_target", "target seat must be a positive integer"
+            ))
 
     @classmethod
     def _validate_counters(
