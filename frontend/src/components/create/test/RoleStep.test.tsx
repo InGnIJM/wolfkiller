@@ -254,4 +254,16 @@ describe('RoleStep 添加角色', () => {
     expect(within(reopened).getByRole('checkbox', { name: '摄梦人' })).not.toBeChecked();
     expect(within(reopened).getByRole('button', { name: '添加 0 个角色' })).toBeDisabled();
   });
+
+  it('offers a collapsible board picker for narrow viewports', async () => {
+    // 窄屏把左栏折到上面，默认收起，先把右栏让出来；桌面端由断点强制显示，
+    // 不受这个状态影响（所以这里只断言窄屏入口本身）。
+    renderStep();
+
+    const toggle = await screen.findByRole('button', { name: '选择板子' });
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
 });

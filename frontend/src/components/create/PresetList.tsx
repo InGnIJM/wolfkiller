@@ -73,8 +73,11 @@ export default function PresetList({
   return (
     <Box
       sx={{
-        width: 290, flexShrink: 0, display: 'flex', flexDirection: 'column',
-        minHeight: 0, borderRight: `1px solid ${HAIRLINE.soft}`,
+        width: { xs: '100%', md: 290 },
+        flexShrink: 0, display: 'flex', flexDirection: 'column',
+        minHeight: 0,
+        borderRight: { xs: 'none', md: `1px solid ${HAIRLINE.soft}` },
+        borderBottom: { xs: `1px solid ${HAIRLINE.soft}`, md: 'none' },
         bgcolor: CANVAS.surface,
       }}
     >

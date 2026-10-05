@@ -41,6 +41,8 @@ export default function RoleStep({
   /** 当前基于哪个板子；点板子或重置时更新。 */
   const [basePresetId, setBasePresetId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // 窄屏的板子选择折叠状态（桌面端由断点强制展开，见下方 sx）。
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -160,13 +162,32 @@ export default function RoleStep({
   const underLimit = constraints !== null && total < constraints.min_players;
 
   return (
-    <Box sx={{ display: 'flex', minHeight: 520 }}>
-      <PresetList
-        presets={presets}
-        roles={roles}
-        selectedPresetId={basePresetId}
-        onSelect={applyPreset}
-      />
+    <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, minHeight: 520 }}>
+      {/* 窄屏把板子列表折到上面并默认收起：290px 固定左栏在 375px 屏上会把
+          右栏挤到只剩几十像素，横向溢出 65px（2026-10-05 实测）。桌面端这个
+          按钮不显示，列表由断点强制展开，所以状态不会影响大屏。 */}
+      <Button
+        size="small"
+        aria-expanded={pickerOpen}
+        onClick={() => setPickerOpen((open) => !open)}
+        sx={{ display: { xs: 'inline-flex', md: 'none' }, alignSelf: 'flex-start', m: 1.5, mb: 0 }}
+      >
+        选择板子
+      </Button>
+      <Box
+        sx={{
+          display: pickerOpen ? 'flex' : { xs: 'none', md: 'flex' },
+          flexDirection: 'column',
+          minWidth: 0,
+        }}
+      >
+        <PresetList
+          presets={presets}
+          roles={roles}
+          selectedPresetId={basePresetId}
+          onSelect={applyPreset}
+        />
+      </Box>
 
       <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Box sx={{ px: 2.25, pt: 1.75, pb: 1.5, borderBottom: `1px solid ${HAIRLINE.soft}` }}>
