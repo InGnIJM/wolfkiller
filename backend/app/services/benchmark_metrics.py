@@ -31,8 +31,11 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
+from app.benchmark.metrics import compute_decision_metrics, compute_decision_samples
 
-METRIC_VERSION = "v2"
+
+#: v3 adds the pooled ``decision`` section (see ``app/benchmark/metrics.py``).
+METRIC_VERSION = "v3"
 _BOOTSTRAP_SEED = 1729
 _BOOTSTRAP_SAMPLES = 2000
 _CONFIDENCE = 0.95
@@ -59,13 +62,20 @@ class BenchmarkMetrics:
         items: Sequence[Mapping[str, Any]],
         model_requests: Sequence[Mapping[str, Any]],
         model_attempts: Sequence[Mapping[str, Any]],
+        summaries: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
-        """Return ``metric_version``, canonical ``input_digest`` and summary."""
+        """Return ``metric_version``, canonical ``input_digest`` and summary.
+
+        ``summaries`` are the per-game ``summary.json`` payloads the decision
+        metrics are computed from; they are part of the hashed facts, so a
+        report is regenerated when a game's decisions change.
+        """
         facts = {
             "games": _canonical_rows(games, "games"),
             "items": _canonical_rows(items, "items"),
             "model_requests": _canonical_rows(model_requests, "model_requests"),
             "model_attempts": _canonical_rows(model_attempts, "model_attempts"),
+            "summaries": _canonical_rows(summaries, "summaries"),
         }
         payload = _canonical_json(facts)
         return {
@@ -73,6 +83,10 @@ class BenchmarkMetrics:
             "input_digest": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
             "summary": {
                 "games": _game_metrics(facts["games"]),
+                "decision": {
+                    **compute_decision_metrics(facts["summaries"]),
+                    "samples": compute_decision_samples(facts["summaries"]),
+                },
                 "requests": _request_metrics(facts["model_requests"]),
                 "attempts": _attempt_metrics(facts["model_attempts"]),
                 "model_performance": _model_performance(

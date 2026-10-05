@@ -270,3 +270,19 @@ def build_and_write_summary(data_dir: str, game_id: str) -> str:
     return write_game_summary(
         data_dir, game_id, build_game_summary(data_dir, game_id),
     )
+
+
+def read_game_summary(data_dir: str, game_id: str) -> Optional[dict]:
+    """Best-effort read of a game's ``summary.json``.
+
+    ``None`` when the file is absent, unreadable, or not a JSON object: a game
+    that predates summaries (or one whose file was hand-edited) must not fail a
+    whole benchmark report. The report counts these as ``summaries_missing``.
+    """
+    path = os.path.join(data_dir, "games", game_id, _SUMMARY_FILENAME)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
