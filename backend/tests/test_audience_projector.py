@@ -23,7 +23,7 @@ def test_public_event_catalogue_is_frozen() -> None:
         "game_initialized", "player_revealed", "execution_state", "phase",
         "speech", "speaking", "death", "vote", "vote_result", "winner",
         "night_action", "night_thought", "technical_abstain",
-        "exile_cancelled", "self_explode",
+        "exile_cancelled", "self_explode", "crimson_explode",
         "knight_duel", "wolf_beauty_charm", "wolf_beauty_revenge",
         "wolf_chat_message", "wolf_vote",
         "sheriff_elected", "sheriff_badge", "sheriff_run",

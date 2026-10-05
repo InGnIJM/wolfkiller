@@ -333,6 +333,10 @@ function EventSummary({
       text = `${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
+    case 'crimson_explode':
+      text = `${entry.payload.seat}号自爆，封印${entry.payload.silenced_seats.length}个好人技能`;
+      tone = '#F4B3B6';
+      break;
     case 'sheriff_elected':
       text = entry.payload.seat == null
         ? '警长竞选结束，警徽流失'

@@ -99,6 +99,27 @@ def test_role_catalog_covers_all_registered_roles():
     assert by_id["wolf-killer-old-drunkard"]["max_count"] == 1
 
 
+def test_crimson_hunter_preset_matches_the_netease_tournament_board() -> None:
+    """十二人赤月猎魔人：赤月使徒 + 猎魔人 + 白痴，没有守卫与猎人。"""
+    preset = next(
+        item for item in STANDARD_PRESETS if item["id"] == "twelve-player-crimson-hunter"
+    )
+    assert preset["role_counts"] == {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-crimson-envoy": 1,
+        "wolf-killer-villager": 4,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-demon-hunter": 1,
+        "wolf-killer-idiot": 1,
+    }
+    assert sum(preset["role_counts"].values()) == 12
+    assert "wolf-killer-guard" not in preset["role_counts"]
+    assert "wolf-killer-hunter" not in preset["role_counts"]
+    assert preset["enable_sheriff"] is True
+    assert preset["recommended_timeout_seconds"] == 7200
+
+
 def test_pure_white_preset_matches_the_netease_tournament_board() -> None:
     """十二人纯白夜影：没有预言家，两个查验位是纯白之女与狼巫。"""
     preset = next(
@@ -120,7 +141,7 @@ def test_pure_white_preset_matches_the_netease_tournament_board() -> None:
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 12
+    assert len(STANDARD_PRESETS) == 13
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -212,6 +233,7 @@ def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
         "twelve-player-wolf-beauty-knight", "twelve-player-wolf-king-guard",
         "twelve-player-evil-knight", "twelve-player-wolf-king-dream",
         "twelve-player-gargoyle-gravekeeper", "twelve-player-pure-white",
+        "twelve-player-crimson-hunter",
     }
     for preset in STANDARD_PRESETS:
         expected = "never" if preset["id"] in netease else "first_night_only"
@@ -263,7 +285,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 12
+    assert len(response.presets) == 13
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
     assert response.presets[-1].recommended_timeout_seconds == 7200

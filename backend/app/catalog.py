@@ -392,6 +392,25 @@ STANDARD_PRESETS: list[dict] = [
         "recommended_timeout_seconds": 7200,
     },
     {
+        # NetEase's official 12-player "Crimson Demon Hunter" board: the envoy's
+        # self-destruct and the hunter's delayed swing are the two clocks.
+        "id": "twelve-player-crimson-hunter",
+        "name": "十二人赤月猎魔人",
+        "description": "3狼 1赤月使徒 4民 1预言家 1女巫 1猎魔人 1白痴",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-crimson-envoy": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-demon-hunter": 1,
+            "wolf-killer-idiot": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
         # NetEase's official 12-player "Pure White Night Shadow" tournament
         # board: no Seer at all — the Pure White's exact-identity check and the
         # Wolf Witch's mirrored one are the board's information engine.

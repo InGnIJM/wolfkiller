@@ -92,6 +92,7 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WOLF_BEAUTY_CHARM": frozenset({"seat", "target_seat", "round_number"}),
     "WOLF_BEAUTY_REVENGE": frozenset({"seat", "target_seat", "cause", "round_number"}),
     "STATUS_ADDED": frozenset({"seat", "status", "round_number"}),
+    "CRIMSON_EXPLODE": frozenset({"seat", "silenced_seats", "round_number"}),
 }
 
 #: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
@@ -611,6 +612,18 @@ def _public_day_verdict_event(
             return []
         return [{"event_type": "self_explode", "payload": {
             "round_number": round_number, "seat": seat, "target_seat": target}}]
+    if event_type == "CRIMSON_EXPLODE":
+        seat = payload.get("seat")
+        silence = payload.get("silenced_seats")
+        if not _is_positive_int(seat):
+            return []
+        if not isinstance(silence, (list, tuple)) or any(
+            not _is_positive_int(item) for item in silence
+        ):
+            return []
+        return [{"event_type": "crimson_explode", "payload": {
+            "round_number": round_number, "seat": seat,
+            "silenced_seats": list(silence)}}]
     if event_type == "SHERIFF_ELECTED":
         seat = payload.get("seat")
         reason = payload.get("reason")
@@ -777,7 +790,8 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         return _public_role_skill_event(event_type, payload, round_number)
-    if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "PLAYER_REVEALED",
+    if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "CRIMSON_EXPLODE",
+                      "PLAYER_REVEALED",
                       "SHERIFF_ELECTED", "SHERIFF_BADGE",
                       "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE"):
         if not _payload_matches(event_type, payload):

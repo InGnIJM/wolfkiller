@@ -353,6 +353,8 @@ function deriveState(
         break;
       }
       case 'self_explode':
+      case 'crimson_explode':
+        // 赤月使徒的自爆不带乘客，但它同样终止当日流程；两者在时间轴上是同一拍。
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         currentSpeaker = null;
         break;

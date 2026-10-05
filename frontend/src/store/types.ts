@@ -21,6 +21,7 @@ export type DeathCause =
   | 'hunter_shot'
   | 'exile'
   | 'self_explode'
+  | 'crimson_explode'
   | 'knight_duel'
   | 'charm'
   | 'wolf_king_shot'
@@ -98,6 +99,13 @@ export interface SelfExplodePayload {
   round_number: number;
   seat: number;
   target_seat: number;
+}
+
+/** 赤月使徒自爆：不带走任何人，改为封印当晚全部好人技能。 */
+export interface CrimsonExplodePayload {
+  round_number: number;
+  seat: number;
+  silenced_seats: number[];
 }
 
 export interface SheriffElectedPayload {
@@ -247,7 +255,9 @@ export interface NightThoughtPayload {
     | 'knight_reasoning'
     | 'wolf_beauty_reasoning'
     | 'pure_white_reasoning'
-    | 'wolf_witch_reasoning';
+    | 'wolf_witch_reasoning'
+    | 'demon_hunter_reasoning'
+    | 'crimson_envoy_reasoning';
   target_seat: number | null;
   reasoning: string;
 }
@@ -307,6 +317,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'technical_abstain', TechnicalAbstainPayload>
   | PublicReplayEnvelope<'exile_cancelled', ExileCancelledPayload>
   | PublicReplayEnvelope<'self_explode', SelfExplodePayload>
+  | PublicReplayEnvelope<'crimson_explode', CrimsonExplodePayload>
   | PublicReplayEnvelope<'knight_duel', KnightDuelPayload>
   | PublicReplayEnvelope<'wolf_beauty_charm', WolfBeautyCharmPayload>
   | PublicReplayEnvelope<'wolf_beauty_revenge', WolfBeautyRevengePayload>

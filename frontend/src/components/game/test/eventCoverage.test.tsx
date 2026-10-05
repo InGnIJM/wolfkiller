@@ -162,6 +162,15 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
+    what: '赤月使徒自爆（封印当晚好人技能）',
+    event: {
+      ...at,
+      event_type: 'crimson_explode',
+      payload: { seat: 1, silenced_seats: [4, 6], round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '骑士翻牌决斗',
     event: {
       ...at,
@@ -296,7 +305,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(30);
+    expect(listed).toHaveLength(31);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];

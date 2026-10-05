@@ -205,6 +205,18 @@ class PublicVoteResponse(_PublicResponse):
     round_number: NonNegativePublicInt
 
 
+class PublicCrimsonExplodeResponse(_PublicResponse):
+    """The Crimson Envoy's self-destruct: who exploded and who is sealed tonight.
+
+    It carries no passenger (unlike the White Wolf King), so the payload names
+    the sealed seats instead of a victim.
+    """
+
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    silenced_seats: tuple[PositivePublicInt, ...] = ()
+
+
 class PublicVoteResultResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     exiled_seat: Optional[PositivePublicInt] = None
@@ -503,6 +515,11 @@ class PublicSelfExplodeReplayEvent(_PublicReplayEvent):
     payload: PublicSelfExplodeResponse
 
 
+class PublicCrimsonExplodeReplayEvent(_PublicReplayEvent):
+    event_type: Literal["crimson_explode"]
+    payload: PublicCrimsonExplodeResponse
+
+
 class PublicKnightDuelReplayEvent(_PublicReplayEvent):
     event_type: Literal["knight_duel"]
     payload: PublicKnightDuelResponse
@@ -567,6 +584,7 @@ PublicReplayEvent = Annotated[
     Union[
         PublicExileCancelledReplayEvent,
         PublicSelfExplodeReplayEvent,
+        PublicCrimsonExplodeReplayEvent,
         PublicKnightDuelReplayEvent,
         PublicWolfBeautyCharmReplayEvent,
         PublicWolfBeautyRevengeReplayEvent,

@@ -39,6 +39,9 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "KNIGHT_DUEL": ("knight_duel", frozenset({"seat", "target_seat", "camp", "round_number"})),
     "WOLF_BEAUTY_CHARM": ("wolf_beauty_charm", frozenset({"seat", "target_seat", "round_number"})),
     "WOLF_BEAUTY_REVENGE": ("wolf_beauty_revenge", frozenset({"seat", "target_seat", "cause", "round_number"})),
+    # The Crimson Envoy takes nobody along: what the god view needs is which
+    # seats it sealed for the coming night.
+    "CRIMSON_EXPLODE": ("crimson_explode", frozenset({"seat", "silenced_seats", "round_number"})),
 }
 
 _PUBLIC_ROLE_ACTIONS = {

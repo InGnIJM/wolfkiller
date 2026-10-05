@@ -110,6 +110,8 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   wolf_beauty_reasoning: '狼美人思考',
   pure_white_reasoning: '纯白之女思考',
   wolf_witch_reasoning: '狼巫思考',
+  demon_hunter_reasoning: '猎魔人思考',
+  crimson_envoy_reasoning: '赤月使徒思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -141,6 +143,8 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   wolf_beauty_reasoning: '狼美人',
   pure_white_reasoning: '纯白之女',
   wolf_witch_reasoning: '狼巫',
+  demon_hunter_reasoning: '猎魔人',
+  crimson_envoy_reasoning: '赤月使徒',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────
@@ -157,6 +161,7 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
   technical_abstain: '系统代投',
   exile_cancelled: '翻牌',
   self_explode: '自爆',
+  crimson_explode: '自爆',
   knight_duel: '决斗',
   wolf_beauty_charm: '魅惑',
   wolf_beauty_revenge: '殉情',

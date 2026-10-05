@@ -271,6 +271,13 @@ function EventCard({
         </Typography>
       );
       break;
+    case 'crimson_explode':
+      content = (
+        <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号自爆，当晚好人技能被封印（{event.payload.silenced_seats.join('、') || '无人'}），本日发言与投票取消 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
     case 'sheriff_elected':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>

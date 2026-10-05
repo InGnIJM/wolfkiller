@@ -1057,6 +1057,9 @@ _LOG_PAYLOAD_OVERRIDES: dict[str, dict] = {
     "WOLF_BEAUTY_CHARM": {"seat": 1, "target_seat": 2, "round_number": 1},
     "WOLF_BEAUTY_REVENGE": {"seat": 1, "target_seat": 2, "cause": "exile", "round_number": 1},
     "STATUS_ADDED": {"seat": 1, "status": "poisoned", "round_number": 1},
+    "CRIMSON_EXPLODE": {
+        "seat": 1, "silenced_seats": [2, 3], "round_number": 1,
+    },
 }
 
 _DEFAULT_VALUES: dict[str, object] = {
@@ -1108,6 +1111,32 @@ def _log_payload(event_type: str, allowed: frozenset[str]) -> dict:
 
 def _projector_declared_events() -> dict[str, tuple[str, frozenset[str]]]:
     return dict(audience_projector._EVENTS)
+
+
+def test_crimson_explode_replay_requires_a_usable_sealed_list() -> None:
+    """赤月使徒自爆的旧档回放：座位必须是正整数，封印名单必须是座位数组。"""
+    base = {"event_type": "CRIMSON_EXPLODE", "payload": {
+        "seat": 1, "silenced_seats": [2, 3], "round_number": 4,
+    }}
+    events = game_routes._public_operation_events(
+        _replay_record("audience_action", base, phase="speech", round_number=4)
+    )
+    # The record's own round wins, exactly like every other replay row.
+    assert events == [{
+        "event_type": "crimson_explode",
+        "payload": {"round_number": 4, "seat": 1, "silenced_seats": [2, 3]},
+    }]
+    for payload in (
+        {"seat": 0, "silenced_seats": [2], "round_number": 4},
+        {"seat": 1, "silenced_seats": "2,3", "round_number": 4},
+        {"seat": 1, "silenced_seats": [0], "round_number": 4},
+        {"seat": 1, "silenced_seats": [2], "round_number": 4, "extra": 1},
+    ):
+        assert game_routes._public_operation_events(
+            _replay_record("audience_action", {
+                "event_type": "CRIMSON_EXPLODE", "payload": payload,
+            }, phase="speech")
+        ) == [], payload
 
 
 def test_every_public_audience_action_type_has_a_replay_branch() -> None:

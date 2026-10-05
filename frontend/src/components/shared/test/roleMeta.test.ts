@@ -23,6 +23,8 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-old-drunkard', 'old_drunkard', '老酒鬼'],
   ['wolf-killer-pure-white', 'seer', '纯白之女'],
   ['wolf-killer-wolf-witch', 'werewolf', '狼巫'],
+  ['wolf-killer-crimson-envoy', 'werewolf', '赤月使徒'],
+  ['wolf-killer-demon-hunter', 'hunter', '猎魔人'],
 ];
 
 /** 后端已注册的全部角色；漏一个就会有角色在界面里显示成「未知身份」。 */

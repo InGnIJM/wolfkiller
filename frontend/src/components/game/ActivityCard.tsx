@@ -638,6 +638,16 @@ export default function ActivityCard() {
           tag="SELF EXPLODE"
         />
       );
+    case 'crimson_explode':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={`${entry.payload.seat}号自爆，封印当晚好人技能`}
+          subtitle={`被封印：${entry.payload.silenced_seats.join('、') || '无人'} · 本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
+          tone="#F6686C"
+          tag="CRIMSON EXPLODE"
+        />
+      );
     case 'sheriff_elected':
       return (
         <DayVerdictView
