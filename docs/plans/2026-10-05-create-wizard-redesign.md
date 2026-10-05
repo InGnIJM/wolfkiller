@@ -1,8 +1,38 @@
 # 创建向导选人界面重设计
 
 > 日期：2026-10-05
-> 状态：**设计已确认，待写实施计划**
+> 状态：**已实施** —— 阶段 A–D 落地，其中 D 的 `SeatMap` 有一处偏差，见下方「实施记录」。
 > 范围：创建对局向导的「选择身份」步骤 + 对局中角色呈现 + 规则介绍页 `/rules`
+
+---
+
+## 实施记录（收尾时补）
+
+| 阶段 | 结果 | 落点 |
+| --- | --- | --- |
+| A 数据模型 | ✅ | `ROLE_ART_BY_ID` + `roleArt()`（`theme/tokens.ts`）、`ROLE_ORDER` 上移到 `shared/roleMeta.ts`、`RolePortrait`（`1deabc0`、`9c36743`） |
+| B 创建向导 | ✅ | `PresetList`（搜索 + 按人数折叠）、`RoleStep` 主从布局、`RoleRow`、`AddRoleDialog`；`custom` 态以 `selectedPresetId` 为单一真源（`7c7973a`、`03c2bdd`） |
+| C 规则页 | ✅ | `RulesPage` + `RoleBrowser` 左索引右详情（`9924397`） |
+| D 对局中 | 🟡 | `DeathAnnouncement` 改用 `RolePortrait`（`57c7b09`）；**`SeatMap` 仍自绘 `<img>`**（`badge?.art ?? CARD_BACK`），未换成组件 |
+
+**已知残留**：
+
+1. `SeatMap` 是本计划里唯一没换成 `RolePortrait` 的消费方。取图来源已经统一在 `roleArt()`
+   （`SeatMap` 经 `ROLE_META.art` 取同一张图、同一套卡背回退），所以「补一张图只改
+   `ROLE_ART_BY_ID` 一行」这条目标仍然成立，差异只在组件复用与卡背水印。
+2. `ROLE_ART_BY_ID` 已为阶段 3–6 的 14 个角色**预先登记**（`pure-white` / `wolf-witch` /
+   `demon-hunter` / `crimson-envoy` / `nightmare` / `time-wolf` / `order-prince` /
+   `miracle-merchant` / `lonely-girl` / `mirror-girl` / `awakened-hidden-wolf` /
+   `awakened-wolf-king` / `eclipse-maid` / `radiance-earl`），角色落地时不用再动取图代码。
+   **仍无图**：觉醒预言家、寻香魅影、觉醒狼美人、觉醒猎人（2023 年后新牌，官方卡牌表未收录）。
+3. Vite 侧门禁在收尾时跑过并全绿（ext4 镜像，做法见 `MEMORY.md` 的「WSL 下的前端验证」）：
+   `npx vitest run` **38 文件 / 589 用例 passed**、`npx vitest run --coverage` 十个受门禁文件 **100%**、
+   `npm run lint` 无告警、`npm run build` 成功。
+4. 375 / 768 / 1440 三宽度的人工目视验收本文档未留记录；需要时跑 `npm run dev` 按 §十二 逐条核对。
+
+> 立绘是本地资产：`frontend/src/assets/roles/role-*.webp` 在 `.gitignore` 里；
+> `card-back.webp` 与 `role-old_drunkard.webp` 是自有素材、随仓库发布，
+> 另 10 张自有的备份在 `frontend/src/assets/roles-original/`（入库）。
 
 ---
 
