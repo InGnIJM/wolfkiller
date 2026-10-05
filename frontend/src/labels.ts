@@ -254,6 +254,8 @@ export const PLAYER_STATUS_LABELS: Record<string, string> = {
   poisoned: '中毒未死',
   wounded: '中枪未死',
   delayed_death: '延迟结算',
+  hunted: '被狩猎',
+  silenced: '技能封印',
 };
 
 /** 记忆里 `action_history[].action.action_type`（存档 JSON，键开放）。 */

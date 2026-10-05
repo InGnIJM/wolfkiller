@@ -234,3 +234,60 @@ def test_silenced_status_is_read_from_plain_sets() -> None:
     assert is_silenced({1: {"poisoned"}}, 1) is False
     assert is_silenced({}, 1) is False
     assert is_silenced({1: ()}, 1) is False
+
+
+def test_the_hunt_cause_delays_any_seat_not_only_a_marked_one() -> None:
+    """猎魔人不能给目标加标记，所以 ``hunt`` 本身就要走延迟档。
+
+    与老酒鬼的 ``delayable`` 分开：那条路要求目标自带资源标记，而这条只看死因。
+    """
+    from app.core.night_settlement import (
+        DELAYED_DEATH_STATUS, HUNTED_STATUS, _ALWAYS_DELAYED_CAUSES, settle,
+    )
+
+    assert "hunt" in _ALWAYS_DELAYED_CAUSES
+    # Poison and the gunshot still need the seat's own ``delayable`` mark.
+    assert "poison" not in _ALWAYS_DELAYED_CAUSES
+    assert "hunter_shot" not in _ALWAYS_DELAYED_CAUSES
+    damage = ({"target": 2, "amount": 1, "cause": "hunt"},)
+    deaths, alive, delayed = settle(
+        damage, (), {1, 2}, {1: True, 2: True}, round_number=3,
+    )
+    assert deaths == ()
+    assert alive[2] is True
+    assert delayed == {2: (HUNTED_STATUS, DELAYED_DEATH_STATUS)}
+
+
+def test_delayed_death_statuses_cover_the_hunt_mark() -> None:
+    from app.core.night_settlement import (
+        DELAYED_DEATH_STATUS, HUNTED_STATUS, delayed_death_statuses,
+    )
+
+    assert delayed_death_statuses("hunt") == (HUNTED_STATUS, DELAYED_DEATH_STATUS)
+    assert delayed_death_statuses("wolf_kill") == ()
+    assert delayed_death_statuses("exile") == ()
+
+
+def test_delayed_deaths_land_the_hunt_cause_on_the_next_day() -> None:
+    from app.core.night_settlement import (
+        DELAYED_DEATH_STATUS, HUNTED_STATUS, resolve_delayed_deaths,
+    )
+
+    deaths, cleared = resolve_delayed_deaths(
+        {2: {HUNTED_STATUS, DELAYED_DEATH_STATUS}}, 3,
+    )
+    assert deaths == ({"seat": 2, "cause": "hunt", "round_number": 3},)
+    assert cleared == {2: (DELAYED_DEATH_STATUS, HUNTED_STATUS)}
+
+
+def test_a_plain_seat_still_dies_to_the_knife_on_the_same_night() -> None:
+    """延迟档只覆盖 hunt / 中毒 / 中枪：夜刀与放逐仍然当夜出局。"""
+    from app.core.night_settlement import settle
+
+    deaths, alive, delayed = settle(
+        ({"target": 2, "amount": 1, "cause": "wolf_kill"},),
+        (), {1, 2}, {1: True, 2: True}, round_number=2,
+    )
+    assert [(item["seat"], item["cause"]) for item in deaths] == [(2, "wolf_kill")]
+    assert alive[2] is False
+    assert delayed == {}

@@ -77,9 +77,19 @@ _NIGHT_IMMUNE_EXEMPT_CAUSES = frozenset({
 _POISON_CAUSES = frozenset({"poison"})
 _WOUND_CAUSES = frozenset({"hunter_shot"})
 _DELAY_CAUSES = _POISON_CAUSES | _WOUND_CAUSES
+#: The Demon Hunter's mark: a hunt always lands on the *next* day, whoever it
+#: hits, and the hunter cannot mark its target itself (the target is not the one
+#: declaring ``delayable``). So this cause delays on its own.
+HUNTED_STATUS = "hunted"
+HUNT_CAUSE = "hunt"
+#: Causes that delay *any* seat, even one declaring no ``delayable`` mark. The
+#: poison and the gunshot are deliberately absent: those still need the seat's
+#: own mark, so the Old Drunkard keeps dying on the spot to everything else.
+_ALWAYS_DELAYED_CAUSES = frozenset({HUNT_CAUSE})
 _DELAYED_DEATH_CAUSES = {
     POISONED_STATUS: "poison",
     WOUNDED_STATUS: "hunter_shot",
+    HUNTED_STATUS: HUNT_CAUSE,
 }
 
 
@@ -89,6 +99,8 @@ def delayed_death_statuses(cause: object) -> tuple[str, ...]:
         return (POISONED_STATUS, DELAYED_DEATH_STATUS)
     if cause in _WOUND_CAUSES:
         return (WOUNDED_STATUS, DELAYED_DEATH_STATUS)
+    if cause == HUNT_CAUSE:
+        return (HUNTED_STATUS, DELAYED_DEATH_STATUS)
     return ()
 
 
@@ -246,9 +258,14 @@ def settle(
             if not lethal_other:
                 continue
             cause = first_exempt_cause[target]
-        if role_resources.get(target, {}).get(DELAYABLE_RESOURCE, 0) > 0:
+        if (
+            role_resources.get(target, {}).get(DELAYABLE_RESOURCE, 0) > 0
+            or cause in _ALWAYS_DELAYED_CAUSES
+        ):
             # The seat survives this settlement and dies on the next day; the
             # caller applies the returned marks so the delay is observable.
+            # Two routes lead here: the seat declares ``delayable`` itself (the
+            # Old Drunkard), or the cause always lands a day later (a hunt).
             held = delayed_death_statuses(cause)
             if held:
                 delayed[target] = held
