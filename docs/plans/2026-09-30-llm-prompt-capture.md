@@ -3,7 +3,40 @@
 > 目标：在现有日志机制之上，把「模型真实收到的 prompt 原文」落盘，形成 `(prompt, completion)` 训练对，用于后续基于 4060 8G 微调小模型替代 API 模型。
 > 硬约束：零行为影响 / 不破坏断点续跑 / 不改 `parameters_digest` / 不泄漏密钥 / 失败无害 / 可开关 / 不阻塞事件循环。
 >
-> 状态：方案（不含实现）。所有行号基于 `main` @ `16810d0` 实测。
+> 状态：**采集侧已实现，开关与 UI 未实现**（收尾时补记，见下方「实现现状」）。
+> 所有行号基于 `main` @ `16810d0` 实测。
+
+---
+
+## 实现现状（收尾时补记）
+
+**已落地**：
+
+| 项 | 落点 |
+| --- | --- |
+| 采集模块 | `app/core/prompt_capture.py`（`PromptSink` / `build_prompt_record` / `PromptCapture` / 取值解析）—— `d145ee2` |
+| 角色侧记录 | `app/roles/base.py` 在调用前把真实 `messages` 交给 sink —— `c2f87fe` |
+| 持久调用链接入 | `app/services/game_service.py` 四条链路（speech / contract_action / pipeline_action / night）接线 + 重放不重采门禁 —— `36c1532` |
+| 插桩闭包修复 | 全员共用同一座位身份的晚绑定 bug —— `f07b706` |
+| 测试 | `app/core/test/test_prompt_capture.py`、`tests/test_base_role.py`、`tests/test_game_service_prompt_capture.py`、`tests/test_role_instrumentation.py` |
+
+**未落地**（本方案 C6 / C7 / C9–C14）：`app/stores/app_settings_store.py`、
+`app/api/settings_schemas.py`、`app/api/routes/settings_routes.py`、前端
+`appSettingsStore.ts` / `SettingsPage.tsx` / `/settings` 路由，以及 `AGENTS.md` / `CLAUDE.md` /
+`docs/architecture.md` 三处文档同步。
+
+**当前开关只有环境变量**：`GameService._prompt_capture_setting()` 是返回 `None` 的桩，
+源码注释写明 *"The settings store is wired in a later change"*。因此
+「一局要么全采要么不采」目前由 `prompt_capture_marker_exists()` 这个闩锁保证：
+建局按 `resolve_capture_setting()` 决定，恢复时只要 `games/<id>/llm_prompts.jsonl` 存在就继续采。
+
+**实现形状偏差**（相对本方案初稿）：
+
+1. C2′ 计划把 `resolve_capture_setting` / `capture_enabled` 放在 `app/config.py`，实际与采集模块
+   同住在 `app/core/prompt_capture.py`。
+2. C4′ 计划让 `GameEngine` 持有采集句柄，实际句柄按对局缓存在
+   `GameService._prompt_captures`（`_prompt_capture()` 惰性创建、`_close_prompt_capture()` 释放）。
+3. C8 的「恢复一律传 `False`」没有实现成入参，语义由上面的 marker 闩锁承担。
 
 ---
 
