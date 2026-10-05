@@ -323,6 +323,8 @@ class PublicSheriffBadgeResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     from_seat: PositivePublicInt
     to_seat: Optional[PositivePublicInt] = None
+    #: 警长的决策理由（观众上帝视角）。旧日志里没有这个字段，所以是可选的。
+    reasoning: Optional[Annotated[str, Field(max_length=500)]] = None
 
 
 class PublicSheriffRunResponse(_PublicResponse):

@@ -28,7 +28,7 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "EXILE_CANCELLED": ("exile_cancelled", frozenset({"target_seat", "round_number"})),
     "SELF_EXPLODE": ("self_explode", frozenset({"seat", "target_seat", "round_number"})),
     "SHERIFF_ELECTED": ("sheriff_elected", frozenset({"seat", "round_number", "reason"})),
-    "SHERIFF_BADGE": ("sheriff_badge", frozenset({"from_seat", "to_seat", "round_number"})),
+    "SHERIFF_BADGE": ("sheriff_badge", frozenset({"from_seat", "to_seat", "round_number", "reasoning"})),
     "SHERIFF_RUN": ("sheriff_run", frozenset({"seat", "choice", "round_number"})),
     "SHERIFF_WITHDRAW": ("sheriff_withdraw", frozenset({"seat", "choice", "round_number"})),
     "SHERIFF_VOTE": ("sheriff_vote", frozenset({"voter_seat", "target_seat", "kind", "round_number"})),

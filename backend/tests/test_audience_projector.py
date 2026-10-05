@@ -185,6 +185,22 @@ def test_a_wolf_chat_message_keeps_the_day_plan() -> None:
     }
 
 
+def test_a_sheriff_badge_keeps_the_sheriff_reason() -> None:
+    """警长为什么交徽/撕徽要进上帝视角；未知键仍被剥掉。"""
+
+    projected = AudienceProjector().project_events("game", [
+        _event("SHERIFF_BADGE", {
+            "from_seat": 1, "to_seat": None, "round_number": 3,
+            "reasoning": "9号是金水，但场上已无合适人选", "secret": "x",
+        }),
+    ])
+
+    assert projected[0]["payload"] == {
+        "from_seat": 1, "to_seat": None, "round_number": 3,
+        "reasoning": "9号是金水，但场上已无合适人选",
+    }
+
+
 def test_a_status_already_using_player_seat_is_preserved() -> None:
     projected = AudienceProjector().project_events("game", [
         _event("STATUS_ADDED", {"player_seat": 3, "status": "wounded", "round_number": 1}),
