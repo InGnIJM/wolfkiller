@@ -416,7 +416,20 @@ class SheriffDirector:
             ][-2:]
             lines.extend(completed)
         if wolf:
-            lines.append("你是狼人阵营：警上可起跳伪装、可冲锋带节奏，也可自爆吞警徽（只死自己）。")
+            # The camp line and the explode line have different gates: a hidden
+            # wolf is a werewolf but sits outside the pack, and only the pack may
+            # swallow the badge. Handing it the explode sentence contradicted its
+            # own role contract, which says it can neither self-destruct nor
+            # swallow the badge.
+            if self._may_explode(state, seat):
+                lines.append(
+                    "你是狼人阵营：警上可起跳伪装、可冲锋带节奏，也可自爆吞警徽（只死自己）。"
+                )
+            else:
+                lines.append(
+                    "你是狼人阵营，但你不属于狼窝：警上可起跳伪装、可冲锋带节奏，"
+                    "但**不能自爆，也不能吞警徽**。"
+                )
             lines.extend(self._wolf_team_block(state, seat))
         return "\n".join(lines) + "\n"
 
@@ -572,7 +585,11 @@ class SheriffDirector:
         actions = [_VOTE, _PASS] + ([_EXPLODE] if explode else [])
         try:
             value = self._invoke_json(
-                self.vote_prompt(state, seat, candidates),
+                # ``wolf`` (camp) is what the prompt needs: dropping it here left
+                # the wolf roster out of the ballot while campaign, withdraw and
+                # every day-time tool carried it, so wolves voted without knowing
+                # their own team. ``explode`` stays schema-only.
+                self.vote_prompt(state, seat, candidates, wolf=wolf),
                 tool_name="sheriff_vote",
                 schema=_schema(
                     actions,

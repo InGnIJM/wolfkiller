@@ -381,6 +381,44 @@ def _campaign_log() -> ConversationLog:
     return log
 
 
+def test_a_hidden_wolf_is_not_told_it_can_swallow_the_badge() -> None:
+    """The camp line and the explode line have different gates.
+
+    A ``no_wolf_pack`` werewolf still knows it is a werewolf, but it sits outside
+    the pack: only the pack may self-destruct to swallow the badge. The prompt
+    used to append the explode sentence on camp alone, telling the Gargoyle it
+    could do something its own role contract forbids.
+    """
+    from app.core.effect_applier import _Runtime
+    from app.core.role_runtime import initialize_role_resources
+    from app.core.sheriff_flow import SheriffDirector
+    from app.roles.registry import builtin_registry
+
+    state = _state()
+    state.players[2] = PlayerState(2, "wolf-killer-gargoyle", Camp.WEREWOLF.value)
+    initialize_role_resources(
+        state, builtin_registry.freeze().specs, "a" * 64,
+    )
+    director = SheriffDirector()
+
+    hidden = director.campaign_prompt(state, 2, wolf=True)[1]["content"]
+    assert "不能自爆" in hidden
+    assert "吞警徽" in hidden
+
+    pack = director.campaign_prompt(state, 1, wolf=True)[1]["content"]
+    assert "也可自爆吞警徽" in pack
+
+
+def test_a_camp_only_wolf_without_live_state_keeps_the_pack_sentence() -> None:
+    """No runtime to read the marker from: the historical line stands."""
+    from app.core.sheriff_flow import SheriffDirector
+
+    state = _state()
+    state.players[2] = PlayerState(2, "wolf-killer-gargoyle", Camp.WEREWOLF.value)
+    prompt = SheriffDirector().campaign_prompt(state, 2, wolf=True)[1]["content"]
+    assert "也可自爆吞警徽" in prompt
+
+
 def test_campaign_prompt_carries_identity_and_campaign_speeches() -> None:
     from app.core.sheriff_flow import SheriffDirector as Director
     state = _rich_state()
@@ -468,6 +506,33 @@ def test_good_player_sheriff_prompts_never_see_wolf_channel() -> None:
         assert "狼队成员" not in human
         assert "悍跳预言家" not in human
         assert "次日计划" not in human
+
+
+def test_vote_turn_carries_the_team_block_into_the_ballot() -> None:
+    """The director's own ballot must render the camp context it was handed.
+
+    ``vote_prompt(wolf=True)`` renders the roster, but ``vote_turn`` used to call
+    it without the flag, so the block never reached the model in a real game:
+    captured ballots show 0/46 wolf ballots carrying the roster while campaign
+    (75/76), withdraw (21/22), the day vote (73/83) and day speech (196/210) all
+    did. Wolves then voted without knowing their own team.
+    """
+    humans: dict[int, str] = {}
+
+    def invoke(messages, tool_name, schema, seat):
+        humans[seat] = messages[1]["content"]
+        return '{"action_type":"vote","target_seat":5}'
+
+    state = _rich_state()
+    director = SheriffDirector(invoke, conversation_log=_wolf_channel_log())
+    assert director.vote_turn(state, 2, (5, 6), wolf=True) == 5
+    assert director.vote_turn(state, 9, (5, 6), wolf=False) == 5
+
+    assert "狼队成员" in humans[2]
+    assert "2号、6号、10号、12号" in humans[2]
+    assert "次日计划" in humans[2]
+    assert "狼队成员" not in humans[9]
+    assert "次日计划" not in humans[9]
 
 
 def test_sheriff_prompts_survive_empty_wolf_channel() -> None:
