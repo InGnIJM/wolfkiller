@@ -5,22 +5,21 @@ Concrete role powers, camps, targets, and win conditions belong to the frozen
 role contract and projected context for the current game.
 """
 
-# Used verbatim by PromptRenderer and NightDirector. It deliberately refers
-# only to values supplied by the current action contract and projected context.
-TARGET_SELECTION_RULE = (
-    "当动作需要选择目标座位（target_seat）时，只能从提示中列出的存活玩家中选取，"
-    "列表之外的座位号一律无效；动作契约或校验规则禁止的座位，即使列在表中也不可选。"
-    "选择目标由你自主判断：有决定性依据时按依据选择；场上已有明显倾向或队友达成共识时，"
-    "可以跟随共识；若你有不同判断，也可以坚持自己的立场并说明理由。"
-    "需要随机选择时，使用提示中给出的 RANDOM_HINT：它是服务端生成的随机目标索引（从 0 开始，"
-    "指向存活玩家按座位号升序排列的列表），直接选择列表中第 RANDOM_HINT 个玩家即可，不要自行另选。"
-    "若 RANDOM_HINT 指向契约不允许选择的目标，请选择 pass 或遵循动作契约中给出的其他合法选项。"
-)
-
 # A fallback is deliberately opt-in.  The server adds this field only after it
 # has established that the actor has no usable information or team consensus.
+#
+# "Legal" is the contract's verdict, not the context's: PROJECTED_CONTEXT lists
+# every live seat so the same facts serve every contract, and a contract may
+# still forbid one of them (the Dancer's ``pooled_seats`` may not dance twice,
+# the Wolf Beauty may not charm the same seat twice). Listing a seat is not a
+# promise that it is selectable, and the sentence below says so — without it the
+# model reads the roster as an offer, gets rejected twice, and burns the night on
+# the contract's fallback.
 TARGET_SELECTION_RULE = (
-    "Choose targets from the legal live seats in PROJECTED_CONTEXT. "
+    "Choose targets from the legal live seats in PROJECTED_CONTEXT. A seat listed "
+    "there is not automatically selectable: a seat the action contract or its "
+    "validation rules forbid must not be chosen, even though it appears in the "
+    "list. "
     "Use evidence or an existing team consensus whenever available. "
     "When the contract declares a multi-target action (``target_seats``), give "
     "exactly the required number of distinct live seats and leave ``target_seat`` "
