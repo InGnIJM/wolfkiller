@@ -566,12 +566,6 @@ class GameEngine:
         pending = self._pending_night_batch
         director = self._director
         state = self.state
-        # The wolf team is every living member of the werewolf camp, whatever
-        # its concrete role id, so camp-mates with extra powers join the chat.
-        wolves = [
-            seat for seat in sorted(state.players)
-            if in_wolf_pack(state, seat) and state.players[seat].is_alive
-        ]
 
         if pending.stage == 0:
             # Kept as a barrier (old archives persist these stage numbers): the
@@ -595,6 +589,16 @@ class GameEngine:
             title, text = director.narration("wolf_open")
             await self._narrate(title, text)
             pending = replace(pending, stage=3); self._pending_night_batch = pending
+
+        # Resolved *after* the night's first schedule point has run: role
+        # resources are established inside ``Scheduler.issue`` (the only setup
+        # call site) and no point runs before the night starts, so deriving the
+        # pack earlier reads ``no_wolf_pack`` as absent and counts a hidden wolf
+        # as a pack member — chat, kill vote, seal check and roster line alike.
+        wolves = [
+            seat for seat in sorted(state.players)
+            if in_wolf_pack(state, seat) and state.players[seat].is_alive
+        ]
 
         if pending.stage == 3:
             if self._pack_sealed(wolves):

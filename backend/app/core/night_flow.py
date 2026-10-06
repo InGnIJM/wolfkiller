@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.core.conversation_log import ConversationLog
 from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
-from app.core.wolf_pack import in_wolf_pack
+from app.core.wolf_pack import actor_sees_pack, in_wolf_pack
 from app.models.conversation import ConversationScope
 from app.models.game import Camp, GameState
 from app.models.pipeline import ActionCommand
@@ -277,6 +277,19 @@ class NightDirector:
             if in_wolf_pack(state, seat) and player.is_alive
         )
 
+    def _teammates_clause(self, state: GameState, seat: int) -> str:
+        """The roster sentence a wolf prompt may hand to ``seat``.
+
+        Pack membership decides who is in the conversation; the actor's own
+        visibility decides what it may be told. A hidden wolf (``no_wolf_pack``)
+        never receives the seats, even if it reaches this prompt by mistake,
+        while ``wolf_knows_pack`` keeps the one-way variant reading a pack that
+        cannot see it.
+        """
+        if not actor_sees_pack(state, seat):
+            return "你不属于狼窝，你看不到任何队友。"
+        return f"你的队友：{'、'.join(str(w) for w in self._wolf_team(state))}号。"
+
     def _self_kill_clause(self, state: GameState, seat: int) -> str:
         """State who may be targeted, including whether the actor itself may.
 
@@ -366,7 +379,8 @@ class NightDirector:
             + _CHINESE_DIRECTIVE
         )
         human = (
-            f"第{state.round_number}晚狼队讨论。你的队友：{('、'.join(str(w) for w in wolves))}号。"
+            f"第{state.round_number}晚狼队讨论。"
+            f"{self._teammates_clause(state, seat)}"
             f"场上存活玩家：{alive}。\n"
             + self._fallback_hint(random_hint) + ""
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
@@ -403,7 +417,6 @@ class NightDirector:
         discussion: Sequence[str], prior_votes: Sequence[WolfVote],
         briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> list[dict[str, str]]:
-        wolves = self._wolf_team(state)
         alive = self._alive_text(state)
         system = (
             self._system_prefix(state)
@@ -416,7 +429,8 @@ class NightDirector:
             + _CHINESE_DIRECTIVE
         )
         human = (
-            f"第{state.round_number}晚狼队投票。你的队友：{('、'.join(str(w) for w in wolves))}号。"
+            f"第{state.round_number}晚狼队投票。"
+            f"{self._teammates_clause(state, seat)}"
             f"场上存活玩家：{alive}。\n"
             + self._fallback_hint(random_hint) + ""
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"

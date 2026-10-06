@@ -209,6 +209,29 @@ def test_wolf_prompts_never_name_a_hidden_teammate() -> None:
         assert "2" not in teammates and "3" not in teammates
 
 
+def test_a_hidden_wolfs_own_prompt_never_names_the_pack() -> None:
+    """The roster line is a visibility decision, not a pack-membership one.
+
+    A hidden wolf may never be told who the pack is, even if it reaches a wolf
+    prompt by mistake; the one-way variant (``wolf_knows_pack``, seat 3 here)
+    still reads the pack it stays invisible to.
+    """
+    game, snapshot = plain_game(), registry()
+    director = NightDirector(
+        snapshot, lambda messages, _tool_name, _schema, _seat: "{}",
+    )
+    for messages in (
+        director.discussion_prompt(game, 2, []),
+        director.vote_prompt(game, 2, [], []),
+    ):
+        text = "\n".join(message["content"] for message in messages)
+        assert "你的队友：" not in text
+        assert "你不属于狼窝，你看不到任何队友。" in text
+    one_way = director.discussion_prompt(game, 3, [])
+    one_way_text = "\n".join(message["content"] for message in one_way)
+    assert one_way_text.split("你的队友：", 1)[1].split("号。", 1)[0] == "1"
+
+
 # ── the wolf channel ──────────────────────────────────────────────────────
 
 def test_hidden_wolf_cannot_read_the_wolf_channel() -> None:

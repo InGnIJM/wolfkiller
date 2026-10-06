@@ -17,6 +17,7 @@ from app.models.conversation import ConversationScope
 from app.config import PipelineMode
 from app.core.role_pipeline import PipelineResult
 from app.core.effect_applier import CommitResult, _Runtime
+from app.core.role_runtime import initialize_role_resources
 from app.core.scheduler import PipelinePaused, PointResult
 from app.models.pipeline import ActionContract, IssuedActionRequest, SchedulePoint
 
@@ -58,18 +59,32 @@ class ScheduleStub:
         return None
 
 
+class ResourceSetupStub(ScheduleStub):
+    """A stub standing in for ``Scheduler.issue``: running the night's first
+    point is what establishes role resources (``initialize_role_resources`` is
+    called from ``_issue_locked`` and nowhere else)."""
+
+    def run_point(self, state, point):
+        if point is SchedulePoint.NIGHT_ACTION:
+            registry = builtin_registry.freeze()
+            initialize_role_resources(state, registry.specs, registry.digest)
+        return super().run_point(state, point)
+
+
 class _FakeDirector:
     """Deterministic in-memory stand-in for NightDirector (no LLM)."""
     def __init__(self, *, speak: bool = True, vote: int | None = 4):
         self.speak, self.vote = speak, vote
         self.votes: list[WolfVote] = []
         self.vote_calls: list[int] = []
+        self.discussion_calls: list[int] = []
         self.discussion_briefings: list[object] = []
         self.vote_briefings: list[object] = []
     def narration(self, kind): return ("标题", "正文")
     def witch_narration(self, kill_target): return ("标题", "正文")
     def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
     def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing(), random_hint=None):
+        self.discussion_calls.append(seat)
         self.discussion_briefings.append(briefing)
         return DiscussionTurn(seat, self.speak, "我怀疑2号" if self.speak else "")
     def wolf_vote_turn(self, state, seat, discussion, prior, briefing=NightBriefing(), random_hint=None):
