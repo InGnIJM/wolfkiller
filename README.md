@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-MPL--2.0-blue) ![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Node](https://img.shields.io/badge/Node-20.19%2B-blueviolet)
 
-完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、骑士、狼美人与老酒鬼）均由大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整对局；创建游戏时可为环境默认或多个自定义模型分配人数，系统会随机落座并在整局中固定每个座位所用模型。
+完全由 LLM 智能体驱动的狼人杀游戏。所有玩家（狼人、村民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、狼王、骑士、狼美人、老酒鬼、恶夜骑士、摄梦人、石像鬼、守墓人、纯白之女、狼巫、猎魔人、赤月使徒、噩梦之影、舞者与假面）均由创建对局时配置的大语言模型控制，无需真人参与。观众可通过基于时间轴的回放界面观看完整对局；创建游戏时可为环境默认或多个自定义模型分配人数，系统会随机落座并在整局中固定每个座位所用模型。
 
 <p align="center">
   <img src="docs/assets/lobby.png" width="49%" alt="游戏大厅" />
@@ -93,3 +93,5 @@ cd frontend && npm run test:e2e                 # Playwright 浏览器验收（�
 
 - 修改仓库内文件后再分发时，被修改的文件需继续以 MPL-2.0 提供源码；新增文件可采用其他许可。
 - 本许可证不授予商标权，项目名称与标识不随代码一并授权。
+- 贡献者协议与参与规则详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 第三方开源依赖与素材来源说明详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
