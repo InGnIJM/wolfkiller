@@ -80,7 +80,12 @@ _PUBLIC_REASONING_EVENTS = {
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",
 })
-_PUBLIC_CONFIG_FIELDS = frozenset({"role_counts", "reveal_on_death", "enable_sheriff"})
+#: Config keys the god view may see. ``witch_self_save`` belongs here because the
+#: Witch's own prompt tells it to obey that setting: an audience that cannot see
+#: it watches the Witch decline a self-save with no way to tell why.
+_PUBLIC_CONFIG_FIELDS = frozenset({
+    "role_counts", "reveal_on_death", "enable_sheriff", "witch_self_save",
+})
 for _domain_type in _PUBLIC_ROLE_ACTIONS:
     _EVENTS[_domain_type] = (
         "night_action",

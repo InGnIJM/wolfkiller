@@ -306,6 +306,8 @@ export interface PublicGameState {
   round_number: number;
   reveal_on_death?: boolean;
   enable_sheriff?: boolean;
+  /** 女巫自救规则；上帝视角可见（女巫的提示词按它执行），旧档可能缺省。 */
+  witch_self_save?: WitchSelfSavePolicy;
   players: Record<number, PublicPlayerState>;
   sheriff: number | null;
   speeches: SpeechRecord[];

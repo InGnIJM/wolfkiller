@@ -149,6 +149,34 @@ def test_a_narration_keeps_only_its_public_keys() -> None:
     }]
 
 
+def test_the_public_config_carries_every_setting_the_prompts_obey() -> None:
+    """A setting the Witch is told to obey must be visible in the god view.
+
+    ``witch_self_save`` is the rule the Witch's own prompt defers to; without it
+    in the public config an audience watches the Witch decline a self-save with
+    no way to tell whether that was the rule or a choice.
+    """
+    projected = AudienceProjector().project_events("game", [
+        _event("GAME_INITIALIZED", {
+            "players": {},
+            "config": {
+                "role_counts": {"wolf-killer-witch": 1},
+                "reveal_on_death": False,
+                "enable_sheriff": True,
+                "witch_self_save": "never",
+                "prompt_digest": "must-not-leak",
+            },
+        }),
+    ])
+
+    assert projected[0]["payload"]["config"] == {
+        "role_counts": {"wolf-killer-witch": 1},
+        "reveal_on_death": False,
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+    }
+
+
 def test_a_delayed_death_status_names_its_player_seat() -> None:
     projected = AudienceProjector().project_events("game", [
         _event("STATUS_ADDED", {
