@@ -15,6 +15,7 @@ import type {
   VoteRecord,
   WinResult,
   ModelSnapshotEntry,
+  StreamingSpeech,
 } from './types';
 
 interface DerivedState {
@@ -57,6 +58,7 @@ interface GameStore extends DerivedState {
   recoverable: boolean;
   recoveryBlockCode: string | null;
   modelSnapshot: ModelSnapshotEntry[];
+  streamingSpeech: StreamingSpeech | null;
 
   setGameState: (state: PublicGameState) => void;
   setPhase: (phase: GamePhase, roundNumber: number) => void;
@@ -67,6 +69,8 @@ interface GameStore extends DerivedState {
   setConnected: (connected: boolean) => void;
   setPaused: (paused: boolean) => void;
   setCurrentSpeaker: (seat: number | null) => void;
+  setStreamingSpeech: (seat: number, text: string) => void;
+  clearStreamingSpeech: () => void;
 
   initPlayersFromDetail: (
     players: Record<number, PublicPlayerState>,
@@ -129,6 +133,7 @@ const initialState = {
   recoverable: false,
   recoveryBlockCode: null as string | null,
   modelSnapshot: [] as ModelSnapshotEntry[],
+  streamingSpeech: null as StreamingSpeech | null,
 };
 
 let playTimer: ReturnType<typeof setInterval> | null = null;
@@ -545,11 +550,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
-  setPhase: (phase, roundNumber) => set({ phase, roundNumber, currentSpeaker: null }),
+  setPhase: (phase, roundNumber) => set({ phase, roundNumber, currentSpeaker: null, streamingSpeech: null }),
 
   addSpeech: (speech) => set((state) => ({
     speeches: [...state.speeches, speech],
     currentSpeaker: speech.player_seat,
+    streamingSpeech: null,
   })),
 
   addVote: (vote) => set((state) => ({
@@ -564,10 +570,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return { players, deathHistory: [...state.deathHistory, death] };
   }),
 
-  setWinResult: (result) => set({ winResult: result, phase: 'game_over', showWinOverlay: true }),
+  setWinResult: (result) => set({ winResult: result, phase: 'game_over', showWinOverlay: true, streamingSpeech: null }),
   setConnected: (connected) => set({ connected }),
   setPaused: (paused) => set({ isPaused: paused }),
-  setCurrentSpeaker: (seat) => set({ currentSpeaker: seat }),
+  setCurrentSpeaker: (seat) => set((state) => ({
+    currentSpeaker: seat,
+    streamingSpeech: state.streamingSpeech?.seat === seat ? state.streamingSpeech : null,
+  })),
+  setStreamingSpeech: (seat, text) => {
+    if (!get().isFollowingLive) return;
+    set({
+      streamingSpeech: {
+        seat,
+        text,
+        updatedAt: Date.now(),
+      },
+    });
+  },
+  clearStreamingSpeech: () => set({ streamingSpeech: null }),
 
   initPlayersFromDetail: (players, revealOnDeath = false, modelSnapshot) => {
     const currentPublicPlayers = copyPlayers(players);
@@ -768,6 +788,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       state.currentPublicPlayers,
     );
     const payload = latestExecutionPayload(consumed);
+    const hasSpeechOrPhaseEvent = consumed.some(
+      (e) => e.event_type === 'speech' || e.event_type === 'phase',
+    );
     set({
       timeline,
       timelineIndex,
@@ -780,6 +803,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       pendingAudienceEvents: pending,
       streamError,
       showWinOverlay: derived.winResult !== null && !state.winOverlayDismissed,
+      streamingSpeech: (hasSpeechOrPhaseEvent || (state.streamingSpeech && state.streamingSpeech.seat !== derived.currentSpeaker))
+        ? null
+        : state.streamingSpeech,
       executionStatus: typeof payload?.execution_status === 'string'
         ? payload.execution_status as ExecutionStatus
         : state.executionStatus,
@@ -812,6 +838,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...derived,
       showWinOverlay: derived.winResult !== null && !winOverlayDismissed,
       isFollowingLive: timelineIndex === timeline.length - 1,
+      streamingSpeech: null,
     });
   },
 

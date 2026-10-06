@@ -1128,5 +1128,106 @@ describe('per-seat model snapshot', () => {
     useGameStore.getState().reset();
     expect(useGameStore.getState().modelSnapshot).toEqual([]);
   });
+
+  describe('streamingSpeech', () => {
+    it('initializes to null and updates when following live', () => {
+      useGameStore.getState().reset();
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+
+      useGameStore.getState().setStreamingSpeech(3, '大家好，我是3号');
+      const state = useGameStore.getState();
+      expect(state.streamingSpeech).not.toBeNull();
+      expect(state.streamingSpeech?.seat).toBe(3);
+      expect(state.streamingSpeech?.text).toBe('大家好，我是3号');
+      expect(state.streamingSpeech?.updatedAt).toBeGreaterThan(0);
+    });
+
+    it('does not update streaming speech when not following live', () => {
+      useGameStore.getState().reset();
+      // Simulate seeking back in timeline
+      useGameStore.setState({ isFollowingLive: false });
+      useGameStore.getState().setStreamingSpeech(3, '历史流式内容');
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+    });
+
+    it('clears streaming speech on clearStreamingSpeech and setPhase', () => {
+      useGameStore.getState().reset();
+      useGameStore.getState().setStreamingSpeech(3, '3号发言中');
+      useGameStore.getState().clearStreamingSpeech();
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+
+      useGameStore.getState().setStreamingSpeech(3, '3号发言中');
+      useGameStore.getState().setPhase('vote_casting', 1);
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+    });
+
+    it('clears streaming speech on addSpeech and speaker change', () => {
+      useGameStore.getState().reset();
+      useGameStore.getState().setStreamingSpeech(3, '3号发言中');
+      // Speaker change to seat 4
+      useGameStore.getState().setCurrentSpeaker(4);
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+
+      useGameStore.getState().setStreamingSpeech(4, '4号发言中');
+      // Setting same speaker retains streaming speech
+      useGameStore.getState().setCurrentSpeaker(4);
+      expect(useGameStore.getState().streamingSpeech?.text).toBe('4号发言中');
+
+      // Adding finalized speech clears it
+      useGameStore.getState().addSpeech({
+        player_seat: 4,
+        text: '4号完整发言',
+        round_number: 1,
+      });
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+    });
+
+    it('clears streaming speech on seekTo', () => {
+      useGameStore.getState().reset();
+      const logs: GameLogs = {
+        game_id: 'game-1',
+        events: [
+          { ...replayEventMeta, event_type: 'phase', payload: { phase: 'speech', round_number: 1 } },
+          { ...replayEventMeta, event_type: 'speaking', payload: { seat: 1, round_number: 1 } },
+        ],
+      };
+      useGameStore.getState().loadLogs(logs);
+      useGameStore.getState().seekTo(1);
+      useGameStore.getState().setStreamingSpeech(1, '1号发言');
+      expect(useGameStore.getState().streamingSpeech?.text).toBe('1号发言');
+
+      useGameStore.getState().seekTo(0);
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+    });
+
+    it('clears streaming speech when mergeAudienceEvents receives speech or phase event', () => {
+      useGameStore.getState().reset();
+      useGameStore.setState({
+        gameId: 'game-1',
+        syncMode: 'incremental',
+        audienceCursor: 0,
+        isFollowingLive: true,
+      });
+      useGameStore.getState().setStreamingSpeech(2, '2号流式中');
+
+      useGameStore.getState().mergeAudienceEvents({
+        game_id: 'game-1',
+        after_seq: 0,
+        last_seq: 1,
+        caught_up: true,
+        events: [
+          {
+            seq: 1,
+            event_id: 'e1',
+            event_type: 'speech',
+            payload: { player_seat: 2, text: '2号完整发言', round_number: 1 },
+            schema_version: 1,
+          },
+        ],
+      });
+
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+    });
+  });
 });
 

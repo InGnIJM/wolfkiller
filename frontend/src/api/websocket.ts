@@ -23,6 +23,15 @@ function isActing(value: unknown): value is { type: 'acting'; seat: number } {
     && value.seat > 0;
 }
 
+function isSpeechStream(value: unknown): value is { type: 'speech_stream'; seat: number; text: string } {
+  return hasExactKeys(value, ['type', 'seat', 'text'])
+    && value.type === 'speech_stream'
+    && typeof value.seat === 'number'
+    && Number.isInteger(value.seat)
+    && value.seat > 0
+    && typeof value.text === 'string';
+}
+
 function isAudienceEvent(value: unknown): value is AudienceEvent {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const event = value as Record<string, unknown>;
@@ -93,6 +102,8 @@ export function useWebSocket() {
         }
         if (isPausedState(msg)) {
           useGameStore.getState().setPaused(msg.paused);
+        } else if (isSpeechStream(msg) && useGameStore.getState().isFollowingLive) {
+          useGameStore.getState().setStreamingSpeech(msg.seat, msg.text);
         } else if (isActing(msg) && useGameStore.getState().isFollowingLive) {
           useGameStore.getState().setCurrentSpeaker(msg.seat);
         } else {

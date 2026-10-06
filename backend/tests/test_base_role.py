@@ -1396,3 +1396,111 @@ class TestPromptCaptureWiring:
 
         assert len(capture.calls) == 1
         assert capture.calls[0]["tool_name"] == VOTE_CONTRACT.resolved_tool_name
+
+    @pytest.mark.asyncio
+    async def test_speak_with_on_chunk_forwarding(self):
+        chunks_received = []
+
+        async def chunk_sink(text: str):
+            chunks_received.append(text)
+
+        class StreamingGatewayClient:
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            async def ainvoke_json(self, messages, *, tool_name, schema, on_chunk=None):
+                if on_chunk:
+                    await on_chunk("我是1号发言中")
+                from app.agents.llm_client import StructuredResponse
+                return StructuredResponse(
+                    payload={"text": "我是1号发言中，这是我的发言内容。"},
+                    transport="tool",
+                    has_tool_calls=True,
+                )
+
+        role = make_role(client=StreamingGatewayClient())
+        state = make_state(phase=GamePhase.SPEECH)
+        speech = await role.speak(state, ConversationLog(), "day_speech", on_chunk=chunk_sink)
+        assert speech == "我是1号发言中，这是我的发言内容。"
+        assert chunks_received == ["我是1号发言中"]
+
+    @pytest.mark.asyncio
+    async def test_speak_with_on_chunk_type_error_fallback(self):
+        class NonStreamingGatewayClient:
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            async def ainvoke_json(self, messages, *, tool_name, schema):
+                from app.agents.llm_client import StructuredResponse
+                return StructuredResponse(
+                    payload={"text": "我是1号玩家，旧客户端不支持流式发言。"},
+                    transport="tool",
+                    has_tool_calls=True,
+                )
+
+        role = make_role(client=NonStreamingGatewayClient())
+        state = make_state(phase=GamePhase.SPEECH)
+        sink = AsyncMock()
+        speech = await role.speak(state, ConversationLog(), "day_speech", on_chunk=sink)
+        assert speech == "我是1号玩家，旧客户端不支持流式发言。"
+
+    @pytest.mark.asyncio
+    async def test_invoke_llm_and_tools_stream_branches(self):
+        from langchain_core.messages import AIMessageChunk
+        chunks_received = []
+
+        async def chunk_sink(text: str):
+            chunks_received.append(text)
+
+        class StreamingModel:
+            async def astream(self, messages):
+                yield AIMessageChunk(content="流式发言内容测试")
+
+            async def ainvoke(self, messages):
+                return AIMessage(content="非流式")
+
+        class StreamingToolModel:
+            async def astream(self, messages):
+                yield AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[{"name": "speak", "args": '{"text": "模型流式工具输出"}', "id": "c1", "index": 0}],
+                )
+
+        class StreamingModelClient:
+            action_timeout_seconds = 90.0
+            action_retry_timeout_seconds = 60.0
+
+            def __init__(self):
+                from app.agents.llm_client import LLMClient, LLMClientConfig
+                self._client = LLMClient(config=LLMClientConfig(
+                    base_url="https://api.openai.com/v1",
+                    api_key="key",
+                    model_id="gpt-4o",
+                    temperature=0.7,
+                    max_tokens=512,
+                    strict_base_url="https://api.openai.com/v1",
+                    action_max_tokens=2048,
+                ))
+
+            def get_model(self):
+                return StreamingModel()
+
+            def get_model_with_tools(self, tools):
+                return StreamingToolModel()
+
+            async def _stream_and_accumulate(self, model, messages, on_chunk=None):
+                return await self._client._stream_and_accumulate(model, messages, on_chunk=on_chunk)
+
+        role = make_role(client=StreamingModelClient())
+        # Test _invoke_llm with on_chunk
+        res1 = await role._invoke_llm("prompt", on_chunk=chunk_sink)
+        assert res1 == "流式发言内容测试"
+        assert "流式发言内容测试" in chunks_received
+
+        # Test _invoke_llm_with_tools with on_chunk
+        res2 = await role._invoke_llm_with_tools(
+            "prompt",
+            [{"type": "function", "function": {"name": "speak", "parameters": {}}}, {"type": "function", "function": {"name": "other"}}],
+            on_chunk=chunk_sink,
+        )
+        assert res2.arguments == {"text": "模型流式工具输出"}

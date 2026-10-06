@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+from collections.abc import Awaitable, Callable
 import logging
 import random
 import time
@@ -14,6 +15,7 @@ from app.agents.llm_client import (
     TIMEOUT_ERRORS,
     TRANSIENT_PROVIDER_ERRORS,
     _content_text,
+    extract_partial_speech,
 )
 from app.agents.output_parser import (
     OutputParser,
@@ -144,7 +146,7 @@ class BaseRole:
 
     async def speak(
         self, state: GameState, conversation_log: ConversationLog, context: str,
-        *, capture=None,
+        *, capture=None, on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> str | None:
         """Generate speech. Uses tool calling with validation for day_speech and last_words.
         Returns the speech text, or None if validation failed.
@@ -156,12 +158,12 @@ class BaseRole:
         # Use tool calling for speech/last_words contexts
         if context in ("day_speech", "last_words", "sheriff_campaign"):
             return await self._speak_with_tools(
-                state, prompt, context, conversation_log, capture=capture,
+                state, prompt, context, conversation_log, capture=capture, on_chunk=on_chunk,
             )
 
         # Other contexts (e.g. werewolf chat handled elsewhere) use plain LLM
         started = time.monotonic()
-        raw = await self._invoke_llm(prompt, capture=capture)
+        raw = await self._invoke_llm(prompt, capture=capture, on_chunk=on_chunk)
         speech = self.output_parser.parse_speech(raw)
         self._log_llm_call(
             conversation_log,
@@ -177,6 +179,7 @@ class BaseRole:
     async def _speak_with_tools(
         self, state: GameState, prompt: str, context: str,
         conversation_log: ConversationLog, *, capture=None,
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> str | None:
         """Invoke LLM with speech tools, validate the tool call, return the speech text.
         Retries once on tool-calling failure, then generates a fallback speech so the
@@ -219,7 +222,9 @@ class BaseRole:
         attempts = 0
         try:
             attempts += 1
-            tool_result = await self._invoke_llm_with_tools(prompt, tools, capture=capture)
+            tool_result = await self._invoke_llm_with_tools(
+                prompt, tools, capture=capture, on_chunk=on_chunk,
+            )
         except Exception as e:
             logger.error(
                 f"Seat {self.seat}: LLM invocation failed with exception for "
@@ -244,7 +249,7 @@ class BaseRole:
             )
             try:
                 tool_result = await self._invoke_llm_with_tools(
-                    retry_prompt, tools, capture=capture,
+                    retry_prompt, tools, capture=capture, on_chunk=on_chunk,
                 )
             except Exception as e:
                 logger.error(
@@ -951,20 +956,29 @@ class BaseRole:
             )
         return self.output_parser.parse_action_payload(content, request.contract)
 
-    async def _invoke_llm(self, prompt: str, *, capture=None) -> str:
+    async def _invoke_llm(
+        self, prompt: str, *, capture=None, on_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
         model = self.llm_client.get_model()
         messages = [
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
         _capture_messages(capture, messages)
+        if on_chunk and hasattr(model, "astream") and callable(getattr(model, "astream", None)):
+            coro = self.llm_client._stream_and_accumulate(model, messages, on_chunk=on_chunk)
+        else:
+            coro = model.ainvoke(messages)
         response = await asyncio.wait_for(
-            model.ainvoke(messages),
+            coro,
             timeout=self._action_timeout_seconds(retried=False, final=False),
         )
         return response.content if hasattr(response, "content") else str(response)
 
-    async def _invoke_llm_with_tools(self, prompt: str, tools: list[dict], *, capture=None):
+    async def _invoke_llm_with_tools(
+        self, prompt: str, tools: list[dict], *, capture=None,
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ):
         """Invoke LLM with tool definitions. Returns ToolCallResult or None."""
         gateway = getattr(self.llm_client, "ainvoke_json", None)
         if callable(gateway) and len(tools) == 1:
@@ -985,14 +999,25 @@ class BaseRole:
                 capture, messages,
                 tool_schema=function["parameters"], tool_name=tool_name,
             )
-            result = await asyncio.wait_for(
-                gateway(
-                    messages,
-                    tool_name=tool_name,
-                    schema=function["parameters"],
-                ),
-                timeout=self._action_timeout_seconds(retried=False, final=False),
-            )
+            try:
+                result = await asyncio.wait_for(
+                    gateway(
+                        messages,
+                        tool_name=tool_name,
+                        schema=function["parameters"],
+                        on_chunk=on_chunk,
+                    ),
+                    timeout=self._action_timeout_seconds(retried=False, final=False),
+                )
+            except TypeError:
+                result = await asyncio.wait_for(
+                    gateway(
+                        messages,
+                        tool_name=tool_name,
+                        schema=function["parameters"],
+                    ),
+                    timeout=self._action_timeout_seconds(retried=False, final=False),
+                )
             return ToolCallResult(
                 function_name=tool_name,
                 arguments=result.payload,
@@ -1010,8 +1035,12 @@ class BaseRole:
             tool_schema=tools[0]["function"]["parameters"],
             tool_name=tools[0]["function"]["name"],
         )
+        if on_chunk and hasattr(model, "astream") and callable(getattr(model, "astream", None)):
+            coro = self.llm_client._stream_and_accumulate(model, messages, on_chunk=on_chunk)
+        else:
+            coro = model.ainvoke(messages)
         response = await asyncio.wait_for(
-            model.ainvoke(messages),
+            coro,
             timeout=self._action_timeout_seconds(retried=False, final=False),
         )
 

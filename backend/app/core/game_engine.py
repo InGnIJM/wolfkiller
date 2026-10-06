@@ -2314,8 +2314,21 @@ class GameEngine:
             BusEvent.SPEAKING, game_id=self.game_id, seat=seat,
         )
         try:
+            async def on_speech_chunk(text: str) -> None:
+                await self.event_bus.publish(
+                    BusEvent.SPEECH_STREAM, game_id=self.game_id, seat=seat, text=text,
+                )
+
             try:
-                result = await role.speak(self.state, self.conversation_log, context)
+                try:
+                    result = await role.speak(
+                        self.state, self.conversation_log, context, on_chunk=on_speech_chunk,
+                    )
+                except TypeError as e:
+                    if "on_chunk" in str(e):
+                        result = await role.speak(self.state, self.conversation_log, context)
+                    else:
+                        raise
             except Exception as e:
                 logger.error(f"Speech error (seat={seat}, context={context}): {e}", exc_info=True)
                 result = self._emergency_speech(seat, context)

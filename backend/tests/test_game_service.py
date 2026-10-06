@@ -1350,6 +1350,44 @@ class TestGameService:
         ws_manager.broadcast.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_speech_stream_queues_and_broadcasts(self):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        ws_manager.queue_v2_notice = MagicMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_speech_stream(game_id="game-a", seat=3, text="正在发言...")
+
+        ws_manager.queue_v2_notice.assert_called_once_with("game-a", "speech_stream", seat=3, text="正在发言...")
+        ws_manager.broadcast.assert_awaited_once_with("game-a", "speech_stream", seat=3, text="正在发言...")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("game_id", "seat", "text"),
+        [
+            (None, 3, "abc"),
+            ("unknown", 3, "abc"),
+            ("game-a", True, "abc"),
+            ("game-a", "3", "abc"),
+            ("game-a", 0, "abc"),
+            ("game-a", 3, None),
+            ("game-a", 3, 123),
+        ],
+    )
+    async def test_speech_stream_drops_unknown_or_invalid(self, game_id, seat, text):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        ws_manager.queue_v2_notice = MagicMock()
+        service = GameService(ws_manager, EventBus())
+        service._games = {"game-a": MagicMock()}
+
+        await service._on_speech_stream(game_id=game_id, seat=seat, text=text)
+
+        ws_manager.queue_v2_notice.assert_not_called()
+        ws_manager.broadcast.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_night_substep_broadcasts_exact_public_payload_only(self):
         ws_manager = WSManager()
         ws_manager.broadcast = AsyncMock()

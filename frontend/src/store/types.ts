@@ -455,6 +455,12 @@ export interface BatchMoveResult {
   failed: BatchFailure[];
 }
 
+export interface StreamingSpeech {
+  seat: number;
+  text: string;
+  updatedAt: number;
+}
+
 export type WSMessage =
   | { type: 'game_state'; state: PublicGameState }
   | {
@@ -467,7 +473,8 @@ export type WSMessage =
   | { type: 'vote_cast'; vote: VoteRecord }
   | { type: 'player_died'; death: DeathRecord }
   | { type: 'game_over'; win_result: WinResult; state: PublicGameState }
-  | { type: 'paused_state'; paused: boolean };
+  | { type: 'paused_state'; paused: boolean }
+  | { type: 'speech_stream'; seat: number; text: string };
 
 // ── Model config & game creation catalog ──────────────────────
 

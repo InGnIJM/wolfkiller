@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 from urllib.parse import urlparse
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 
@@ -197,6 +198,47 @@ def _content_text(content: Any) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+def extract_partial_speech(raw: str) -> str:
+    """Extract speech text from raw chunks, supporting JSON arguments or plain text."""
+    if not raw:
+        return ""
+    trimmed = raw.strip()
+    if "text" in trimmed and ("{" in trimmed or '"text"' in trimmed):
+        match = re.search(r'"text"\s*:\s*"', trimmed)
+        if match:
+            start = match.end()
+            res = []
+            i = start
+            n = len(trimmed)
+            while i < n:
+                c = trimmed[i]
+                if c == "\\":
+                    if i + 1 < n:
+                        next_c = trimmed[i + 1]
+                        if next_c == '"':
+                            res.append('"')
+                        elif next_c == "n":
+                            res.append("\n")
+                        elif next_c == "t":
+                            res.append("\t")
+                        elif next_c == "\\":
+                            res.append("\\")
+                        else:
+                            res.append(next_c)
+                        i += 2
+                        continue
+                    break
+                elif c == '"':
+                    break
+                else:
+                    res.append(c)
+                    i += 1
+            return "".join(res)
+    if trimmed.startswith("{"):
+        return ""
+    return trimmed
 
 
 class LLMClient:
@@ -587,8 +629,36 @@ class LLMClient:
             llm_attempts=attempts,
         )
 
+    async def _stream_and_accumulate(
+        self, model, messages, on_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ):
+        """Consume model.astream chunks, notify on_chunk with partial speech, and return accumulated response."""
+        acc = None
+        args_acc = ""
+        last_emitted = ""
+        async for chunk in model.astream(messages):
+            acc = chunk if acc is None else acc + chunk
+            if on_chunk is not None:
+                tool_chunks = getattr(chunk, "tool_call_chunks", None) or []
+                if tool_chunks:
+                    for tc in tool_chunks:
+                        args_val = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", "")
+                        if args_val:
+                            args_acc += args_val
+                    partial = extract_partial_speech(args_acc)
+                    if partial and partial != last_emitted:
+                        last_emitted = partial
+                        await on_chunk(partial)
+                elif hasattr(acc, "content") and acc.content:
+                    partial = extract_partial_speech(str(acc.content))
+                    if partial and partial != last_emitted:
+                        last_emitted = partial
+                        await on_chunk(partial)
+        return acc if acc is not None else AIMessage(content="")
+
     async def ainvoke_json(
         self, messages, *, tool_name: str, schema: dict[str, Any],
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> StructuredResponse:
         """Async structured JSON request with native-tool to JSON fallback."""
         started = time.monotonic()
@@ -597,9 +667,11 @@ class LLMClient:
         if self.supports_action_tools:
             attempts += 1
             try:
-                response = await self.get_model_with_json_tool(
-                    tool_name, schema,
-                ).ainvoke(messages)
+                model = self.get_model_with_json_tool(tool_name, schema)
+                if on_chunk and hasattr(model, "astream") and callable(getattr(model, "astream", None)):
+                    response = await self._stream_and_accumulate(model, messages, on_chunk=on_chunk)
+                else:
+                    response = await model.ainvoke(messages)
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
                 result = self._coerce_payload_types(result, schema)
@@ -618,7 +690,11 @@ class LLMClient:
                     type(error).__name__,
                 )
         attempts += 1
-        response = await self.get_action_model().ainvoke(messages)
+        action_model = self.get_action_model()
+        if on_chunk and hasattr(action_model, "astream") and callable(getattr(action_model, "astream", None)):
+            response = await self._stream_and_accumulate(action_model, messages, on_chunk=on_chunk)
+        else:
+            response = await action_model.ainvoke(messages)
         usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)
         result = self._require_schema_fields(result, schema)

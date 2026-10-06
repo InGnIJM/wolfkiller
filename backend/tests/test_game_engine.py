@@ -1831,6 +1831,45 @@ class TestGameEngine:
         assert engine.state.current_speaker is None
 
     @pytest.mark.asyncio
+    async def test_speak_publishes_speech_stream_chunks(self):
+        role = MagicMock()
+
+        async def stream_speech(_state, _log, _context, on_chunk=None):
+            if on_chunk:
+                await on_chunk("我是1号正在发言")
+            return "我是1号正在发言，完整内容。"
+
+        role.speak = stream_speech
+        bus = EventBus()
+        stream_events: list[dict] = []
+
+        async def capture(**kwargs):
+            stream_events.append(kwargs)
+
+        bus.subscribe(BusEvent.SPEECH_STREAM, capture)
+        engine = GameEngine(game_id="speak-stream", roles={1: role}, event_bus=bus)
+        engine._checkpoint_hook = AsyncMock()
+
+        res = await engine.speak(1, "day_speech")
+        assert res == "我是1号正在发言，完整内容。"
+        assert stream_events == [{"game_id": "speak-stream", "seat": 1, "text": "我是1号正在发言"}]
+
+    @pytest.mark.asyncio
+    async def test_speak_handles_mock_role_without_on_chunk(self):
+        role = MagicMock()
+
+        async def legacy_speak(_state, _log, _context):
+            return "我是1号，旧接口发言。"
+
+        role.speak = legacy_speak
+        bus = EventBus()
+        engine = GameEngine(game_id="speak-legacy", roles={1: role}, event_bus=bus)
+        engine._checkpoint_hook = AsyncMock()
+
+        res = await engine.speak(1, "day_speech")
+        assert res == "我是1号，旧接口发言。"
+
+    @pytest.mark.asyncio
     async def test_announce_actor_publishes_before_a_blocking_night_call(self, monkeypatch):
         bus = EventBus()
         announced: list[int] = []

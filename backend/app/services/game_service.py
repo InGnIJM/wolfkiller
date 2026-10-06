@@ -689,6 +689,7 @@ class GameService:
         self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._on_player_died)
         self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._on_speech_made)
         self.event_bus.subscribe(BusEvent.SPEAKING, self._on_speaking)
+        self.event_bus.subscribe(BusEvent.SPEECH_STREAM, self._on_speech_stream)
         self.event_bus.subscribe(BusEvent.ACTING, self._on_acting)
         self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
@@ -3160,6 +3161,21 @@ class GameService:
         ):
             return
         await self.ws_manager.broadcast(game_id, "speaking", seat=seat)
+
+    async def _on_speech_stream(self, **kwargs) -> None:
+        game_id = self._known_game_id(kwargs)
+        seat = kwargs.get("seat")
+        text = kwargs.get("text")
+        if (
+            game_id is None
+            or isinstance(seat, bool)
+            or not isinstance(seat, int)
+            or seat < 1
+            or not isinstance(text, str)
+        ):
+            return
+        self.ws_manager.queue_v2_notice(game_id, "speech_stream", seat=seat, text=text)
+        await self.ws_manager.broadcast(game_id, "speech_stream", seat=seat, text=text)
 
     async def _on_acting(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)

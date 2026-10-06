@@ -480,7 +480,7 @@ function DayVerdictView({
 }
 
 export default function ActivityCard() {
-  const { timeline, timelineIndex } = useGameStore();
+  const { timeline, timelineIndex, streamingSpeech, isFollowingLive } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;
@@ -498,7 +498,73 @@ export default function ActivityCard() {
   }
 
   switch (entry.event_type) {
-    case 'speaking':
+    case 'speaking': {
+      const isStreaming = isFollowingLive
+        && streamingSpeech !== null
+        && streamingSpeech.seat === entry.payload.seat
+        && Boolean(streamingSpeech.text);
+
+      if (isStreaming) {
+        return (
+          <ActivityFrame tone="#E5484D">
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, width: '100%' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <SeatAvatar seat={entry.payload.seat} />
+                  <Box>
+                    <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                      {entry.payload.seat}号
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
+                      正在发言
+                    </Typography>
+                  </Box>
+                </Box>
+                <LiveTag label="STREAMING" />
+              </Box>
+              <Box
+                sx={{
+                  maxHeight: 180,
+                  overflowY: 'auto',
+                  bgcolor: 'rgba(0, 0, 0, 0.25)',
+                  p: 1.5,
+                  borderRadius: 1,
+                  border: '1px solid rgba(229, 72, 77, 0.25)',
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.primary',
+                    lineHeight: 1.8,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {streamingSpeech.text}
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'inline-block',
+                      width: '2px',
+                      height: '1em',
+                      bgcolor: 'secondary.main',
+                      ml: 0.5,
+                      verticalAlign: 'text-bottom',
+                      animation: 'cursor-blink 1s step-start infinite',
+                      '@keyframes cursor-blink': {
+                        '0%, 100%': { opacity: 1 },
+                        '50%': { opacity: 0 },
+                      },
+                    }}
+                  />
+                </Typography>
+              </Box>
+            </Box>
+          </ActivityFrame>
+        );
+      }
+
       return (
         <ActivityFrame tone="#E5484D">
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -515,6 +581,7 @@ export default function ActivityCard() {
           </Box>
         </ActivityFrame>
       );
+    }
     case 'speech':
       return <SpeechView payload={entry.payload} timestamp={entry.timestamp} durationSec={durationSec} />;
     case 'witch_thought':
