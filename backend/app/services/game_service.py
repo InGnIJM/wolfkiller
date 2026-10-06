@@ -52,6 +52,7 @@ from app.core.role_runtime import (
     adopt_resource_declaration, resource_declaration_marker,
 )
 from app.core.scheduler import Scheduler
+from app.core.sheriff_flow import ballot_weight
 from app.models.pipeline import ActionCommand as PipelineActionCommand, SchedulePoint
 from app.models.contracts import AcceptedAction, ActionCommand as ContractActionCommand
 from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
@@ -1746,15 +1747,26 @@ class GameService:
             parts = label.split(":")
             exiled_seat = None if parts[-1] == "none" else int(parts[-1])
             counts: dict[str, int] = {}
+            weighted: dict[str, int] = {}
             for vote in engine.state.votes:
                 if vote.target_seat is not None:
                     key = str(vote.target_seat)
                     counts[key] = counts.get(key, 0) + 1
+                    # The exile is decided by ``ballot_weight`` — one unit per
+                    # ballot, or 3 for the sheriff against 2 for everyone else
+                    # once a sheriff sits — so a head count can disagree with
+                    # the outcome it is published next to. Both numbers travel:
+                    # how many hands went up, and what the decision was made of.
+                    weight = ballot_weight(engine.state, vote.voter_seat)
+                    weighted[key] = weighted.get(key, 0) + weight
             event_type = "VOTE_RESULT"
             payload = {
                 "round_number": engine.state.round_number,
                 "exiled_seat": exiled_seat,
                 "counts": dict(sorted(counts.items(), key=lambda item: int(item[0]))),
+                "weighted_counts": dict(
+                    sorted(weighted.items(), key=lambda item: int(item[0]))
+                ),
             }
         elif label.startswith("speaking:"):
             parts = label.split(":")

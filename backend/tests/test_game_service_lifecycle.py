@@ -150,7 +150,10 @@ def test_vote_result_checkpoint_emits_tally_without_replaying_private_data() -> 
         "payload": {
             "round_number": 2,
             "exiled_seat": 3,
+            # ``counts`` is the head count; ``weighted_counts`` is what the
+            # exile was actually decided from (no sheriff here, so they agree).
             "counts": {"3": 2},
+            "weighted_counts": {"3": 2},
         },
         "visibility": ["PUBLIC"],
         "schema_version": 1,

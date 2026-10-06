@@ -108,6 +108,8 @@ _AUDIENCE_ACTION_OPTIONAL = {
     "WOLF_CHAT_MESSAGE": frozenset({"day_plan"}),
     # `reasoning`（警长的交/撕徽理由）同理：本仓库里早于它的警徽记录都没有这个键。
     "SHERIFF_BADGE": frozenset({"reasoning"}),
+    # `weighted_counts`（半票加权计票）同理：早于它的票型记录只有人头数 `counts`。
+    "VOTE_RESULT": frozenset({"weighted_counts"}),
 }
 
 
