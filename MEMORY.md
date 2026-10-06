@@ -688,3 +688,25 @@
   Mapping)`), and when a test hangs with a partially printed progress line,
   interrupt it (`timeout -s INT`) to get the owner task's traceback instead of
   waiting.
+
+## 标记驱动的判定在第一个调度点之前读成「没有标记」
+- Trigger: 十二人石像鬼守墓人板的第一夜，石像鬼参与了狼队讨论与狼刀投票
+  （观众流里有它的 `WOLF_CHAT_MESSAGE` / `WOLF_VOTE`），它的狼队提示词里还写着
+  「你的队友：5、11、12号」——正是这张牌绝不能知道的信息；观众看到 4 张狼刀票，
+  `WEREWOLF_KILL.vote_counts` 却只有 3 票（第 4 张结构上无法计数：`NIGHT_WOLF_VOTE`
+  只给 `werewolf_kill` 契约的持有者发请求，石像鬼持的是 `hidden_wolf_kill`）。
+  Action: 角色资源是**懒建立**的 —— `initialize_role_resources` 的唯一调用点在
+  `Scheduler._issue_locked`，也就是「当晚第一个调度点真的跑起来」的那一刻；建局与
+  ROLE_DEAL 都不跑点。所以在那之前 `has_role_marker` 一律返回 `False`，
+  `in_wolf_pack` 退化成「只看 camp」。`_execute_staged_night` 恰好在函数**顶部**就把
+  狼窝名单算完了，那一行跑在 stage 1 的 `NIGHT_ACTION` 之前。名单必须在第一个调度点
+  之后推导（放在 stage 2 之后、stage 3 之前即可），`_pack_sealed` 与提示词的队友行
+  都吃同一份名单。顺带修的另一面：`NightDirector` 的队友行用的是 pack 成员，却没判
+  actor 自己可不可见（`actor_sees_pack`），于是同一夜把狼窝座位写进了隐狼的提示词。
+- Trigger: 你要在第一个调度点之前读任何 `initial_resources` 标记（`no_wolf_pack` /
+  `night_immune` / `delayable` / `charm_immune` …），或者给"资源已声明"的行为写测试。
+  Action: 先把那个调度点跑掉，或把判定推迟到真正使用它的阶段；测试若自己先调一遍
+  `initialize_role_resources`，就永远复现不了这个窗口——回归用例必须让第一个点**自己**
+  建立资源（stub 在 `NIGHT_ACTION` 里模拟 `Scheduler.issue` 的行为），
+  `tests/test_game_engine.py::test_first_night_roster_excludes_a_hidden_wolf_without_resources_yet`
+  就是这么钉住它的。
