@@ -2533,6 +2533,24 @@ class GameService:
         ]
         return (rng or random).choice(candidates) if candidates else None
 
+    def _pack_ballot_point(self, request, context) -> bool:
+        """True when the pack's own kill vote answers this request.
+
+        Gated on *pack* membership, not on the schedule point. Both the pack's
+        shared kill and a hidden wolf's lone kill are scheduled at
+        ``NIGHT_WOLF_VOTE``, but only the pack balloted during the discussion:
+        ``NightDirector.collected_vote`` knows nothing about a ``no_wolf_pack``
+        seat, so matching on the point alone handed the hidden wolf the safe
+        fallback every night and its documented lone kill never reached a model.
+        """
+        if request.contract.schedule_point is not SchedulePoint.NIGHT_WOLF_VOTE:
+            return False
+        state = getattr(self._engines.get(context.game_id), "state", None)
+        if not isinstance(state, GameState):
+            # Nothing live to consult: keep the historical hand-off.
+            return True
+        return in_wolf_pack(state, request.actor_seat)
+
     def _command_provider(self, snapshot, renderer: PromptRenderer, client_provider, director):
         """LLM-backed command provider for the pipeline scheduler.
 
@@ -2542,7 +2560,7 @@ class GameService:
         so a point never stalls on a malformed model response.
         """
         def provider(request, context, attempt, *, prompt_sink=None):
-            if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
+            if self._pack_ballot_point(request, context):
                 command = director.collected_vote(request.actor_seat)
                 return command if command is not None else PipelineActionCommand(
                     action_type=request.contract.fallback_action_type,
@@ -2654,7 +2672,7 @@ class GameService:
             return provider
 
         def durable_provider(request, context, attempt):
-            if request.contract.schedule_point is SchedulePoint.NIGHT_WOLF_VOTE:
+            if self._pack_ballot_point(request, context):
                 return provider(request, context, attempt)
             engine_context = self._durable_contexts.get(context.game_id)
             if engine_context is None:
