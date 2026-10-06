@@ -37,13 +37,35 @@ DRUNKARD = "wolf-killer-old-drunkard"
 EVENT_ID = "event:" + "3" * 16
 
 
+def last_night_memory(
+    value: object, round_number: int, memory_round: int | None = None,
+) -> object:
+    """Wrap a bare seat into the ``{seat, round}`` memory the roles now write.
+
+    ``round_number`` is the night being played, so the memory defaults to the
+    night before it. ``memory_round`` models a *skipped* night: the same seat
+    remembered from further back. A non-int pass-through keeps malformed-input
+    cases testable.
+    """
+    if value is None or type(value) is not int:
+        return value
+    return {
+        "seat": value,
+        "round": round_number - 1 if memory_round is None else memory_round,
+    }
+
+
 def context(
     *, alive: bool = True, target: int | None = 3, last_charmed: object = None,
     camp: str | None = "good", resources: tuple[str, ...] = (),
-    with_fact: bool = True, actor: int = 1,
+    with_fact: bool = True, actor: int = 1, round_number: int = 2,
+    memory_round: int | None = None,
 ) -> ActionContext:
     contract = WOLF_BEAUTY_CHARM_CONTRACT
-    facts: dict[str, object] = {"alive_seats": (1, 2, 3), "last_charmed": last_charmed}
+    facts: dict[str, object] = {
+        "alive_seats": (1, 2, 3),
+        "last_charmed": last_night_memory(last_charmed, round_number, memory_round),
+    }
     if with_fact and target is not None:
         selected: dict[str, object] = {"seat": target}
         if camp is not None:
@@ -53,7 +75,7 @@ def context(
     return ActionContext(
         "g", 6, facts, config_version="a" * 64, contract_id=contract.contract_id,
         contract_version=contract.schema_version, contract_digest=contract.stable_digest(),
-        round_number=2, phase="night", window_id="w",
+        round_number=round_number, phase="night", window_id="w",
         schedule_point=contract.schedule_point, actor_seat=actor,
         actor_role_id=BEAUTY, actor_alive=alive, resources={"kill": 1},
         action_key="beauty:1",
@@ -200,7 +222,9 @@ def test_charm_records_the_target_privately_and_publishes_it_to_the_audience() -
         derive_effect_id("beauty:1", index) for index in range(1, 5)
     ]
     assert all(effect.expected_revision == 6 for effect in effects)
-    assert effects[0].payload == {"target": 1, "key": "last_charmed", "value": 3}
+    assert dict(effects[0].payload) == {
+        "target": 1, "key": "last_charmed", "value": {"seat": 3, "round": 2},
+    }
     assert effects[1].payload == {
         "target": 3, "relation": "charmed_by", "other_seat": 1}
     assert effects[2].payload == {
@@ -313,7 +337,9 @@ def test_charm_window_runs_after_the_wolf_vote_and_spends_nothing() -> None:
     assert asked[-1] == "wolf_beauty_charm"
     assert [e["event_type"] for e in charm.events] == [
         "WOLF_BEAUTY_CHARM", "WOLF_BEAUTY_REASONING"]
-    assert game._pipeline_runtime.private_data[1]["last_charmed"] == 3
+    assert dict(game._pipeline_runtime.private_data[1]["last_charmed"]) == {
+        "seat": 3, "round": game.round_number,
+    }
     assert game._pipeline_runtime.relations[3] == frozenset({("charmed_by", 1)})
     assert charm.events[0]["payload"] == {
         "seat": 1, "target_seat": 3, "round_number": 1,
@@ -346,7 +372,9 @@ def test_charm_can_be_repeated_on_a_later_night() -> None:
         runner.run_point(game, SchedulePoint.NIGHT_WOLF_VOTE)
         runner.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
 
-    assert game._pipeline_runtime.private_data[1]["last_charmed"] == 3
+    assert dict(game._pipeline_runtime.private_data[1]["last_charmed"]) == {
+        "seat": 3, "round": game.round_number,
+    }
     assert game._pipeline_runtime.relations[3] == frozenset({("charmed_by", 1)})
     assert game._pipeline_runtime.relations[4] == frozenset({("charmed_by", 1)})
     # Still cloneable: the runtime keeps its set invariant throughout.
@@ -368,7 +396,9 @@ def test_charm_window_can_still_charm_on_a_no_kill_night() -> None:
     runner.run_point(game, SchedulePoint.NIGHT_WOLF_VOTE)
     assert game._pipeline_runtime.pending_damage == ()
     charm = runner.run_point(game, SchedulePoint.NIGHT_WITCH_ACTION)
-    assert game._pipeline_runtime.private_data[1]["last_charmed"] == 3
+    assert dict(game._pipeline_runtime.private_data[1]["last_charmed"]) == {
+        "seat": 3, "round": game.round_number,
+    }
     assert [e["event_type"] for e in charm.events][0] == "WOLF_BEAUTY_CHARM"
 
 
@@ -437,7 +467,9 @@ async def test_an_exiled_wolf_beauty_drags_the_charmed_player_along(tmp_path) ->
     runner = engine._pipeline_scheduler
     runner.run_point(engine.state, SchedulePoint.NIGHT_WOLF_VOTE)
     runner.run_point(engine.state, SchedulePoint.NIGHT_WITCH_ACTION)
-    assert engine.state._pipeline_runtime.private_data[1]["last_charmed"] == 4
+    assert dict(engine.state._pipeline_runtime.private_data[1]["last_charmed"]) == {
+        "seat": 4, "round": engine.state.round_number,
+    }
 
     # The night kill took a plain villager; the charmed hunter is still alive and
     # therefore a visible target for the revenge damage.
@@ -478,3 +510,17 @@ async def test_an_exiled_wolf_beauty_drags_the_charmed_player_along(tmp_path) ->
     assert engine.state.players[6].is_alive is True
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [
         (3, "wolf_kill"), (1, "exile"), (4, "charm")]
+
+
+
+def test_the_charm_forgets_a_night_it_spent_passing() -> None:
+    """A charm two nights back is not "two nights in a row"."""
+    consecutive = context(last_charmed=2, round_number=4, memory_round=3)
+    assert [item.code for item in validate_wolf_beauty_action(
+        consecutive, command("charm", 2),
+    )] == ["consecutive_charm"]
+
+    after_a_skipped_night = context(last_charmed=2, round_number=4, memory_round=2)
+    assert validate_wolf_beauty_action(
+        after_a_skipped_night, command("charm", 2),
+    ) == ()

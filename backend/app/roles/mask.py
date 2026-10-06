@@ -24,6 +24,7 @@ from app.models.pipeline import (
     RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
+from app.roles.target_memory import is_consecutive_repeat, target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 
 LAST_MASKED_KEY = "last_masked"
@@ -41,7 +42,7 @@ def validate_mask_action(
 ) -> tuple[RuleViolation, ...]:
     if command.action_type != "mask" or command.target_seat is None:
         return ()
-    if command.target_seat == context.facts.get(LAST_MASKED_KEY):
+    if is_consecutive_repeat(context, LAST_MASKED_KEY, command.target_seat):
         return (RuleViolation(
             "consecutive_mask_forbidden",
             "the same seat cannot be masked on two consecutive nights",
@@ -109,7 +110,7 @@ def resolve_mask_action(
         GameEffect(
             derive_effect_id(context.action_key, 1), EffectKind.SET_PRIVATE_DATA,
             context.action_key, target_seat=actor,
-            payload={"target": actor, "key": LAST_MASKED_KEY, "value": target},
+            payload=target_memory(actor, LAST_MASKED_KEY, target, context.round_number),
             sort_key=(1,), **common,
         ),
         GameEffect(

@@ -324,14 +324,34 @@ def mask_command(action_type: str = "mask", target: int | None = 2) -> ActionCom
     return ActionCommand(action_type=action_type, target_seat=target, reasoning="戴面具")
 
 
+def last_night_memory(
+    value: object, round_number: int, memory_round: int | None = None,
+) -> object:
+    """Wrap a bare seat into the ``{seat, round}`` memory the roles now write.
+
+    ``round_number`` is the night being played, so the memory defaults to the
+    night before it. ``memory_round`` models a *skipped* night: the same seat
+    remembered from further back. A non-int pass-through keeps malformed-input
+    cases testable.
+    """
+    if value is None or type(value) is not int:
+        return value
+    return {
+        "seat": value,
+        "round": round_number - 1 if memory_round is None else memory_round,
+    }
+
+
 def mask_context(
     *, target: int | None = 2, in_pool: bool = True, last_masked: object = None,
     checks: tuple = (), round_number: int = 2, with_fact: bool = True,
+    memory_round: int | None = None,
 ) -> ActionContext:
     from app.roles.mask import MASK_GRANT_CONTRACT
 
     facts: dict[str, object] = {
-        "alive_seats": (1, 2, 3, 4), "last_masked": last_masked,
+        "alive_seats": (1, 2, 3, 4),
+        "last_masked": last_night_memory(last_masked, round_number, memory_round),
         "pool_checks": checks,
     }
     if with_fact and target is not None:
@@ -403,7 +423,9 @@ def test_mask_learns_whether_its_target_is_dancing() -> None:
     assert [effect.kind.value for effect in inside] == [
         "set_private_data", "set_private_data", "add_status", "emit_event", "emit_event",
     ]
-    assert inside[0].payload == {"target": 1, "key": "last_masked", "value": 2}
+    assert dict(inside[0].payload) == {
+        "target": 1, "key": "last_masked", "value": {"seat": 2, "round": 2},
+    }
     # Frozen payloads: the appended record lands as a tuple of proxies.
     assert dict(inside[1].payload) == {
         "target": 1, "key": "pool_checks",
@@ -537,3 +559,15 @@ def test_the_dancer_and_the_mask_declare_their_opening_lines() -> None:
     assert DANCE_POOL_CONTRACT.order < MASK_GRANT_CONTRACT.order
 
 
+
+def test_the_mask_forgets_a_night_it_spent_passing() -> None:
+    """The mask may be given to the same seat after a night it did not act."""
+    from app.roles.mask import validate_mask_action
+
+    consecutive = mask_context(last_masked=2, round_number=4, memory_round=3)
+    assert [item.code for item in validate_mask_action(
+        consecutive, mask_command(target=2),
+    )] == ["consecutive_mask_forbidden"]
+
+    after_a_skipped_night = mask_context(last_masked=2, round_number=4, memory_round=2)
+    assert validate_mask_action(after_a_skipped_night, mask_command(target=2)) == ()

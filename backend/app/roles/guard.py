@@ -4,6 +4,10 @@ from app.models.pipeline import (
     RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
+from app.roles.target_memory import is_consecutive_repeat, target_memory
+
+#: Private slot: who the Guard protected last, and on which night.
+LAST_GUARDED_KEY = "last_guarded"
 
 
 def guard_applicable(context: ActionContext) -> bool:
@@ -15,7 +19,7 @@ def validate_guard_action(
 ) -> tuple[RuleViolation, ...]:
     if command.action_type == "pass" or command.target_seat is None:
         return ()
-    if context.facts.get("last_guarded") == command.target_seat:
+    if is_consecutive_repeat(context, LAST_GUARDED_KEY, command.target_seat):
         return (RuleViolation("consecutive_guard", "the same seat cannot be guarded two consecutive nights"),)
     return ()
 
@@ -63,8 +67,10 @@ def resolve_guard_action(
         GameEffect(
             derive_effect_id(context.action_key, 2), EffectKind.SET_PRIVATE_DATA,
             context.action_key, target_seat=context.actor_seat,
-            payload={"target": context.actor_seat, "key": "last_guarded",
-                     "value": command.target_seat},
+            payload=target_memory(
+                context.actor_seat, LAST_GUARDED_KEY,
+                command.target_seat, context.round_number,
+            ),
             sort_key=(2,), **common,
         ),
         _guard_reasoning_effect(context, command, 3, **common),
@@ -96,12 +102,13 @@ GUARD_SPEC = RoleSpec(
         validate=validate_guard_action,
         resolve=resolve_guard_action,
     ),),
-    initial_private_data={"last_guarded": None},
+    initial_private_data={LAST_GUARDED_KEY: None},
     allowed_effects=frozenset({EffectKind.SUBMIT_PROTECTION, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
         "Each night Guard may protect one living player or pass; the same seat cannot be "
-        "protected on consecutive nights. Guard protection only cancels werewolf-kill damage; "
+        "protected on two consecutive nights (a night the Guard spent passing is not one of "
+        "them). Guard protection only cancels werewolf-kill damage; "
         "poison and hunter shots ignore it. If Guard protection and Witch antidote both target "
         "the same werewolf-kill target, that target dies by double-save penetration. "
         "Tactical advice: The Guard is a critical unverified god. Focus on discerning the real Seer "

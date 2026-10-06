@@ -29,10 +29,16 @@ from app.models.pipeline import (
     RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
+from app.roles.target_memory import (
+    is_consecutive_repeat, last_target, target_memory,
+)
 
 #: Death cause shared by both ways the Dream Weaver kills: the second night on
 #: the same seat, and dragging that night's dreamer along on its own death.
 DREAM_DEATH_CAUSE = "dream_death"
+
+#: Private slot: who the Dream Weaver visited last, and on which night.
+LAST_DREAMED_KEY = "last_dreamed"
 
 #: Ways out that drag the dreamer along. The daytime ones are excluded: the
 #: rules only bind the dreamer to a *night* death, so an exile or a duel leaves
@@ -91,9 +97,10 @@ def resolve_dream_weaver_action(
     if command.action_type != "dream" or command.target_seat is None:
         return (_dream_reasoning_effect(context, command, 1, **common),)
     target = command.target_seat
-    if context.facts.get("last_dreamed") == target:
-        # Two nights running on the same seat: the weave turns lethal instead of
-        # shielding. No protection is submitted, so nothing can save it.
+    if is_consecutive_repeat(context, LAST_DREAMED_KEY, target):
+        # Two nights *running* on the same seat: the weave turns lethal instead
+        # of shielding. No protection is submitted, so nothing can save it.
+        # A night the Dream Weaver spent passing is not one of the two.
         first = GameEffect(
             derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_DAMAGE,
             context.action_key, target_seat=target,
@@ -112,7 +119,9 @@ def resolve_dream_weaver_action(
         GameEffect(
             derive_effect_id(context.action_key, 2), EffectKind.SET_PRIVATE_DATA,
             context.action_key, target_seat=context.actor_seat,
-            payload={"target": context.actor_seat, "key": "last_dreamed", "value": target},
+            payload=target_memory(
+                context.actor_seat, LAST_DREAMED_KEY, target, context.round_number,
+            ),
             sort_key=(2,), **common,
         ),
         _dream_reasoning_effect(context, command, 3, **common),
@@ -120,13 +129,13 @@ def resolve_dream_weaver_action(
 
 
 def dream_weaver_revenge_applicable(context: ActionContext) -> bool:
-    target = context.facts.get("last_dreamed")
+    target = last_target(context, LAST_DREAMED_KEY)
     return (
         context.source_event_id is not None
         and context.trigger_event is not None
         and context.trigger_event.get("target_seat") == context.actor_seat
         and context.trigger_reason in _DREAM_REVENGE_REASONS
-        and type(target) is int
+        and target is not None
         and target > 0
         and target != context.actor_seat
     )
@@ -140,7 +149,7 @@ def react_dream_weaver_revenge(context: ActionContext) -> tuple[GameEffect, ...]
     """
     if not dream_weaver_revenge_applicable(context):
         return ()
-    target = context.facts["last_dreamed"]
+    target = last_target(context, LAST_DREAMED_KEY)
     return (GameEffect(
         derive_effect_id(context.action_key, 1), EffectKind.SUBMIT_DAMAGE,
         context.action_key, target_seat=target,
@@ -189,7 +198,7 @@ DREAM_WEAVER_SPEC = RoleSpec(
         validate=validate_dream_weaver_action,
         resolve=resolve_dream_weaver_action,
     ), DREAM_WEAVER_REVENGE_CONTRACT),
-    initial_private_data={"last_dreamed": None},
+    initial_private_data={LAST_DREAMED_KEY: None},
     allowed_effects=frozenset({
         EffectKind.SUBMIT_PROTECTION, EffectKind.SUBMIT_DAMAGE,
         EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,

@@ -47,13 +47,33 @@ def nightmare_registry() -> RegistrySnapshot:
     return registry.freeze()
 
 
+def last_night_memory(
+    value: object, round_number: int, memory_round: int | None = None,
+) -> object:
+    """Wrap a bare seat into the ``{seat, round}`` memory the roles now write.
+
+    ``round_number`` is the night being played, so the memory defaults to the
+    night before it. ``memory_round`` models a *skipped* night: the same seat
+    remembered from further back. A non-int pass-through keeps malformed-input
+    cases testable.
+    """
+    if value is None or type(value) is not int:
+        return value
+    return {
+        "seat": value,
+        "round": round_number - 1 if memory_round is None else memory_round,
+    }
+
+
 def context(
     *, target: int | None = 3, last_feared: object = None, alive: bool = True,
-    actor: int = 1, round_number: int = 2,
+    actor: int = 1, round_number: int = 2, memory_round: int | None = None,
 ) -> ActionContext:
     contract = NIGHTMARE_FEAR_CONTRACT
     return ActionContext(
-        "g", 8, {"alive_seats": (1, 2, 3, 4), FEARED_KEY: last_feared},
+        "g", 8, {"alive_seats": (1, 2, 3, 4),
+                 FEARED_KEY: last_night_memory(
+                     last_feared, round_number, memory_round)},
         config_version="a" * 64, contract_id=contract.contract_id,
         contract_version=contract.schema_version,
         contract_digest=contract.stable_digest(),
@@ -108,7 +128,9 @@ def test_resolve_records_the_target_and_seals_it() -> None:
     assert kinds(effects) == [
         "set_private_data", "add_status", "emit_event", "emit_event",
     ]
-    assert effects[0].payload == {"target": 1, "key": FEARED_KEY, "value": 3}
+    assert dict(effects[0].payload) == {
+        "target": 1, "key": FEARED_KEY, "value": {"seat": 3, "round": 2},
+    }
     assert effects[1].payload == {"target": 3, "status": SILENCED_STATUS}
     assert effects[1].target_seat == 3
     assert effects[1].preconditions == {
@@ -185,7 +207,9 @@ def test_the_fear_is_issued_first_and_silences_the_guard_in_the_same_point() -> 
 
     assert requested == [("nightmare_fear", 1)]
     assert state._pipeline_runtime.statuses[3] == {SILENCED_STATUS}
-    assert state._pipeline_runtime.private_data[1][FEARED_KEY] == 3
+    assert dict(state._pipeline_runtime.private_data[1][FEARED_KEY]) == {
+        "seat": 3, "round": state.round_number,
+    }
     assert [fault["code"] for fault in result.faults] == ["actor_silenced"]
     assert result.faults[0]["seat"] == 3
     types = [event["event_type"] for event in result.events]
@@ -223,3 +247,18 @@ def test_the_nightmare_declares_its_opening_line() -> None:
     assert NIGHTMARE_FEAR_CONTRACT.order == 10
 
 
+
+def test_the_fear_forgets_a_night_it_spent_passing() -> None:
+    """「不能连续两晚」means consecutive nights, not consecutive choices.
+
+    A night the Nightmare passed (or whose call failed, or on which it was
+    silenced) breaks the chain: the same seat afterwards is a legal fear, not a
+    violation that would burn a second night on the blind retry.
+    """
+    consecutive = context(last_feared=3, round_number=4, memory_round=3)
+    assert [item.code for item in validate_nightmare_action(
+        consecutive, command(target=3),
+    )] == ["consecutive_fear_forbidden"]
+
+    after_a_skipped_night = context(last_feared=3, round_number=4, memory_round=2)
+    assert validate_nightmare_action(after_a_skipped_night, command(target=3)) == ()

@@ -16,8 +16,10 @@ from app.models.pipeline import (
     RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
+from app.roles.target_memory import is_consecutive_repeat, target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 
+#: Private slot: who the Nightmare feared last, and on which night.
 FEARED_KEY = "last_feared"
 
 
@@ -30,7 +32,7 @@ def validate_nightmare_action(
 ) -> tuple[RuleViolation, ...]:
     if command.action_type != "fear" or command.target_seat is None:
         return ()
-    if command.target_seat == context.facts.get(FEARED_KEY):
+    if is_consecutive_repeat(context, FEARED_KEY, command.target_seat):
         return (RuleViolation(
             "consecutive_fear_forbidden",
             "the same seat cannot be feared on two consecutive nights",
@@ -79,7 +81,9 @@ def resolve_nightmare_action(
         GameEffect(
             derive_effect_id(context.action_key, 1), EffectKind.SET_PRIVATE_DATA,
             context.action_key, target_seat=context.actor_seat,
-            payload={"target": context.actor_seat, "key": FEARED_KEY, "value": target},
+            payload=target_memory(
+                context.actor_seat, FEARED_KEY, target, context.round_number,
+            ),
             sort_key=(1,), **common,
         ),
         GameEffect(

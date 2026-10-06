@@ -30,18 +30,40 @@ ROLE = DREAM_WEAVER_SPEC.role_id
 DREAM_CONTRACT = DREAM_WEAVER_SPEC.contracts[0]
 
 
+def last_night_memory(
+    value: object, round_number: int, memory_round: int | None = None,
+) -> object:
+    """Wrap a bare seat into the ``{seat, round}`` memory the roles now write.
+
+    ``round_number`` is the night being played, so the memory defaults to the
+    night before it. ``memory_round`` models a *skipped* night: the same seat
+    remembered from further back. A non-int pass-through keeps malformed-input
+    cases testable.
+    """
+    if value is None or type(value) is not int:
+        return value
+    return {
+        "seat": value,
+        "round": round_number - 1 if memory_round is None else memory_round,
+    }
+
+
 def context(
     *, last_dreamed: object = None, alive=(1, 2, 3), actor: int = 1,
     reason: str = "wolf_kill", trigger_target: int | None = None,
-    bound: bool = False,
+    bound: bool = False, round_number: int = 2,
+    memory_round: int | None = None,
 ) -> ActionContext:
     contract = DREAM_WEAVER_REVENGE_CONTRACT if bound else DREAM_CONTRACT
     event_id = "event:" + "1" * 16 if bound else None
-    facts: dict[str, object] = {"alive_seats": alive, "last_dreamed": last_dreamed}
+    facts: dict[str, object] = {
+        "alive_seats": alive,
+        "last_dreamed": last_night_memory(last_dreamed, round_number, memory_round),
+    }
     return ActionContext(
         "g", 0, facts, config_version="a" * 64,
         contract_id=contract.contract_id, contract_version=contract.schema_version,
-        contract_digest=contract.stable_digest(), round_number=2, phase="night",
+        contract_digest=contract.stable_digest(), round_number=round_number, phase="night",
         window_id="w", schedule_point=contract.schedule_point, actor_seat=actor,
         actor_role_id=ROLE, actor_alive=True, action_key="a",
         source_event_id=event_id,
@@ -125,7 +147,9 @@ def test_a_fresh_dream_shields_and_records() -> None:
     shield = effects[0]
     assert shield.target_seat == 2
     assert shield.payload == {"target": 2, "amount": 1, "source": "dream"}
-    assert effects[1].payload == {"target": 1, "key": "last_dreamed", "value": 2}
+    assert dict(effects[1].payload) == {
+        "target": 1, "key": "last_dreamed", "value": {"seat": 2, "round": 2},
+    }
     assert effects[2].payload["payload"]["thought"] == "决定让 2 号玩家梦游：ok"
 
 
@@ -294,4 +318,30 @@ def test_the_weave_lands_through_a_real_scheduler_run() -> None:
 def test_the_dream_weaver_declares_its_opening_line() -> None:
     assert DREAM_WEAVER_SPEC.opening_narration == ("摄梦人请睁眼", "请选择今晚要摄梦的玩家。")
 
+def test_a_repeat_after_a_skipped_night_shields_instead_of_killing() -> None:
+    """The lethal reading needs two *nights running*.
 
+    The Dream Weaver visited seat 2 on night 2, spent night 3 elsewhere (a pass,
+    a failed call, or being silenced), and visits seat 2 again on night 4. That
+    is not "two nights in a row": the seat gets the ordinary shield. Reading it
+    as a repeat killed the very seat the visit meant to protect.
+    """
+    effects = resolve_dream_weaver_action(
+        context(last_dreamed=2, round_number=4, memory_round=2), command("dream", 2),
+    )
+    assert [effect.kind for effect in effects] == [
+        EffectKind.SUBMIT_PROTECTION, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT]
+    assert effects[0].payload == {"target": 2, "amount": 1, "source": "dream"}
+    assert dict(effects[1].payload) == {
+        "target": 1, "key": "last_dreamed", "value": {"seat": 2, "round": 4},
+    }
+
+
+def test_consecutive_nights_still_turn_the_weave_lethal() -> None:
+    effects = resolve_dream_weaver_action(
+        context(last_dreamed=2, round_number=4, memory_round=3), command("dream", 2),
+    )
+    assert [effect.kind for effect in effects] == [
+        EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT]
+    assert effects[0].payload == {
+        "target": 2, "amount": 1, "cause": DREAM_DEATH_CAUSE}

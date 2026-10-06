@@ -16,7 +16,13 @@ from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
     RuleViolation, SchedulePoint,
 )
+from app.roles.target_memory import (
+    is_consecutive_repeat, last_target, target_memory,
+)
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+
+#: Private slot: who Wolf Beauty charmed last, and on which night.
+LAST_CHARMED_KEY = "last_charmed"
 
 # Private relation name recorded on the charmed seat.
 _CHARM_RELATION = "charmed_by"
@@ -47,7 +53,7 @@ def validate_wolf_beauty_action(
         return (RuleViolation("charm_target_required", "the charm needs a target"),)
     if command.target_seat == context.actor_seat:
         return (RuleViolation("self_target", "Wolf Beauty cannot charm itself"),)
-    if context.facts.get("last_charmed") == command.target_seat:
+    if is_consecutive_repeat(context, LAST_CHARMED_KEY, command.target_seat):
         return (RuleViolation(
             "consecutive_charm",
             "the same player cannot be charmed two nights in a row",
@@ -99,7 +105,9 @@ def resolve_wolf_beauty_action(
         GameEffect(
             derive_effect_id(context.action_key, 1), EffectKind.SET_PRIVATE_DATA,
             context.action_key, target_seat=actor,
-            payload={"target": actor, "key": "last_charmed", "value": target},
+            payload=target_memory(
+                actor, LAST_CHARMED_KEY, target, context.round_number,
+            ),
             sort_key=(1,), **common,
         ),
         GameEffect(
@@ -138,7 +146,7 @@ def wolf_beauty_revenge_applicable(context: ActionContext) -> bool:
         and trigger.get("target_seat") == context.actor_seat
         and context.trigger_reason in _REVENGE_REASONS
         and not context.actor_alive
-        and context.facts.get("last_charmed") is not None
+        and last_target(context, LAST_CHARMED_KEY) is not None
     )
 
 
@@ -150,8 +158,8 @@ def react_wolf_beauty_revenge(context: ActionContext) -> tuple[GameEffect, ...]:
     """
     if not wolf_beauty_revenge_applicable(context):
         return ()
-    charmed = context.facts.get("last_charmed")
-    if type(charmed) is not int or charmed <= 0:
+    charmed = last_target(context, LAST_CHARMED_KEY)
+    if charmed is None or charmed <= 0:
         return ()
     common = {
         "expected_revision": context.revision,
@@ -224,7 +232,7 @@ WOLF_BEAUTY_SPEC = RoleSpec(
         WOLF_BEAUTY_CHARM_CONTRACT,
         WOLF_BEAUTY_REVENGE_CONTRACT,
     ),
-    initial_private_data={"last_charmed": None},
+    initial_private_data={LAST_CHARMED_KEY: None},
     # Wolf Beauty may never be the wolf team's own kill target. The kill
     # contract is shared byte-identically with the whole camp, so the rule
     # travels as a declared resource and ``validate_werewolf_action`` rejects

@@ -18,7 +18,28 @@ def guard_contract() -> ActionContract:
                 if contract.contract_id == "guard_action")
 
 
-def guard_context(*, last_guarded=None, actor_alive=True, action_key="guard:1") -> ActionContext:
+def last_night_memory(
+    value: object, round_number: int, memory_round: int | None = None,
+) -> object:
+    """Wrap a bare seat into the ``{seat, round}`` memory the roles now write.
+
+    ``round_number`` is the night being played, so the memory defaults to the
+    night before it. ``memory_round`` models a *skipped* night: the same seat
+    remembered from further back. A non-int pass-through keeps malformed-input
+    cases testable.
+    """
+    if value is None or type(value) is not int:
+        return value
+    return {
+        "seat": value,
+        "round": round_number - 1 if memory_round is None else memory_round,
+    }
+
+
+def guard_context(
+    *, last_guarded=None, actor_alive=True, action_key="guard:1",
+    round_number: int = 2, memory_round: int | None = None,
+) -> ActionContext:
     contract = guard_contract()
     return ActionContext(
         game_id="guard-game",
@@ -27,7 +48,7 @@ def guard_context(*, last_guarded=None, actor_alive=True, action_key="guard:1") 
         contract_id=contract.contract_id,
         contract_version=contract.schema_version,
         contract_digest=contract.stable_digest(),
-        round_number=2,
+        round_number=round_number,
         phase="night",
         window_id="guard:window",
         schedule_point=contract.schedule_point,
@@ -35,7 +56,12 @@ def guard_context(*, last_guarded=None, actor_alive=True, action_key="guard:1") 
         actor_role_id=GUARD_SPEC.role_id,
         actor_alive=actor_alive,
         action_key=action_key,
-        facts={"alive_seats": (1, 2, 3), "last_guarded": last_guarded},
+        facts={
+            "alive_seats": (1, 2, 3),
+            "last_guarded": last_night_memory(
+                last_guarded, round_number, memory_round,
+            ),
+        },
     )
 
 
@@ -70,9 +96,38 @@ def test_guard_uses_only_existing_effects() -> None:
     assert effects[0].target_seat == 3
     assert effects[0].payload == {"target": 3, "amount": 1, "source": "guard"}
     assert effects[1].target_seat == 1
-    assert effects[1].payload == {"target": 1, "key": "last_guarded", "value": 3}
+    assert effects[1].payload == {
+        "target": 1, "key": "last_guarded", "value": {"seat": 3, "round": 2},
+    }
     assert effects[0].effect_id == derive_effect_id(context.action_key, 1)
     assert effects[1].effect_id == derive_effect_id(context.action_key, 2)
+
+
+def test_guard_forgets_a_night_it_spent_passing() -> None:
+    """「不能连续两晚」counts consecutive nights, not consecutive choices.
+
+    The memory is stamped with the night it was written on, so a night the
+    Guard passed (or whose model call failed, or on which it was silenced)
+    breaks the chain instead of silently extending it.
+    """
+    stale = guard_context(last_guarded=2, round_number=4, memory_round=2)
+    assert validate_guard_action(stale, guard_command(2)) == ()
+    # One night apart is still consecutive.
+    adjacent = guard_context(last_guarded=2, round_number=4, memory_round=3)
+    assert [item.code for item in validate_guard_action(adjacent, guard_command(2))] == [
+        "consecutive_guard",
+    ]
+
+
+def test_guard_reads_a_pre_round_memory_the_old_way() -> None:
+    """Archives written before the round was stored keep their old meaning."""
+    legacy = guard_context(last_guarded=2, round_number=2)
+    assert [item.code for item in validate_guard_action(legacy, guard_command(2))] == [
+        "consecutive_guard",
+    ]
+    assert validate_guard_action(
+        guard_context(last_guarded="not a seat"), guard_command(2),
+    ) == ()
 
 
 def test_guard_action_emits_reasoning_and_protect_audience_events() -> None:
@@ -189,7 +244,10 @@ def test_guard_night_action_point_issues_request_and_submits_protection() -> Non
     assert derive_effect_id(action_key, 2) in commit.effect_ids  # SET_PRIVATE_DATA
     assert derive_effect_id(action_key, 3) in commit.effect_ids  # GUARD_REASONING
     assert derive_effect_id(action_key, 4) in commit.effect_ids  # GUARD_PROTECT
-    assert role_private_data_view(state, 1)["last_guarded"] == 2
+    # The memory is stamped with the night it was written on, which is what
+    # makes the next night's comparison mean "consecutive".
+    memory = role_private_data_view(state, 1)["last_guarded"]
+    assert dict(memory) == {"seat": 2, "round": state.round_number}
     event_types = [event["event_type"] for event in commit.events]
     assert event_types == ["GUARD_REASONING", "GUARD_PROTECT"]
 
