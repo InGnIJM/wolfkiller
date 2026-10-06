@@ -709,8 +709,10 @@ class GameEngine:
             )
 
         if pending.stage == 6:
-            title, text = director.witch_narration(state.last_wolf_kill_target)
-            await self._narrate(title, text)
+            # The Seer's line, one stage ahead of its own point (stage 7).
+            if self._night_openers(SchedulePoint.NIGHT_SEER_ACTION):
+                title, text = director.narration("seer_open")
+                await self._narrate(title, text)
             pending = replace(pending, stage=7); self._pending_night_batch = pending
 
         if pending.stage == 7:
@@ -723,8 +725,11 @@ class GameEngine:
             )
 
         if pending.stage == 8:
-            title, text = director.narration("seer_open")
-            await self._narrate(title, text)
+            # The Witch's line, one stage ahead of its own point (stage 9). The
+            # text depends on tonight's knife, which stage 5 already resolved.
+            if self._night_openers(SchedulePoint.NIGHT_WITCH_ACTION):
+                title, text = director.witch_narration(state.last_wolf_kill_target)
+                await self._narrate(title, text)
             pending = replace(pending, stage=9); self._pending_night_batch = pending
 
         if pending.stage == 9:
@@ -762,6 +767,40 @@ class GameEngine:
         self._pending_night_completion = _PendingNightCompletion(result)
         self._pending_night_batch = None
         await self._resume_pipeline_night()
+
+    def _night_openers(self, point: SchedulePoint) -> tuple[int, ...]:
+        """Living, unsilenced seats whose spec declares a contract at ``point``.
+
+        The engine's own beats for the Seer and the Witch are scheduled one
+        stage *before* their point runs, so they cannot read that point's
+        request list the way ``_narrate_role_openings`` does. They read the
+        registry instead, and reproduce the scheduler's gate from its two
+        ingredients: both contracts are applicable on ``actor_alive`` alone
+        (``seer_applicable`` / ``witch_applicable``), and the scheduler skips a
+        requested seat that carries tonight's silence mark. No role name is
+        involved, so a death or a seal simply stops the line.
+        """
+        scheduler = self._pipeline_scheduler
+        specs = getattr(getattr(scheduler, "registry", None), "specs", None)
+        living = tuple(sorted(
+            seat for seat, player in self.state.players.items() if player.is_alive
+        ))
+        if not isinstance(specs, Mapping):
+            # Nothing to evaluate the gate against: keep the beat rather than
+            # going silent on a caller we cannot judge.
+            return living
+        runtime = getattr(self.state, "_pipeline_runtime", None)
+        statuses = {} if runtime is None else runtime.statuses
+        openers: list[int] = []
+        for seat in living:
+            if is_silenced(statuses, seat):
+                continue
+            spec = specs.get(self.state.players[seat].role)
+            if spec is None:
+                continue
+            if any(contract.schedule_point is point for contract in spec.contracts):
+                openers.append(seat)
+        return tuple(openers)
 
     def _pack_sealed(self, wolves: list[int]) -> bool:
         """True when this night's silence mark covers any living pack member.

@@ -289,6 +289,108 @@ async def test_staged_night_narrates_the_openings_of_the_roles_that_acted() -> N
     assert [point for _, point in scheduler.calls] == list(game_engine_module._NIGHT_POINTS)
 
 
+class _NarrationDirector(_FakeDirector):
+    """Names every beat after its own key so the emitted order is assertable."""
+
+    def narration(self, kind): return (kind, kind)
+    def witch_narration(self, kill_target): return ("witch_open", kill_target)
+    def dawn_narration(self, deaths): return ("dawn", deaths)
+
+
+def _night_with(seats: dict[int, str]) -> GameEngine:
+    """A staged night over a real registry, with the given seats and roles."""
+    snapshot = builtin_registry.freeze()
+    result = PointResult((), (), (), "d")
+    scheduler = _ScheduledPointTrace(result, snapshot)
+    engine = GameEngine(
+        "beats", pipeline_scheduler=scheduler, director=_NarrationDirector(),
+    )
+    engine.state.players = {
+        seat: PlayerState(seat, role_id, "good") for seat, role_id in seats.items()
+    }
+    engine.sm.set_state(GamePhase.NIGHT); engine.state.phase = GamePhase.NIGHT
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(
+        engine.state.round_number, 0, (), (), (),
+    )
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+    engine._narrate = AsyncMock()
+    return engine
+
+
+def _beats(engine: GameEngine) -> list[str]:
+    return [call.args[0] for call in engine._narrate.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_the_seer_beat_precedes_the_seers_own_night() -> None:
+    """「预言家请睁眼」现在排在预言家行动之前，女巫随后。
+
+    The two director beats used to be swapped relative to their points: the
+    witch was announced before the Seer even checked, and the Seer was announced
+    *after* its own check had already been shown.
+    """
+    engine = _night_with({
+        1: "wolf-killer-seer",
+        2: "wolf-killer-witch",
+        3: "wolf-killer-villager",
+    })
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    assert beats.index("seer_open") < beats.index("witch_open")
+    assert beats.index("wolf_open") < beats.index("seer_open")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("dead", "absent"), [
+    ("wolf-killer-seer", "seer_open"),
+    ("wolf-killer-witch", "witch_open"),
+    ("wolf-killer-villager", "dawn"),
+])
+async def test_a_dead_role_is_not_woken(dead, absent) -> None:
+    """死了就不播「请睁眼」——旧实现是引擎硬编码的节拍，死者照样被叫醒。"""
+    others = [
+        role_id for role_id in
+        ("wolf-killer-seer", "wolf-killer-witch", "wolf-killer-villager")
+        if role_id != dead
+    ]
+    seats = {1: dead}
+    for index, role_id in enumerate(others, start=2):
+        seats[index] = role_id
+    engine = _night_with(seats)
+    engine.state.players[1].is_alive = False
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    if absent == "dawn":
+        # A living seer and witch: both beats still play.
+        assert "seer_open" in beats and "witch_open" in beats
+    else:
+        assert absent not in beats
+
+
+@pytest.mark.asyncio
+async def test_a_silenced_role_is_not_woken() -> None:
+    """A seat sealed for the night never acts, so its line must not play."""
+    from app.core.effect_applier import _Runtime
+
+    engine = _night_with({
+        1: "wolf-killer-seer",
+        2: "wolf-killer-witch",
+        3: "wolf-killer-villager",
+    })
+    runtime = getattr(engine.state, "_pipeline_runtime", None)
+    if runtime is None:
+        runtime = _Runtime()
+        engine.state._pipeline_runtime = runtime
+    runtime.statuses[1] = {"silenced"}
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    assert "seer_open" not in beats
+    assert "witch_open" in beats
+
+
 @pytest.mark.asyncio
 async def test_the_night_script_is_silent_without_a_usable_registry() -> None:
     """没有可读的注册表时只是不播旁白，绝不因为展示层的东西打断对局。"""
