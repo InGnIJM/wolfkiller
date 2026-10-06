@@ -68,7 +68,7 @@ class LLMConfig:
         os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "120")
     )
     action_final_retry_timeout_seconds: float = float(
-        os.getenv("LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS", "30")
+        os.getenv("LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS", "60")
     )
 
 
@@ -81,8 +81,11 @@ class GameConfig:
     speech_timeout_seconds: int = 60
     phase_delay_seconds: float = 0.3
     vote_concurrency: int = int(os.getenv("VOTE_CONCURRENCY", "5"))
+    #: Must stay at or above two full retry ladders (see the invariant test in
+    #: ``app/test/test_config.py``): the phase runs ``vote_concurrency`` workers
+    #: at a time, so the worst case is two batches of the whole ladder.
     vote_phase_timeout_seconds: float = float(
-        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "500")
+        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "540")
     )
 
 

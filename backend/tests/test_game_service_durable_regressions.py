@@ -420,6 +420,136 @@ async def test_durable_night_rejects_non_object_provider_response(durable, fake_
     assert repository.list_model_attempts(game_id)[0]["status"] == "failed"
 
 
+def _transient_error():
+    import httpx
+    from openai import APIConnectionError
+
+    return APIConnectionError(
+        request=httpx.Request("POST", "https://model.test/v1"),
+    )
+
+
+def _no_wait(monkeypatch) -> None:
+    """Keep the night backoff out of the test clock."""
+    monkeypatch.setattr(module, "_NIGHT_RETRY_POLICY", module.RetryPolicy(
+        attempts=2, base_delay_seconds=0.0, jitter_ratio=0.0,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_night_retry_recovers_within_one_durable_attempt(
+    durable, fake_provider, monkeypatch,
+):
+    """A transient night failure is retried *inside* the durable provider call.
+
+    The ledger must still see a single logical attempt: were the retry a second
+    durable dispatch, the first failure would leave the request marked ``failed``
+    and ModelInvocationService refuses to redispatch those, poisoning the night
+    turn for the rest of the game.
+    """
+    _no_wait(monkeypatch)
+    service, repository = durable
+    game_id = await service.create_game(role_counts={"wolf-killer-villager": 1})
+    await service.wait_game(game_id)
+
+    client = fake_provider.instances[0]
+    healthy = client.invoke_json
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _transient_error()
+        return healthy(*args, **kwargs)
+
+    client.invoke_json = flaky
+
+    payload = service._engines[game_id]._director._invoke(
+        [{"content": "prompt"}], "werewolf_kill", {"type": "object"}, 1,
+    )
+
+    assert json.loads(payload)["action_type"] == "pass"
+    assert calls["n"] == 2
+    assert [row["status"] for row in repository.list_model_requests(game_id)] == [
+        "resolved",
+    ]
+    attempts = repository.list_model_attempts(game_id)
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_night_retry_gives_up_after_the_bounded_attempts(
+    durable, fake_provider, monkeypatch,
+):
+    _no_wait(monkeypatch)
+    service, repository = durable
+    game_id = await service.create_game(role_counts={"wolf-killer-villager": 1})
+    await service.wait_game(game_id)
+
+    client = fake_provider.instances[0]
+    calls = {"n": 0}
+
+    def always_down(*_args, **_kwargs):
+        calls["n"] += 1
+        raise _transient_error()
+
+    client.invoke_json = always_down
+
+    with pytest.raises(Exception, match="Connection error"):
+        service._engines[game_id]._director._invoke(
+            [{"content": "prompt"}], "werewolf_kill", {"type": "object"}, 1,
+        )
+
+    assert calls["n"] == 2
+    assert [row["status"] for row in repository.list_model_requests(game_id)] == [
+        "failed",
+    ]
+    assert len(repository.list_model_attempts(game_id)) == 1
+
+
+def test_night_turn_does_not_retry_a_malformed_answer(monkeypatch):
+    """A transport that worked but answered garbage is not a transient fault."""
+    from app.services.game_service import _night_turn
+
+    _no_wait(monkeypatch)
+    calls = {"n": 0}
+
+    class Client:
+        def invoke_json(self, *_args, **_kwargs):
+            calls["n"] += 1
+            return SimpleNamespace(payload=[], usage=None)
+
+    with pytest.raises(ValueError, match="not a JSON object"):
+        _night_turn(Client(), [], tool_name="werewolf_kill", schema={})
+
+    assert calls["n"] == 1
+
+
+def test_night_turn_reports_the_attempts_and_usage_it_used(monkeypatch):
+    from app.services.game_service import _night_turn
+
+    _no_wait(monkeypatch)
+    usage = SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+    calls = {"n": 0}
+
+    class Client:
+        def invoke_json(self, *_args, **_kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _transient_error()
+            return SimpleNamespace(
+                payload={"action_type": "kill", "target_seat": 2}, usage=usage,
+            )
+
+    turn = _night_turn(Client(), [], tool_name="werewolf_kill", schema={})
+
+    assert turn.payload == {"action_type": "kill", "target_seat": 2}
+    assert turn.usage is usage
+    assert turn.attempts == 2
+    assert turn.elapsed_ms >= 0
+
+
 @pytest.mark.asyncio
 async def test_invalid_tool_xml_falls_back_to_json_instead_of_accepting_bad_action():
     from langchain_core.messages import AIMessage

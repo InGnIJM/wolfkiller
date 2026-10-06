@@ -115,8 +115,16 @@ class CallPurpose(StrEnum):
     ACTION_JSON = "action_json"
     TOOLS = "tools"
     ACTION_STRICT = "action_strict"
+    #: Structured night-turn request. Same output budget as the other action
+    #: calls, but its transport timeout *is* the deadline: the night pipeline
+    #: runs on a worker thread with no surrounding ``asyncio.wait_for``, so it
+    #: must not inherit the retry headroom meant for the vote ladder.
+    NIGHT_JSON = "night_json"
 
 
+#: Action purposes that run under a caller-side retry ladder, so their transport
+#: timeout has to stay above the whole retry budget. ``NIGHT_JSON`` is
+#: deliberately absent — see :class:`CallPurpose`.
 ACTION_PURPOSES = frozenset({
     CallPurpose.ACTION_JSON,
     CallPurpose.ACTION_STRICT,
@@ -169,7 +177,9 @@ def call_budget(config, purpose: CallPurpose) -> CallBudget:
 
     Action calls (JSON, tools, strict) get the dedicated action budget and a
     timeout with headroom above the retry budget; plain text calls use the
-    general budget and the primary action timeout.
+    general budget and the primary action timeout. A night request gets the
+    action token budget but the primary timeout with no headroom, because it is
+    the only bound that call has.
     """
     if purpose in ACTION_PURPOSES:
         return CallBudget(
@@ -177,6 +187,11 @@ def call_budget(config, purpose: CallPurpose) -> CallBudget:
             timeout=max(
                 config.action_timeout_seconds, config.action_retry_timeout_seconds,
             ) + 5.0,
+        )
+    if purpose is CallPurpose.NIGHT_JSON:
+        return CallBudget(
+            max_tokens=config.action_max_tokens,
+            timeout=config.action_timeout_seconds,
         )
     return CallBudget(
         max_tokens=config.max_tokens,

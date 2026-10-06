@@ -40,6 +40,25 @@ def test_action_timeout_headroom_follows_the_larger_of_primary_and_retry():
     assert call_budget(config, CallPurpose.TOOLS).timeout == 205.0
 
 
+def test_night_json_gets_the_action_token_budget_without_retry_headroom():
+    """The night pipeline has no outer deadline, so its transport timeout is the
+    only bound; it must not inherit headroom meant for the vote retry ladder."""
+    assert call_budget(_config(), CallPurpose.NIGHT_JSON) == CallBudget(
+        max_tokens=2048, timeout=90.0,
+    )
+
+
+def test_night_json_timeout_does_not_grow_with_the_retry_budget():
+    config = _config()
+    config.action_retry_timeout_seconds = 300.0
+
+    assert call_budget(config, CallPurpose.NIGHT_JSON).timeout == 90.0
+
+
+def test_night_json_is_not_a_retry_ladder_purpose():
+    assert CallPurpose.NIGHT_JSON not in ACTION_PURPOSES
+
+
 def test_action_purposes_exclude_text():
     assert CallPurpose.TEXT not in ACTION_PURPOSES
     assert ACTION_PURPOSES == {

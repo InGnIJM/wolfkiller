@@ -19,10 +19,10 @@
 | `LLM_ACTION_MAX_TOKENS` | `2048` | 行动请求 token 上限 |
 | `LLM_ACTION_TIMEOUT_SECONDS` | `90` | 行动请求主超时 |
 | `LLM_ACTION_RETRY_TIMEOUT_SECONDS` | `120` | 行动请求重试超时 |
-| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `30` | 投票 JSON 强格式短重试超时 |
+| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `60` | 投票 JSON 强格式末次重试超时（观测成功调用 p95=60s，末次是最后机会，不能给最小预算） |
 | `LLM_PROVIDER_MAX_RETRIES` | `4` | SDK 对瞬时 429/5xx 的重试次数 |
 | `VOTE_CONCURRENCY` | `5` | 投票并发上限 |
-| `VOTE_PHASE_TIMEOUT_SECONDS` | `500` | 投票阶段总超时 |
+| `VOTE_PHASE_TIMEOUT_SECONDS` | `540` | 投票阶段总超时（须 ≥ 两批 5 并发的完整重试梯子，由 `app/test/test_config.py` 的不变式测试把关） |
 | `ROLE_PIPELINE_V2` | `v1` | **不改变对局运行时**。仅 `pipeline_mode_from_env()` / `RolePipeline` 适配器测试读取；`GameEngine` 固定走 `PipelineMode.V2` |
 | `WOLFKILLER_DATA_DIR` | `data` | SQLite、游戏日志、模型配置的数据根目录 |
 | `MODEL_CONFIG_PATH` | `{WOLFKILLER_DATA_DIR}/models.json` | 显式覆盖模型配置文件路径 |

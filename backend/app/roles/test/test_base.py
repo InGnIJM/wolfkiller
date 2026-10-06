@@ -33,6 +33,8 @@ class JsonClient:
     action_timeout_seconds = 0.1
     action_retry_timeout_seconds = 0.1
     action_final_retry_timeout_seconds = 0.1
+    #: Keep the transient backoff out of the test clock.
+    action_retry_backoff_seconds = 0.0
 
     def __init__(self, responses):
         self.model = RecordingModel(responses)

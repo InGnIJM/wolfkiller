@@ -22,6 +22,7 @@ from app.agents.output_parser import (
     ToolCallResult,
     extract_tool_call_xml,
 )
+from app.agents.retry import RetryPolicy, delay_for
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.core.vote_service import eligible_exile_targets
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
@@ -75,6 +76,26 @@ class _ActionTransportTimeout(RuntimeError):
     """Signals that the primary action transport should use its fallback."""
 
 
+class _ActionTransientRetry(_ActionTransportTimeout):
+    """A retryable provider fault: back off, then re-ask the same way.
+
+    Subclasses ``_ActionTransportTimeout`` so every existing handler keeps
+    working, but the driver catches it first: a connection reset or a 429 says
+    nothing about the request *shape*, so switching to the JSON transport would
+    only spend the retry budget on a different prompt for the same broken pipe.
+    """
+
+
+#: Backoff before re-asking an action. The provider SDK has already spent its own
+#: retries inside the failed call, so re-firing immediately lands in the very
+#: same outage window -- which is how glm-5.3-flash recovered 0 of 30
+#: rate-limited ballots. Tests zero the base delay out through the client's
+#: ``action_retry_backoff_seconds``, mirroring the timeout attributes.
+_VOTE_RETRY_POLICY = RetryPolicy(
+    attempts=3, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
+)
+
+
 def _capture_messages(capture, messages, *, tool_schema=None, tool_name=None) -> None:
     """Hand the messages about to be sent to the prompt-capture sink.
 
@@ -106,6 +127,10 @@ class BaseRole:
         self.action_validator = ActionValidator()
         self._last_words_used = False
         self._speech_used_fallback = False
+        # Set by ``_invoke_strict_action`` when a tool-bound request came back as
+        # plain JSON content instead of a native tool call. The caller reads it
+        # to label the telemetry row, exactly like ``_speech_used_fallback``.
+        self._action_tool_content_salvaged = False
 
     @property
     def is_good(self) -> bool:
@@ -483,29 +508,41 @@ class BaseRole:
                 self._invoke_json_action, conversation_log, "json", 3, capture=capture,
             )
         tool_transport = "strict" if supports_strict else "tool"
+        # A capability rejection or a deadline wants the smaller JSON transport;
+        # a transient provider fault does not. The transport was never the
+        # problem there, so the retry keeps it and only the prompt compacts.
+        retry_invoke, retry_transport = self._invoke_strict_action, tool_transport
         try:
             return await self._request_action_with_transport(
                 state, request, messages, self._invoke_strict_action,
                 conversation_log, tool_transport, 1, capture=capture,
             )
+        except _ActionTransientRetry:
+            retry_messages = self._build_vote_retry_messages(
+                state, conversation_log,
+            )
         except _ActionTransportTimeout:
+            retry_invoke, retry_transport = self._invoke_json_action, "json"
             retry_messages = self._build_vote_retry_messages(
                 state, conversation_log,
             )
         except StrictCapabilityError:
+            retry_invoke, retry_transport = self._invoke_json_action, "json"
             retry_messages = self._build_vote_retry_messages(
                 state, conversation_log,
             )
         try:
             return await self._request_action_with_transport(
-                state, request, retry_messages, self._invoke_json_action,
-                conversation_log, "json", 2, capture=capture,
+                state, request, retry_messages, retry_invoke,
+                conversation_log, retry_transport, 2, capture=capture,
             )
-        except _ActionTransportTimeout:
+        except _ActionTransientRetry:
             pass
+        except _ActionTransportTimeout:
+            retry_invoke, retry_transport = self._invoke_json_action, "json"
         return await self._request_action_with_transport(
             state, request, self._final_retry_messages(state, conversation_log),
-            self._invoke_json_action, conversation_log, "json", 3, capture=capture,
+            retry_invoke, conversation_log, retry_transport, 3, capture=capture,
         )
 
     def _final_retry_messages(
@@ -602,6 +639,26 @@ class BaseRole:
         value = getattr(self.llm_client, attribute, fallback)
         return float(value) if isinstance(value, (int, float)) and value > 0 else fallback
 
+    def _retry_backoff_seconds(self, attempt: int, error: Exception) -> float:
+        """Backoff before re-asking, honouring a provider ``Retry-After`` hint.
+
+        The base delay is read off the client so test stubs can zero it and keep
+        the suite fast, exactly like the three timeout attributes above.
+        """
+        base = getattr(
+            self.llm_client, "action_retry_backoff_seconds",
+            _VOTE_RETRY_POLICY.base_delay_seconds,
+        )
+        if type(base) not in (int, float) or base < 0:
+            base = _VOTE_RETRY_POLICY.base_delay_seconds
+        policy = RetryPolicy(
+            attempts=_VOTE_RETRY_POLICY.attempts,
+            base_delay_seconds=float(base),
+            max_delay_seconds=_VOTE_RETRY_POLICY.max_delay_seconds,
+            jitter_ratio=_VOTE_RETRY_POLICY.jitter_ratio,
+        )
+        return delay_for(policy, error, attempt)
+
     def _log_vote_technical_abstain(
         self, conversation_log: ConversationLog, request: ActionRequest,
         *, failure_code: str, timeout_type: str | None = None,
@@ -626,6 +683,7 @@ class BaseRole:
         for attempt_number in range(first_attempt, 4):
             prompt_chars = sum(len(message.content) for message in active_messages)
             started = time.monotonic()
+            self._action_tool_content_salvaged = False
             try:
                 _capture_messages(capture, active_messages, tool_name=capture_tool_name)
                 command = await asyncio.wait_for(
@@ -695,7 +753,15 @@ class BaseRole:
                     failure_code=_provider_failure_code(error),
                 )
                 if should_retry:
-                    raise _ActionTransportTimeout from None
+                    # Wait first: the SDK already exhausted its own retries inside
+                    # the call that just failed, so an immediate re-ask would land
+                    # in the same outage window. Timeouts deliberately skip this --
+                    # there the model was merely slow, and waiting only eats the
+                    # vote window.
+                    await asyncio.sleep(
+                        self._retry_backoff_seconds(attempt_number, error)
+                    )
+                    raise _ActionTransientRetry from None
                 self._log_vote_technical_abstain(
                     conversation_log, request,
                     failure_code=_provider_failure_code(error),
@@ -771,7 +837,11 @@ class BaseRole:
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
                     prompt_chars=prompt_chars, elapsed_ms=int((time.monotonic() - started) * 1000),
-                    retried=attempt_number > 1, parse_result="accepted",
+                    retried=attempt_number > 1,
+                    parse_result=(
+                        "strict_content_fallback"
+                        if self._action_tool_content_salvaged else "accepted"
+                    ),
                 )
                 return accepted
         raise AssertionError("unreachable")  # pragma: no cover - transport always returns or re-raises within the attempt window
@@ -846,6 +916,20 @@ class BaseRole:
                     )
                 except ActionValidationError:
                     pass
+            # A gateway that binds the tool without forcing it (``forced_tool_choice``
+            # is off for opencode-go/Zen) leaves the model free to answer in the
+            # content block. Parsing that content here is what the JSON transport
+            # would do next anyway, so salvage it before paying a whole extra
+            # round-trip: go-deepseek otherwise burned p50 28s per salvaged call.
+            try:
+                salvaged = self.output_parser.parse_action_payload(
+                    content, request.contract,
+                )
+            except ActionValidationError:
+                pass
+            else:
+                self._action_tool_content_salvaged = True
+                return salvaged
             # The provider ignored the action tool. Degrade to JSON instead
             # of retrying the same unsupported native-tool path.
             raise StrictCapabilityError(

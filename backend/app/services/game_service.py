@@ -11,7 +11,7 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional
 
@@ -26,6 +26,7 @@ from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import (
     LLMClient, LLMClientConfig, derive_strict_base_url, env_default_client_config,
 )
+from app.agents.retry import RetryPolicy, call_with_retry, delay_for
 from app.agents.providers.registry import ProviderRegistry
 from app.stores.app_settings_store import get_app_settings_store
 from app.stores.model_config_store import get_model_config_store
@@ -311,6 +312,71 @@ def _log_night_llm_telemetry(
             "Failed to persist wolf llm telemetry for game=%s seat=%s",
             game_id, seat,
         )
+
+
+#: Night turns used to be asked exactly once: the pipeline is the only model
+#: path with no application-level retry, so a single connection reset forfeited
+#: a wolf kill or a whole discussion turn. One retry on top of the SDK's own
+#: attempts bounds a night call at 2 x the night transport timeout plus backoff.
+_NIGHT_RETRY_POLICY = RetryPolicy(attempts=2)
+
+
+#: One retry for a transient pipeline-action failure, with the same backoff the
+#: vote ladder uses. This provider runs on a worker thread, so a blocking sleep
+#: is safe here.
+_PIPELINE_RETRY_POLICY = RetryPolicy(
+    attempts=2, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
+)
+
+
+def _pipeline_retry_delay(error: Exception) -> float:
+    """Backoff before the single pipeline-action retry."""
+    return delay_for(_PIPELINE_RETRY_POLICY, error, 1)
+
+
+@dataclass(frozen=True)
+class _NightTurn:
+    """One night-turn model answer plus the attempts it actually took."""
+
+    payload: dict[str, object]
+    usage: object | None
+    elapsed_ms: int
+    attempts: int
+
+
+def _night_turn(
+    llm_client, messages, *, tool_name: str, schema: dict[str, object],
+) -> _NightTurn:
+    """Ask the model for one night-turn payload, backing off on transients.
+
+    The retry lives *inside* the durable provider call on purpose. The ledger
+    then still records exactly one logical attempt, so a recovered retry never
+    leaves the request marked ``failed`` -- and
+    :class:`~app.services.model_invocation_service.ModelInvocationService`
+    refuses to redispatch a failed request id, which would poison that night
+    turn for the rest of the game.
+    """
+    started = time.monotonic()
+    attempts = 0
+
+    def call():
+        nonlocal attempts
+        attempts += 1
+        produced = llm_client.invoke_json(messages, tool_name=tool_name, schema=schema)
+        value = getattr(produced, "payload", None)
+        if not isinstance(value, Mapping):
+            # A malformed answer is not retryable: the transport worked and the
+            # model answered something unusable. ``retry_on`` filters it out.
+            raise ValueError("model gateway response is not a JSON object")
+        return produced, dict(value)
+
+    produced, payload = call_with_retry(call, _NIGHT_RETRY_POLICY)
+    return _NightTurn(
+        payload=payload,
+        usage=getattr(produced, "usage", None),
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+        attempts=attempts,
+    )
 
 
 def _saved_client_config(
@@ -1353,10 +1419,10 @@ class GameService:
                 try:
                     result = None
                     if self._model_invocations is None:
-                        result = llm_client.invoke_json(
-                            messages, tool_name=tool_name, schema=schema,
+                        result = _night_turn(
+                            llm_client, messages, tool_name=tool_name, schema=schema,
                         )
-                        payload = getattr(result, "payload", None)
+                        payload = result.payload
                     else:
                         engine_state = engine_ref.state if engine_ref is not None else None
                         round_number = 0 if engine_state is None else engine_state.round_number
@@ -1369,13 +1435,13 @@ class GameService:
                         generation = self._durable_contexts[game_id]["execution_generation"]
 
                         def provider_call():
-                            produced = llm_client.invoke_json(
-                                messages, tool_name=tool_name, schema=schema,
+                            turn = _night_turn(
+                                llm_client, messages,
+                                tool_name=tool_name, schema=schema,
                             )
-                            value = getattr(produced, "payload", None)
-                            if not isinstance(value, Mapping):
-                                raise ValueError("model gateway response is not a JSON object")
-                            return dict(value), _usage_mapping(getattr(produced, "usage", None))
+                            nonlocal result
+                            result = turn
+                            return turn.payload, _usage_mapping(turn.usage)
 
                         durable = self._model_invocations.invoke_sync(
                             game_id=game_id,
@@ -1408,7 +1474,12 @@ class GameService:
                                 # is what makes this record independently verifiable.
                                 request_digest=digest, sink=sink,
                             ))
-                    if not isinstance(payload, Mapping):
+                    # Unreachable by construction: the non-durable branch takes a
+                    # payload from ``_night_turn``, which raises on anything that
+                    # is not a mapping, and the durable branch gets one from
+                    # ``invoke_sync``, whose ``_normalize_result`` enforces the
+                    # same. Kept as a trust-boundary guard across that call.
+                    if not isinstance(payload, Mapping):  # pragma: no cover
                         raise ValueError("model gateway response is not a JSON object")
                 except Exception as error:
                     if engine_ref is not None:
@@ -1450,9 +1521,9 @@ class GameService:
                         tool_name=tool_name,
                         model_id=getattr(llm_client, "model_name", None),
                         prompt_chars=prompt_chars,
-                        elapsed_ms=getattr(result, "elapsed_ms", 0) if result is not None else 0,
-                        usage=getattr(result, "usage", None) if result is not None else None,
-                        attempts=getattr(result, "llm_attempts", 1) if result is not None else 1,
+                        elapsed_ms=(result.elapsed_ms if result is not None else 0),
+                        usage=(result.usage if result is not None else None),
+                        attempts=(result.attempts if result is not None else 1),
                         parse_result="ok",
                     )
                 return json.dumps(dict(payload), ensure_ascii=False)
@@ -2386,14 +2457,14 @@ class GameService:
             digest = self._model_invocations.request_digest(frozen_request)
             generation = self._durable_contexts[state.game_id]["execution_generation"]
 
+            turn_box: dict[str, _NightTurn] = {}
+
             def provider_call():
-                produced = client.invoke_json(
-                    messages, tool_name=tool_name, schema=schema,
+                turn = _night_turn(
+                    client, messages, tool_name=tool_name, schema=schema,
                 )
-                value = getattr(produced, "payload", None)
-                if not isinstance(value, Mapping):
-                    raise ValueError("model gateway response is not a JSON object")
-                return dict(value), _usage_mapping(getattr(produced, "usage", None))
+                turn_box["turn"] = turn
+                return turn.payload, _usage_mapping(turn.usage)
 
             durable = self._model_invocations.invoke_sync(
                 game_id=state.game_id,
@@ -2432,6 +2503,7 @@ class GameService:
                 raise ValueError("model gateway response is not a JSON object")
             engine = engine_box.get("engine")
             if engine is not None:
+                turn = turn_box.get("turn")
                 _log_night_llm_telemetry(
                     engine.game_logger, state.game_id, state.round_number, seat,
                     tool_name=tool_name,
@@ -2439,7 +2511,9 @@ class GameService:
                     prompt_chars=sum(
                         len(str(item.get("content") or "")) for item in messages
                     ),
-                    elapsed_ms=0, usage=None, attempts=1,
+                    elapsed_ms=(turn.elapsed_ms if turn is not None else 0),
+                    usage=(turn.usage if turn is not None else None),
+                    attempts=(turn.attempts if turn is not None else 1),
                     parse_result="ok",
                 )
             return json.dumps(dict(payload), ensure_ascii=False)
@@ -2637,8 +2711,11 @@ class GameService:
                 failure = error
                 if _is_retryable_model_error(error):
                     # Transient provider blips (timeout/rate limit/connection)
-                    # get one immediate retry so a night action is not
-                    # silently forfeited on a single flaky call.
+                    # get one retry so a night action is not silently forfeited
+                    # on a single flaky call. Wait first: the SDK already spent
+                    # its own retries inside the call that just failed, so
+                    # re-firing immediately would land in the same outage window.
+                    time.sleep(_pipeline_retry_delay(error))
                     try:
                         result = llm_client.invoke_action(messages, request.contract)
                         command = _pipeline_command(result.payload, request.contract)

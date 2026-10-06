@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, mock_open, patch, PropertyMock
 from app.core.conversation_log import ConversationLog
@@ -2009,6 +2010,22 @@ class TestPipelineSnapshotVersioning:
 
 
 class TestCommandProvider:
+    @pytest.fixture(autouse=True)
+    def recorded_backoff(self, monkeypatch):
+        """Keep the pipeline retry backoff off the test clock.
+
+        The delay is still computed and handed to ``time.sleep``; only the
+        waiting is stubbed, so a test can still assert the backoff was applied.
+        """
+        from types import SimpleNamespace
+        import app.services.game_service as module
+
+        waits: list[float] = []
+        monkeypatch.setattr(module, "time", SimpleNamespace(
+            sleep=waits.append, monotonic=time.monotonic,
+        ))
+        return waits
+
     def _request(self, role_id="wolf-killer-werewolf", actor_seat=1):
         from app.models.pipeline import IssuedActionRequest
         contract = builtin_registry.freeze().require(role_id).contracts[0]
@@ -2159,6 +2176,70 @@ class TestCommandProvider:
 
         assert command.action_type == "pass"
         assert llm.invoke_action.call_count == 2
+
+    def test_provider_backs_off_before_the_pipeline_retry(
+        self, recorded_backoff,
+    ):
+        """The SDK already spent its own retries inside the failed call, so the
+        pipeline retry must wait rather than re-fire into the same outage."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import httpx
+        from openai import APIConnectionError
+
+        from app.agents.output_parser import extract_json_object
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        payload = extract_json_object(
+            '{"action_type":"pass","target_seat":null,"reasoning":"ok"}'
+        )
+        llm.invoke_action.side_effect = [
+            APIConnectionError(
+                request=httpx.Request("POST", "https://model.test/v1"),
+            ),
+            SimpleNamespace(payload=payload),
+        ]
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "pass"
+        assert llm.invoke_action.call_count == 2
+        assert len(recorded_backoff) == 1
+        assert recorded_backoff[0] > 0
+
+    def test_provider_retry_honours_a_rate_limit_retry_after(self, recorded_backoff):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import httpx
+        from openai import RateLimitError
+
+        from app.agents.output_parser import extract_json_object
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        payload = extract_json_object(
+            '{"action_type":"pass","target_seat":null,"reasoning":"ok"}'
+        )
+        llm.invoke_action.side_effect = [
+            RateLimitError(
+                "slow down",
+                response=httpx.Response(
+                    429, request=httpx.Request("POST", "https://model.test/v1"),
+                    headers={"retry-after": "9"},
+                ),
+                body=None,
+            ),
+            SimpleNamespace(payload=payload),
+        ]
+        provider = self._provider_with_llm(service, llm)
+
+        provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert recorded_backoff == [9.0]
 
     def test_provider_routes_actor_seat_and_keeps_retry_on_same_client(self):
         from types import SimpleNamespace

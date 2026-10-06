@@ -342,7 +342,7 @@ class LLMClient:
             },
         }
         model = self._build(
-            CallPurpose.TOOLS,
+            CallPurpose.NIGHT_JSON,
             replace(self._config, temperature=_ACTION_TEMPERATURE),
         )
         choice = self._action_tool_choice(tool_name)

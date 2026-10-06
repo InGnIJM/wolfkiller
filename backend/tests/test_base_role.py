@@ -1,13 +1,15 @@
 import asyncio
+import time
 
 import pytest
 import httpx
 from unittest.mock import AsyncMock, MagicMock
 from langchain_core.messages import AIMessage
-from openai import APITimeoutError
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 
 from app.agents.llm_client import StructuredResponse
 from app.agents.prompt_builder import PromptBuilder
+from app.agents.retry import RetryPolicy
 from app.core.action_validator import ActionValidationError
 from app.core.conversation_log import ConversationLog
 from app.core.game_engine import VOTE_CONTRACT
@@ -975,6 +977,279 @@ class TestBaseRoleAccept:
                 state, self._vote_request(state),
                 ActionCommand(action_type="vote", target_seat=2, reasoning="x"),
             )
+
+    @pytest.mark.asyncio
+    async def test_strict_transport_salvages_json_content_without_a_second_call(self):
+        """A gateway that binds the action tool without forcing it leaves the
+        model free to answer in the content block. That JSON is exactly what the
+        JSON transport would ask for next, so it must be accepted on the spot
+        instead of paying a whole extra round-trip for it."""
+        class TelemetryLogger:
+            def __init__(self):
+                self.records = []
+
+            def log_vote_telemetry(self, game_id, round_num, seat, **data):
+                self.records.append(data)
+
+        class JsonInContentClient:
+            supports_strict_actions = True
+            action_timeout_seconds = 5.0
+            action_retry_timeout_seconds = 5.0
+            action_final_retry_timeout_seconds = 5.0
+
+            def __init__(self):
+                self.strict = ModelStub([AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"salvaged"}'
+                ))])
+                # Left empty on purpose: reaching for it would pop from an empty
+                # list and fail the test loudly.
+                self.action = ModelStub([])
+
+            def get_model_with_action_tool(self, contract):
+                return self.strict
+
+            def get_action_model(self):
+                return self.action
+
+        client = JsonInContentClient()
+        logger = TelemetryLogger()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(logger=logger, game_id="g"),
+            self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert accepted.command.reasoning == "salvaged"
+        assert accepted.technical_failure_code is None
+        assert client.action.messages == []
+        assert len(logger.records) == 1
+        assert logger.records[0]["transport"] == "strict"
+        assert logger.records[0]["attempt"] == 1
+        assert logger.records[0]["parse_result"] == "strict_content_fallback"
+        # game_summary counts a non-null failure_code as an error, so a salvaged
+        # call must not carry one — it succeeded.
+        assert logger.records[0]["failure_code"] is None
+
+    @pytest.mark.asyncio
+    async def test_strict_transport_still_switches_to_json_for_prose_content(self):
+        """Content that is not a valid issued action keeps the old behaviour:
+        StrictCapabilityError, then the JSON transport gets its turn."""
+        class ProseThenJsonClient:
+            supports_strict_actions = True
+            action_timeout_seconds = 5.0
+            action_retry_timeout_seconds = 5.0
+            action_final_retry_timeout_seconds = 5.0
+
+            def __init__(self):
+                self.strict = ModelStub([AIMessage(
+                    content="我认为应该投2号，因为他的发言前后矛盾。"
+                )])
+                self.action = ModelStub([AIMessage(content=(
+                    '{"action_type":"vote","target_seat":2,"reasoning":"json"}'
+                ))])
+
+            def get_model_with_action_tool(self, contract):
+                return self.strict
+
+            def get_action_model(self):
+                return self.action
+
+        client = ProseThenJsonClient()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.reasoning == "json"
+        assert len(client.strict.messages) == 1
+        assert len(client.action.messages) == 1
+        assert role._action_tool_content_salvaged is False
+
+
+    @pytest.mark.asyncio
+    async def test_transient_failure_keeps_the_native_transport(self):
+        """A connection reset says nothing about the request shape, so the retry
+        must re-ask the same way instead of spending itself on a new prompt for
+        the same broken pipe."""
+        class TelemetryLogger:
+            def __init__(self):
+                self.records = []
+
+            def log_vote_telemetry(self, game_id, round_num, seat, **data):
+                self.records.append(data)
+
+        class FlakyStrictClient:
+            supports_strict_actions = True
+            action_timeout_seconds = 5.0
+            action_retry_timeout_seconds = 5.0
+            action_final_retry_timeout_seconds = 5.0
+            action_retry_backoff_seconds = 0.0
+
+            def __init__(self):
+                self.strict = ModelStub([
+                    APIConnectionError(
+                        request=httpx.Request("POST", "https://model.test/v1"),
+                    ),
+                    AIMessage(content="", tool_calls=[{
+                        "name": "exile_vote",
+                        "args": {
+                            "action_type": "vote", "target_seat": 2,
+                            "reasoning": "same-transport",
+                        },
+                        "id": "call_1",
+                    }]),
+                ])
+                self.action = ModelStub([])
+
+            def get_model_with_action_tool(self, contract):
+                return self.strict
+
+            def get_action_model(self):
+                return self.action
+
+        client = FlakyStrictClient()
+        logger = TelemetryLogger()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(logger=logger, game_id="g"),
+            self._vote_request(state),
+        )
+
+        assert accepted.command.reasoning == "same-transport"
+        assert client.action.messages == []
+        assert [record["transport"] for record in logger.records] == [
+            "strict", "strict",
+        ]
+        assert logger.records[0]["parse_result"] == "invoke_error_retry"
+        assert logger.records[1]["parse_result"] == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_transient_retry_actually_waits_before_re_asking(self):
+        class FlakyClient:
+            supports_strict_actions = False
+            action_timeout_seconds = 5.0
+            action_retry_timeout_seconds = 5.0
+            action_final_retry_timeout_seconds = 5.0
+            action_retry_backoff_seconds = 0.05
+
+            def __init__(self):
+                self.model = ModelStub([
+                    APIConnectionError(
+                        request=httpx.Request("POST", "https://model.test/v1"),
+                    ),
+                    AIMessage(content=(
+                        '{"action_type":"vote","target_seat":2,"reasoning":"x"}'
+                    )),
+                ])
+
+            def get_action_model(self):
+                return self.model
+
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), FlakyClient())
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+        started = time.monotonic()
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert time.monotonic() - started >= 0.04
+
+    @pytest.mark.asyncio
+    async def test_transient_failures_keep_the_transport_across_all_attempts(self):
+        """Both retries of a transient fault stay on the native transport."""
+        class TelemetryLogger:
+            def __init__(self):
+                self.records = []
+
+            def log_vote_telemetry(self, game_id, round_num, seat, **data):
+                self.records.append(data)
+
+        class TwiceFlakyClient:
+            supports_strict_actions = True
+            action_timeout_seconds = 5.0
+            action_retry_timeout_seconds = 5.0
+            action_final_retry_timeout_seconds = 5.0
+            action_retry_backoff_seconds = 0.0
+
+            def __init__(self):
+                down = lambda: APIConnectionError(  # noqa: E731
+                    request=httpx.Request("POST", "https://model.test/v1"),
+                )
+                self.strict = ModelStub([
+                    down(),
+                    down(),
+                    AIMessage(content="", tool_calls=[{
+                        "name": "exile_vote",
+                        "args": {
+                            "action_type": "vote", "target_seat": 2,
+                            "reasoning": "third-time",
+                        },
+                        "id": "call_1",
+                    }]),
+                ])
+                self.action = ModelStub([])
+
+            def get_model_with_action_tool(self, contract):
+                return self.strict
+
+            def get_action_model(self):
+                return self.action
+
+        client = TwiceFlakyClient()
+        logger = TelemetryLogger()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(logger=logger, game_id="g"),
+            self._vote_request(state),
+        )
+
+        assert accepted.command.reasoning == "third-time"
+        assert client.action.messages == []
+        assert [record["transport"] for record in logger.records] == [
+            "strict", "strict", "strict",
+        ]
+        assert [record["parse_result"] for record in logger.records] == [
+            "invoke_error_retry", "invoke_error_retry", "accepted",
+        ]
+        assert [record["attempt"] for record in logger.records] == [1, 2, 3]
+
+    def test_retry_backoff_honours_a_provider_retry_after_hint(self):
+        class Client:
+            action_retry_backoff_seconds = 0.0
+
+        role = make_role(client=Client())
+        hint = RateLimitError(
+            "slow down",
+            response=httpx.Response(
+                429, request=httpx.Request("POST", "https://model.test/v1"),
+                headers={"retry-after": "7"},
+            ),
+            body=None,
+        )
+
+        assert role._retry_backoff_seconds(1, hint) == 7.0
+
+    def test_retry_backoff_ignores_a_nonsense_client_attribute(self):
+        class Client:
+            action_retry_backoff_seconds = "soon"
+
+        role = make_role(client=Client())
+        base = RetryPolicy().base_delay_seconds
+        delay = role._retry_backoff_seconds(1, RuntimeError("no hint"))
+
+        # Falls back to the policy default, jittered within +/-25%.
+        assert base * 0.75 <= delay <= base * 1.25
 
 
 class RecordingCapture:
