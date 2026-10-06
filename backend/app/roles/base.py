@@ -305,22 +305,27 @@ class BaseRole:
 
     def _generate_fallback_speech(self, state: GameState, context: str) -> str:
         """Generate a minimal but valid speech when the LLM fails to produce one.
+
         Ensures the player never silently disappears from the conversation.
+
+        The text names the seat and nothing else. It used to splice in
+        ``RoleSpec.display_name``, which turned a failed call into a public
+        identity reveal: a fallback last words read 「我是12号Wolf King，我出局了」
+        in games configured ``reveal_on_death=false``, and every later prompt
+        quoted it back. The day-speech branch never carried the name, so only
+        the last-words branch leaked.
         """
         self._speech_used_fallback = True
-        from app.roles.registry import builtin_registry
-        try: cn_name = builtin_registry.freeze().specs[self.role_name].display_name
-        except KeyError: cn_name = "玩家"
         alive_others = [s for s in state.alive_players() if s != self.seat]
 
         if context == "last_words":
             if alive_others:
                 suspects = "、".join(f"{s}号" for s in alive_others[:3])
                 return (
-                    f"我是{self.seat}号{cn_name}，我出局了。"
+                    f"我是{self.seat}号，我出局了。"
                     f"我怀疑的玩家是{suspects}，希望好人能仔细分析，找出狼人。"
                 )
-            return f"我是{self.seat}号{cn_name}，我出局了。希望好人阵营加油，找出最后的狼人。"
+            return f"我是{self.seat}号，我出局了。希望好人阵营加油，找出最后的狼人。"
 
         # Day speech fallback
         if alive_others:

@@ -3167,7 +3167,7 @@ class TestGameEngine:
         engine = GameEngine(game_id="emergency")
         engine.state.players = {1: PlayerState(1, "unknown-role", "good")}
         last_words = engine._emergency_speech(1, "last_words")
-        assert "1号" in last_words and "玩家" in last_words  # unknown role falls back
+        assert "1号" in last_words and "出局" in last_words
 
         engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good", is_alive=False)}
         villager_words = engine._emergency_speech(1, "last_words")
@@ -3183,6 +3183,18 @@ class TestGameEngine:
         engine.state.players = {1: PlayerState(1, "wolf-killer-villager", "good")}
         alone = engine._emergency_speech(1, "day_speech")
         assert "人数很少" in alone
+
+    def test_emergency_speech_never_names_the_role(self):
+        """The engine-level last resort must not reveal a hidden identity either."""
+        specs = builtin_registry.freeze().specs
+        names = {spec.display_name for spec in specs.values()}
+        engine = GameEngine(game_id="emergency-secret")
+        for role_id in specs:
+            engine.state.players = {1: PlayerState(1, role_id, "good", is_alive=False)}
+            text = engine._emergency_speech(1, "last_words")
+            assert "1号" in text
+            for name in names:
+                assert name not in text, (role_id, name, text)
 
     @pytest.mark.asyncio
     async def test_check_game_over_returns_false_without_win(self):

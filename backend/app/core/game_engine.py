@@ -2292,18 +2292,14 @@ class GameEngine:
     def _emergency_speech(self, seat: int, context: str) -> str:
         """Last-resort speech when the role's LLM completely fails.
         Ensures the player is never silently dropped from the conversation.
-        """
-        player = self.state.players.get(seat)
-        role_cn = "玩家"
-        if player:
-            try:
-                role_cn = builtin_registry.freeze().specs[player.role].display_name
-            except KeyError:
-                role_cn = "玩家"
 
+        Like the role-level fallback this names the seat only: splicing in the
+        role's display name leaked the identity of every player whose speech
+        call failed outright, in games whose configuration keeps roles secret.
+        """
         if context == "last_words":
             return (
-                f"我是{seat}号{role_cn}，我已经出局了。"
+                f"我是{seat}号，我已经出局了。"
                 f"希望好人能仔细分析场上局势，找出狼人。"
             )
 

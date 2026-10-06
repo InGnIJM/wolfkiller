@@ -385,14 +385,25 @@ class TestBaseRoleProperties:
         assert "我怀疑的玩家" in text or "好人阵营" in text  # fallback, not the wrong-fn text
         assert len(text) >= 15
 
-    def test_fallback_speech_unknown_role_uses_generic_name(self):
-        role = BaseRole(1, "unknown-role", PromptBuilder(), ClientStub())
-        state = make_state(phase=GamePhase.LAST_WORDS, seats=1)
-        from app.models.actions import DeathReport
-        state.death_history = [DeathReport(1, "exile", 1)]
-        state.players[1].is_alive = False
-        fallback = role._generate_fallback_speech(state, "last_words")
-        assert "玩家" in fallback
+    def test_fallback_speech_never_names_the_role(self):
+        """A failed call must not turn into a public identity reveal.
+
+        The template used to splice in ``RoleSpec.display_name``, so a fallback
+        last words read 「我是12号Wolf King，我出局了」 in games configured to keep
+        roles secret, and every later prompt quoted it back at the table.
+        """
+        specs = builtin_registry.freeze().specs
+        names = {spec.display_name for spec in specs.values()}
+        assert names, "registry has no display names to check against"
+        for role_id in specs:
+            role = BaseRole(1, role_id, PromptBuilder(), ClientStub())
+            state = make_state(phase=GamePhase.LAST_WORDS, seats=2)
+            state.death_history = [DeathReport(1, "exile", 1)]
+            state.players[1].is_alive = False
+            fallback = role._generate_fallback_speech(state, "last_words")
+            assert "1号" in fallback
+            for name in names:
+                assert name not in fallback, (role_id, name, fallback)
 
     def test_speak_validation_requires_existing_player(self):
         role = make_role()
