@@ -307,6 +307,66 @@ def test_invalid_vote_checkpoint_never_replaces_existing_windows(corruption):
     assert service.checkpoint() == original
 
 
+def test_a_tiebreak_round_votes_only_between_the_tied_seats():
+    """PK 复投只能投并列候选人。
+
+    The re-vote re-decides between the seats that tied; opening the floor to a
+    fresh nomination is a different (and unlisted) round. Statuses still apply on
+    top: an immune candidate cannot come back through the PK window.
+    """
+    from app.core.effect_applier import _Runtime
+    from app.core.vote_service import (
+        EXILE_IMMUNE_STATUS, VoteService, eligible_exile_targets,
+    )
+
+    state = make_state()
+    assert eligible_exile_targets(state) == frozenset({1, 2, 3})
+
+    state.is_tiebreak = True
+    state.tiebreak_candidates = {1, 3}
+    assert eligible_exile_targets(state) == frozenset({1, 3})
+
+    state._pipeline_runtime = _Runtime(statuses={1: {EXILE_IMMUNE_STATUS}})
+    assert eligible_exile_targets(state) == frozenset({3})
+
+    window = VoteService(state, clock=lambda: 10.0).open_window(timeout_seconds=5.0)
+    assert window.eligible_targets == frozenset({3})
+
+
+def test_a_ballot_for_a_seat_outside_the_tiebreak_is_rejected():
+    """The PK window refuses a fresh nomination outright."""
+    from app.core.vote_service import VoteError, VoteService
+
+    state = make_state()
+    state.is_tiebreak = True
+    state.tiebreak_candidates = {1, 2}
+    service = VoteService(state, clock=lambda: 10.0)
+    window = service.open_window(timeout_seconds=5.0)
+
+    with pytest.raises(VoteError, match="vote_target_ineligible"):
+        service.submit(window.window_id, 3, vote(3))
+    receipt = service.submit(window.window_id, 3, vote(1))
+    assert receipt.target_seat == 1
+
+
+def test_a_tiebreak_with_no_eligible_candidate_still_opens():
+    """All abstain, and the round ends with no exile — not with a fresh ballot."""
+    from app.core.effect_applier import _Runtime
+    from app.core.vote_service import (
+        EXILE_IMMUNE_STATUS, VoteService, eligible_exile_targets,
+    )
+
+    state = make_state()
+    state.is_tiebreak = True
+    state.tiebreak_candidates = {1}
+    state._pipeline_runtime = _Runtime(statuses={1: {EXILE_IMMUNE_STATUS}})
+    assert eligible_exile_targets(state) == frozenset()
+
+    window = VoteService(state, clock=lambda: 10.0).open_window(timeout_seconds=5.0)
+    assert window.eligible_targets == frozenset()
+    assert window.eligible_voters == frozenset({1, 2, 3})
+
+
 def test_runtime_statuses_shape_exile_voters_and_targets():
     from app.core.effect_applier import _Runtime
     from app.core.vote_service import (

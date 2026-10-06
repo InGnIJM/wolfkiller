@@ -3456,3 +3456,45 @@ async def test_tiebreak_restore_enters_missing_vote_phase_without_repeating_spee
     engine.speak.assert_not_awaited()
     for role in roles.values(): role.request_action.assert_awaited_once()
     assert engine.sm.get_state() is GamePhase.NIGHT
+
+
+@pytest.mark.asyncio
+async def test_first_night_roster_excludes_a_hidden_wolf_without_resources_yet() -> None:
+    """A hidden wolf is outside the pack from the first night on.
+
+    Role resources are established lazily, inside ``Scheduler.issue``, when the
+    night's first schedule point runs. Deriving the pack list at the top of the
+    staged night therefore read ``no_wolf_pack`` as absent and gave the Gargoyle
+    the wolf chat, the kill vote and the roster line (game
+    51f54f3e-9725-4e83-aa74-3d7241e508cb, night 1).
+    """
+    seats = {1: "wolf-killer-werewolf", 2: "wolf-killer-werewolf",
+             3: "wolf-killer-gargoyle", 4: "wolf-killer-villager",
+             5: "wolf-killer-villager", 6: "wolf-killer-seer"}
+    scheduler = ResourceSetupStub(PointResult((), (), (), "d"))
+    director = _FakeDirector(vote=4)
+    engine = GameEngine("hidden-wolf-night-1", pipeline_scheduler=scheduler,
+                        director=director)
+    engine.state.players = {
+        seat: PlayerState(
+            seat, role,
+            "werewolf" if role in ("wolf-killer-werewolf", "wolf-killer-gargoyle") else "good",
+        )
+        for seat, role in seats.items()
+    }
+    engine.state.phase = GamePhase.NIGHT
+    engine.sm.set_state(GamePhase.NIGHT)
+    engine._prepare_night()
+    engine._pending_night_batch = game_engine_module._PendingNightBatch(
+        engine.state.round_number, 0, (), (), (),
+    )
+    engine.memory_service = MagicMock()
+    engine.rule_engine.check_win = MagicMock(return_value=None)
+    engine._resume_pipeline_night = AsyncMock()
+
+    await engine._execute_staged_night()
+
+    assert scheduler.calls[0][1] is SchedulePoint.NIGHT_ACTION
+    assert 3 not in director.discussion_calls
+    assert set(director.discussion_calls) == {1, 2}
+    assert director.vote_calls == [1, 2]

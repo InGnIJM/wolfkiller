@@ -527,7 +527,8 @@ class PromptBuilder:
             speakers = "、".join(f"{seat}号" for seat in sorted(state.supplemental_speakers)) or "无"
             status = (
                 f"本次为平票复投（第{state.vote_round}轮）。上一轮平票相关座位：{candidates}；"
-                f"补充发言座位：{speakers}。复投可投任意存活座位，也可弃权。"
+                f"补充发言座位：{speakers}。复投只能在上轮平票的座位中投票，也可弃权；"
+                f"投给其他座位会被判为无效票。"
             )
         else:
             status = f"这是第{state.vote_round}轮放逐投票。可投任意存活座位，也可弃权。"

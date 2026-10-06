@@ -45,8 +45,19 @@ def eligible_exile_voters(state: GameState) -> frozenset[int]:
 
 
 def eligible_exile_targets(state: GameState) -> frozenset[int]:
-    """Alive seats that may still be exiled by vote."""
-    return frozenset(state.alive_players()) - seats_with_status(state, EXILE_IMMUNE_STATUS)
+    """Seats that may receive an exile ballot right now.
+
+    On the tie-break re-vote this narrows to the seats that actually tied, which
+    is the standing rule for a PK round: the table re-decides between the tied
+    candidates instead of opening the floor to a fresh nomination. Returning an
+    empty set in that case is meaningful rather than a bug — nobody may receive a
+    ballot, every voter abstains, and the round ends with no exile, which is what
+    the rules say happens when the re-vote changes nothing.
+    """
+    alive = frozenset(state.alive_players()) - seats_with_status(state, EXILE_IMMUNE_STATUS)
+    if not state.is_tiebreak:
+        return alive
+    return alive & frozenset(state.tiebreak_candidates)
 
 
 class VoteService:
