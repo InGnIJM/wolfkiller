@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isAtTimelineEnd, useGameStore } from '../gameStore';
 import type {
+  AudienceEvent,
   GameLogs,
   PublicGameState,
   PublicPlayerState,
@@ -1226,6 +1227,48 @@ describe('per-seat model snapshot', () => {
         ],
       });
 
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+    });
+
+    it('clears streaming speech on a batch that moves the live seat without a speech event', () => {
+      // 上一条用例走的是 `hasSpeechOrPhaseEvent` 为真的短路分支。这里的事件批里既
+      // 没有 speech 也没有 phase，右边的「座位已经换人」才会被求值：否则流式发言
+      // 会挂在一个早就不在发言的座位上，直到下一条 speech 才消失。
+      useGameStore.getState().reset();
+      useGameStore.setState({
+        gameId: 'game-1',
+        syncMode: 'incremental',
+        audienceCursor: 0,
+        isFollowingLive: true,
+      });
+      useGameStore.getState().setStreamingSpeech(2, '2号流式中');
+
+      const batch = (seq: number, event: Pick<AudienceEvent, 'event_type' | 'payload'>) => ({
+        game_id: 'game-1',
+        after_seq: seq - 1,
+        last_seq: seq,
+        caught_up: true,
+        events: [{ seq, event_id: `e${seq}`, schema_version: 1, ...event }],
+      });
+
+      // 死亡事件不会认领发言席：derived.currentSpeaker 仍是 null，与流式座位 2 不同。
+      useGameStore.getState().mergeAudienceEvents(batch(1, {
+        event_type: 'death',
+        payload: { player_seat: 4, cause: 'wolf_kill', round_number: 1 },
+      }));
+
+      expect(useGameStore.getState().currentSpeaker).toBeNull();
+      expect(useGameStore.getState().streamingSpeech).toBeNull();
+
+      // 反过来，批里的发言席就是流式座位时，收掉它的理由变成了「完整发言已到」
+      // （走 `||` 左边），而不是「座位换了」。
+      useGameStore.getState().setStreamingSpeech(2, '2号继续流式中');
+      useGameStore.getState().mergeAudienceEvents(batch(2, {
+        event_type: 'speech',
+        payload: { player_seat: 2, text: '2号完整发言', round_number: 1 },
+      }));
+
+      expect(useGameStore.getState().currentSpeaker).toBe(2);
       expect(useGameStore.getState().streamingSpeech).toBeNull();
     });
   });

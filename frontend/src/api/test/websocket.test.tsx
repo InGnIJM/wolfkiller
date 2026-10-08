@@ -195,6 +195,40 @@ describe('useWebSocket', () => {
     expect(useGameStore.getState().currentSpeaker).toBeNull();
   });
 
+  it('streams a live seat speech and only while following live', () => {
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1'));
+    const socket = MockWebSocket.instances[0];
+
+    act(() => {
+      useGameStore.setState({ isFollowingLive: true });
+      socket.emit({ type: 'speech_stream', seat: 6, text: '6号正在说' });
+    });
+    expect(useGameStore.getState().streamingSpeech?.seat).toBe(6);
+    expect(useGameStore.getState().streamingSpeech?.text).toBe('6号正在说');
+
+    // 每个字段各自决定这条流是否可信：座位必须是正整数，正文必须是字符串。
+    // 被拒的消息既不清空已有流式发言，也不能溜进事件批处理分支。
+    act(() => {
+      [
+        { type: 'speech_stream', seat: 7, text: 8 },
+        { type: 'speech_stream', seat: '7', text: '7号正在说' },
+        { type: 'speech_stream', seat: 0, text: '0号正在说' },
+        { type: 'speech_stream', seat: 7.5, text: '7号正在说' },
+        { type: 'speech_stream', text: '没有座位' },
+      ].forEach((message) => socket.emit(message));
+    });
+    expect(useGameStore.getState().streamingSpeech?.seat).toBe(6);
+    expect(useGameStore.getState().streamingSpeech?.text).toBe('6号正在说');
+    expect(socket.send).not.toHaveBeenCalled();
+
+    act(() => {
+      useGameStore.setState({ isFollowingLive: false });
+      socket.emit({ type: 'speech_stream', seat: 8, text: '8号正在说' });
+    });
+    expect(useGameStore.getState().streamingSpeech?.seat).toBe(6);
+  });
+
   it('ignores replay, state, malformed, unknown, and private websocket events', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useWebSocket());

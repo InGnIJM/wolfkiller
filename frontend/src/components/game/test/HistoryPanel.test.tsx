@@ -562,6 +562,30 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.getByText(/3号给 5号戴上面具/)).toBeVisible();
   });
 
+  it('says 不在舞池 and 无人 for the empty branches of mask and crimson cards', () => {
+    // 上面那条用例只走了两个三元表达式的真值分支（in_pool=true、封印名单非空）。
+    // 假值分支同样是真实牌局会出现的形状：假面戴在舞池外的人身上，以及赤月使徒
+    // 自爆时当晚没有任何好人技能可封。
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'mask_granted',
+          payload: { seat: 3, target_seat: 5, in_pool: false, round_number: 2 },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'crimson_explode',
+          payload: { seat: 1, silenced_seats: [], round_number: 2 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/3号给 5号戴上面具（目标不在舞池中/)).toBeVisible();
+    expect(screen.getByText(/1号自爆，当晚好人技能被封印（无人）/)).toBeVisible();
+  });
+
   it('marks an archived charm entry as missing its target', () => {
     useGameStore.setState({
       timeline: [
