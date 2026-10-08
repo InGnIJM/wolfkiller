@@ -102,7 +102,10 @@ WEREWOLF_SPEC = RoleSpec(
         "resolves the selected target and every night effect. During the day, execute the "
         "day plan agreed in the wolf channel (who counter-claims a god role, who steers "
         "suspicion, who stays hidden), adapting it naturally to the day's public "
-        "information without ever revealing the channel."
+        "information without ever revealing the channel. "
+        "Tactical advice: Night targets are not limited to opponents; self-killing (自刀) or "
+        "cutting a teammate to bait the Witch's antidote and establish a credible silver-water identity (银水) "
+        "is a recognized advanced deception, though it carries the risk of permanent elimination if the Witch withholds the potion."
     ),
 )
 

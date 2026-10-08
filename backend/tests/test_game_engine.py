@@ -1870,6 +1870,30 @@ class TestGameEngine:
         assert res == "我是1号，旧接口发言。"
 
     @pytest.mark.asyncio
+    async def test_speak_keeps_the_seat_in_the_turn_after_a_plain_type_error(self):
+        """A TypeError that is not about ``on_chunk`` must not be swallowed.
+
+        The inner handler only retries without the streaming callback when the
+        message mentions the argument; anything else is a real defect and is
+        re-raised into the outer handler, which still owes the seat a turn.
+        """
+        role = MagicMock()
+
+        async def broken_speak(_state, _log, _context, on_chunk=None):
+            raise TypeError("role object is not callable")
+
+        role.speak = broken_speak
+        engine = GameEngine(game_id="speak-broken", roles={1: role}, event_bus=EventBus())
+        engine._checkpoint_hook = AsyncMock()
+
+        speech = await engine.speak(1, "day_speech")
+
+        # The seat still speaks, and the fallback names only the seat: the
+        # role's display name never reaches a public speech.
+        assert speech
+        assert speech.startswith("我是1号，")
+
+    @pytest.mark.asyncio
     async def test_announce_actor_publishes_before_a_blocking_night_call(self, monkeypatch):
         bus = EventBus()
         announced: list[int] = []

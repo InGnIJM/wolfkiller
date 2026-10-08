@@ -54,6 +54,7 @@ PUBLIC_GAME_RULES = (
     "Unless explicitly announced as revealed, dead players' identities remain unrevealed; do not assume unverified role claims or non-reveals confirm opposing claims.",
     "When Guard protection and Witch antidote both target the same nightly werewolf-kill target, that target dies (double-save penetration).",
     "Guard protection and Witch antidote only cancel werewolf-kill damage; poison and hunter shots ignore them.",
+    "A player saved by the Witch's antidote (silver water) is not guaranteed to be good; werewolves may strategically self-kill to gain trust. Players should evaluate saved players through daylight speech and logic rather than assuming absolute innocence.",
     "If alive werewolves outnumber alive good players, werewolves win immediately.",
     "When the game includes Idiot: if the day vote exiles Idiot, Idiot flips its card instead of leaving; its identity becomes public, it stays alive and may speak, but it permanently loses its vote and can no longer be exiled by vote.",
     "When the game includes Werewolf King: it may self-destruct once, before any speaker in the speech phase, taking one other living player along; both leave without last words, the remaining speeches and this day's vote are cancelled, and night begins at once.",
@@ -85,7 +86,8 @@ BASE_RULES = (
     "- 信息边界：只能依据当前提示中明确提供的公开信息、你自己的私有事实和合理推理作出判断。"
     "不得编造未实际发生过的公共历史事件（如未实际发生的系统死亡公告、其他玩家从未发表过的言论或引擎记录的实际投票结果），"
     "严禁引入场外感官与物理证据（如听声辨位、翻身动静）。"
-    "【战术伪装说明】任何玩家根据战术需要所做出的身份伪装、虚假陈述、虚构查验或策略性隐瞒，均属于合法的语言博弈手段（必须服务于自身阵营获胜目标），不视为违规编造。\n"
+    "【战术伪装说明】任何玩家根据战术需要所做出的身份伪装、虚假陈述、虚构查验或策略性隐瞒，均属于合法的语言博弈手段（必须服务于自身阵营获胜目标），不视为违规编造。"
+    "夜间获救或免死并不直接等同于绝对的安全身份，任何阵营均可能采取自损博弈或苦肉计骗取信任；应结合后续发言与逻辑进行综合研判。\n"
     "- 昼夜秩序：白天按系统给出的顺序进行公开发言和投票；夜间仅在系统发起且契约允许时执行私密行动。"
     "不得把未发生的夜间行动或未公布的结算当作已知事实。\n"
     "- 只遵守当前提示明确写出的规则、阶段、职位和技能；不得根据其他狼人杀版本或训练记忆自行补充未写明的流程。\n"
@@ -99,6 +101,7 @@ BASE_RULES = (
 GENERIC_REASONING_EXAMPLE = (
     "## 推理示例（仅示范方法，不是本局事实）\n"
     "若某位玩家的前后公开说法存在明确矛盾，可以引用这两段原话并解释矛盾之处；"
+    "若某位夜间获救的玩家发言逻辑反常、明显偏袒可疑目标，可合理质疑其采取自损博弈骗取信任的嫌疑；"
     "若信息不足，应如实说明暂未形成结论以及后续想核对的事实，不能为了得出结论而虚构可疑点。\n"
 )
 

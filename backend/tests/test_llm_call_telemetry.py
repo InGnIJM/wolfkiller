@@ -1,5 +1,6 @@
 """Tests for the universal llm_calls.log benchmark telemetry."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -31,19 +32,29 @@ class ModelStub:
 class ClientStub:
     """Minimal LLM client double: plain model for speech, no tool support."""
 
-    def __init__(self, plain=(), model_name="stub-model"):
+    def __init__(self, plain=(), model_name="stub-model", action_timeout_seconds=90.0):
         self.plain_model = ModelStub(plain)
         self.model_name = model_name
         self.supports_strict_actions = False
         self.supports_action_tools = False
-        self.action_timeout_seconds = 90.0
+        self.action_timeout_seconds = action_timeout_seconds
         self.action_retry_timeout_seconds = 60.0
+        #: The suite must never wait on a retry: the refusal floor alone is 20s.
+        self.action_retry_backoff_seconds = 0.0
+        self.action_refused_backoff_seconds = 0.0
 
     def get_model(self):
         return self.plain_model
 
     def get_action_model(self):
         return self.plain_model
+
+
+def tool_msg(name: str, text: str) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": name, "args": {"text": text}, "id": "call_1"}],
+    )
 
 
 def make_state(phase=GamePhase.SPEECH, seats=2) -> GameState:
@@ -229,11 +240,16 @@ class TestSpeechTelemetry:
 
     @pytest.mark.asyncio
     async def test_fallback_speech_after_failed_attempts_is_recorded(self, tmp_path: Path):
+        from app.roles.base import _SPEECH_RETRY_POLICY
+
         client = ClientStub()
         client.supports_action_tools = True
+        client.action_retry_backoff_seconds = 0.0
+        # Every attempt fails: an unclassified fault is retried, so the recorded
+        # attempt count is the whole ladder rather than a single blind retry.
         client.get_model_with_tools = lambda tools: ModelStub([
-            RuntimeError("provider down"), RuntimeError("provider down"),
-        ])
+            RuntimeError("provider down"),
+        ] * _SPEECH_RETRY_POLICY.attempts)
         role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
         log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
         state = make_state()
@@ -245,9 +261,125 @@ class TestSpeechTelemetry:
         assert len(records) == 1
         data = records[0]["data"]
         assert data["call_kind"] == "speech"
-        assert data["attempt"] == 2
+        assert data["attempt"] == _SPEECH_RETRY_POLICY.attempts
         assert data["retried"] is True
         assert data["parse_result"] == "fallback"
+
+    @pytest.mark.asyncio
+    async def test_a_provider_refusal_is_named_on_the_fallback_row(self, tmp_path: Path):
+        """The row must say *why* the seat got a template.
+
+        One real game produced 270 template speeches out of 275 and the log
+        recorded only ``fallback`` with no failure code, so an emptied upstream
+        account pool was indistinguishable from a model that refused to answer.
+        """
+        import httpx
+        from openai import InternalServerError
+
+        from app.roles.base import _SPEECH_RETRY_POLICY
+
+        refusal = InternalServerError(
+            "no available account",
+            response=httpx.Response(
+                503, request=httpx.Request("POST", "https://model.test/v1"),
+            ),
+            body=None,
+        )
+        client = ClientStub()
+        client.supports_action_tools = True
+        client.get_model_with_tools = lambda tools: ModelStub([refusal] * 8)
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+
+        speech = await role.speak(make_state(), log, "day_speech")
+
+        assert "我是1号" in speech
+        data = read_llm_calls(tmp_path, "g1")[0]["data"]
+        assert data["parse_result"] == "fallback"
+        assert data["failure_code"] == "provider_unavailable"
+        # A refusal is not the ordinary ladder: it gets one wait and one resend,
+        # then stops, because a capacity cooldown cannot be out-waited inside a
+        # turn. The ladder's full budget is reserved for faults that might clear.
+        assert data["attempt"] == 2
+        assert _SPEECH_RETRY_POLICY.attempts > data["attempt"]
+
+    @pytest.mark.asyncio
+    async def test_an_unusable_answer_is_named_on_the_fallback_row(self, tmp_path: Path):
+        client = ClientStub()
+        client.supports_action_tools = True
+        # Always a tool call, never any text: a model that answers unusably.
+        client.get_model_with_tools = lambda tools: ModelStub(
+            [tool_msg("speak", "过")] * 8,
+        )
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+
+        await role.speak(make_state(), log, "day_speech")
+
+        data = read_llm_calls(tmp_path, "g1")[0]["data"]
+        assert data["parse_result"] == "fallback"
+        assert data["failure_code"] == "speech_text_too_short"
+
+    @pytest.mark.asyncio
+    async def test_a_local_deadline_is_named_on_the_fallback_row(self, tmp_path: Path):
+        class HangingModel:
+            async def ainvoke(self, messages):
+                await asyncio.sleep(10)
+
+        client = ClientStub(action_timeout_seconds=0.02)
+        client.supports_action_tools = True
+        client.get_model_with_tools = lambda tools: HangingModel()
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+
+        await role.speak(make_state(), log, "day_speech")
+
+        data = read_llm_calls(tmp_path, "g1")[0]["data"]
+        assert data["parse_result"] == "fallback"
+        assert data["failure_code"] == "request_timeout"
+        assert data["timeout_type"] == "local_deadline"
+
+    @pytest.mark.asyncio
+    async def test_a_provider_timeout_is_named_on_the_fallback_row(self, tmp_path: Path):
+        """The SDK's own timeout keeps the vote ladder's vocabulary."""
+        import httpx
+        from openai import APITimeoutError
+
+        from app.roles.base import _SPEECH_RETRY_POLICY
+
+        timeout = APITimeoutError(
+            request=httpx.Request("POST", "https://model.test/v1"),
+        )
+        client = ClientStub()
+        client.supports_action_tools = True
+        client.get_model_with_tools = lambda tools: ModelStub(
+            [timeout] * _SPEECH_RETRY_POLICY.attempts,
+        )
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+
+        await role.speak(make_state(), log, "day_speech")
+
+        data = read_llm_calls(tmp_path, "g1")[0]["data"]
+        assert data["parse_result"] == "fallback"
+        assert data["failure_code"] == "request_timeout"
+        assert data["timeout_type"] == "provider_timeout"
+
+    @pytest.mark.asyncio
+    async def test_a_successful_speech_records_no_failure_code(self, tmp_path: Path):
+        client = ClientStub()
+        client.supports_action_tools = True
+        client.get_model_with_tools = lambda tools: ModelStub([
+            tool_msg("speak", "我认为三号玩家昨晚的发言有明显矛盾。"),
+        ])
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+
+        await role.speak(make_state(), log, "day_speech")
+
+        data = read_llm_calls(tmp_path, "g1")[0]["data"]
+        assert data["parse_result"] == "ok"
+        assert "failure_code" not in data
 
     @pytest.mark.asyncio
     async def test_successful_tool_speech_records_ok(self, tmp_path: Path):

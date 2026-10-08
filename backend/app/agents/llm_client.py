@@ -19,6 +19,10 @@ from app.agents.output_parser import (
     StrictCapabilityError, coerce_payload_to_schema, extract_json_object,
     extract_tool_call_xml,
 )
+# ``UnusableModelOutput`` is the one exception the parser raises for "the
+# provider answered, but we cannot use it" -- the distinction ``retry_plan``
+# reads to choose a repair reminder over a verbatim resend.
+from app.agents.retry import UnusableModelOutput
 from app.agents.providers.base import (
     API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS, CallPurpose,
 )
@@ -27,10 +31,15 @@ from app.agents.providers.base import (
 from app.agents.providers.errors import (  # noqa: F401
     CAPABILITY_REJECTION_ERRORS,
     CONNECTION_ERRORS,
+    FAILURE_REFUSED,
     RATE_LIMIT_ERRORS,
+    REFUSED_STATUS_CODES,
     SERVER_ERRORS,
     TIMEOUT_ERRORS,
     TRANSIENT_PROVIDER_ERRORS,
+    classify_provider_error,
+    is_refused_error,
+    status_code_of,
 )
 from app.agents.providers.registry import ProviderRegistry
 from app.agents.providers.transports import transport_for
@@ -282,6 +291,22 @@ class LLMClient:
         # build creates a fresh httpx SDK client, and unclosed clients
         # segfault the interpreter at shutdown on Windows.
         self._built_models: dict[tuple[CallPurpose, LLMClientConfig], BaseChatModel] = {}
+        #: Set once this provider has shown it will not honour an action tool --
+        #: either it rejected the schema (400/422) or it answered in content
+        #: instead of calling the tool. Learned per client, i.e. per seat for one
+        #: game: the failure is a property of the provider, so paying for the
+        #: discovery on every single action is pure waste. glm-5.3-flash spent
+        #: 24 of one game's 30 ballots that way.
+        self._prefers_json_actions = False
+
+    @property
+    def prefers_json_actions(self) -> bool:
+        """Whether later actions should skip the native action tool."""
+        return self._prefers_json_actions
+
+    def note_action_tools_unsupported(self) -> None:
+        """Remember that this provider will not do native action tools."""
+        self._prefers_json_actions = True
 
     @property
     def supports_strict_actions(self) -> bool:
@@ -476,6 +501,16 @@ class LLMClient:
 
     @staticmethod
     def _structured_response(response, expected_tool_name: str) -> StructuredResponse:
+        """Read one structured answer, or say why it could not be used.
+
+        Every rejection here is an *answer we could not use*, not a transport
+        fault, so it raises :class:`UnusableModelOutput` rather than a bare
+        ``ValueError``. That distinction is what lets ``retry_plan`` send a
+        repair reminder instead of resending the identical request: the four
+        cases below are exactly the ones a sharper request can fix, and a bare
+        ``ValueError`` classified them as "no answer arrived" -- so the repair
+        path never ran for any of them.
+        """
         tool_calls = getattr(response, "tool_calls", None) or []
         content = _content_text(getattr(response, "content", ""))
         content_length = len(content)
@@ -485,15 +520,24 @@ class LLMClient:
 
         if tool_calls:
             if len(tool_calls) != 1:
-                raise ValueError("structured response must contain exactly one tool call")
+                raise UnusableModelOutput(
+                    "structured response must contain exactly one tool call",
+                    code="response_multiple_tool_calls",
+                )
             call = tool_calls[0]
             if call.get("name") != expected_tool_name:
-                raise ValueError("structured response used an unexpected tool")
+                raise UnusableModelOutput(
+                    "structured response used an unexpected tool",
+                    code="response_unexpected_tool",
+                )
             payload = call.get("args", {})
             if isinstance(payload, str):
                 payload = json.loads(payload)
             if not isinstance(payload, dict):
-                raise ValueError("tool arguments must be a JSON object")
+                raise UnusableModelOutput(
+                    "tool arguments must be a JSON object",
+                    code="tool_args_not_object",
+                )
             return StructuredResponse(
                 payload=payload,
                 transport="tool",
@@ -514,7 +558,10 @@ class LLMClient:
 
         payload = extract_json_object(content)
         if not isinstance(payload, dict):
-            raise ValueError("structured response contains neither a tool call nor JSON")
+            raise UnusableModelOutput(
+                "structured response contains neither a tool call nor JSON",
+                code="response_no_tool_call",
+            )
         return StructuredResponse(
             payload=payload,
             transport="json_fallback",
@@ -527,6 +574,13 @@ class LLMClient:
     def _require_schema_fields(
         result: StructuredResponse, schema: dict[str, Any],
     ) -> StructuredResponse:
+        """Reject an answer that parsed but does not honour the issued schema.
+
+        Also an unusable answer, so it also asks for a repair: the model
+        answered in the right shape but skipped a required field, and the
+        missing-field names travel in ``code``-adjacent text so a log can say
+        which one without decoding a sentence.
+        """
         required = schema.get("required", ())
         if not isinstance(required, (list, tuple)) or any(
             type(field) is not str for field in required
@@ -534,18 +588,24 @@ class LLMClient:
             raise ValueError("JSON schema required fields must be strings")
         missing = [field for field in required if field not in result.payload]
         if missing:
-            raise ValueError(
+            raise UnusableModelOutput(
                 "structured response omitted required fields: "
-                + ", ".join(missing)
+                + ", ".join(missing),
+                code="response_missing_fields",
             )
         return result
 
     def invoke_action(self, messages, contract: ActionContract) -> StructuredResponse:
-        """Invoke one action contract through native tools with JSON fallback."""
+        """Invoke one action contract through native tools with JSON fallback.
+
+        A provider that has already refused or ignored the action tool goes
+        straight to JSON: the discovery is a property of the provider, so paying
+        for it once per action is pure waste.
+        """
         started = time.monotonic()
         usage = None
         attempts = 0
-        if self.supports_action_tools:
+        if self.supports_action_tools and not self._prefers_json_actions:
             try:
                 attempts += 1
                 response = self.get_model_with_action_tool(contract).invoke(messages)
@@ -561,6 +621,7 @@ class LLMClient:
                     self.model_name,
                     type(error).__name__,
                 )
+                self.note_action_tools_unsupported()
                 attempts += 1
                 response = self.get_action_model().invoke(messages)
                 usage = merge_usage(usage, extract_usage(response))

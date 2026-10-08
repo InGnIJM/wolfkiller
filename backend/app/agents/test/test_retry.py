@@ -3,16 +3,28 @@ import asyncio
 import httpx
 import pytest
 from openai import APIConnectionError, RateLimitError
+from pydantic import BaseModel, ValidationError
 
 from app.agents.retry import (
+    KIND_REPAIR,
+    KIND_TRANSPORT,
+    RETRYABLE_OUTPUT_ERRORS,
     RETRYABLE_PROVIDER_ERRORS,
     RetryPolicy,
+    UnusableModelOutput,
     acall_with_retry,
     call_with_retry,
     delay_for,
     retry_after_seconds,
     retry_delay,
+    retry_plan,
 )
+
+
+class _BadPayload(BaseModel):
+    """Declared at module scope: pydantic builds the schema once."""
+
+    n: int
 
 
 class Recorder:
@@ -199,7 +211,7 @@ def test_delay_for_keeps_the_computed_delay_when_the_hint_is_smaller():
 def test_call_with_retry_returns_the_first_success_without_sleeping():
     waits: list[float] = []
 
-    result = call_with_retry(lambda: "ok", RetryPolicy(), sleep=waits.append)
+    result = call_with_retry(lambda kind: "ok", RetryPolicy(), sleep=waits.append)
 
     assert result == "ok"
     assert waits == []
@@ -209,7 +221,7 @@ def test_call_with_retry_backs_off_then_succeeds():
     attempts = {"n": 0}
     waits: list[float] = []
 
-    def call():
+    def call(kind):
         attempts["n"] += 1
         if attempts["n"] < 3:
             raise connection_error()
@@ -228,7 +240,7 @@ def test_call_with_retry_reraises_the_final_error():
     attempts = {"n": 0}
     waits: list[float] = []
 
-    def call():
+    def call(kind):
         attempts["n"] += 1
         raise connection_error()
 
@@ -246,7 +258,7 @@ def test_call_with_retry_does_not_retry_other_errors():
     attempts = {"n": 0}
     waits: list[float] = []
 
-    def call():
+    def call(kind):
         attempts["n"] += 1
         raise ValueError("malformed payload")
 
@@ -257,6 +269,163 @@ def test_call_with_retry_does_not_retry_other_errors():
     assert waits == []
 
 
+# ── retry_plan ──────────────────────────────────────────────────
+
+
+def test_retry_plan_reports_transport_for_a_provider_fault():
+    kind, delay = retry_plan(
+        RetryPolicy(attempts=2, base_delay_seconds=1.0, jitter_ratio=0.0),
+        connection_error(), 1,
+    )
+
+    assert kind == KIND_TRANSPORT
+    assert delay == 1.0
+
+
+def test_retry_plan_reports_repair_for_an_unusable_answer():
+    kind, delay = retry_plan(
+        RetryPolicy(attempts=2, base_delay_seconds=1.0, jitter_ratio=0.0),
+        UnusableModelOutput("empty"), 1,
+    )
+
+    assert kind == KIND_REPAIR
+    assert delay == 1.0
+
+
+def test_retry_plan_treats_a_validation_error_as_a_repair():
+    """Pydantic surfaces a bad structured payload as ``ValidationError``."""
+    with pytest.raises(ValidationError) as caught:
+        _BadPayload.model_validate({"n": "not-an-int"})
+
+    kind, _ = retry_plan(RetryPolicy(attempts=2), caught.value, 1)
+
+    assert kind == KIND_REPAIR
+
+
+def test_retry_plan_is_exhausted_on_the_last_attempt():
+    policy = RetryPolicy(attempts=2, base_delay_seconds=0.0, jitter_ratio=0.0)
+
+    assert retry_plan(policy, connection_error(), 2) is None
+    assert retry_plan(policy, UnusableModelOutput("empty"), 2) is None
+
+
+def test_retry_plan_ignores_errors_outside_both_sets():
+    assert retry_plan(RetryPolicy(attempts=5), KeyError("nope"), 1) is None
+
+
+def test_retry_plan_ignores_a_plain_value_error():
+    """Only the canonical output errors are repaired, not every ValueError."""
+    assert retry_plan(RetryPolicy(attempts=5), ValueError("bug"), 1) is None
+
+
+def test_retry_plan_prefers_transport_when_both_sets_match():
+    """Resending is safe; a dropped connection cannot be "repaired"."""
+    policy = RetryPolicy(
+        attempts=2, base_delay_seconds=0.0, jitter_ratio=0.0,
+        retry_on=(UnusableModelOutput,), repair_on=(UnusableModelOutput,),
+    )
+
+    assert retry_plan(policy, UnusableModelOutput("empty"), 1)[0] == KIND_TRANSPORT
+
+
+def test_retry_plan_rejects_invalid_attempts():
+    with pytest.raises(ValueError, match="positive integer"):
+        retry_plan(RetryPolicy(), connection_error(), 0)
+
+
+def test_repair_is_off_when_a_policy_opts_out():
+    assert retry_plan(
+        RetryPolicy(attempts=5, repair_on=()), UnusableModelOutput("empty"), 1,
+    ) is None
+
+
+def test_retry_plan_resends_an_unclassified_error_when_opted_in():
+    """A call site that would forfeit a turn resends even an unknown fault."""
+    policy = RetryPolicy(
+        attempts=3, base_delay_seconds=1.0, jitter_ratio=0.0,
+        retry_unknown_errors=True,
+    )
+
+    kind, delay = retry_plan(policy, RuntimeError("gateway wrapper"), 1)
+
+    assert kind == KIND_TRANSPORT
+    assert delay == 1.0
+
+
+def test_retry_plan_still_repairs_known_output_errors_when_opted_in():
+    """Opting into unknown faults must not demote a repair to a plain resend."""
+    policy = RetryPolicy(
+        attempts=3, base_delay_seconds=0.0, jitter_ratio=0.0,
+        retry_unknown_errors=True,
+    )
+
+    assert retry_plan(policy, UnusableModelOutput("empty"), 1)[0] == KIND_REPAIR
+
+
+def test_retry_policy_defaults_to_the_canonical_repair_set():
+    assert RetryPolicy().repair_on == RETRYABLE_OUTPUT_ERRORS
+    assert RETRYABLE_OUTPUT_ERRORS == (UnusableModelOutput, ValidationError)
+    # A transparent upgrade: call sites that already catch ValueError keep working.
+    assert issubclass(UnusableModelOutput, ValueError)
+
+
+# ── call_with_retry ─────────────────────────────────────────────
+
+
+def test_call_with_retry_hands_the_kind_to_each_attempt():
+    """The first attempt is a transport attempt; a repair follows a bad answer."""
+    kinds: list[str] = []
+
+    def call(kind):
+        kinds.append(kind)
+        if len(kinds) == 1:
+            raise UnusableModelOutput("empty")
+        return "recovered"
+
+    result = call_with_retry(
+        call, RetryPolicy(attempts=3, base_delay_seconds=0.0, jitter_ratio=0.0),
+        sleep=lambda delay: None,
+    )
+
+    assert result == "recovered"
+    assert kinds == [KIND_TRANSPORT, KIND_REPAIR]
+
+
+def test_call_with_retry_keeps_resending_after_a_transport_fault():
+    kinds: list[str] = []
+    remaining = {"n": 2}
+
+    def call(kind):
+        kinds.append(kind)
+        if remaining["n"]:
+            remaining["n"] -= 1
+            raise connection_error()
+        return "recovered"
+
+    result = call_with_retry(
+        call, RetryPolicy(attempts=4, base_delay_seconds=0.0, jitter_ratio=0.0),
+        sleep=lambda delay: None,
+    )
+
+    assert result == "recovered"
+    assert kinds == [KIND_TRANSPORT, KIND_TRANSPORT, KIND_TRANSPORT]
+
+
+def test_call_with_retry_reraises_an_unusable_answer_when_repair_is_off():
+    attempts = {"n": 0}
+
+    def call(kind):
+        attempts["n"] += 1
+        raise UnusableModelOutput("empty")
+
+    with pytest.raises(UnusableModelOutput):
+        call_with_retry(
+            call, RetryPolicy(attempts=3, repair_on=()), sleep=lambda delay: None,
+        )
+
+    assert attempts["n"] == 1
+
+
 # ── acall_with_retry ────────────────────────────────────────────
 
 
@@ -265,7 +434,7 @@ async def test_acall_with_retry_backs_off_then_succeeds():
     attempts = {"n": 0}
     waits: list[float] = []
 
-    async def call():
+    async def call(kind):
         attempts["n"] += 1
         if attempts["n"] < 2:
             raise connection_error()
@@ -288,7 +457,7 @@ async def test_acall_with_retry_reraises_the_final_error():
     attempts = {"n": 0}
     waits: list[float] = []
 
-    async def call():
+    async def call(kind):
         attempts["n"] += 1
         raise connection_error()
 
@@ -306,11 +475,53 @@ async def test_acall_with_retry_reraises_the_final_error():
 
 
 @pytest.mark.asyncio
+async def test_acall_with_retry_repairs_an_unusable_answer():
+    kinds: list[str] = []
+
+    async def call(kind):
+        kinds.append(kind)
+        if len(kinds) == 1:
+            raise UnusableModelOutput("empty")
+        return "recovered"
+
+    async def fake_sleep(delay: float) -> None:
+        return None
+
+    result = await acall_with_retry(
+        call, RetryPolicy(attempts=3, base_delay_seconds=0.0, jitter_ratio=0.0),
+        sleep=fake_sleep,
+    )
+
+    assert result == "recovered"
+    assert kinds == [KIND_TRANSPORT, KIND_REPAIR]
+
+
+@pytest.mark.asyncio
+async def test_acall_with_retry_reraises_the_final_unusable_answer():
+    attempts = {"n": 0}
+
+    async def call(kind):
+        attempts["n"] += 1
+        raise UnusableModelOutput("empty")
+
+    async def fake_sleep(delay: float) -> None:
+        return None
+
+    with pytest.raises(UnusableModelOutput):
+        await acall_with_retry(
+            call, RetryPolicy(attempts=2, base_delay_seconds=0.0, jitter_ratio=0.0),
+            sleep=fake_sleep,
+        )
+
+    assert attempts["n"] == 2
+
+
+@pytest.mark.asyncio
 async def test_acall_with_retry_never_swallows_cancellation():
     """A cancelled vote or an ``asyncio.wait_for`` deadline must propagate."""
     attempts = {"n": 0}
 
-    async def call():
+    async def call(kind):
         attempts["n"] += 1
         raise asyncio.CancelledError()
 
@@ -318,3 +529,134 @@ async def test_acall_with_retry_never_swallows_cancellation():
         await acall_with_retry(call, RetryPolicy(attempts=3))
 
     assert attempts["n"] == 1
+
+
+# ── refusals: one long wait, then stop ──────────────────────────
+
+
+class _Refusal(Exception):
+    """An HTTP 503 as a gateway that is not one of the SDK classes raises it."""
+
+    def __init__(self, status_code: int = 503, *, retry_after=None) -> None:
+        super().__init__("no available account")
+        self.status_code = status_code
+        self.response = httpx.Response(
+            status_code,
+            request=httpx.Request("POST", "https://model.test/v1"),
+            headers={} if retry_after is None else {"retry-after": str(retry_after)},
+        )
+
+
+def test_retry_plan_gives_a_refusal_one_long_wait():
+    """The short transport backoff cannot span a capacity cooldown."""
+    policy = RetryPolicy(
+        attempts=3, base_delay_seconds=0.5, jitter_ratio=0.0,
+        refused_delay_seconds=20.0,
+    )
+
+    kind, delay = retry_plan(policy, _Refusal(), 1)
+
+    assert kind == KIND_TRANSPORT
+    assert delay == 20.0
+
+
+def test_retry_plan_stops_after_the_first_refusal_retry():
+    """A second refusal says the same thing; another wait only spends the turn."""
+    policy = RetryPolicy(attempts=3, refused_delay_seconds=20.0)
+
+    assert retry_plan(policy, _Refusal(), 2) is None
+
+
+def test_retry_plan_honours_a_refusal_retry_after_above_the_floor():
+    policy = RetryPolicy(
+        attempts=3, refused_delay_seconds=5.0, max_retry_after_seconds=30.0,
+    )
+
+    assert retry_plan(policy, _Refusal(retry_after=25), 1)[1] == 25.0
+
+
+def test_retry_plan_caps_a_refusal_retry_after():
+    policy = RetryPolicy(
+        attempts=3, refused_delay_seconds=5.0, max_retry_after_seconds=30.0,
+    )
+
+    assert retry_plan(policy, _Refusal(retry_after=600), 1)[1] == 30.0
+
+
+def test_retry_plan_keeps_the_floor_when_the_hint_is_shorter():
+    policy = RetryPolicy(
+        attempts=3, refused_delay_seconds=20.0, max_retry_after_seconds=30.0,
+    )
+
+    assert retry_plan(policy, _Refusal(retry_after=3), 1)[1] == 20.0
+
+
+def test_a_refusal_setting_of_zero_retries_immediately():
+    """Ops can disable the long wait; tests use it to stay fast.
+
+    ``0`` means "no long wait", not "use the ordinary ladder": the refusal rule
+    runs before the generic classification, so the floor *is* the whole delay.
+    """
+    policy = RetryPolicy(
+        attempts=3, base_delay_seconds=0.5, jitter_ratio=0.0,
+        refused_delay_seconds=0.0,
+    )
+
+    assert retry_plan(policy, _Refusal(), 1)[1] == 0.0
+
+
+def test_retry_plan_checks_the_budget_before_the_refusal_rule():
+    policy = RetryPolicy(attempts=1, refused_delay_seconds=20.0)
+
+    assert retry_plan(policy, _Refusal(), 1) is None
+
+
+def test_call_with_retry_resends_a_refusal_once():
+    kinds = []
+    remaining = {"n": 1}
+
+    def call(kind):
+        kinds.append(kind)
+        if remaining["n"]:
+            remaining["n"] -= 1
+            raise _Refusal()
+        return "recovered"
+
+    waits: list[float] = []
+    result = call_with_retry(
+        call,
+        RetryPolicy(attempts=3, base_delay_seconds=0.0, jitter_ratio=0.0,
+                    refused_delay_seconds=20.0),
+        sleep=waits.append,
+    )
+
+    assert result == "recovered"
+    assert kinds == [KIND_TRANSPORT, KIND_TRANSPORT]
+    assert waits == [20.0]
+
+
+def test_call_with_retry_stops_after_a_second_refusal():
+    attempts = {"n": 0}
+    waits: list[float] = []
+
+    def call(kind):
+        attempts["n"] += 1
+        raise _Refusal()
+
+    with pytest.raises(_Refusal):
+        call_with_retry(
+            call,
+            RetryPolicy(attempts=4, base_delay_seconds=0.0, jitter_ratio=0.0,
+                        refused_delay_seconds=20.0),
+            sleep=waits.append,
+        )
+
+    assert attempts["n"] == 2
+    assert waits == [20.0]
+
+
+def test_unusable_model_output_carries_its_own_code():
+    assert UnusableModelOutput("empty").code == "unusable_model_output"
+    assert UnusableModelOutput("short", code="speech_text_too_short").code == (
+        "speech_text_too_short"
+    )

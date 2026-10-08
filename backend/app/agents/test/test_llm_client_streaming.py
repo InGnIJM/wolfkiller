@@ -198,6 +198,36 @@ async def test_ainvoke_json_streaming_without_action_tools_support():
 
 
 @pytest.mark.asyncio
+async def test_stream_and_accumulate_without_a_callback_keeps_every_chunk():
+    """No callback: the loop still accumulates chunk by chunk."""
+    client = LLMClient(config=_test_config())
+
+    class TwoChunkModel:
+        async def astream(self, messages):
+            yield AIMessageChunk(content="上半句，")
+            yield AIMessageChunk(content="下半句。")
+
+    result = await client._stream_and_accumulate(TwoChunkModel(), [])
+
+    assert result.content == "上半句，下半句。"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # "text" appears only inside another key ("context"), so the key
+        # pattern does not match and the JSON must not be read as speech.
+        ('{"context": "火", "seat": 3}', ""),
+        # An escape the extractor does not know about keeps the literal char.
+        ('{"text": "a\\qb"}', "aqb"),
+        ("plain words", "plain words"),
+    ],
+)
+def test_extract_partial_speech_edge_cases(raw, expected):
+    assert extract_partial_speech(raw) == expected
+
+
+@pytest.mark.asyncio
 async def test_stream_and_accumulate_with_empty_or_whitespace_chunks():
     client = LLMClient(config=_test_config())
 
@@ -207,6 +237,9 @@ async def test_stream_and_accumulate_with_empty_or_whitespace_chunks():
             yield AIMessageChunk(content="")
             # chunk with unextractable json
             yield AIMessageChunk(content='{"reasoning": "abc"}')
+            # a later chunk carries the text: the first two must stay silent,
+            # and the callback fires exactly once with the extracted partial
+            yield AIMessageChunk(content='{"text": "后来者"}')
 
     emitted = []
 
@@ -216,5 +249,5 @@ async def test_stream_and_accumulate_with_empty_or_whitespace_chunks():
     await client._stream_and_accumulate(
         EmptyChunkModel(), [], on_chunk=on_chunk,
     )
-    assert emitted == []
+    assert emitted == ["后来者"]
 

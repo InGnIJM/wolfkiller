@@ -6,10 +6,10 @@ import hashlib
 import inspect
 import json
 import time
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
+from app.agents.providers.errors import classify_provider_error
 from app.persistence.repository import CommitConflict, GameRepository
 
 
@@ -262,6 +262,10 @@ class ModelInvocationService:
 
     @staticmethod
     def _failure_code(error: BaseException) -> str:
-        if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
-            return "provider_timeout"
-        return "model_invocation_error"
+        """One shared vocabulary for the durable ledger too.
+
+        It used to answer ``model_invocation_error`` for everything except a
+        builtin ``TimeoutError``, so the provider's own ``APITimeoutError`` and
+        the HTTP 503 that emptied the account pool both landed in the catch-all.
+        """
+        return classify_provider_error(error)

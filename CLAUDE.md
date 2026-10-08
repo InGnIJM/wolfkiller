@@ -86,7 +86,9 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 
 ### 角色 LLM 交互（白天路径）
 
-- `roles/base.py` 的 `BaseRole` 处理发言（tool calling 两层防线 + ≥15 字校验 + 兜底）与投票（strict tool → JSON 降级 → 安全 fallback）
+- `roles/base.py` 的 `BaseRole` 处理发言与投票，两者都走 **`agents/retry.py` 的分类重试梯子**、全部失败才兜底。发言（4 次，`_SPEECH_RETRY_POLICY`）：transport 故障原样重发、不可用答复（没调工具 / 空 / <15 字 / 用错函数）带 repair 提示重问、超时类失败不等退避；只有预算耗尽才给模板发言。投票（3 次）：strict tool → JSON 降级 → JSON 强格式末次重试，全部失败才显式技术弃票。**`_action_timeout_seconds()` 以第一次尝试的预算为地板**，后续尝试只能更宽不能更窄（末次曾是 30s < 首次 90s，慢到需要重试的 provider 恰恰最容易被它砍掉）。旧实现只给发言两次、第二次还是无条件「加强格式」提示，且空/过短/用错函数**一次都不重试**直接落模板 —— 真局里出现过 275 条发言 268 条是模板。**发言落兜底模板时必须带 `failure_code`**（`provider_unavailable` / `provider_timeout` / `request_timeout`+`timeout_type` / `speech_*`）：这一格从前是空的，「上游没号了」与「模型不肯答」事后完全无法区分。
+- **故障码只有一份词表**：`agents/providers/errors.py: classify_provider_error()` 是白天投票（`roles/base._provider_failure_code`）、夜间动作（`game_service._model_failure_code`）与耐久账本（`ModelInvocationService._failure_code`）共用的唯一分类器 —— 从前三处各写一份，同一个 HTTP 503 在白天叫 `provider_server_error`、在夜间与账本里叫 `model_invocation_error`。判定顺序是**超时类名 → 状态码 → SDK 类**：状态码是事实（网关用哪个类回 429/503 不重要，429 就是限流、503 就是容量拒绝 `provider_unavailable`）。**503 走单独的拒绝规则**（`retry_plan` 里 `is_refused_error()`）：给一次长等待（`refused_delay_seconds`，默认 20s；有 `Retry-After` 取大者并封顶）后重发一次，**第二次拒绝即终局**，因为它是分钟级的容量决定，半秒级退避等不到恢复；429 不在其列（带提示且重试确实有效）。
+- **provider 不认 action tool 只学一次**：`LLMClient.prefers_json_actions`（一局一座位）在工具通道被拒（400/422）或被无视（没吐原生 tool call）时置位，之后的投票与夜间动作直接从 JSON 通道起步。glm-5.3-flash 曾在一局里为此白花 24/30 张票。
 - `agents/prompt_builder.py` / `agents/state_filter.py` 是**委托外壳**：动作提示委托 `PromptRenderer`，角色视图委托 `ContextProjector.project_view()`；两者源码不含任何内置角色名（有测试门禁）。关警长时提示词省略警长词；开警长时仅注入 `SHERIFF_GAME_RULES`，并在权威状态里给出警上/警下名单（`office.candidates` 与 `off_badge_seats`：开选时存活且从未上警，排除开选前死亡）与固定事实约束，竞选期另给出竞选发言顺序与已发言/尚未发言名单，防止模型把警下玩家说成警上。只允许提示里写明的规则，禁止模型用其他版本补流程。
 - `agents/output_parser.py` 解析 LLM 返回的 JSON 与 tool call；`parse_tool_call()` 优先原生 function calling，失败回退正则匹配文本模式
 

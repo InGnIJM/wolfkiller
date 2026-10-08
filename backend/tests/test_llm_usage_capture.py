@@ -130,11 +130,15 @@ class _ScriptedClient(LLMClient):
     """LLMClient with scripted capability flags; models are injected per test."""
 
     def __init__(self, *, tools: bool, strict: bool):
-        self._config = LLMClientConfig(
+        # Initialise the base class: skipping it left every instance attribute
+        # the real client sets (the remembered transport preference, the model
+        # cache) undefined, so the double silently diverged from the thing it
+        # stands in for.
+        super().__init__(config=LLMClientConfig(
             base_url="https://provider.example", api_key="key",
             model_id="scripted-model", temperature=0.1, max_tokens=64,
             strict_base_url="https://provider.example",
-        )
+        ))
         self.provider_profile = SimpleNamespace(
             profile_id="scripted",
             capabilities=SimpleNamespace(strict_tools=strict, tools=tools),
@@ -202,6 +206,43 @@ class TestInvokeActionCapture:
         assert result.transport == "json_fallback"
         assert result.usage == LLMUsage(30, 8, 38)
         assert result.llm_attempts == 2
+
+    def test_a_remembered_refusal_skips_the_tool_transport(self):
+        """Once the provider has ignored the tool, later actions go to JSON.
+
+        The flag is set by whichever path discovers it first -- the ballot
+        ladder or this one -- because the discovery is a property of the
+        provider, not of the request.
+        """
+        client = _ScriptedClient(tools=True, strict=True)
+        json_model = _ScriptedModel([
+            _json_response('{"action_type": "pass"}'),
+        ])
+        client.get_action_model = lambda: json_model
+        client.get_model_with_action_tool = lambda contract: pytest.fail(
+            "the tool transport must not be tried again"
+        )
+        client.note_action_tools_unsupported()
+
+        result = client.invoke_action([{"role": "user"}], _contract())
+
+        assert result.llm_attempts == 1
+        assert result.transport == "json_fallback"
+
+    def test_a_tool_failure_is_remembered(self):
+        """Discovering it here must save the ballot ladder the same call."""
+        client = _ScriptedClient(tools=True, strict=True)
+        client.get_model_with_action_tool = lambda contract: _ScriptedModel(
+            [_provider_error(400)],
+        )
+        client.get_action_model = lambda: _ScriptedModel([
+            _json_response('{"action_type": "pass"}'),
+        ])
+        assert client.prefers_json_actions is False
+
+        client.invoke_action([{"role": "user"}], _contract())
+
+        assert client.prefers_json_actions is True
 
     def test_without_tools_uses_single_json_attempt(self):
         client = _ScriptedClient(tools=False, strict=False)

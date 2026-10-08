@@ -2,7 +2,7 @@
 
 本文说明 WolfKiller 的 benchmark 工具链：如何采集数据、如何跑批量对局评测，以及各指标的定义。
 
-最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
+最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。**最近两次运行的复盘与现行指标缺陷清单见 [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md)**：在那一批修完之前，本页「指标定义」一节的决策质量（阵营/神职分类走角色名字符串）、`requests.failure_rate`（流水线兜底不计失败）、`attempts.token_usage.completeness_rate`（发言/投票/夜间流水线不回传 usage）与 `retry_rate`（恒为 0）四项都不要当权威口径。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
 
 ## 两层基准
 
@@ -18,7 +18,9 @@
 新运行时在一个事务中把检查点、领域/公开事件、模型请求消费状态和派生任务写入 `data/wolfkiller.sqlite3`。以下兼容文件仍会写入 `data/games/<game_id>/`：
 
 - `game.log`：阶段切换、发言、投票、死亡、胜负，以及 `stage_telemetry`（`scope=phase` 相位耗时；`scope=hook` 调度器 slow_rule）
-- `llm_calls.log`：每次 LLM 调用一条记录，字段包括 `call_kind`（action / speech / speech_plain / night）、`contract_id`、`transport`、`attempt`、`model_id`、`prompt_chars`、`elapsed_ms`、`prompt_tokens` / `completion_tokens` / `total_tokens`、`retried`、`parse_result`、`failure_code`。只记录元数据，不含 prompt 内容与模型输出。
+- `llm_calls.log`：每次 LLM 调用一条记录，字段包括 `call_kind`（action / speech / speech_plain / night）、`contract_id`、`transport`、`attempt`、`model_id`、`prompt_chars`、`elapsed_ms`、`prompt_tokens` / `completion_tokens` / `total_tokens`、`retried`、`parse_result`、`failure_code`（+ 超时类的 `timeout_type`）。只记录元数据，不含 prompt 内容与模型输出。
+  - **发言落兜底模板时同样带 `failure_code`**（`provider_unavailable` / `provider_timeout` / `request_timeout`+`timeout_type` / `speech_tool_not_called` / `speech_empty_text` / `speech_text_too_short` / `speech_wrong_function`）。这一格曾经是空的：真局里一局 275 条发言有 270 条是模板，而日志只写了 `fallback`，导致「上游没号了」和「模型不肯答」在事后完全无法区分。
+  - `failure_code` 是**全路径统一词表**（`agents/providers/errors.py: classify_provider_error`）：`provider_timeout` / `provider_rate_limit` / **`provider_unavailable`（HTTP 503：容量、额度、上游账号池为空）** / `provider_server_error` / `provider_connection_error` / `provider_bad_request` / `model_invocation_error`。同一个 503 从前在白天投票路径叫 `provider_server_error`、在夜间路径与耐久账本里叫 `model_invocation_error`，一次故障读成两件不相干的事。
 - `summary.json`：对局结束（`game_over`）时由 `GameService` 调用 `build_and_write_summary()` 自动生成，含角色真值表、逐轮行动/发言/投票/死亡、LLM 聚合、引擎相位耗时汇总，以及对局级模型座位快照。仓库内没有补生成 CLI。
 
 token 统计的兼容性：优先读取 LangChain 的 `usage_metadata`，回退 OpenAI 风格的 `response_metadata["token_usage"]`；提供商不返回用量时对应字段缺省。JSON fallback 重试烧掉的 token 会计入该次调用的总量（`llm_attempts` 记录实际调用次数）。

@@ -508,8 +508,40 @@ async def test_night_retry_gives_up_after_the_bounded_attempts(
     assert len(repository.list_model_attempts(game_id)) == 1
 
 
-def test_night_turn_does_not_retry_a_malformed_answer(monkeypatch):
-    """A transport that worked but answered garbage is not a transient fault."""
+def test_night_turn_repairs_a_malformed_answer_before_giving_up(monkeypatch):
+    """A transport that worked but answered garbage is worth a repair attempt.
+
+    This used to fail the seat outright on the first unusable payload: the one
+    blind resend was reserved for transport faults, and nothing at all was
+    reserved for "the model answered something we cannot read". That is how a
+    provider returning empty or truncated JSON silently forfeited night actions
+    instead of simply being asked again.
+    """
+    from app.services.game_service import _night_turn
+
+    _no_wait(monkeypatch)
+    calls = {"n": 0}
+    seen: list[list] = []
+
+    class Client:
+        def invoke_json(self, messages, *_args, **_kwargs):
+            calls["n"] += 1
+            seen.append(messages)
+            if calls["n"] == 1:
+                return SimpleNamespace(payload=[], usage=None)
+            return SimpleNamespace(payload={"action_type": "kill"}, usage=None)
+
+    turn = _night_turn(Client(), [], tool_name="werewolf_kill", schema={})
+
+    assert turn.payload == {"action_type": "kill"}
+    assert calls["n"] == 2
+    # The second ask carries an explicit repair instruction naming the tool.
+    assert "werewolf_kill" in seen[1][-1]["content"]
+    assert "上一次回复的内容无法解析" in seen[1][-1]["content"]
+
+
+def test_night_turn_reraises_when_every_repair_attempt_is_unusable(monkeypatch):
+    """The repair budget stays bounded: an always-garbage provider gives up."""
     from app.services.game_service import _night_turn
 
     _no_wait(monkeypatch)
@@ -523,7 +555,7 @@ def test_night_turn_does_not_retry_a_malformed_answer(monkeypatch):
     with pytest.raises(ValueError, match="not a JSON object"):
         _night_turn(Client(), [], tool_name="werewolf_kill", schema={})
 
-    assert calls["n"] == 1
+    assert calls["n"] == 2
 
 
 def test_night_turn_reports_the_attempts_and_usage_it_used(monkeypatch):

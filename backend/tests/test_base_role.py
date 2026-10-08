@@ -48,7 +48,18 @@ class ClientStub:
             if supports_action_tools is None else supports_action_tools
         )
         self.action_timeout_seconds = action_timeout_seconds
+        # A 503's real floor is tens of seconds; tests must not wait.
+        self.action_refused_backoff_seconds = 0.0
+        self.action_retry_backoff_seconds = 0.0
         self.action_retry_timeout_seconds = action_retry_timeout_seconds
+        self._prefers_json_actions = False
+
+    @property
+    def prefers_json_actions(self):
+        return self._prefers_json_actions
+
+    def note_action_tools_unsupported(self):
+        self._prefers_json_actions = True
 
     def get_model(self):
         return self.plain_model
@@ -151,7 +162,7 @@ class TestBaseRoleSpeech:
         assert len(client.tools_model.messages) == 1
 
     @pytest.mark.asyncio
-    async def test_speak_retries_once_when_no_tool_call(self):
+    async def test_speak_retries_a_missing_tool_call_with_a_repair_prompt(self):
         client = ClientStub(tools=[
             AIMessage(content="普通文本，没有调用函数。"),
             tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。"),
@@ -163,7 +174,47 @@ class TestBaseRoleSpeech:
 
         assert text.startswith("我认为三号玩家")
         assert len(client.tools_model.messages) == 2
-        assert "你刚才没有调用发言函数" in client.tools_model.messages[1][1].content
+        # A repair reminder, not a verbatim resend: the connection was fine.
+        assert "请立即调用正确的发言函数" in client.tools_model.messages[1][1].content
+
+    @pytest.mark.asyncio
+    async def test_speak_resends_the_same_request_after_a_transport_fault(self):
+        """A dropped connection needs the same request again, not a format nudge."""
+        client = ClientStub(tools=[
+            APIConnectionError(request=httpx.Request("POST", "https://model.test")),
+            tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。"),
+        ])
+        role = make_role(client=client)
+        client.action_retry_backoff_seconds = 0.0
+        state = make_state()
+
+        text = await role.speak(state, ConversationLog(), "day_speech")
+
+        assert text.startswith("我认为三号玩家")
+        assert len(client.tools_model.messages) == 2
+        # The prompt is unchanged: the request shape was never the problem.
+        assert (
+            client.tools_model.messages[1][1].content
+            == client.tools_model.messages[0][1].content
+        )
+
+    @pytest.mark.asyncio
+    async def test_speak_falls_back_only_after_the_whole_ladder_fails(self):
+        """Every attempt is spent before the template is used."""
+        client = ClientStub(tools=[
+            AIMessage(content="没有工具调用。"),
+            AIMessage(content="没有工具调用。"),
+            AIMessage(content="没有工具调用。"),
+            AIMessage(content="没有工具调用。"),
+        ])
+        role = make_role(client=client)
+        client.action_retry_backoff_seconds = 0.0
+        state = make_state()
+
+        text = await role.speak(state, ConversationLog(), "day_speech")
+
+        assert text is not None and len(text) >= 15
+        assert len(client.tools_model.messages) == 4
 
     @pytest.mark.asyncio
     async def test_speak_falls_back_after_both_attempts_fail(self):
@@ -755,6 +806,63 @@ class TestBaseRoleAccept:
         assert "exactly one JSON" in final_messages[-1].content
 
     @pytest.mark.asyncio
+    async def test_action_tool_refusal_is_remembered_for_the_next_action(self):
+        """A provider that ignores the action tool is discovered once, not per call.
+
+        glm-5.3-flash spent 24 of one game's 30 ballots on a native tool call it
+        simply does not make: the first attempt came back with content instead of
+        a tool call, and every later action paid for the same discovery again.
+        """
+        from app.agents.output_parser import StrictCapabilityError
+
+        client = ClientStub(supports_strict_actions=False, supports_action_tools=True)
+        role = make_role(client=client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        # First action: the tool transport answers without a native tool call.
+        client.strict_model = ModelStub([
+            StrictCapabilityError("action tool transport returned no native tool call"),
+        ])
+        client.plain_model = ModelStub([
+            AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"可疑"}'),
+        ])
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert client.prefers_json_actions is True
+
+        # Second action: the tool model must not be touched at all.
+        client.strict_model = ModelStub([])
+        client.plain_model = ModelStub([
+            AIMessage(content='{"action_type":"vote","target_seat":1,"reasoning":"仍可疑"}'),
+        ])
+        again = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert again.command.target_seat == 1
+        assert client.strict_model.messages == []
+
+    @pytest.mark.asyncio
+    async def test_a_provider_without_action_tools_starts_on_json(self):
+        """No learning needed when the capability is declared off up front."""
+        client = ClientStub(supports_action_tools=False)
+        client.plain_model = ModelStub([
+            AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"可疑"}'),
+        ])
+        role = make_role(client=client)
+        state = make_state(phase=GamePhase.VOTE_CASTING)
+
+        accepted = await role.request_action(
+            state, ConversationLog(), self._vote_request(state),
+        )
+
+        assert accepted.command.target_seat == 2
+        assert client.strict_model.messages == []
+
+    @pytest.mark.asyncio
     async def test_strict_timeout_retries_json_without_writing_state(self):
         class SlowStrictModel:
             def __init__(self):
@@ -1335,8 +1443,8 @@ class TestPromptCaptureWiring:
         await role.speak(make_state(), ConversationLog(), "day_speech", capture=capture)
 
         assert len(capture.calls) == 2
-        assert "你刚才没有调用发言函数" not in capture.user_text(0)
-        assert "你刚才没有调用发言函数" in capture.user_text(1)
+        assert "请立即调用正确的发言函数" not in capture.user_text(0)
+        assert "请立即调用正确的发言函数" in capture.user_text(1)
 
     @pytest.mark.asyncio
     async def test_speak_capture_covers_non_tool_contexts(self):
@@ -1504,3 +1612,79 @@ class TestPromptCaptureWiring:
             on_chunk=chunk_sink,
         )
         assert res2.arguments == {"text": "模型流式工具输出"}
+
+
+class TestRetryBudgetPolicy:
+    """The ladder's budgets and backoff are the seat's fault tolerance."""
+
+    def test_later_attempts_never_get_a_shorter_deadline(self):
+        """A slow provider is the one most likely to be cut off, so do not cut it.
+
+        The final attempt used to be the *smallest* budget (30s against the first
+        attempt's 90s), which turned "ask again" into "give up sooner".
+        """
+        client = ClientStub(
+            action_timeout_seconds=90.0,
+            action_retry_timeout_seconds=120.0,
+        )
+        client.action_final_retry_timeout_seconds = 30.0
+        role = make_role(client=client)
+
+        assert role._action_timeout_seconds(retried=False) == 90.0
+        assert role._action_timeout_seconds(retried=True) == 120.0
+        assert role._action_timeout_seconds(retried=True, final=True) == 90.0
+
+    def test_a_generous_final_budget_is_still_honoured(self):
+        client = ClientStub(action_timeout_seconds=10.0)
+        client.action_final_retry_timeout_seconds = 45.0
+        role = make_role(client=client)
+
+        assert role._action_timeout_seconds(retried=True, final=True) == 45.0
+
+    @pytest.mark.parametrize("configured", [None, "90", 0.0, -1.0])
+    def test_an_unusable_timeout_setting_falls_back_to_the_documented_default(
+        self, configured,
+    ):
+        client = ClientStub(action_timeout_seconds=90.0)
+        client.action_final_retry_timeout_seconds = configured
+        role = make_role(client=client)
+
+        # The floor still applies, so the fallback can only widen the budget.
+        assert role._action_timeout_seconds(retried=True, final=True) == 90.0
+
+    def test_a_missing_first_attempt_timeout_falls_back_to_ninety_seconds(self):
+        client = ClientStub()
+        client.action_timeout_seconds = None
+        role = make_role(client=client)
+
+        assert role._action_timeout_seconds(retried=False) == 90.0
+
+    def test_backoff_policy_keeps_the_ladder_classification(self):
+        """Zeroing the delay for tests must not disable the retry classes."""
+        from app.agents.retry import RetryPolicy, UnusableModelOutput, retry_plan
+        from app.roles.base import _SPEECH_RETRY_POLICY
+
+        client = ClientStub()
+        client.action_retry_backoff_seconds = 0.0
+        role = make_role(client=client)
+
+        policy = role._backoff_policy(_SPEECH_RETRY_POLICY)
+
+        assert policy.base_delay_seconds == 0.0
+        assert policy.attempts == _SPEECH_RETRY_POLICY.attempts
+        assert policy.retry_unknown_errors is True
+        assert retry_plan(policy, UnusableModelOutput("empty"), 1)[0] == "repair"
+
+    @pytest.mark.parametrize("configured", [None, "0.5", -1.0])
+    def test_an_unusable_backoff_setting_falls_back_to_the_policy_default(
+        self, configured,
+    ):
+        from app.agents.retry import RetryPolicy
+
+        client = ClientStub()
+        client.action_retry_backoff_seconds = configured
+        role = make_role(client=client)
+
+        policy = role._backoff_policy(RetryPolicy(base_delay_seconds=0.5))
+
+        assert policy.base_delay_seconds == 0.5

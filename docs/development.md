@@ -19,7 +19,7 @@
 | `LLM_ACTION_MAX_TOKENS` | `2048` | 行动请求 token 上限 |
 | `LLM_ACTION_TIMEOUT_SECONDS` | `90` | 行动请求主超时 |
 | `LLM_ACTION_RETRY_TIMEOUT_SECONDS` | `120` | 行动请求重试超时 |
-| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `60` | 投票 JSON 强格式末次重试超时（观测成功调用 p95=60s，末次是最后机会，不能给最小预算） |
+| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `60` | 投票 JSON 强格式末次重试超时。**只是下限建议值**：`_action_timeout_seconds()` 以第一次尝试的 `LLM_ACTION_TIMEOUT_SECONDS` 为地板，后续尝试取值 ≥ 地板（配置比地板小也不会把末次砍短——慢到需要重试的 provider 正是最容易被更小的本地 deadline 砍掉的那个） |
 | `LLM_PROVIDER_MAX_RETRIES` | `4` | SDK 对瞬时 429/5xx 的重试次数 |
 | `VOTE_CONCURRENCY` | `5` | 投票并发上限 |
 | `VOTE_PHASE_TIMEOUT_SECONDS` | `540` | 投票阶段总超时（须 ≥ 两批 5 并发的完整重试梯子，由 `app/test/test_config.py` 的不变式测试把关） |

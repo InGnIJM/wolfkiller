@@ -77,7 +77,8 @@ _FIRST_NIGHT_NOTICE = (
     "注意：这是第 1 晚，白天尚未开始，所有玩家都没有任何发言记录。"
     "不要引用或暗示任何玩家此前的行为特征（如\"活跃\"\"话多\"\"像有身份\"），"
     "只能依据座位位置等客观信息选择目标。"
-    "首夜没有信息也没有倾向，直接选择一个目标即可；没有思路时随机选一个。\n"
+    "首夜落刀既可选择外置位好人压缩轮次，也可根据战术意图评估是否自刀骗药做高身份；"
+    "没有特殊战术时，可依据客观信息直接选择目标或参考 RANDOM_HINT。\n"
 )
 
 _TARGET_RULE = TARGET_SELECTION_RULE
@@ -304,10 +305,13 @@ class NightDirector:
                 "Your role can never be the wolf team's own kill target: you must "
                 "not vote for yourself. Cutting a teammate is still a valid "
                 "strategy. "
+                "【注意】你的角色无法成为狼刀目标，不可投自己；但刀其他狼队友依然是合法战术。"
             )
         return (
             "A deliberate target among your teammates, including yourself, is "
             "a valid strategy unless the action contract forbids it. "
+            "【自刀/刀队友战术】选择己方队友或自己作为刀口属于合法的进阶博弈战术（如首夜自刀骗取女巫解药打造高身份银水牌、制造内讧假象，或狼王借刀开枪等）。"
+            "自刀属于高风险高回报策略，需全队权衡女巫开药可能性并达成共识。"
         )
 
     def _night_immune_clause(self, state: GameState) -> str:
@@ -401,8 +405,10 @@ class NightDirector:
             "①深水位：表现中立甚至轻踩己方队友来做高自身身份，为后期翻盘蓄力；"
             "②倒钩位：白天初期站好人视角制造内部【对立】假象，关键时刻反水带节奏；"
             "③划水位：发言低调不主动带节奏，减少自身暴露；"
-            "④明冲锋位：公开为队友背书（仅在局势明确有利、己方占优时才用，不要首夜盲目冲锋）。"
+            "④明冲锋位：公开为队友背书（仅在局势明确有利、己方占优时才用，不要首夜盲目冲锋）；"
+            "⑤自刀银水位：首夜主动自刀骗取女巫解药，次日以银水高身份带队站边或反打真预言家（注意：需承担女巫不救直接阵亡的减员风险，须全队达成一致方可采用）。"
             "每位队员在计划里应有明确分工，绝不要全员集体压注同一路线。计划会同步给全体队友。\n"
+            "- 今晚落刀目标既可选择好人，也可由队员提议自刀战术；全队应权衡女巫开药概率与减员风险，达成一致后再执行。\n"
             "- 当所有狼队友都认可同一个目标后，讨论会提前结束。\n"
             + _night_notice(state)
             + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤400字)", '

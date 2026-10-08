@@ -24,9 +24,18 @@ from app.models.game import (
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import (
-    LLMClient, LLMClientConfig, derive_strict_base_url, env_default_client_config,
+    LLMClient, LLMClientConfig, classify_provider_error, derive_strict_base_url,
+    env_default_client_config,
 )
-from app.agents.retry import RetryPolicy, call_with_retry, delay_for
+from app.agents.retry import (
+    KIND_REPAIR,
+    KIND_TRANSPORT,
+    RetryPolicy,
+    UnusableModelOutput,
+    call_with_retry,
+    delay_for,
+    retry_plan,
+)
 from app.agents.providers.registry import ProviderRegistry
 from app.stores.app_settings_store import get_app_settings_store
 from app.stores.model_config_store import get_model_config_store
@@ -172,20 +181,22 @@ def _pending_window_rows(engine: GameEngine, event_id: str) -> list[dict[str, ob
     return rows
 
 
-def _model_failure_code(error: Exception, status_code: int | None) -> str:
-    cause: BaseException | None = error
-    seen: set[int] = set()
-    while cause is not None and id(cause) not in seen:
-        seen.add(id(cause))
-        if "timeout" in type(cause).__name__.lower():
-            return "provider_timeout"
-        cause = cause.__cause__ or cause.__context__
-    if status_code == 400:
-        return "provider_bad_request"
-    return "model_invocation_error"
+def _model_failure_code(error: Exception) -> str:
+    """Classify a night/action provider error through the one shared vocabulary.
 
+    It used to answer ``model_invocation_error`` for anything that was not a
+    timeout or a 400, so the HTTP 503 that emptied the upstream account pool was
+    recorded under a different name here than on the daytime ballot path.
 
-_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+    An error that carries its own stable token wins: the parse layer knows
+    *which* field was missing or whether a tool call ever arrived, and that
+    detail is the difference between a gateway that answered nothing and a
+    model that answered the wrong shape.
+    """
+    code = getattr(error, "code", None)
+    if type(code) is str and code:
+        return code
+    return classify_provider_error(error)
 
 
 def _pipeline_command(payload: object, contract) -> PipelineActionCommand:
@@ -200,20 +211,6 @@ def _pipeline_command(payload: object, contract) -> PipelineActionCommand:
     if getattr(contract, "multi_target_actions", None):
         payload = coerce_payload_to_schema(dict(payload), contract.json_schema())
     return PipelineActionCommand.model_validate(payload)
-
-
-def _is_retryable_model_error(error: Exception) -> bool:
-    """Transient provider failures get one immediate retry before fallback."""
-    diagnostics = _exception_diagnostics(error)
-    status_code = diagnostics.get("status_code")
-    if isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES:
-        return True
-    failure_code = _model_failure_code(
-        error, status_code if isinstance(status_code, int) else None,
-    )
-    if failure_code == "provider_timeout":
-        return True
-    return "connection" in type(error).__name__.lower()
 
 
 def _exception_diagnostics(error: BaseException) -> dict[str, object]:
@@ -235,7 +232,15 @@ def _exception_diagnostics(error: BaseException) -> dict[str, object]:
     if isinstance(structured_message, str) and structured_message:
         message = structured_message[:1000]
     else:
-        message = f"{type(error).__name__}: model invocation failed"
+        # Fall back to the exception's own text before the generic label. The
+        # parse layer says exactly what was wrong ("structured response omitted
+        # required fields: target_seat"), and this used to replace it with
+        # "model invocation failed" -- so a game log could not distinguish an
+        # empty gateway reply from a schema miss, which is the one question a
+        # failure log is read to answer.
+        message = (str(error) or "").strip()[:1000] or (
+            f"{type(error).__name__}: model invocation failed"
+        )
 
     details: dict[str, object] = {
         "exception_type": type(error).__name__,
@@ -257,15 +262,12 @@ def _exception_diagnostics(error: BaseException) -> dict[str, object]:
 
 def _model_error_diagnostics(error: Exception, llm_client) -> dict[str, object]:
     primary = _exception_diagnostics(error)
-    status_code = primary.get("status_code")
     profile = getattr(getattr(llm_client, "provider_profile", None), "profile_id", None)
     model_id = getattr(llm_client, "model_name", None)
     details: dict[str, object] = {
         "provider_profile": profile if isinstance(profile, str) else "unknown",
         "model_id": model_id if isinstance(model_id, str) else "unknown",
-        "failure_code": _model_failure_code(
-            error, status_code if isinstance(status_code, int) else None,
-        ),
+        "failure_code": _model_failure_code(error),
         **primary,
     }
     cause_chain: list[dict[str, object]] = []
@@ -316,22 +318,23 @@ def _log_night_llm_telemetry(
 
 #: Night turns used to be asked exactly once: the pipeline is the only model
 #: path with no application-level retry, so a single connection reset forfeited
-#: a wolf kill or a whole discussion turn. One retry on top of the SDK's own
-#: attempts bounds a night call at 2 x the night transport timeout plus backoff.
-_NIGHT_RETRY_POLICY = RetryPolicy(attempts=2)
-
-
-#: One retry for a transient pipeline-action failure, with the same backoff the
-#: vote ladder uses. This provider runs on a worker thread, so a blocking sleep
-#: is safe here.
-_PIPELINE_RETRY_POLICY = RetryPolicy(
-    attempts=2, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
+#: a wolf kill or a whole discussion turn. The ladder now pairs backoff with a
+#: repair attempt, so an empty or malformed answer no longer costs the turn
+#: outright. Three attempts on top of the SDK's own retries bounds a night call
+#: at 3 x the night transport timeout plus backoff.
+_NIGHT_RETRY_POLICY = RetryPolicy(
+    attempts=3, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
+    retry_unknown_errors=True,
 )
 
 
-def _pipeline_retry_delay(error: Exception) -> float:
-    """Backoff before the single pipeline-action retry."""
-    return delay_for(_PIPELINE_RETRY_POLICY, error, 1)
+#: Retries for a pipeline-action failure. A transient fault is resent; an
+#: unusable payload is re-asked with a repair reminder. This provider runs on a
+#: worker thread, so a blocking sleep is safe here.
+_PIPELINE_RETRY_POLICY = RetryPolicy(
+    attempts=3, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
+    retry_unknown_errors=True,
+)
 
 
 @dataclass(frozen=True)
@@ -342,6 +345,36 @@ class _NightTurn:
     usage: object | None
     elapsed_ms: int
     attempts: int
+
+
+def _with_repair_reminder(messages, suffix: str) -> list:
+    """Return ``messages`` with the repair instruction appended to the last turn.
+
+    The reminder is merged into the final message rather than added as a new one:
+    two consecutive user turns are rejected or silently reordered by some
+    gateways, and every transport here already ends on a user turn.
+
+    Message objects are copied, not mutated, and keep their type: the night flow
+    hands over plain dicts while the action pipeline hands over LangChain
+    messages, and flattening the latter into dicts would quietly drop the
+    ``additional_kwargs`` the transport carries.
+
+    Only the in-flight provider call sees this. The durable request digest is
+    computed from the original messages before the call runs, so a repaired
+    attempt never changes the request's identity, and a recovery replay simply
+    repairs again if it has to.
+    """
+    active = list(messages)
+    if not active:
+        return [{"role": "user", "content": suffix.lstrip("\n")}]
+    last = active[-1]
+    if isinstance(last, dict):
+        merged: object = {**last, "content": f"{last.get('content') or ''}{suffix}"}
+    else:
+        merged = last.model_copy(
+            update={"content": f"{getattr(last, 'content', '') or ''}{suffix}"},
+        )
+    return [*active[:-1], merged]
 
 
 def _night_turn(
@@ -355,19 +388,35 @@ def _night_turn(
     :class:`~app.services.model_invocation_service.ModelInvocationService`
     refuses to redispatch a failed request id, which would poison that night
     turn for the rest of the game.
+
+    An unusable answer is retried too, not accepted as final. A dropped
+    connection and an empty or malformed payload fail for different reasons, but
+    both used to cost the seat its whole night action: the transport fault got
+    one blind resend and the malformed payload got none at all. The repair
+    attempt re-asks the same schema with an explicit format reminder.
     """
     started = time.monotonic()
     attempts = 0
+    repair_suffix = (
+        "\n\n【系统提示】上一次回复的内容无法解析。"
+        f"请只调用 {tool_name} 函数，参数严格遵守给定 schema，不要输出任何其他文字。"
+    )
+    active_messages = messages
 
-    def call():
-        nonlocal attempts
+    def call(kind: str):
+        nonlocal attempts, active_messages
         attempts += 1
-        produced = llm_client.invoke_json(messages, tool_name=tool_name, schema=schema)
+        if kind == KIND_REPAIR:
+            active_messages = _with_repair_reminder(messages, repair_suffix)
+        produced = llm_client.invoke_json(
+            active_messages, tool_name=tool_name, schema=schema,
+        )
         value = getattr(produced, "payload", None)
         if not isinstance(value, Mapping):
-            # A malformed answer is not retryable: the transport worked and the
-            # model answered something unusable. ``retry_on`` filters it out.
-            raise ValueError("model gateway response is not a JSON object")
+            # The transport worked and the model answered something unusable:
+            # a repair attempt can still save the turn, so classify it as an
+            # output failure rather than letting it fail the seat outright.
+            raise UnusableModelOutput("model gateway response is not a JSON object")
         return produced, dict(value)
 
     produced, payload = call_with_retry(call, _NIGHT_RETRY_POLICY)
@@ -2699,30 +2748,51 @@ class GameService:
             failure: Exception | None = None
             if prompt_sink is not None:
                 # The rendered prompt already embeds OUTPUT_ACTION_COMMAND_SCHEMA,
-                # so only the tool name is worth recording. The transient retry
-                # below re-sends these same messages, so one record covers both.
+                # so only the tool name is worth recording. One record covers the
+                # whole ladder: a repair attempt only appends a reminder to the
+                # same conversation.
                 prompt_sink.record(
                     messages, tool_name=request.contract.resolved_tool_name,
                 )
             try:
                 llm_client = client_provider(request.actor_seat)
-                result = llm_client.invoke_action(messages, request.contract)
-                command = _pipeline_command(result.payload, request.contract)
             except Exception as error:
+                # A client that cannot even be built has no request to re-ask.
                 failure = error
-                if _is_retryable_model_error(error):
-                    # Transient provider blips (timeout/rate limit/connection)
-                    # get one retry so a night action is not silently forfeited
-                    # on a single flaky call. Wait first: the SDK already spent
-                    # its own retries inside the call that just failed, so
-                    # re-firing immediately would land in the same outage window.
-                    time.sleep(_pipeline_retry_delay(error))
+            else:
+                active_messages = messages
+                # ``retry_plan`` owns the budget: it reports ``None`` once the
+                # attempt count reaches the policy's limit, which is what ends
+                # this loop. ``attempt`` is the scheduler's own 0/1 index and
+                # stays the value reported in the game log, so the inner counter
+                # must not shadow it.
+                try_number = 0
+                while True:
+                    try_number += 1
                     try:
-                        result = llm_client.invoke_action(messages, request.contract)
+                        result = llm_client.invoke_action(
+                            active_messages, request.contract,
+                        )
                         command = _pipeline_command(result.payload, request.contract)
                         failure = None
-                    except Exception as retry_error:
-                        failure = retry_error
+                        break
+                    except Exception as error:
+                        failure = error
+                        plan = retry_plan(_PIPELINE_RETRY_POLICY, error, try_number)
+                        if plan is None:
+                            break
+                        # Wait first: the SDK already spent its own retries inside
+                        # the call that just failed, so re-firing immediately
+                        # would land in the very same outage window.
+                        kind, delay = plan
+                        if kind == KIND_REPAIR:
+                            active_messages = _with_repair_reminder(
+                                messages,
+                                "\n\n【系统提示】上一次回复的内容无法解析。"
+                                f"请只调用 {request.contract.resolved_tool_name} 函数，"
+                                "参数严格遵守给定 schema，不要输出任何其他文字。",
+                            )
+                        time.sleep(delay)
             if failure is not None:
                 logger.warning(
                     "LLM action command failed for seat=%s contract=%s point=%s; "

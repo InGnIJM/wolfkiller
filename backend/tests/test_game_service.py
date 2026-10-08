@@ -52,7 +52,52 @@ def test_model_failure_code_detects_nested_timeout() -> None:
     error = RuntimeError("provider request failed")
     error.__cause__ = TimeoutError("timed out")
 
-    assert _model_failure_code(error, None) == "provider_timeout"
+    assert _model_failure_code(error) == "provider_timeout"
+
+
+def test_model_failure_code_prefers_the_parse_layer_token() -> None:
+    """An unusable answer names its own failure instead of the catch-all.
+
+    The parse layer knows whether no tool call arrived, whether the arguments
+    were not an object, or which field was missing; collapsing all of those into
+    ``model_invocation_error`` is what made the audited batch impossible to
+    diagnose after the fact.
+    """
+    from app.agents.retry import UnusableModelOutput
+    from app.services.game_service import _model_failure_code
+
+    assert _model_failure_code(
+        UnusableModelOutput("no json", code="response_no_tool_call"),
+    ) == "response_no_tool_call"
+    # The class has its own generic token when a caller names nothing more.
+    assert _model_failure_code(UnusableModelOutput("no json")) == (
+        "unusable_model_output"
+    )
+    # An error carrying no token still goes through the shared classifier.
+    assert _model_failure_code(ValueError("boom")) == "model_invocation_error"
+
+
+def test_model_failure_code_names_a_capacity_refusal() -> None:
+    """The night path must use the same word for a 503 as the ballot path.
+
+    It used to answer ``model_invocation_error`` for anything that was not a
+    timeout or a 400, so the 503 that emptied the upstream account pool was
+    counted under one name at night and ``provider_server_error`` by day.
+    """
+    import httpx
+    from openai import InternalServerError
+
+    from app.services.game_service import _model_failure_code
+
+    refused = InternalServerError(
+        "no available account",
+        response=httpx.Response(
+            503, request=httpx.Request("POST", "https://model.test/v1"),
+        ),
+        body=None,
+    )
+
+    assert _model_failure_code(refused) == "provider_unavailable"
 
 
 def test_model_error_diagnostics_keeps_sanitized_nested_provider_cause() -> None:
@@ -282,11 +327,21 @@ class TestGameService:
         service._manifest = MagicMock()
         monkeypatch.setattr(GameEngine, "start", AsyncMock())
 
+        # Keep the repair ladder's backoff off the test clock, and give every
+        # unusable turn enough answers to spend its whole budget.
+        monkeypatch.setattr(
+            service_module, "_NIGHT_RETRY_POLICY",
+            service_module.RetryPolicy(
+                attempts=3, base_delay_seconds=0.0, jitter_ratio=0.0,
+            ),
+        )
+        attempts = service_module._NIGHT_RETRY_POLICY.attempts
+
         fake_llm = MagicMock()
         fake_llm.invoke_json.side_effect = [
             SimpleNamespace(payload={"speak": False}),
-            SimpleNamespace(payload=[]),
-            object(),
+            *[SimpleNamespace(payload=[]) for _ in range(attempts)],
+            *[object() for _ in range(attempts)],
         ]
         monkeypatch.setattr(
             service_module, "LLMClient",
@@ -302,6 +357,7 @@ class TestGameService:
         )) == {
             "speak": False,
         }
+        # A non-object payload is retried with a repair reminder, then rejected.
         with pytest.raises(ValueError):
             invoke([{"role": "user", "content": "x"}], "test_night", schema, 1)
         with pytest.raises(ValueError):
@@ -2248,6 +2304,88 @@ class TestCommandProvider:
         assert len(recorded_backoff) == 1
         assert recorded_backoff[0] > 0
 
+    def test_provider_repairs_an_unusable_payload_instead_of_giving_up(
+        self, recorded_backoff,
+    ):
+        """A wrong-shaped answer is re-asked with a reminder, not silently passed.
+
+        A malformed payload used to be final: the only retry was reserved for
+        transport faults, so one unreadable answer forfeited the whole night
+        action and the seat quietly did nothing.
+        """
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from app.agents.output_parser import extract_json_object
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        # 'check' needs a target_seat; this payload cannot satisfy the contract.
+        llm.invoke_action.side_effect = [
+            SimpleNamespace(payload={"action_type": "check"}),
+            SimpleNamespace(payload=extract_json_object(
+                '{"action_type":"check","target_seat":1,"reasoning":"ok"}'
+            )),
+        ]
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "check"
+        assert llm.invoke_action.call_count == 2
+        assert len(recorded_backoff) == 1
+        repaired = llm.invoke_action.call_args_list[1][0][0]
+        assert "上一次回复的内容无法解析" in repaired[-1].content
+        # The original prompt survives; the reminder is appended to it.
+        assert repaired[-1].content.startswith("prompt")
+
+    def test_provider_gives_up_after_the_whole_repair_budget(
+        self, recorded_backoff,
+    ):
+        """The ladder stays bounded: an always-unusable provider still degrades."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import app.services.game_service as module
+
+        service = GameService(WSManager(), EventBus())
+        llm = MagicMock()
+        llm.invoke_action.side_effect = lambda *a, **k: SimpleNamespace(payload={})
+        provider = self._provider_with_llm(service, llm)
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "pass"
+        assert llm.invoke_action.call_count == module._PIPELINE_RETRY_POLICY.attempts
+        assert len(recorded_backoff) == module._PIPELINE_RETRY_POLICY.attempts - 1
+
+    def test_provider_survives_a_client_that_cannot_be_built(self, recorded_backoff):
+        """A seat whose client cannot be constructed still gets a safe command.
+
+        There is no request to re-ask in that case, so the ladder is skipped
+        entirely rather than burning the budget on a factory that keeps failing.
+        """
+        from unittest.mock import MagicMock
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+
+        def broken_client(seat):
+            raise RuntimeError("cannot build client")
+
+        from app.core.night_flow import NightDirector
+
+        provider = service._command_provider(
+            snapshot, renderer, broken_client, NightDirector(snapshot, lambda m: None),
+        )
+
+        command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
+
+        assert command.action_type == "pass"
+        assert recorded_backoff == []
+
     def test_provider_retry_honours_a_rate_limit_retry_after(self, recorded_backoff):
         from types import SimpleNamespace
         from unittest.mock import MagicMock
@@ -2325,7 +2463,9 @@ class TestCommandProvider:
         assert clients[2].invoke_action.call_count == 2
         clients[1].invoke_action.assert_not_called()
 
-    def test_provider_retries_once_then_falls_back_on_persistent_timeout(self):
+    def test_provider_spends_the_whole_budget_then_falls_back(self):
+        import app.services.game_service as module
+
         class APITimeoutError(Exception):
             pass
 
@@ -2338,7 +2478,9 @@ class TestCommandProvider:
 
         assert command.action_type == "pass"
         assert command.reasoning == "系统异常，本轮未行动"
-        assert llm.invoke_action.call_count == 2
+        # One blind retry used to be the entire budget; every attempt is now spent
+        # before the night action is forfeited.
+        assert llm.invoke_action.call_count == module._PIPELINE_RETRY_POLICY.attempts
 
     def test_provider_retries_rate_limit_error_by_status_code(self):
         import httpx

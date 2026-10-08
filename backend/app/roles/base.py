@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 import logging
 import random
 import time
@@ -10,11 +11,10 @@ from app.models.actions import VoteAction, is_last_words_eligible
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import (
     LLMClient,
-    RATE_LIMIT_ERRORS,
-    SERVER_ERRORS,
     TIMEOUT_ERRORS,
     TRANSIENT_PROVIDER_ERRORS,
     _content_text,
+    classify_provider_error,
     extract_partial_speech,
 )
 from app.agents.output_parser import (
@@ -24,7 +24,13 @@ from app.agents.output_parser import (
     ToolCallResult,
     extract_tool_call_xml,
 )
-from app.agents.retry import RetryPolicy, delay_for
+from app.agents.retry import (
+    KIND_REPAIR,
+    RetryPolicy,
+    UnusableModelOutput,
+    delay_for,
+    retry_plan,
+)
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.core.vote_service import eligible_exile_targets
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
@@ -56,12 +62,13 @@ def _validation_failure_code(error: ActionValidationError) -> str:
 
 
 def _provider_failure_code(error: Exception) -> str:
-    """Classify a transient provider error regardless of which SDK raised it."""
-    if isinstance(error, RATE_LIMIT_ERRORS):
-        return "provider_rate_limit"
-    if isinstance(error, SERVER_ERRORS):
-        return "provider_server_error"
-    return "provider_connection_error"
+    """Classify a transient provider error regardless of which SDK raised it.
+
+    Delegates to the one shared vocabulary: the same HTTP 503 used to be
+    ``provider_connection_error`` here and ``model_invocation_error`` on the
+    night path, so one outage read as two unrelated faults.
+    """
+    return classify_provider_error(error)
 
 _VOTE_CONTRACT = PipelineActionContract(
     contract_id="exile_vote",
@@ -96,6 +103,58 @@ class _ActionTransientRetry(_ActionTransportTimeout):
 _VOTE_RETRY_POLICY = RetryPolicy(
     attempts=3, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
 )
+
+
+#: Retries for one speech turn. A seat used to get two attempts, and the second
+#: only re-emphasised the format: that fits a missing tool call but not a dropped
+#: connection, which needs the very same request again. A too-short or empty
+#: answer got no second chance at all and went straight to the template, which is
+#: how a flaky provider turned into 268 of 275 speeches being generated text.
+#: Classifying the failure fixes both, and one extra attempt costs far less than
+#: a silently muted seat.
+_SPEECH_RETRY_POLICY = RetryPolicy(
+    attempts=4, base_delay_seconds=0.5, max_delay_seconds=8.0, jitter_ratio=0.25,
+    retry_unknown_errors=True,
+)
+
+
+#: Failures where waiting before the next attempt only wastes the turn. The
+#: provider was merely slow, not stuck in an outage window, so the retry fires
+#: immediately -- the same call the vote ladder makes for its own deadlines.
+#: (``asyncio.TimeoutError`` is ``TimeoutError`` on 3.11+, hence the union.)
+_IMMEDIATE_RETRY_ERRORS: tuple[type[BaseException], ...] = (
+    asyncio.TimeoutError, *TIMEOUT_ERRORS,
+)
+
+
+#: Appended to a speech request whose previous answer was unusable. Only ever
+#: added to the in-flight request: the prompt builder's own output is what the
+#: training-corpus capture and the replay digests are keyed on.
+_SPEECH_REPAIR_REMINDER = (
+    "\n\n【系统紧急提示】你刚才的回复无法使用（没有调用发言函数，"
+    "或发言内容为空、过短、用错了函数）。这是严重的违规。"
+    "请立即调用正确的发言函数（遗言用 last_words 函数），"
+    "在函数参数中输入至少15字的实质发言内容。直接输出文本无效！"
+)
+
+
+def _speech_failure_codes(error: BaseException) -> tuple[str, str | None]:
+    """The ``(failure_code, timeout_type)`` pair to record for a speech failure.
+
+    Three kinds of failure reach the speech ladder and they must not all read as
+    "fallback": a local deadline, a provider fault (a 503 that emptied the
+    account pool, say), and an answer we could not use. The first two keep the
+    vocabulary the vote ladder already records, so one game log can be grepped
+    across both paths; the third carries the validator's own code.
+    """
+    if isinstance(error, asyncio.TimeoutError):
+        return "request_timeout", "local_deadline"
+    if isinstance(error, TIMEOUT_ERRORS):
+        return "request_timeout", "provider_timeout"
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code:
+        return code, None
+    return classify_provider_error(error), None
 
 
 def _capture_messages(capture, messages, *, tool_schema=None, tool_name=None) -> None:
@@ -216,121 +275,137 @@ class BaseRole:
                 return None
             self._last_words_used = True
 
-        # ── Attempt 1: normal tool-calling prompt ──
+        # ── Ask, and keep re-asking while it is still worth it ──
+        #
+        # Everything that used to jump straight to the template now goes through
+        # one classifier: a transport fault is retried with the same request, an
+        # unusable answer with a repair reminder. Only a spent budget falls back,
+        # so a flaky provider costs extra tokens instead of a muted seat.
         started = time.monotonic()
         self._speech_used_fallback = False
-        attempts = 0
-        try:
-            attempts += 1
-            tool_result = await self._invoke_llm_with_tools(
-                prompt, tools, capture=capture, on_chunk=on_chunk,
-            )
-        except Exception as e:
-            logger.error(
-                f"Seat {self.seat}: LLM invocation failed with exception for "
-                f"context={context} (attempt 1): {e}",
-                exc_info=True,
-            )
-            tool_result = None
-
-        # ── Attempt 2 (retry): stronger prompt emphasising tool call ──
-        if tool_result is None:
-            attempts += 1
-            logger.warning(
-                f"Seat {self.seat}: LLM did not call any tool for context={context} "
-                f"(attempt 1). Retrying with stronger instructions."
-            )
-            retry_prompt = (
-                prompt
-                + "\n\n【系统紧急提示】你刚才没有调用发言函数！这是严重的违规。"
-                + "请立即在内心思考后调用 speak 函数（遗言用 last_words 函数），"
-                + "在函数参数中输入至少15字的实质发言内容。"
-                + "直接输出文本无效！不调用函数等于放弃发言！"
-            )
+        policy = self._backoff_policy(_SPEECH_RETRY_POLICY)
+        active_prompt = prompt
+        speech: str | None = None
+        # Why the ladder gave up, recorded on the fallback row. A speech failure
+        # used to leave no trace beyond "fallback", which made an outage
+        # indistinguishable from a model that simply refused to answer: one real
+        # game produced 270 template speeches out of 275 and the log could not
+        # say whether the cause was the provider or the model.
+        failure_code: str | None = None
+        timeout_type: str | None = None
+        # ``retry_plan`` owns the budget: it reports ``None`` once the attempt
+        # count reaches the policy's limit, which is what ends this loop.
+        attempt_number = 0
+        while True:
+            attempt_number += 1
             try:
                 tool_result = await self._invoke_llm_with_tools(
-                    retry_prompt, tools, capture=capture, on_chunk=on_chunk,
+                    active_prompt, tools, capture=capture, on_chunk=on_chunk,
                 )
-            except Exception as e:
-                logger.error(
-                    f"Seat {self.seat}: LLM invocation failed with exception for "
-                    f"context={context} (attempt 2): {e}",
-                    exc_info=True,
+                speech = self._validate_tool_result(tool_result, state, context)
+            except Exception as error:
+                speech = None
+                failure_code, timeout_type = _speech_failure_codes(error)
+                logger.warning(
+                    f"Seat {self.seat}: speech attempt {attempt_number} failed for "
+                    f"context={context} ({failure_code}): {error}"
                 )
-                tool_result = None
+                plan = retry_plan(policy, error, attempt_number)
+                if plan is None:
+                    logger.error(
+                        f"Seat {self.seat}: speech attempt {attempt_number} for "
+                        f"context={context} is final ({failure_code}); falling back"
+                    )
+                    break
+                kind, delay = plan
+                if isinstance(error, _IMMEDIATE_RETRY_ERRORS):
+                    delay = 0.0
+                await asyncio.sleep(delay)
+                if kind == KIND_REPAIR:
+                    active_prompt = prompt + _SPEECH_REPAIR_REMINDER
+            else:
+                break
 
-        # ── Validate and return ──
-        try:
-            speech = self._validate_tool_result(tool_result, state, context)
-        except Exception as e:
+        if speech is None:
             logger.error(
-                f"Seat {self.seat}: Unexpected error validating tool result for "
-                f"context={context}: {e}. Falling back to generated speech.",
-                exc_info=True,
+                f"Seat {self.seat}: all {attempt_number} speech attempts failed for "
+                f"context={context}. Generating fallback speech so the seat still "
+                f"takes its turn."
             )
             speech = self._generate_fallback_speech(state, context)
         self._log_llm_call(
             conversation_log,
             round_num=state.round_number, phase=state.phase.value,
             call_kind="speech", contract_id=context,
-            transport="speech_tool", attempt=attempts,
+            transport="speech_tool", attempt=attempt_number,
             prompt_chars=len(prompt),
             elapsed_ms=int((time.monotonic() - started) * 1000),
-            retried=attempts > 1,
+            retried=attempt_number > 1,
             parse_result="fallback" if self._speech_used_fallback else "ok",
+            failure_code=failure_code,
+            timeout_type=timeout_type,
         )
         return speech
 
     def _validate_tool_result(
         self, tool_result, state: GameState, context: str,
     ) -> str:
-        """Validate and extract speech text from a tool call result.
-        Returns fallback speech on any validation failure.
+        """Validate and extract speech text, or raise :class:`UnusableModelOutput`.
+
+        Raising rather than substituting the template is what lets the ladder
+        re-ask. A missing tool call, the wrong function or a too-short answer are
+        all worth one more, stricter attempt before the seat loses its voice;
+        returning the template here is exactly how those failures became silent.
         """
         if tool_result is None:
-            logger.error(
-                f"Seat {self.seat}: Both LLM attempts failed to call a tool for "
-                f"context={context}. Generating fallback speech to prevent silent skip."
+            logger.warning(
+                f"Seat {self.seat}: no speech tool call for context={context}"
             )
-            return self._generate_fallback_speech(state, context)
+            raise UnusableModelOutput(
+                "speech tool was not called", code="speech_tool_not_called",
+            )
 
         fn_name = tool_result.function_name
         args = tool_result.arguments if isinstance(tool_result.arguments, dict) else {}
         text = args.get("text", "").strip()
 
-        # Validate: context must match function name
-        if context in {"day_speech", "sheriff_campaign"} and fn_name != "speak":
-            logger.warning(
-                f"Seat {self.seat}: 校验失败——发言阶段调用了 {fn_name} 而非 speak，"
-                f"fallback to auto speech"
-            )
-            return self._generate_fallback_speech(state, context)
-
-        if context == "last_words" and fn_name != "last_words":
-            logger.warning(
-                f"Seat {self.seat}: 校验失败——遗言阶段调用了 {fn_name} 而非 last_words，"
-                f"fallback to auto speech"
-            )
-            return self._generate_fallback_speech(state, context)
+        # Validate: context must match function name. Unknown contexts keep the
+        # historical behaviour of not constraining the tool name at all.
+        if context in {"day_speech", "sheriff_campaign", "last_words"}:
+            expected = "last_words" if context == "last_words" else "speak"
+            if fn_name != expected:
+                logger.warning(
+                    f"Seat {self.seat}: 校验失败——{context} 阶段调用了 {fn_name} "
+                    f"而非 {expected}"
+                )
+                raise UnusableModelOutput(
+                    f"{context} called {fn_name} instead of {expected}",
+                    code="speech_wrong_function",
+                )
 
         if not text:
             logger.warning(
-                f"Seat {self.seat}: {fn_name} called with empty text, "
-                f"fallback to auto speech"
+                f"Seat {self.seat}: {fn_name} called with empty text"
             )
-            return self._generate_fallback_speech(state, context)
+            raise UnusableModelOutput(
+                f"{fn_name} called with empty text", code="speech_empty_text",
+            )
 
         # Reject speeches that are too short — "过" or trivial replies are never acceptable
         MIN_SPEECH_LENGTH = 15
-        if context in ("day_speech", "last_words", "sheriff_campaign") and len(text) < MIN_SPEECH_LENGTH:
+        if (
+            context in ("day_speech", "last_words", "sheriff_campaign")
+            and len(text) < MIN_SPEECH_LENGTH
+        ):
             logger.warning(
                 f"Seat {self.seat}: {fn_name} text too short ({len(text)} chars), "
-                f"minimum is {MIN_SPEECH_LENGTH}. Text was: '{text}'. "
-                f"Fallback to auto speech."
+                f"minimum is {MIN_SPEECH_LENGTH}. Text was: '{text}'."
             )
-            return self._generate_fallback_speech(state, context)
+            raise UnusableModelOutput(
+                f"{fn_name} text too short ({len(text)} chars)",
+                code="speech_text_too_short",
+            )
 
-        logger.info(f"Seat {self.seat}: {fn_name} validated OK, text length={len(text)}")
         return text
 
     def _generate_fallback_speech(self, state: GameState, context: str) -> str:
@@ -513,14 +588,22 @@ class BaseRole:
                 self._invoke_json_action, conversation_log, "json", 3, capture=capture,
             )
         tool_transport = "strict" if supports_strict else "tool"
-        # A capability rejection or a deadline wants the smaller JSON transport;
-        # a transient provider fault does not. The transport was never the
-        # problem there, so the retry keeps it and only the prompt compacts.
-        retry_invoke, retry_transport = self._invoke_strict_action, tool_transport
+        if getattr(self.llm_client, "prefers_json_actions", False):
+            # This provider already showed it will not honour an action tool, so
+            # attempt 1 goes straight to the JSON transport instead of spending a
+            # round trip rediscovering it. The vote prompt carries the schema, so
+            # nothing is lost but the wasted call.
+            retry_invoke, retry_transport = self._invoke_json_action, "json"
+        else:
+            # A capability rejection or a deadline wants the smaller JSON
+            # transport; a transient provider fault does not. The transport was
+            # never the problem there, so the retry keeps it and only the prompt
+            # compacts.
+            retry_invoke, retry_transport = self._invoke_strict_action, tool_transport
         try:
             return await self._request_action_with_transport(
-                state, request, messages, self._invoke_strict_action,
-                conversation_log, tool_transport, 1, capture=capture,
+                state, request, messages, retry_invoke,
+                conversation_log, retry_transport, 1, capture=capture,
             )
         except _ActionTransientRetry:
             retry_messages = self._build_vote_retry_messages(
@@ -532,6 +615,15 @@ class BaseRole:
                 state, conversation_log,
             )
         except StrictCapabilityError:
+            # Either the provider rejected the tool schema (400/422) or it
+            # answered in content instead of calling the tool. Both are
+            # properties of the provider, not of this ballot, so remember it and
+            # let the rest of the game skip the discovery.
+            note_unsupported = getattr(
+                self.llm_client, "note_action_tools_unsupported", None,
+            )
+            if callable(note_unsupported):
+                note_unsupported()
             retry_invoke, retry_transport = self._invoke_json_action, "json"
             retry_messages = self._build_vote_retry_messages(
                 state, conversation_log,
@@ -632,37 +724,58 @@ class BaseRole:
         )
 
     def _action_timeout_seconds(self, *, retried: bool, final: bool = False) -> float:
+        """Deadline for one action attempt, never shorter than the first.
+
+        The ladder used to hand its *last* chance a smaller budget than its first
+        (30s against 90s by default). A provider slow enough to need a retry was
+        therefore the one most likely to be cut off by the local deadline, which
+        turned "ask again" into "give up sooner". Later attempts may be granted
+        more room, never less.
+        """
+        base = getattr(self.llm_client, "action_timeout_seconds", 90.0)
+        floor = float(base) if isinstance(base, (int, float)) and base > 0 else 90.0
         if final:
-            attribute = "action_final_retry_timeout_seconds"
-            fallback = 30.0
+            attribute, fallback = "action_final_retry_timeout_seconds", 30.0
         elif retried:
-            attribute = "action_retry_timeout_seconds"
-            fallback = 90.0
+            attribute, fallback = "action_retry_timeout_seconds", 90.0
         else:
-            attribute = "action_timeout_seconds"
-            fallback = 90.0
+            return floor
         value = getattr(self.llm_client, attribute, fallback)
-        return float(value) if isinstance(value, (int, float)) and value > 0 else fallback
+        if not isinstance(value, (int, float)) or value <= 0:
+            value = fallback
+        return max(floor, float(value))
+
+    def _backoff_policy(self, base_policy: RetryPolicy) -> RetryPolicy:
+        """``base_policy`` with this client's backoff, so tests can zero it out.
+
+        The delays are read off the client (like the three timeout attributes
+        above) because the suite must never actually wait on a retry -- and the
+        refusal floor is measured in tens of seconds, so a test that fed a 503
+        would otherwise stall. ``replace`` rather than a fresh ``RetryPolicy``:
+        the ladder's classification fields (``retry_on`` / ``repair_on`` /
+        ``retry_unknown_errors``) have to survive the copy, or turning one on
+        would silently do nothing.
+        """
+        return replace(
+            base_policy,
+            base_delay_seconds=self._client_seconds(
+                "action_retry_backoff_seconds", base_policy.base_delay_seconds,
+            ),
+            refused_delay_seconds=self._client_seconds(
+                "action_refused_backoff_seconds", base_policy.refused_delay_seconds,
+            ),
+        )
+
+    def _client_seconds(self, attribute: str, default: float) -> float:
+        """One non-negative client-provided delay, falling back to ``default``."""
+        value = getattr(self.llm_client, attribute, default)
+        if type(value) not in (int, float) or value < 0:
+            return float(default)
+        return float(value)
 
     def _retry_backoff_seconds(self, attempt: int, error: Exception) -> float:
-        """Backoff before re-asking, honouring a provider ``Retry-After`` hint.
-
-        The base delay is read off the client so test stubs can zero it and keep
-        the suite fast, exactly like the three timeout attributes above.
-        """
-        base = getattr(
-            self.llm_client, "action_retry_backoff_seconds",
-            _VOTE_RETRY_POLICY.base_delay_seconds,
-        )
-        if type(base) not in (int, float) or base < 0:
-            base = _VOTE_RETRY_POLICY.base_delay_seconds
-        policy = RetryPolicy(
-            attempts=_VOTE_RETRY_POLICY.attempts,
-            base_delay_seconds=float(base),
-            max_delay_seconds=_VOTE_RETRY_POLICY.max_delay_seconds,
-            jitter_ratio=_VOTE_RETRY_POLICY.jitter_ratio,
-        )
-        return delay_for(policy, error, attempt)
+        """Backoff before re-asking an action, honouring a provider hint."""
+        return delay_for(self._backoff_policy(_VOTE_RETRY_POLICY), error, attempt)
 
     def _log_vote_technical_abstain(
         self, conversation_log: ConversationLog, request: ActionRequest,
