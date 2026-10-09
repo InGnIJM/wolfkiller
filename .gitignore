@@ -46,6 +46,11 @@ backend/scripts/*
 # reports per-section sizes plus duplicate-fact leakage, which is the measurable
 # gate for any prompt change. It ships with its own regression test.
 !backend/scripts/prompt_size_report.py
+# Benchmark leftovers: the 2026-10-07 review left two interrupted runs and four
+# checkpoint_corrupt games behind. The script drives the same service methods the
+# HTTP API uses (unbind benchmark_items, then soft delete), so it is a thin
+# entry point over tracked logic and belongs in the repository.
+!backend/scripts/cleanup_stale_benchmarks.py
 
 .zcode/
 .cursor/

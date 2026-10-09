@@ -753,3 +753,11 @@
   （`llm_calls.log` 的 `retried`）接进 `llm.llm_retry_rate`；token 覆盖率 42% 是因为三条路
   一律给账本传 `None`，不是 provider 没给。同类：`benchmark_reports` 每次事实变化插一整份、
   从不清理（单 run 3404 行 / 149MB），读者的 `ORDER BY … LIMIT 1` 只用最新一行。
+- Trigger: 要清理生产库，但 `sqlite3.connect("backend/data/wolfkiller.sqlite3")` 在 WSL 里
+  直接 `disk I/O error`（读也不行，`PRAGMA journal_mode` 都失败）。Action: 这是 drvfs 上
+  SQLite 共享内存的挂载限制，不是库损坏 —— 把主文件与 `-wal`/`-shm` 一起拷到 `/tmp` 后同一
+  个库可以正常读写（本次在 `/tmp` 副本上完整验证了清理脚本：7 个 run → 5 个、保留的 run
+  仍在、非终局未删除对局 0）。**不要**把副本改完再拷回去（主库可能正被 Windows 侧进程打开，
+  覆盖 378MB 的文件是灾难），正确做法是把脚本交给能访问该库的进程/机器去跑：
+  `python scripts/cleanup_stale_benchmarks.py --data-dir data`（默认 dry run，`--apply` 才删，
+  先取 SQLite `.backup`）。
