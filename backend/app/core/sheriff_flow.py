@@ -297,7 +297,21 @@ def badge_reasoning(raw: object) -> str:
     return value.strip()[:_MAX_REASONING_CHARS]
 
 
-def _schema(action_types: Sequence[str], extra: dict[str, object] | None = None) -> dict[str, object]:
+def _schema(
+    action_types: Sequence[str], extra: dict[str, object] | None = None,
+    *, optional: Sequence[str] = (),
+) -> dict[str, object]:
+    """The bound tool's schema.
+
+    ``optional`` keeps a property out of ``required``. That matters for the two
+    calls where one action needs a target and another must not have one
+    (``vote`` vs ``pass``, ``transfer`` vs ``tear``): listing ``target_seat`` as
+    required made the schema contradict the prompt, and ``_require_schema_fields``
+    then threw away a perfectly good ``pass`` answer as
+    ``response_missing_fields`` — 4 of 7 sheriff ballots died that way in one
+    batch. The JSON tool channel is bound non-strict (``get_model_with_json_tool``),
+    so relaxing ``required`` cannot be rejected provider-side either.
+    """
     properties: dict[str, object] = {
         "action_type": {"type": "string", "enum": list(action_types)},
         "reasoning": {"type": "string", "maxLength": 500},
@@ -305,7 +319,9 @@ def _schema(action_types: Sequence[str], extra: dict[str, object] | None = None)
     required = ["action_type", "reasoning"]
     if extra:
         properties.update(extra)
-        required.extend(key for key in extra if key not in required)
+        required.extend(
+            key for key in extra if key not in required and key not in optional
+        )
     return {
         "type": "object",
         "additionalProperties": False,
@@ -510,7 +526,8 @@ class SheriffDirector:
         human = (
             f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，因此拥有警长投票权，"
             f"请在候选人中选择：{listed}。结合警上发言判断谁更适合当警长。"
-            f"输出 action_type=vote 且 target_seat 为候选座位，或 action_type=pass。\n"
+            f"输出 action_type=vote 且 target_seat 为候选座位；不投任何人时输出 "
+            f"action_type=pass 且**省略 target_seat**。\n"
             + self._context_block(state, seat, wolf=wolf)
         )
         return self._messages(self._system(), human)
@@ -530,7 +547,7 @@ class SheriffDirector:
             # wolf=False 是刻意的：狼人分支那句「可自爆吞警徽」只属于竞选期。
             f"{self._context_block(state, seat, wolf=False)}"
             f"可移交警徽给：{listed}，或撕毁警徽。"
-            "action_type 为 transfer 时必须给出 target_seat；tear 时 target_seat 为 null。"
+            "action_type 为 transfer 时必须给出 target_seat；tear 时省略 target_seat（或给 null）。"
         )
         return self._messages(self._system(), human)
 
@@ -594,6 +611,7 @@ class SheriffDirector:
                 schema=_schema(
                     actions,
                     {"target_seat": {"type": ["integer", "null"], "minimum": 1}},
+                    optional=("target_seat",),
                 ),
                 seat=seat,
             )
@@ -625,6 +643,7 @@ class SheriffDirector:
                 schema=_schema(
                     [_TRANSFER, _TEAR],
                     {"target_seat": {"type": ["integer", "null"], "minimum": 1}},
+                    optional=("target_seat",),
                 ),
                 seat=seat,
             )

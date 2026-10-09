@@ -15,6 +15,7 @@ import pytest
 
 from app.models.actions import VoteAction
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+from app.services.audience_projector import AudienceProjector
 from app.services.game_service import GameService
 
 GAME = "tally"
@@ -98,3 +99,23 @@ def test_a_seat_number_alone_carries_no_weight() -> None:
     payload = result_frame(engine, None)
     assert payload["weighted_counts"] == {"3": 1, "4": 1}
     assert payload["counts"] == {"3": 1, "4": 1}
+
+
+def test_the_projection_keeps_the_weighted_tally() -> None:
+    """域事件带上加权票型还不够：投影器按白名单**过滤**载荷。
+
+    `weighted_counts` 曾不在 `_EVENTS["VOTE_RESULT"]` 的允许集里，于是观众流与回放
+    都只有人头数，`game_routes._AUDIENCE_ACTION_OPTIONAL["VOTE_RESULT"]` 成了一条
+    永远不会被触发的配置。
+    """
+    engine = engine_with([VoteAction(1, 4), VoteAction(2, 3)], sheriff=1)
+    payload = result_frame(engine, 4)
+    event = {
+        "event_id": "domain:tally:1", "event_type": "VOTE_RESULT",
+        "payload": payload, "visibility": ["PUBLIC"], "schema_version": 1,
+    }
+
+    projected = AudienceProjector().project_events(GAME, [event])
+
+    assert projected[0]["payload"]["weighted_counts"] == {"3": 2, "4": 3}
+    assert projected[0]["payload"]["counts"] == {"3": 1, "4": 1}

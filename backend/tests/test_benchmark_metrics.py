@@ -42,6 +42,88 @@ def test_role_classifiers_cover_idiot_and_werewolf_king() -> None:
     assert _is_wolf_role(None) is False
 
 
+@pytest.mark.parametrize("role,god,wolf", [
+    # 神职：旧 token 表只有 seer / witch / hunter / guard / idiot
+    ("wolf-killer-seer", True, False),
+    ("wolf-killer-witch", True, False),
+    ("wolf-killer-hunter", True, False),
+    ("wolf-killer-guard", True, False),
+    ("wolf-killer-idiot", True, False),
+    ("wolf-killer-knight", True, False),
+    ("wolf-killer-pure-white", True, False),
+    ("wolf-killer-dancer", True, False),
+    ("wolf-killer-demon-hunter", True, False),
+    ("wolf-killer-dream-weaver", True, False),
+    ("wolf-killer-gravekeeper", True, False),
+    # 平民
+    ("wolf-killer-villager", False, False),
+    ("wolf-killer-old-drunkard", False, False),
+    # 狼：旧集合只认 werewolf 与 werewolf-king（白狼王）两张
+    ("wolf-killer-werewolf", False, True),
+    ("wolf-killer-werewolf-king", False, True),
+    ("wolf-killer-wolf-king", False, True),
+    ("wolf-killer-wolf-beauty", False, True),
+    ("wolf-killer-evil-knight", False, True),
+    ("wolf-killer-gargoyle", False, True),
+    ("wolf-killer-mask", False, True),
+    ("wolf-killer-nightmare", False, True),
+    ("wolf-killer-crimson-envoy", False, True),
+    ("wolf-killer-wolf-witch", False, True),
+])
+def test_role_classifiers_follow_the_registry_tags(role: str, god: bool, wolf: bool) -> None:
+    """阵营与神职判定读 `RoleSpec.tags`，不是手写的字符串表。
+
+    旧实现只认 2 个狼 id 与 5 个神职 token：白狼王之外的全部狼牌被算成好人、
+    骑士/纯白之女/舞者/猎魔人/摄梦人/守墓人被算成平民。评测里「放逐命中狼 38.4%」
+    就是这么来的（按 tags 重算是 54.6%），而狼刀杀神、毒药命中同样系统性偏低。
+    """
+    from app.benchmark.metrics import _is_god, _is_wolf_role
+
+    assert _is_god(role) is god
+    assert _is_wolf_role(role) is wolf
+
+
+def test_an_unknown_role_is_neither_god_nor_wolf() -> None:
+    """旧档里可能出现本仓库不认识的 id，指标计算不能因此抛异常。"""
+    from app.benchmark.metrics import _is_god, _is_wolf_role
+
+    assert _is_god("not-a-role") is False
+    assert _is_wolf_role("not-a-role") is False
+
+
+def test_wolf_kill_god_rate_counts_a_god_the_token_table_missed() -> None:
+    """纯白之女是神职，但旧 token 表里没有它 —— 狼刀杀神的分子会漏掉这一刀。"""
+    summary = _summary_g1()
+    summary["roles"] = {
+        "1": {"role": "wolf-killer-werewolf", "camp": "werewolf"},
+        "2": {"role": "wolf-killer-pure-white", "camp": "good"},
+    }
+    summary["rounds"] = {"1": {"night_actions": [
+        {"event": "WEREWOLF_KILL", "target_seat": 2},
+    ]}}
+
+    decision = compute_decision_metrics([summary])
+
+    assert decision["wolf_kill_god_rate"] == 1.0
+
+
+def test_outcome_metrics_score_a_non_seer_board_by_tags() -> None:
+    """纯白夜影板：旧实现把狼巫算成好人阵营的「好人」。"""
+    summary = _summary_g1()
+    summary["roles"] = {
+        "1": {"role": "wolf-killer-pure-white", "camp": "good"},
+        "2": {"role": "wolf-killer-wolf-witch", "camp": "werewolf"},
+        "3": {"role": "wolf-killer-old-drunkard", "camp": "good"},
+    }
+    summary["winner"] = "werewolf"
+
+    outcome = compute_outcome_metrics([summary])
+
+    assert outcome["win_rate_by_role"]["wolf-killer-wolf-witch"] == 1.0
+    assert outcome["win_rate_by_role"]["wolf-killer-pure-white"] == 0.0
+    assert outcome["win_rate_by_role"]["wolf-killer-old-drunkard"] == 0.0
+
+
 def _llm_block() -> dict:
     return {
         "calls": 4, "errors": 1, "fallbacks": 1,

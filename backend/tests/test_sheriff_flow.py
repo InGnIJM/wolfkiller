@@ -828,3 +828,57 @@ def test_context_block_survives_malformed_private_state() -> None:
     state._pipeline_runtime = runtime
     human = Director().campaign_prompt(state, 11, wolf=False)[1]["content"]
     assert "暂无夜间私密信息" in human
+
+
+def test_sheriff_vote_schema_does_not_require_a_target_for_pass() -> None:
+    """`pass` 不该被工具 schema 逼着给 `target_seat`。
+
+    schema 曾把 `target_seat` 无条件塞进 `required`，而提示词明说可以
+    `action_type=pass`；`_require_schema_fields` 于是把一条合法的弃票判成
+    `response_missing_fields` —— 一批 7 张警长票里有 4 张就是这么死的。
+    """
+    captured: dict[str, object] = {}
+
+    def invoke(messages, tool_name, schema, seat):
+        captured.update(schema)
+        return '{"action_type":"pass","reasoning":"不投任何人"}'
+
+    director = SheriffDirector(invoke)
+    assert director.vote_turn(_rich_state(), 9, (5, 6), wolf=False) is None
+
+    assert "target_seat" in captured["properties"]
+    assert "target_seat" not in captured["required"]
+
+
+def test_a_schema_valid_pass_answer_survives_the_required_field_check() -> None:
+    """把 schema 交给真正的字段检查：`pass` 少一个 `target_seat` 必须能过。
+
+    这一格才是「4/7 张警长票死于 JSON 少必填字段」的根因所在。
+    """
+    from app.agents.llm_client import LLMClient, StructuredResponse
+    from app.core.sheriff_flow import _schema
+
+    schema = _schema(
+        ["vote", "pass"],
+        {"target_seat": {"type": ["integer", "null"], "minimum": 1}},
+        optional=("target_seat",),
+    )
+    answer = StructuredResponse(
+        payload={"action_type": "pass", "reasoning": "不投任何人"},
+        transport="json", has_tool_calls=False,
+    )
+
+    assert LLMClient._require_schema_fields(answer, schema) is answer
+
+
+def test_sheriff_badge_schema_does_not_require_a_target_for_tear() -> None:
+    captured: dict[str, object] = {}
+
+    def invoke(messages, tool_name, schema, seat):
+        captured.update(schema)
+        return '{"action_type":"tear","reasoning":"警徽不留人"}'
+
+    director = SheriffDirector(invoke)
+
+    assert director.badge_turn(_rich_state(), 2, (5, 6)) == ("tear", None, "警徽不留人")
+    assert "target_seat" not in captured["required"]

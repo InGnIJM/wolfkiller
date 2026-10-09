@@ -8,23 +8,42 @@ samples do not average misleadingly.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Optional
 
-_WEREWOLF_ROLE = "wolf-killer-werewolf"
-_WEREWOLF_ROLES = frozenset({_WEREWOLF_ROLE, "wolf-killer-werewolf-king"})
+from app.roles.registry import builtin_registry
+
 _WEREWOLF_CAMP = "werewolf"
-_GOD_ROLE_TOKENS = ("seer", "witch", "hunter", "guard", "idiot")
+_GOD_TAG = "god"
+_WOLF_TAG = "wolf"
 _ROUNDS_KEY = "rounds"
 
 
+@lru_cache(maxsize=None)
+def _role_tags(role: str) -> frozenset[str]:
+    """``RoleSpec.tags`` for a role id, empty for anything the registry lacks.
+
+    The classifier used to be two hand-written string sets
+    (``_GOD_ROLE_TOKENS`` / ``_WEREWOLF_ROLES``), which is exactly the kind of
+    copy that drifts: it knew 2 wolf ids out of 10 and 5 god tokens out of 11,
+    so every 纯白夜影 / 假面舞会 / 狼美人 board was scored with the wrong camp
+    and the wrong god/villager split (放逐命中狼 38.4% against the true 54.6%).
+    ``RoleSpec.tags`` is the registry's own authority — the same one
+    ``rule_engine`` uses for 屠边 — and role ids are never deleted, so archived
+    summaries stay classifiable.
+    """
+    try:
+        return builtin_registry.freeze().require(role).tags
+    except ValueError:
+        return frozenset()
+
+
 def _is_god(role: Optional[str]) -> bool:
-    if not isinstance(role, str):
-        return False
-    return any(token in role for token in _GOD_ROLE_TOKENS)
+    return isinstance(role, str) and _GOD_TAG in _role_tags(role)
 
 
 def _is_wolf_role(role: Optional[str]) -> bool:
-    return role in _WEREWOLF_ROLES
+    return isinstance(role, str) and _WOLF_TAG in _role_tags(role)
 
 
 def _roles_by_seat(summary: dict) -> dict[str, str]:

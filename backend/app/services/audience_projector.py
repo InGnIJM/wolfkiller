@@ -21,7 +21,11 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     "SPEAKING": ("speaking", frozenset({"seat", "round_number"})),
     "PLAYER_DIED": ("death", frozenset({"player_seat", "seat", "target_seat", "cause", "round_number"})),
     "VOTE_CAST": ("vote", frozenset({"voter_seat", "target_seat", "round_number", "status"})),
-    "VOTE_RESULT": ("vote_result", frozenset({"round_number", "exiled_seat", "counts"})),
+    # `weighted_counts`（半票加权计票）与 `counts`（人头数）并列发布：放逐结果按
+    # `ballot_weight` 判定，只给未加权的人头数会让「谁出局」在票型旁边读不通
+    # （警长 1.5 票对人 1 票看起来是平局）。白名单漏掉它时，域事件带了、
+    # 观众流与回放都没有 —— `game_routes._AUDIENCE_ACTION_OPTIONAL` 也就成了死配置。
+    "VOTE_RESULT": ("vote_result", frozenset({"round_number", "exiled_seat", "counts", "weighted_counts"})),
     "GAME_OVER": ("winner", frozenset({"winning_camp", "reason"})),
     "NIGHT_ACTION": ("night_action", frozenset({"action_type", "target_seat", "round_number", "vote_counts", "result"})),
     "TECHNICAL_ABSTAIN": ("technical_abstain", frozenset({"player_seat", "voter_seat", "round_number", "failure_code"})),
