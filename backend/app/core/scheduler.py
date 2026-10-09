@@ -46,6 +46,19 @@ class ResponseLimitExceeded(RuntimeError): pass
 class PipelinePaused(RuntimeError): pass
 
 
+class DecisionPaused(PipelinePaused):
+    """A one-shot contract's model budget ran out — pause, do not forfeit.
+
+    ``exhausted_bucket`` sends ``per_game_limit == 1`` contracts (hunter's gun,
+    wolf king's claw, idiot's flip, crimson envoy's explode) here instead of
+    degrading them. A degraded one-shot forfeits the card silently: the game
+    plays on and the seat never gets its shot. This is a *separate* subclass so
+    the watcher can tell it apart from a genuine ``PipelinePaused`` (rule
+    execution failure, stale revision, …) — those stay fatal, because a pause
+    would hide a real defect behind a resumable state.
+    """
+
+
 def _execution_lock(state: GameState) -> RLock:
     """Serialize one game's scheduler while allowing short state transactions."""
     key = id(state)
@@ -373,6 +386,11 @@ class Scheduler:
                  context: ActionContext) -> tuple[ActionCommand, ActionContext]:
         for attempt in (0, 1):
             try: command = self.command_provider(request, context, attempt)
+            except DecisionPaused:
+                # A one-shot contract ran out of budget: the game must stop here
+                # and resume later, not burn the second provider attempt and not
+                # be reported as a provider failure.
+                raise
             except Exception:
                 logger.error(
                     "Command provider failed: seat=%s contract=%s point=%s attempt=%d",

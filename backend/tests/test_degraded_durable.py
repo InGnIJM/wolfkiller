@@ -31,6 +31,7 @@ from app.models.pipeline import (
     DEGRADED_REASONING, ActionCommand, ActionContext, SchedulePoint,
 )
 from app.persistence.repository import GameRepository
+from app.core.scheduler import DecisionPaused
 from app.services.game_service import (
     GameService, _durable_command_payload, _pipeline_command,
 )
@@ -219,10 +220,10 @@ class TestTheProductionProviderKeepsTheStamp:
     """
 
     @staticmethod
-    def _provider(service, repository, invocations, payload):
+    def _provider(service, repository, invocations, payload, contract=None):
         add_game(service, repository, "g")
         service._model_invocations = invocations
-        contract = _contract("window", "round", "game")
+        contract = contract or _contract("window", "round", "game")
         provider = service._command_provider(
             _snapshot(contract), _StubRenderer(),
             lambda _seat: _Client(payload), director=None,
@@ -234,7 +235,12 @@ class TestTheProductionProviderKeepsTheStamp:
         game_service, repository = service
         invocations = _Invocations()
         monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
-        provider, contract = self._provider(game_service, repository, invocations, None)
+        # No ``game`` limit: a one-shot contract is paused now, not degraded
+        # (see ``test_a_one_shot_exhaustion_pauses_instead_of_forfeiting``).
+        contract = _contract("window", "round")
+        provider, contract = self._provider(
+            game_service, repository, invocations, None, contract=contract,
+        )
 
         command = provider(_request(contract), _context(contract), 0)
 
@@ -259,3 +265,25 @@ class TestTheProductionProviderKeepsTheStamp:
         assert command.degraded is False
         assert "degraded" not in invocations.payloads[0]
         assert ActionCommand.model_validate(invocations.payloads[0]).degraded is False
+
+    @pytest.mark.asyncio
+    async def test_a_one_shot_exhaustion_pauses_instead_of_forfeiting(self, service, monkeypatch):
+        """一次性契约耗尽必须暂停，不能降级。
+
+        降级会静默作废这张牌：占位命令照样消耗 `game` 配额，猎人再也开不了枪、
+        狼王再也伸不出爪，而牌局照常进行，事后只能从「这局猎人没开枪」看出来。
+        暂停把点位留给续跑（账本把该请求记成 `unknown`，续跑代际 +1 后可重派发）。
+        """
+        game_service, repository = service
+        invocations = _Invocations()
+        monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+        provider, contract = self._provider(game_service, repository, invocations, None)
+
+        with pytest.raises(DecisionPaused):
+            provider(_request(contract), _context(contract), 0)
+
+        # 同一点第二次耗尽不再暂停：benchmark executor 会自动续跑 paused 局，
+        # 否则一个永久故障的 provider 会把这个点无限暂停下去。
+        command = provider(_request(contract), _context(contract), 0)
+        assert command.degraded is True
+        assert command.reasoning == DEGRADED_REASONING

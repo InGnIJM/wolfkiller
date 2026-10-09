@@ -61,7 +61,10 @@ from app.core.prompt_capture import (
 from app.core.role_runtime import (
     adopt_resource_declaration, resource_declaration_marker,
 )
-from app.core.scheduler import Scheduler
+from app.agents.invocation import (
+    CALL_KIND_PIPELINE, FailureBucket, exhausted_bucket,
+)
+from app.core.scheduler import DecisionPaused, Scheduler
 from app.core.sheriff_flow import ballot_weight
 from app.models.pipeline import (
     DEGRADED_REASONING, ActionCommand as PipelineActionCommand, SchedulePoint,
@@ -758,6 +761,11 @@ class GameService:
             None if repository is None else ModelInvocationService(repository)
         )
         self._durable_contexts: dict[str, dict[str, int]] = {}
+        # ``(game_id, action_key)`` pairs already paused once for an exhausted
+        # one-shot contract. The benchmark executor resumes paused games
+        # automatically, so without this bound a permanently broken provider
+        # would pause the same point forever instead of degrading it.
+        self._paused_points: set[tuple[str, str]] = set()
         # Runtime-only, like the other per-game maps here: capture handles must
         # never reach a checkpoint, because the orchestration codec matches field
         # sets exactly and any extra field stops old games from resuming.
@@ -2676,6 +2684,24 @@ class GameService:
                     except (KeyError, InvalidExecutionTransition):
                         logger.debug("Recovered game was already finalized", exc_info=True)
                 return
+            if isinstance(error, DecisionPaused):
+                # A one-shot contract ran out of model budget. The point is
+                # re-run after a resume, so the game keeps its phase and becomes
+                # `paused` — marking it `failed` (or `ERROR`) would end the game
+                # and forfeit the card the pause exists to protect. The ledger
+                # stored this request as `unknown`, which the resumed dispatch
+                # (generation bumped by the recover) may re-dispatch once.
+                logger.warning(
+                    "Game paused on an exhausted one-shot contract: %s", game_id,
+                )
+                if self.repository is not None:
+                    try:
+                        self.repository.transition_execution(
+                            game_id, expected=("running", "paused"), target="paused",
+                        )
+                    except (KeyError, InvalidExecutionTransition):
+                        logger.debug("Recovered game pause already finalized", exc_info=True)
+                return
             logger.error(
                 "Recovered game engine crashed for %s", game_id,
                 exc_info=(type(error), error, error.__traceback__),
@@ -2731,6 +2757,34 @@ class GameService:
             )
         ]
         return (rng or random).choice(candidates) if candidates else None
+
+    def _pause_once_or_degrade(
+        self, game_id: str, point_key: str, contract: object,
+    ) -> None:
+        """Pause the game instead of forfeiting an exhausted one-shot contract.
+
+        ``exhausted_bucket`` owns the rule: ``per_game_limit == 1`` contracts
+        (hunter's gun, wolf king's claw, idiot's flip, crimson envoy's explode)
+        are paused, everything else degrades as before. A degraded one-shot is a
+        silent forfeit — the placeholder consumes the card's quota, so the seat
+        never gets its shot and the game plays on as if it had declined.
+
+        Once per point: the benchmark executor resumes a paused game
+        automatically, so a permanently broken provider must not be able to pause
+        the same point forever. The second exhaustion at the same point degrades.
+        """
+        if self.repository is None:
+            return
+        if exhausted_bucket(contract, call_kind=CALL_KIND_PIPELINE) is not FailureBucket.PAUSE:
+            return
+        key = (game_id, point_key)
+        if key in self._paused_points:
+            return
+        self._paused_points.add(key)
+        raise DecisionPaused(
+            "one-shot contract exhausted its model budget at "
+            f"{getattr(contract, 'contract_id', '?')}"
+        )
 
     def _pack_ballot_point(self, request, context) -> bool:
         """True when the pack's own kill vote answers this request.
@@ -2897,6 +2951,11 @@ class GameService:
                 # Provider failure, unusable answer, or an action type outside the
                 # contract: all three are the engine deciding for the seat, so the
                 # placeholder must say so instead of reading like a player's reason.
+                # A one-shot contract is the exception: degrading it forfeits the
+                # card, so the game pauses and the point is re-run after a resume.
+                self._pause_once_or_degrade(
+                    context.game_id, request.action_key, request.contract,
+                )
                 return PipelineActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None,

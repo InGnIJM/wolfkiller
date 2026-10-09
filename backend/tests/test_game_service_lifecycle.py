@@ -1521,3 +1521,126 @@ def test_recovered_night_gateway_uses_durable_result_and_logs_telemetry(
         assert telemetry[0]["contract_id"] == "werewolf_kill"
     finally:
         asyncio.run(service.aclose())
+
+
+@pytest.mark.asyncio
+async def test_the_watcher_pauses_a_game_on_an_exhausted_one_shot(tmp_path) -> None:
+    """一次性契约耗尽 → 局状态 paused（不是 failed）。
+
+    暂停的意义全在这一跳：`failed` 是终局（benchmark 条目失败、native 局要人工
+    介入），而 paused 可以被 `recover`（代际 +1）续跑，重跑那个点位。引擎 phase
+    也不置 ERROR —— 那是「崩了」的语义，暂停只是等一个可重试的机会。
+    """
+    from app.core.scheduler import DecisionPaused
+
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+
+    async def crash() -> None:
+        raise DecisionPaused("one-shot budget spent")
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(DecisionPaused):
+            await task
+        await asyncio.sleep(0)
+        assert repository.get_game("game")["execution_status"] == "paused"
+        assert repository.get_game("game")["execution_generation"] == 1
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_the_watcher_still_fails_a_game_on_a_plain_pipeline_pause(tmp_path) -> None:
+    """真正的 PipelinePaused（规则执行失败等）仍然记 failed —— 暂停不能掩盖缺陷。"""
+    from app.core.scheduler import PipelinePaused
+
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+
+    async def crash() -> None:
+        raise PipelinePaused("rule execution failed")
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(PipelinePaused):
+            await task
+        await asyncio.sleep(0)
+        assert repository.get_game("game")["execution_status"] == "failed"
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_the_watcher_pauses_even_without_a_repository(tmp_path) -> None:
+    """没有仓库（纯内存局）时暂停分支仍然成立：只记日志，不抛异常。"""
+    from app.core.scheduler import DecisionPaused
+
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+
+    async def crash() -> None:
+        raise DecisionPaused("one-shot budget spent")
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(DecisionPaused):
+            await task
+        await asyncio.sleep(0)
+        assert service.repository is None
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_whose_transition_is_already_finalized_is_tolerated(
+    tmp_path, monkeypatch,
+) -> None:
+    """暂停的状态转换已经被别处落定（键不存在/非法转换）时只记 debug，不再抛。"""
+    from app.core.scheduler import DecisionPaused
+    from app.persistence.repository import InvalidExecutionTransition
+
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    monkeypatch.setattr(
+        repository, "transition_execution",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            InvalidExecutionTransition("already finalized")
+        ),
+    )
+
+    async def crash() -> None:
+        raise DecisionPaused("one-shot budget spent")
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(DecisionPaused):
+            await task
+        await asyncio.sleep(0)
+        assert repository.get_game("game")["execution_status"] == "running"
+    finally:
+        await service.aclose()
+        repository.close()

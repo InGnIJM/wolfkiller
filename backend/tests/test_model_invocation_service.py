@@ -9,6 +9,7 @@ from app.persistence.repository import (
     GameRepository,
     ModelAttemptQuotaExceeded,
 )
+from app.core.scheduler import DecisionPaused
 from app.services.model_invocation_service import (
     ModelInvocationService, ModelRequestUnavailable, StaleModelResult,
 )
@@ -434,6 +435,17 @@ def test_sync_invocation_success_reuse_and_failure_are_durable() -> None:
         )
     assert failed_repository.finished[0]["failure_code"] == "model_invocation_error"
     assert failed_repository.resolved[0]["status"] == "failed"
+
+    # 一次「故意暂停」不是失败的调用：`failed` 永久不可派发，暂停局续跑后就再也
+    # 拿不回这个请求；`unknown` + 一次性 recovery 才是续跑要走的那条路。
+    paused_repository = FakeInvocationRepository(request=_request(), game=_game())
+    with pytest.raises(DecisionPaused):
+        _sync_invoke(
+            ModelInvocationService(paused_repository),
+            lambda: (_ for _ in ()).throw(DecisionPaused("one-shot budget spent")),
+        )
+    assert paused_repository.finished[0]["failure_code"] == "model_invocation_error"
+    assert paused_repository.resolved[0]["status"] == "unknown"
 
     recovery_repository = FakeInvocationRepository(
         request=_request("unknown"), game=_game(), reserve=True,

@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from app.agents.providers.errors import classify_provider_error
+from app.core.scheduler import DecisionPaused
 from app.persistence.repository import CommitConflict, GameRepository
 
 
@@ -117,8 +118,14 @@ class ModelInvocationService:
                 failure_code=self._failure_code(error), elapsed_ms=elapsed_ms,
                 usage=None,
             )
+            # A deliberate pause is not a failed call. `failed` is permanently
+            # undispatchable, so a pause resolved that way could never be retried
+            # after the resume; `unknown` plus the one-shot
+            # `reserve_recovery_retry` is exactly the path a resume takes
+            # (`recovery=True`, generation bumped by the recover).
+            status = "unknown" if isinstance(error, DecisionPaused) else "failed"
             self._repository.resolve_model_request(
-                game_id, request_id, status="failed", normalized_result=None,
+                game_id, request_id, status=status, normalized_result=None,
             )
             raise
         try:
@@ -207,8 +214,14 @@ class ModelInvocationService:
                 failure_code=self._failure_code(error), elapsed_ms=elapsed_ms,
                 usage=None,
             )
+            # A deliberate pause is not a failed call. `failed` is permanently
+            # undispatchable, so a pause resolved that way could never be retried
+            # after the resume; `unknown` plus the one-shot
+            # `reserve_recovery_retry` is exactly the path a resume takes
+            # (`recovery=True`, generation bumped by the recover).
+            status = "unknown" if isinstance(error, DecisionPaused) else "failed"
             self._repository.resolve_model_request(
-                game_id, request_id, status="failed", normalized_result=None,
+                game_id, request_id, status=status, normalized_result=None,
             )
             raise
         try:

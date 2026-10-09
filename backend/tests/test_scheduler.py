@@ -16,8 +16,9 @@ from app.core.effect_applier import (
     CommitResult, EffectApplier, EffectPermission, EffectRejected, _Runtime, derive_effect_id,
 )
 from app.core.scheduler import (
-    DomainEvent, PipelinePaused, PointResult, ResponseLimitExceeded,
-    ResponseQueue, ResponseWindow, Scheduler, stable_window_id,
+    DecisionPaused, DomainEvent, PipelinePaused, PointResult,
+    ResponseLimitExceeded, ResponseQueue, ResponseWindow, Scheduler,
+    stable_window_id,
 )
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
@@ -1577,3 +1578,26 @@ def test_a_mixed_aggregate_is_not_marked_degraded() -> None:
 
     assert calls["n"] == 2
     assert [permission.degraded for permission in spy.permissions] == [False]
+
+
+def test_a_decision_pause_is_neither_retried_nor_rewrapped() -> None:
+    """`DecisionPaused` 必须原样穿过 `_command`。
+
+    `Scheduler._command` 会把 provider 的**任何**异常包成
+    `PipelinePaused("command provider failed")` 再抛，于是监听器只能看到「provider
+    失败」，无法把「一次性契约耗尽、可以续跑」与「真的崩了」分开；它还会再问一次
+    provider（attempt 0/1），把已经耗尽的预算当成一次瞬时故障重试。暂停语义依赖这两条都不发生。
+    """
+    attempts: list[int] = []
+
+    def provider(request, context, attempt):
+        attempts.append(attempt)
+        raise DecisionPaused("one-shot budget spent")
+
+    registry = snapshot(spec("r", contract("act", 1)))
+    game = state("r")
+
+    with pytest.raises(DecisionPaused, match="one-shot budget spent"):
+        scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
+
+    assert attempts == [0]
