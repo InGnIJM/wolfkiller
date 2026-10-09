@@ -126,7 +126,7 @@ def test_outcome_metrics_score_a_non_seer_board_by_tags() -> None:
 
 def _llm_block() -> dict:
     return {
-        "calls": 4, "errors": 1, "fallbacks": 1,
+        "calls": 4, "errors": 1, "fallbacks": 1, "retried": 1,
         "tokens": {"prompt": 1000, "completion": 200, "total": 1200},
         "elapsed_ms": {"p50": 1000, "p95": 2000, "p99": 3000},
         "calls_by_kind": {"action": 2, "speech": 1, "night": 1},
@@ -170,7 +170,7 @@ def _summary_g2() -> dict:
     summary["rounds_played"] = 5
     summary["model_errors"] = 0
     summary["llm"] = {
-        "calls": 2, "errors": 0, "fallbacks": 0,
+        "calls": 2, "errors": 0, "fallbacks": 0, "retried": 0,
         "tokens": {"prompt": 500, "completion": 100, "total": 600},
         "elapsed_ms": {"p50": 800, "p95": 1200, "p99": 1200},
         "calls_by_kind": {"action": 1, "speech": 1},
@@ -256,6 +256,8 @@ def test_compliance_metrics_pooled() -> None:
     assert compliance["llm_calls"] == 6
     assert compliance["llm_error_rate"] == 0.1667
     assert compliance["llm_fallback_rate"] == 0.1667
+    # 1/6：内层重试率来自 `llm_calls.log` 的 `retried`，不是 attempts 行（后者恒 1 行/请求）
+    assert compliance["llm_retry_rate"] == 0.1667
     assert compliance["technical_abstains"] == 1
     assert compliance["model_errors"] == 2
 

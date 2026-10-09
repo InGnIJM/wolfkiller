@@ -47,6 +47,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+#: How many cached benchmark reports to keep per ``(run_id, metric_version)``.
+#: The reader only ever serves the newest one; the second copy exists so the
+#: previous computation can still be compared against.
+_REPORT_KEEP = 2
+
+
 def _json(value: object) -> str:
     try:
         return json.dumps(
@@ -1693,6 +1699,27 @@ class GameRepository:
                 "INSERT INTO benchmark_reports VALUES (?,?,?,?,?)",
                 (run_id, metric_version, input_digest, report_json, _now()),
             )
+            self._prune_benchmark_reports(connection, run_id, metric_version)
+
+    @staticmethod
+    def _prune_benchmark_reports(connection, run_id: str, metric_version: str) -> None:
+        """Keep only the newest ``_REPORT_KEEP`` reports of one metric version.
+
+        Every fact change — a late usage write, a new attempt row, a status flip —
+        produces a new ``input_digest`` and therefore a new full report, and
+        nothing ever removed them: one run reached 3404 rows. The reader only ever
+        takes the newest (``ORDER BY generated_at DESC, rowid DESC LIMIT 1``), so
+        the older copies are dead weight. Two are kept rather than one so the
+        previous computation stays available for comparison; the side effect is
+        that the same-digest ``CommitConflict`` guard above only fires while a row
+        is still inside this window.
+        """
+        connection.execute(
+            "DELETE FROM benchmark_reports WHERE run_id=? AND metric_version=? AND rowid NOT IN ("
+            "SELECT rowid FROM benchmark_reports WHERE run_id=? AND metric_version=? "
+            "ORDER BY generated_at DESC, rowid DESC LIMIT ?)",
+            (run_id, metric_version, run_id, metric_version, _REPORT_KEEP),
+        )
 
     def get_benchmark_report(
         self, run_id: str, *, metric_version: str, input_digest: str,

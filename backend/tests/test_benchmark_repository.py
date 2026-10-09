@@ -206,6 +206,48 @@ def test_benchmark_report_is_deduplicated_by_metric_version_and_input_digest(tmp
         repository.close()
 
 
+def test_older_benchmark_reports_are_pruned_per_metric_version(tmp_path) -> None:
+    """报告缓存必须有界：每个 (run_id, metric_version) 只留最新两份。
+
+    每次事实变化（迟到的 usage、新的 attempt、run 状态翻转）都会算出一个新的
+    `input_digest` 并插入一整份报告，而此前没有任何清理 —— 单个 run 曾累积 3404 行。
+    读者只用最新一行，旧行是死重量；留两份是为了还能对照上一次计算。
+    """
+    repository = GameRepository(tmp_path)
+    try:
+        repository.create_benchmark_run(
+            run_id="run-keep", client_request_id="client-keep", request_digest="request",
+            name="A/B", mode="paired_regression", config={}, schedule=[],
+        )
+        for index in range(4):
+            repository.save_benchmark_report(
+                "run-keep", metric_version="v1", input_digest=f"facts-{index}",
+                report={"winner": "candidate", "index": index},
+            )
+        repository.save_benchmark_report(
+            "run-keep", metric_version="v2", input_digest="other",
+            report={"winner": "baseline", "metric_version": "v2"},
+        )
+
+        # The two oldest v1 rows are gone; the newest two survive.
+        for stale in ("facts-0", "facts-1"):
+            assert repository.get_benchmark_report(
+                "run-keep", metric_version="v1", input_digest=stale,
+            ) is None
+        assert repository.get_benchmark_report(
+            "run-keep", metric_version="v1", input_digest="facts-2",
+        )["report"]["index"] == 2
+        assert repository.get_latest_benchmark_report("run-keep")["report"] == {
+            "winner": "baseline", "metric_version": "v2",
+        }
+        # A different metric version is not collateral damage.
+        assert repository.get_benchmark_report(
+            "run-keep", metric_version="v2", input_digest="other",
+        )["report"]["metric_version"] == "v2"
+    finally:
+        repository.close()
+
+
 def test_model_attempt_quota_is_atomic_across_repository_instances(tmp_path) -> None:
     first = GameRepository(tmp_path)
     second = GameRepository(tmp_path)

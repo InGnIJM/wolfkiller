@@ -75,7 +75,8 @@ def _seed_game(data_dir: Path, game_id: str = "g1") -> None:
          "seat": 1, "data": {"call_kind": "action", "contract_id": "seer_action",
                              "elapsed_ms": 1200, "prompt_tokens": 800,
                              "completion_tokens": 90, "total_tokens": 890,
-                             "parse_result": "accepted", "attempt": 1}},
+                             "parse_result": "accepted", "attempt": 2,
+                             "retried": True}},
         {"timestamp": "b", "round": 1, "phase": "speech", "operation": "llm_call",
          "seat": 1, "data": {"call_kind": "speech", "elapsed_ms": 2500,
                              "prompt_tokens": 1500, "completion_tokens": 200,
@@ -165,6 +166,8 @@ def test_build_game_summary_from_fixture(tmp_path: Path) -> None:
     assert summary["llm"]["calls"] == 4
     assert summary["llm"]["errors"] == 1
     assert summary["llm"]["fallbacks"] == 1
+    # 内层梯子的重试次数只在这份日志里：`model_attempts` 每次逻辑请求只有一行。
+    assert summary["llm"]["retried"] == 1
     assert summary["llm"]["tokens"] == {"prompt": 2300, "completion": 290, "total": 2590}
     assert summary["llm"]["calls_by_kind"] == {"action": 1, "speech": 2, "night": 1}
     assert summary["llm"]["elapsed_ms"]["p50"] == 1200

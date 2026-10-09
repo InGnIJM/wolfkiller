@@ -437,8 +437,13 @@ def _attempt_metrics(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "unknown_usage_count": unknown_count,
         "usage_completeness_rate": completeness_rate,
         "executed_requests": executed_requests,
+        # A request with more than one `model_attempts` row is a **recovery
+        # re-dispatch**, not a ladder retry: every retry happens inside one
+        # `provider_call`, so this count can never see them. The truthful retry
+        # rate lives in the `llm` block (`llm_retry_rate`), computed from
+        # `llm_calls.log`'s own `retried` flag. The old `retry_rate` key was
+        # removed rather than left as a structurally-zero number.
         "retried_requests": retried_requests,
-        "retry_rate": _rate(retried_requests, executed_requests),
     }
 
 

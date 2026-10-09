@@ -1235,6 +1235,13 @@ def test_every_projected_public_payload_is_accepted_by_the_replay_dto() -> None:
     rejected: list[str] = []
     missing: list[str] = []
 
+    # 每个可选键都必须有样本：缺样本时下面的 `payload.update` 会跳过它，DTO 校验
+    # 也跟着跳过 —— 门禁会静默形同虚设（`degraded` 当年就是这么漏出去的）。
+    unsampled = {
+        key for keys in game_routes._AUDIENCE_ACTION_OPTIONAL.values() for key in keys
+    } - set(_OPTIONAL_KEY_SAMPLES)
+    assert unsampled == set(), f"可选键缺少样本: {sorted(unsampled)}"
+
     for event_type, (public_type, allowed) in sorted(_projector_declared_events().items()):
         if event_type in classified:
             continue

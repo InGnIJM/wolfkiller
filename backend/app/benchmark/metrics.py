@@ -298,6 +298,7 @@ def compute_compliance_metrics(summaries: list[dict]) -> dict:
     errors = 0
     technical_abstains = 0
     model_errors = 0
+    retried_calls = 0
     for summary in summaries:
         if not isinstance(summary, dict):
             continue
@@ -308,6 +309,7 @@ def compute_compliance_metrics(summaries: list[dict]) -> dict:
             llm_calls += total_calls
             errors += _int(llm.get("errors"))
             fallbacks += _int(llm.get("fallbacks"))
+            retried_calls += _int(llm.get("retried"))
         rounds = summary.get(_ROUNDS_KEY)
         if isinstance(rounds, dict):
             for bucket in rounds.values():
@@ -317,6 +319,11 @@ def compute_compliance_metrics(summaries: list[dict]) -> dict:
         "llm_calls": llm_calls,
         "llm_fallback_rate": _rate(fallbacks, llm_calls),
         "llm_error_rate": _rate(errors, llm_calls),
+        # Truthful inner-ladder retry rate, from `llm_calls.log`'s own `retried`
+        # flag. The `attempts` block's rate could only ever be 0: a logical
+        # request writes exactly one `model_attempts` row no matter how many
+        # provider calls its ladder made.
+        "llm_retry_rate": _rate(retried_calls, llm_calls),
         "technical_abstains": technical_abstains,
         "model_errors": model_errors,
     }

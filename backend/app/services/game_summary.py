@@ -206,6 +206,7 @@ def _llm_aggregate(records: list[dict]) -> dict:
     by_kind: dict[str, int] = {}
     errors = 0
     fallbacks = 0
+    retried = 0
 
     for record in records:
         data = record.get("data") if isinstance(record.get("data"), dict) else {}
@@ -223,6 +224,11 @@ def _llm_aggregate(records: list[dict]) -> dict:
         ms = data.get("elapsed_ms")
         if type(ms) is int and ms >= 0:
             elapsed.append(ms)
+        # The inner ladder's own count: one llm_calls row per logical call, so
+        # this is the only truthful source for a retry rate. `model_attempts`
+        # cannot express it (one row per dispatch, retries happen inside it).
+        if data.get("retried") is True:
+            retried += 1
         parse_result = data.get("parse_result")
         if parse_result == "error" or data.get("failure_code") is not None:
             errors += 1
@@ -233,6 +239,7 @@ def _llm_aggregate(records: list[dict]) -> dict:
         "calls": len(records),
         "errors": errors,
         "fallbacks": fallbacks,
+        "retried": retried,
         "tokens": tokens,
         "elapsed_ms": {
             "p50": _percentile(elapsed, 50),
