@@ -22,8 +22,8 @@ from __future__ import annotations
 from app.core.effect_applier import derive_effect_id
 from app.core.night_settlement import DANCE_POOL_STATUS, POISON_IMMUNE_RESOURCE
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
 
@@ -78,7 +78,9 @@ def validate_dance_pool(
 def _reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
 ) -> GameEffect:
-    if command.action_type == "pool" and command.target_seats:
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "pool" and command.target_seats:
         seats = "、".join(f"{seat}号" for seat in command.target_seats)
         veil = (
             "，舞者在池内因此三人免疫狼刀"
@@ -99,6 +101,7 @@ def _reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": None,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

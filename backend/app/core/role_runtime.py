@@ -35,8 +35,32 @@ def clone_action_counts(value: object) -> dict[str, dict[str, int]]:
 
 def record_accepted_action(
     counts: dict[str, dict[str, int]], payload: Mapping[str, object], seats: set[int],
+    *, degraded: bool = False,
 ) -> None:
+    """Count one accepted action, telling "asked" apart from "spent".
+
+    ``action_counts`` serves two purposes at once, and they need opposite
+    treatment when the engine — not the seat — produced the command:
+
+    * ``window`` / ``round`` are the **re-ask guard**. ``GameEngine`` runs a
+      slot per speaker and per response window, so without them an outage would
+      buy the same seat another 60-second attempt at every later slot of the
+      round. A degraded attempt did happen, so it counts here.
+    * ``game`` is the **"this card is spent"** counter, and it duplicates
+      ``role_resources``: every contract declaring ``per_game_limit`` also
+      consumes a resource with a compare-and-set precondition (the Hunter's
+      ``gun``, the Idiot's ``flip``, the Wolf King's ``wolf_claw``, the Crimson
+      Envoy's ``explode``). Counting a degraded attempt here is what silently
+      voided one-shot skills: the resource was still in hand, but the validator
+      answered ``game_limit_reached`` to every later attempt. The registry
+      enforces that pairing, so a counter-only one-shot cannot exist.
+
+    The distinction is why a fallback never reaches this function with
+    ``degraded=False``: the write entry reads it off the permission.
+    """
     from app.core.effect_applier import EffectRejected
+    if type(degraded) is not bool:
+        raise EffectRejected("invalid accept action degraded flag")
     fields = {"actor_seat", "contract_id", "window_id", "round_number"}
     if set(payload) != fields:
         raise EffectRejected("invalid accept action fields")
@@ -59,6 +83,8 @@ def record_accepted_action(
         "game": f"{actor}\0{contract}",
     }
     for scope, key in keys.items():
+        if degraded and scope == "game":
+            continue
         current = counts[scope].get(key, 0)
         if current >= _INT32: raise EffectRejected("action count overflow")
         counts[scope][key] = current + 1

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from app.core.effect_applier import derive_effect_id
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 
@@ -59,7 +59,9 @@ def validate_wolf_king_action(
 def _wolf_king_reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
 ) -> GameEffect:
-    if command.action_type == "shoot" and command.target_seat is not None:
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "shoot" and command.target_seat is not None:
         thought = f"决定发动狼王爪带走 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
     else:
         thought = f"决定不发动狼王爪：{command.reasoning or '无理由'}"
@@ -73,6 +75,7 @@ def _wolf_king_reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": command.target_seat,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

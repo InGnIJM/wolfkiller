@@ -586,6 +586,40 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.getByText(/1号自爆，当晚好人技能被封印（无人）/)).toBeVisible();
   });
 
+  it('marks an engine-cast action as 系统代行 instead of a player decision', () => {
+    // 模型调用失败时引擎会替该座位提交兜底动作。旧实现把这句「系统异常，本轮未行动」
+    // 当理由播出去，读起来完全像玩家自己决定不动手；现在带 `degraded` 标记的动作
+    // 眉标换成「系统代行」，正文只留中性说明。
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_thought',
+          payload: {
+            action_type: 'witch_reasoning', seat: 8, target_seat: null,
+            reasoning: '本轮未提交决策', degraded: true, round_number: 2,
+          },
+        },
+        {
+          ...replayEventMeta,
+          event_type: 'wolf_vote',
+          payload: {
+            seat: 1, target_seat: null, reasoning: '本轮未提交决策',
+            degraded: true, round_number: 2,
+          },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/系统代行 · 8号/)).toBeVisible();
+    expect(screen.getByText('本轮未提交决策')).toBeVisible();
+    // 代行动作没有「不行动」这个决定，也没有角色名眉标。
+    expect(screen.queryByText(/不行动/)).toBeNull();
+    expect(screen.queryByText(/女巫思考/)).toBeNull();
+    expect(screen.getByText(/1号 → 弃权（系统代行：本轮未提交决策）/)).toBeVisible();
+  });
+
   it('marks an archived charm entry as missing its target', () => {
     useGameStore.setState({
       timeline: [

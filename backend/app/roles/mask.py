@@ -20,8 +20,8 @@ from collections.abc import Mapping
 from app.core.effect_applier import derive_effect_id
 from app.core.night_settlement import MASKED_STATUS, POISON_IMMUNE_RESOURCE
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
 from app.roles.target_memory import is_consecutive_repeat, target_memory
@@ -64,7 +64,9 @@ def _reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int, *,
     in_pool: bool | None, **common: object,
 ) -> GameEffect:
-    if command.action_type == "mask" and command.target_seat is not None:
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "mask" and command.target_seat is not None:
         state = "，对方正在舞池中" if in_pool else "，对方不在舞池中"
         thought = (
             f"决定给 {command.target_seat} 号玩家戴上面具{state}："
@@ -82,6 +84,7 @@ def _reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": command.target_seat,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

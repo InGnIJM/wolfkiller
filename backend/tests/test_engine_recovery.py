@@ -18,6 +18,7 @@ from app.core.scheduler import PointResult
 from app.models.actions import SpeechRecord
 from app.models.conversation import Conversation, ConversationScope
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
+from app.models.pipeline import DEGRADED_REASONING
 from app.persistence.checkpoint_codec import CheckpointCodec, CheckpointError
 from app.roles.registry import builtin_registry
 
@@ -207,6 +208,51 @@ def test_pending_completion_round_trip_allows_absent_deaths_diff_and_win(tmp_pat
     restored = GameEngine("recover", roles={1: _Role()}, data_dir=str(tmp_path / "restored"))
     restored.load_restored_state(source.state, orchestration, codec)
     assert restored._pending_night_completion == source._pending_night_completion
+
+
+def test_a_degraded_wolf_ballot_survives_the_checkpoint_round_trip(tmp_path) -> None:
+    """A night interrupted mid-ballot must not lose the engine-made flag.
+
+    Dropping it on resume would publish the placeholder as the wolf's own
+    abstention for every ballot cast before the interruption.
+    """
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    source = GameEngine("recover", roles={1: _Role()}, data_dir=str(tmp_path))
+    source.state = _state(registry.digest)
+    source._pending_night_batch = _PendingNightBatch(
+        2, 0, (), (WolfVote(1, "pass", None, DEGRADED_REASONING, degraded=True),), (), (), None,
+    )
+
+    orchestration = json.loads(json.dumps(source.export_orchestration(codec)))
+    assert orchestration["pending_night_batch"]["wolf_votes"][0]["degraded"] is True
+
+    restored = GameEngine("recover", roles={1: _Role()}, data_dir=str(tmp_path / "restored"))
+    restored.load_restored_state(source.state, orchestration, codec)
+
+    assert restored._pending_night_batch.wolf_votes[0].degraded is True
+    assert restored._pending_night_batch.wolf_votes[0].reasoning == DEGRADED_REASONING
+
+
+def test_a_wolf_ballot_archive_without_the_degraded_key_still_decodes(tmp_path) -> None:
+    """Every batch written before the key existed must keep resuming."""
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    source = GameEngine("recover", roles={1: _Role()}, data_dir=str(tmp_path))
+    source.state = _state(registry.digest)
+    source._pending_night_batch = _PendingNightBatch(
+        2, 0, (), (WolfVote(1, "kill", 2, "reason"),), (), (), None,
+    )
+
+    orchestration = json.loads(json.dumps(source.export_orchestration(codec)))
+    del orchestration["pending_night_batch"]["wolf_votes"][0]["degraded"]
+
+    restored = GameEngine("recover", roles={1: _Role()}, data_dir=str(tmp_path / "restored"))
+    restored.load_restored_state(source.state, orchestration, codec)
+
+    ballot = restored._pending_night_batch.wolf_votes[0]
+    assert ballot.degraded is False
+    assert ballot.action_type == "kill" and ballot.target_seat == 2
 
 
 def test_engine_orchestration_encoder_rejects_invalid_live_values(tmp_path) -> None:

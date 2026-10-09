@@ -101,6 +101,12 @@ class PromptRenderer:
             },
             "resources": context.resources,
             "counters": context.counters,
+            # True when the engine, not this seat, supplied the last command for
+            # this contract. The seat's own thought history deliberately does not
+            # record the engine's placeholder (see GameEngine._log_audience_pairs),
+            # so without this field a re-asked model could not tell that the
+            # previous round was never its answer.
+            "degraded": context.degraded,
             "source_event_id": context.source_event_id,
             "trigger_event": context.trigger_event,
             "trigger_reason": context.trigger_reason,

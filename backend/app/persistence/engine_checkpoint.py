@@ -96,7 +96,12 @@ def encode_engine_orchestration(
             "discussion_history": list(batch.discussion_history),
             "wolf_votes": [
                 {"seat": item.seat, "action_type": item.action_type,
-                 "target_seat": item.target_seat, "reasoning": item.reasoning}
+                 "target_seat": item.target_seat, "reasoning": item.reasoning,
+                 # Persisted explicitly, unlike the in-process command flag: the
+                 # decoder defaults it to False, so a batch written before the key
+                 # existed resumes unchanged while a degraded placeholder keeps
+                 # saying it was the engine's.
+                 "degraded": item.degraded}
                 for item in batch.wolf_votes
             ],
             "raw_results": [_point_result(codec, item) for item in batch.raw_results],

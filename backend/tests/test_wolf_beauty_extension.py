@@ -244,7 +244,7 @@ def test_passing_keeps_the_night_free_and_records_the_reasoning() -> None:
     assert [effect.kind for effect in effects] == [EffectKind.EMIT_EVENT]
     assert effects[0].payload["payload"] == {
         "seat": 1, "action_type": "pass", "target_seat": None,
-        "reasoning": "先观察", "thought": "决定本晚不魅惑：先观察",
+        "reasoning": "先观察", "degraded": False, "thought": "决定本晚不魅惑：先观察",
     }
 
 

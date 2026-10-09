@@ -136,7 +136,7 @@ def test_passing_keeps_the_duel_and_records_the_reasoning() -> None:
     assert [effect.kind for effect in effects] == [EffectKind.EMIT_EVENT]
     assert effects[0].payload["payload"] == {
         "seat": 1, "action_type": "pass", "target_seat": None,
-        "reasoning": "再等等", "thought": "决定暂不发动决斗：再等等",
+        "reasoning": "再等等", "degraded": False, "thought": "决定暂不发动决斗：再等等",
     }
     assert role_resource_view_guard(effects) is True
 

@@ -21,8 +21,8 @@ from app.core.scheduler import (
 )
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect,
-    RoleSpec, RuleViolation, SchedulePoint,
+    DEGRADED_REASONING, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
 from app.roles.registry import builtin_registry
@@ -217,6 +217,51 @@ def test_run_point_retries_once_then_falls_back_and_applies() -> None:
     assert len(result.requests) == len(result.commits) == 1
     assert result.events[0]["event_type"] == "DONE"
     assert result.commits[0].revision == 1
+
+
+def test_a_scheduler_fallback_marks_the_command_as_degraded() -> None:
+    """The engine's own command must be labelled, not dressed up as an answer.
+
+    Nothing downstream could tell the placeholder apart from a real command
+    before ``degraded`` existed: the god view published it as the seat's inner
+    monologue and the next prompt fed it back as the seat's own memory.
+    """
+    def provider(request, context, attempt):
+        return ActionCommand(action_type="invalid", target_seat=None, reasoning="x")
+
+    registry = snapshot(spec("r", contract("c")))
+    seen: list = []
+
+    def spy(context, command):
+        seen.append(command)
+        return resolve_event(context, command)
+
+    registry.specs["r"].contracts[0].__dict__.update({"resolve": spy})
+    scheduler(registry, provider).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+    assert len(seen) == 1
+    assert seen[0].action_type == "pass"
+    assert seen[0].degraded is True
+    assert seen[0].reasoning == DEGRADED_REASONING
+
+
+def test_a_valid_command_is_not_marked_degraded() -> None:
+    def provider(request, context, attempt):
+        return ActionCommand(action_type="act", target_seat=None, reasoning="先看")
+
+    registry = snapshot(spec("r", contract("c")))
+    seen: list = []
+
+    def spy(context, command):
+        seen.append(command)
+        return resolve_event(context, command)
+
+    registry.specs["r"].contracts[0].__dict__.update({"resolve": spy})
+    scheduler(registry, provider).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+    assert len(seen) == 1
+    assert seen[0].degraded is False
+    assert seen[0].reasoning == "先看"
 
 
 def test_run_point_uses_aggregate_group_key_once() -> None:

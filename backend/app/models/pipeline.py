@@ -313,6 +313,14 @@ class ActionContext(_FrozenValue):
     trigger_reason: str | None = None
     accepted_command_summaries: tuple[JsonValue, ...] = ()
     aggregate_result: Mapping[str, JsonValue] | None = None
+    #: True when the command this context resolves came from the engine instead
+    #: of a model (a provider failure, an unusable answer, or the contract's own
+    #: fallback). The scheduler marks it; the write entry reads it to decide how
+    #: the accepted action is counted — a degraded attempt must not consume a
+    #: one-shot card's quota. It also reaches the prompt, because the seat's own
+    #: history deliberately no longer records the placeholder: without this field
+    #: a re-asked model would not know the previous round was never its answer.
+    degraded: bool = False
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
@@ -334,6 +342,7 @@ class ActionContext(_FrozenValue):
         _require_int("round_number", self.round_number)
         _require_int("actor_seat", self.actor_seat)
         _require_bool("actor_alive", self.actor_alive)
+        _require_bool("degraded", self.degraded)
         try:
             point = SchedulePoint(self.schedule_point)
         except (TypeError, ValueError) as error:
@@ -368,6 +377,19 @@ class ActionContext(_FrozenValue):
             )
 
 
+#: The reasoning a command carries when the engine, not a model, produced it.
+#: Every fallback used to invent player-facing prose instead ("系统异常，本轮未
+#: 行动"), and because ``degraded`` did not exist, nothing downstream could tell
+#: that sentence apart from a real answer: the god view published it as the
+#: player's inner monologue and the next prompt fed it back as the player's own
+#: memory. The wording deliberately avoids "系统异常": a command that failed
+#: validation three times is degraded without any system being broken.
+DEGRADED_REASONING = "本轮未提交决策"
+#: The matching thought line, for the roles that publish one. Not a decision, so
+#: it does not pretend to be one ("决定今晚不使用药水：…" would).
+DEGRADED_THOUGHT = "本轮未提交决策（系统代行）"
+
+
 class ActionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -386,6 +408,15 @@ class ActionCommand(BaseModel):
     #: command written before it existed round-trips unchanged.
     target_seats: tuple[StrictInt, ...] | None = None
     reasoning: StrictStr = Field(max_length=500)
+    #: True when the engine generated this command rather than a model: the
+    #: contract's fallback action, an unusable answer, or a provider failure.
+    #: **Excluded from serialization on purpose** — ``stable_digest()`` hashes
+    #: ``model_dump()`` and sorts aggregate command groups by that digest, so a
+    #: field that shows up in the dump would reorder two otherwise identical
+    #: fallback commands mid-contract. The flag is in-process data; the durable
+    #: surfaces that need it (the wolf-vote checkpoint) serialize it explicitly,
+    #: and the audience payload carries it as its own ``degraded`` key.
+    degraded: Literal[False] | bool = Field(default=False, exclude=True)
 
     @field_validator("target_seats", mode="before")
     @classmethod

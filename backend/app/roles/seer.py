@@ -8,8 +8,8 @@ from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
 from app.core.reflect import REFLECT_CHECK_RESOURCE, reflect_effects
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,9 @@ def validate_seer_action(
 def _seer_reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
 ) -> GameEffect:
-    if command.action_type == "check" and command.target_seat is not None:
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "check" and command.target_seat is not None:
         thought = f"决定查验 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
     else:
         thought = f"决定今晚不查验：{command.reasoning or '无理由'}"
@@ -44,6 +46,7 @@ def _seer_reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": command.target_seat,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

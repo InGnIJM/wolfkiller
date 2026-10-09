@@ -95,12 +95,12 @@ _EVENTS["WOLF_CHAT_MESSAGE"] = (
     "wolf_chat_message", frozenset({"seat", "text", "day_plan", "round_number"}),
 )
 _EVENTS["WOLF_VOTE"] = (
-    "wolf_vote", frozenset({"seat", "target_seat", "reasoning", "round_number"}),
+    "wolf_vote", frozenset({"seat", "target_seat", "reasoning", "round_number", "degraded"}),
 )
 for _domain_type in _PUBLIC_REASONING_EVENTS:
     _EVENTS[_domain_type] = (
         "night_thought",
-        frozenset({"seat", "action_type", "target_seat", "reasoning", "round_number"}),
+        frozenset({"seat", "action_type", "target_seat", "reasoning", "round_number", "degraded"}),
     )
 
 

@@ -98,7 +98,7 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     assert saved[3].payload["event_type"] == "WITCH_REASONING"
     assert saved[3].payload["payload"] == {
         "seat": 1, "action_type": "save", "target_seat": 2,
-        "reasoning": "ok", "thought": "决定使用解药救 2 号玩家：ok",
+        "reasoning": "ok", "degraded": False, "thought": "决定使用解药救 2 号玩家：ok",
     }
     assert poisoned[2].payload["event_type"] == "WITCH_REASONING"
     assert poisoned[2].payload["payload"]["thought"] == "决定使用毒药毒杀 3 号玩家：ok"
@@ -114,7 +114,7 @@ def test_resolve_pass_emits_reasoning_event() -> None:
         "event_type": "WITCH_REASONING",
         "payload": {
             "seat": 1, "action_type": "pass", "target_seat": None,
-            "reasoning": "ok", "thought": "决定今晚不使用药水：ok",
+            "reasoning": "ok", "degraded": False, "thought": "决定今晚不使用药水：ok",
         },
     }
     assert effects[0].visibility == ("PUBLIC",)

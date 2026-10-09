@@ -153,6 +153,13 @@ _REASONING_EVENT_TYPES = {
     "MASK_REASONING": ("mask_reasoning", frozenset({"mask", "pass"})),
 }
 
+#: `degraded`（引擎代行的动作）是本仓库后加的键：旧记录里不存在，必须仍算合法载荷。
+#: 推理类事件共 17 种，加上狼票；逐个手写只会让下一次新增角色再漏一处，所以从
+#: `_REASONING_EVENT_TYPES` 派生。
+_AUDIENCE_ACTION_OPTIONAL.update({
+    name: frozenset({"degraded"}) for name in (*_REASONING_EVENT_TYPES, "WOLF_VOTE")
+})
+
 
 def get_service() -> GameService:
     from app.main import game_service
@@ -596,14 +603,16 @@ def _public_reasoning_event(
         return []
     if not _is_reasoning_text(reasoning) or not _is_reasoning_text(thought):
         return []
-    return [{
-        "event_type": "night_thought",
-        "payload": {
-            "round_number": round_number, "seat": seat,
-            "action_type": public_type, "target_seat": target,
-            "reasoning": reasoning,
-        },
-    }]
+    public_payload: dict[str, Any] = {
+        "round_number": round_number, "seat": seat,
+        "action_type": public_type, "target_seat": target,
+        "reasoning": reasoning,
+    }
+    # `degraded` is optional: every record written before it existed lacks the
+    # key, and those must keep replaying as a seat's own decision.
+    if payload.get("degraded") is True:
+        public_payload["degraded"] = True
+    return [{"event_type": "night_thought", "payload": public_payload}]
 
 
 def _public_day_verdict_event(
@@ -811,9 +820,15 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             return []
         return [{"event_type": "wolf_vote", "payload": {
             "round_number": round_number, "seat": seat,
-            "target_seat": target, "reasoning": reasoning}}]
+            "target_seat": target, "reasoning": reasoning,
+            # 同上：早于 `degraded` 的记录一律按「玩家自己的票」回放。
+            **({"degraded": True} if payload.get("degraded") is True else {}),
+        }}]
     if event_type in _REASONING_EVENT_TYPES:
-        if not isinstance(payload, dict) or set(payload) != _REASONING_EVENT_SCHEMA:
+        # 必填字段齐全即可；`degraded` 是本仓库后加的，旧记录没有这个键。
+        if not isinstance(payload, dict) or not _REASONING_EVENT_SCHEMA <= set(payload) <= (
+            _REASONING_EVENT_SCHEMA | {"degraded"}
+        ):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         return _public_reasoning_event(event_type, payload, round_number)

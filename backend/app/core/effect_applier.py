@@ -50,10 +50,19 @@ class EffectPermission:
     allowed_targets: frozenset[int]
     allowed_visibility: frozenset[str]
     schema_version: int = 1
+    #: True when the batch being applied is the engine's own fallback rather than
+    #: an answer. The write entry needs it to count the accepted action correctly
+    #: (see ``record_accepted_action``): a degraded attempt protects the
+    #: window/round from being asked again, but must not consume a one-shot card's
+    #: ``per_game_limit``. It rides on the permission — not on the accept payload —
+    #: so the persisted commit shape, and therefore every resumed checkpoint, is
+    #: unchanged.
+    degraded: bool = False
     def __post_init__(self) -> None:
         _integer(self.actor_seat, "actor_seat", positive=True)
         if type(self.schema_version) is not int: raise TypeError("schema_version must be an integer")
         if self.schema_version != 1: raise ValueError("unsupported schema_version")
+        if type(self.degraded) is not bool: raise TypeError("degraded must be a boolean")
         for name in ("role_effects", "contract_effects"): object.__setattr__(self, name, _effect_set(getattr(self, name), name))
         if type(self.allowed_targets) is not frozenset: raise TypeError("allowed_targets must be a frozenset")
         for seat in self.allowed_targets: _integer(seat, "allowed target", positive=True)
@@ -554,7 +563,10 @@ class EffectApplier:
         for effect in ordered:
             payload = _validate_payload(effect, set(state.players))
             if effect.kind is EffectKind.ACCEPT_ACTION and payload:
-                record_accepted_action(simulated.action_counts, payload, set(state.players))
+                record_accepted_action(
+                    simulated.action_counts, payload, set(state.players),
+                    degraded=permission.degraded,
+                )
             _check_preconditions(effect, simulated, alive)
             _apply_one(effect, payload, simulated, alive, generated_events, preexisting_relations)
         simulated.revision += 1

@@ -19,7 +19,7 @@ from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
 from app.core.role_runtime import initialize_role_resources
 from app.models.conversation import ConversationScope
 from app.models.game import GameConfig, GameState, PlayerState
-from app.models.pipeline import ActionCommand
+from app.models.pipeline import DEGRADED_REASONING, ActionCommand
 from app.roles.registry import RegistrySnapshot
 from app.roles.evil_knight import EVIL_KNIGHT_SPEC
 from app.roles.registry import builtin_registry
@@ -838,81 +838,73 @@ def test_wolf_vote_turn_pass(state: GameState):
     assert vote == WolfVote(1, "pass", None, "先看")
 
 
+def degraded_vote() -> WolfVote:
+    """The ballot the engine casts for itself when no usable answer arrived.
+
+    ``degraded=True`` is the whole point of the case: without it the audience
+    stream and the seat's own history read this placeholder as the wolf's own
+    decision to skip the night.
+    """
+    return WolfVote(1, "pass", None, DEGRADED_REASONING, degraded=True)
+
+
 def test_wolf_vote_turn_fallback_invoke_raises(state: GameState, caplog):
     def invoke(_messages):
         raise RuntimeError("boom")
 
     director = _director(invoke)
     with caplog.at_level(logging.WARNING, logger="app.core.night_flow"):
-        assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-            1, "pass", None, "系统异常，本轮未行动"
-        )
+        assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
     assert any("degrading to safe pass" in record.message for record in caplog.records)
     assert any("boom" in record.exc_text for record in caplog.records)
 
 
 def test_wolf_vote_turn_fallback_non_str(state: GameState):
     director = _director(lambda _messages: 123)  # type: ignore[arg-type,return-value]
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_fallback_invalid_json(state: GameState):
     director = _director(lambda _messages: "not json")
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_fallback_list(state: GameState):
     director = _director(lambda _messages: "[]")
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_kill_missing_target(state: GameState):
     director = _director(
         lambda _messages: '{"action_type": "kill", "reasoning": "可疑"}'
     )
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_kill_non_int_target(state: GameState):
     director = _director(
         lambda _messages: '{"action_type": "kill", "target_seat": "2", "reasoning": "可疑"}'
     )
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_kill_out_of_seats_target(state: GameState):
     director = _director(
         lambda _messages: '{"action_type": "kill", "target_seat": 99, "reasoning": "可疑"}'
     )
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_kill_missing_reasoning(state: GameState):
     director = _director(
         lambda _messages: '{"action_type": "kill", "target_seat": 2}'
     )
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
     director = _director(lambda _messages: '{"action_type": "pass", "target_seat": null}')
-    assert director.wolf_vote_turn(state, 1, [], []) == WolfVote(
-        1, "pass", None, "系统异常，本轮未行动"
-    )
+    assert director.wolf_vote_turn(state, 1, [], []) == degraded_vote()
 
 
 # ── narration / dawn_narration ──────────────────────────────

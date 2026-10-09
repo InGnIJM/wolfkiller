@@ -22,8 +22,8 @@ from app.core.night_settlement import (
     DELAYED_DEATH_STATUS, LINGERING_EXILE_STATUS, SILENCED_STATUS,
 )
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
@@ -72,7 +72,9 @@ def validate_crimson_envoy_action(
 def _reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int, **common: object,
 ) -> GameEffect:
-    if command.action_type == "explode":
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "explode":
         thought = f"决定自爆并封印当晚所有好人技能：{command.reasoning or '无理由'}"
     else:
         thought = f"决定暂不自爆：{command.reasoning or '无理由'}"
@@ -86,6 +88,7 @@ def _reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": command.target_seat,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

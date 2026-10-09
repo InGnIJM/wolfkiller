@@ -10,7 +10,7 @@ from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
 from app.core.wolf_pack import actor_sees_pack, in_wolf_pack
 from app.models.conversation import ConversationScope
 from app.models.game import Camp, GameState
-from app.models.pipeline import ActionCommand
+from app.models.pipeline import ActionCommand, DEGRADED_REASONING
 from app.roles.registry import RegistrySnapshot
 from app.agents.game_rules import BASE_RULES, TARGET_SELECTION_RULE, SHERIFF_GAME_RULES
 from app.agents.output_parser import extract_json_object
@@ -216,6 +216,11 @@ class WolfVote:
     action_type: str
     target_seat: Optional[int]
     reasoning: str
+    #: True when this ballot is the engine's, not the seat's own answer. The
+    #: audience payload publishes it so the god view can tell a system-cast
+    #: abstention from a wolf that chose to sit the night out. Defaulted so every
+    #: archive written before the key existed decodes unchanged.
+    degraded: bool = False
 
     def __post_init__(self) -> None:
         if type(self.seat) is not int or self.seat <= 0:
@@ -226,6 +231,8 @@ class WolfVote:
             raise ValueError("kill requires target")
         if self.action_type == "pass" and self.target_seat is not None:
             raise ValueError("pass cannot have target")
+        if type(self.degraded) is not bool:
+            raise ValueError("invalid degraded flag")
         _clean(self.reasoning, "reasoning", 500)
 
     def to_command(self) -> ActionCommand:
@@ -233,6 +240,7 @@ class WolfVote:
             action_type=self.action_type,
             target_seat=self.target_seat,
             reasoning=self.reasoning,
+            degraded=self.degraded,
         )
 
 
@@ -529,7 +537,7 @@ class NightDirector:
                 seat, state.round_number,
                 exc_info=True,
             )
-            return WolfVote(seat, "pass", None, "系统异常，本轮未行动")
+            return WolfVote(seat, "pass", None, DEGRADED_REASONING, degraded=True)
 
     # ── narration ──────────────────────────────────────────────
 

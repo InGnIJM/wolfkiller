@@ -133,7 +133,7 @@ def test_validate_and_resolve_shoot_or_pass() -> None:
         "event_type": "WOLF_KING_REASONING",
         "payload": {
             "seat": 1, "action_type": "pass", "target_seat": None,
-            "reasoning": "ok", "thought": "决定不发动狼王爪：ok",
+            "reasoning": "ok", "degraded": False, "thought": "决定不发动狼王爪：ok",
         },
     }
 
@@ -153,7 +153,7 @@ def test_validate_and_resolve_shoot_or_pass() -> None:
         "event_type": "WOLF_KING_REASONING",
         "payload": {
             "seat": 1, "action_type": "shoot", "target_seat": 2,
-            "reasoning": "ok", "thought": "决定发动狼王爪带走 2 号玩家：ok",
+            "reasoning": "ok", "degraded": False, "thought": "决定发动狼王爪带走 2 号玩家：ok",
         },
     }
     assert [effect.target_seat for effect in effects] == [1, 2, None, None]
@@ -201,7 +201,10 @@ KILLER_SPEC = RoleSpec(
         order=1, action_types=("kill", "pass"),
         actions_requiring_target=frozenset(), fallback_action_type="pass",
         allowed_effects=frozenset({EffectKind.MARK_DEATH}),
-        visibility_namespaces=frozenset({"PUBLIC"}), per_game_limit=1,
+        # No `per_game_limit` here on purpose: this helper exists to kill a role
+        # once in a test, not to model a one-shot card. Declaring a game limit
+        # without a resource is what the registry now rejects.
+        visibility_namespaces=frozenset({"PUBLIC"}),
         is_applicable=_killer_applicable, resolve=_kill_wolf_king,
     ),), allowed_effects=frozenset({EffectKind.MARK_DEATH}),
     visibility_namespaces=frozenset({"PUBLIC"}),

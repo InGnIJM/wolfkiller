@@ -8,7 +8,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from queue import Empty, Queue
 from threading import RLock, Semaphore, Thread
 from time import monotonic
@@ -27,8 +27,8 @@ from app.core.state_transaction import state_transaction_lock
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, IssuedActionRequest,
-    RoleSpec, SchedulePoint,
+    DEGRADED_REASONING, ActionCommand, ActionContext, ActionContract, EffectKind,
+    IssuedActionRequest, RoleSpec, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
 
@@ -386,13 +386,23 @@ class Scheduler:
                 state, request, context, command, self.registry
             )
             violations = self._rule_call("validation", lambda: self.validator.validate(rule_context, request.contract, command))
-            if not violations: return command, rule_context
+            if not violations:
+                # A provider that hands back a command already marked ``degraded``
+                # (an outage fallback, not an answer) must reach the write entry
+                # as degraded too, or the accept would consume the card's quota.
+                return command, self._as_degraded(rule_context) if command.degraded else rule_context
         return self._fallback(state, request, context)
 
     def _fallback(self, state: GameState, request: IssuedActionRequest,
                   context: ActionContext) -> tuple[ActionCommand, ActionContext]:
         contract = request.contract
-        command = ActionCommand(action_type=contract.fallback_action_type, target_seat=None, reasoning="系统异常，本轮未行动")
+        # ``degraded`` is what tells the resolve hook (and, through it, the
+        # audience stream) that this command is the engine's, not the seat's.
+        # Without it every downstream layer read the placeholder as a decision.
+        command = ActionCommand(
+            action_type=contract.fallback_action_type, target_seat=None,
+            reasoning=DEGRADED_REASONING, degraded=True,
+        )
         rule_context = self.projector.project_selected_target(
             state, request, context, command, self.registry
         )
@@ -403,7 +413,10 @@ class Scheduler:
                 request.actor_seat, contract.contract_id, violations[0].message,
             )
             raise PipelinePaused("fallback command invalid")
-        return command, rule_context
+        # This context feeds both the resolve hook and the write entry, so the
+        # engine's own command is marked all the way through: the hook publishes
+        # the neutral placeholder, and the accept does not spend the card.
+        return command, self._as_degraded(rule_context)
 
     def _resolve_with_fallback(self, state: GameState, request: IssuedActionRequest,
                                context: ActionContext, role: RoleSpec,
@@ -437,7 +450,17 @@ class Scheduler:
     def _permission(context: ActionContext, role: RoleSpec, contract: ActionContract) -> EffectPermission:
         return EffectPermission(context.actor_seat, role.allowed_effects, contract.allowed_effects,
             frozenset(context.facts.get("alive_seats", ())) | {context.actor_seat},
-            role.visibility_namespaces & contract.visibility_namespaces)
+            role.visibility_namespaces & contract.visibility_namespaces,
+            # The write entry needs to know whether this batch is the engine's
+            # command or the seat's answer: a degraded attempt protects the
+            # window/round from being asked again, but must not consume a
+            # one-shot card's quota.
+            degraded=context.degraded)
+
+    @staticmethod
+    def _as_degraded(context: ActionContext) -> ActionContext:
+        """Mark a context whose command the engine produced rather than a model."""
+        return context if context.degraded else replace(context, degraded=True)
 
     def _record_effect_conflict(
         self, state: GameState, contract: ActionContract,
@@ -510,7 +533,9 @@ class Scheduler:
             )
             group_key = _digest(*(sorted(request.action_key for request in bound)))
             group_request = self._bind(bound[0], state, action_key=group_key)
-            group_context = self.projector.project(state, group_request, self.registry)
+            group_context = self._as_degraded(
+                self.projector.project(state, group_request, self.registry)
+            )
             # ``_rule_call`` already turns a hook failure into ``PipelinePaused``,
             # so a fallback aggregate that fails is fatal here too.
             effects = self._rule_call(

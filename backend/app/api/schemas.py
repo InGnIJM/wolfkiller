@@ -214,7 +214,11 @@ class PublicCrimsonExplodeResponse(_PublicResponse):
 
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
-    silenced_seats: tuple[PositivePublicInt, ...] = ()
+    #: 座位数组。**必须是 list 而不是 tuple**：回放分支产出的是 JSON 数组
+    #: （`game_routes` 里 `list(...)`），而 `_PublicResponse` 是 `strict=True` ——
+    #: 声明成 tuple 会让任何含这条事件的对局在 `/api/games/{id}/logs` 上直接 500
+    #: （实测 13/253 局），前端 `store/types.ts` 也一直是 `number[]`。
+    silenced_seats: list[PositivePublicInt] = Field(default_factory=list)
 
 
 class PublicDancePoolResponse(_PublicResponse):
@@ -222,7 +226,9 @@ class PublicDancePoolResponse(_PublicResponse):
 
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
-    pool_seats: tuple[PositivePublicInt, ...] = ()
+    #: 同 `PublicCrimsonExplodeResponse.silenced_seats`：回放分支发的是 list，
+    #: 这里必须是 list（strict 模式下 tuple 会拒绝它）。
+    pool_seats: list[PositivePublicInt] = Field(default_factory=list)
 
 
 class PublicMaskGrantedResponse(_PublicResponse):
@@ -311,6 +317,10 @@ class PublicNightThoughtResponse(_PublicResponse):
     action_type: PublicThoughtActionType
     target_seat: Optional[PositivePublicInt] = None
     reasoning: str
+    #: 引擎代行的动作（模型故障或答复连续不可用时的兜底）。可选，且**必须**可选：
+    #: 本仓库后加的键，早于它的记录没有它；`extra="forbid"` 下漏掉这一行会让所有
+    #: 含降级动作的对局在回放接口上 500。语义见 `models/pipeline.DEGRADED_THOUGHT`。
+    degraded: Optional[bool] = None
 
 
 class PublicNarrationResponse(_PublicResponse):
@@ -332,6 +342,9 @@ class PublicWolfVoteResponse(_PublicResponse):
     seat: PositivePublicInt
     target_seat: Optional[PositivePublicInt] = None
     reasoning: Annotated[str, Field(max_length=500)]
+    #: 同 `PublicNightThoughtResponse.degraded`：引擎代投的狼票带这个键，
+    #: 旧记录没有它，所以可选。
+    degraded: Optional[bool] = None
 
 
 class PublicWitchThoughtResponse(_PublicResponse):

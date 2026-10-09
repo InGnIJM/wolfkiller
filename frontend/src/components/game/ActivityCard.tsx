@@ -4,7 +4,7 @@ import { keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent } from '../../store/types';
-import { DEATH_CAUSE_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_LABELS } from '../../labels';
+import { DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, SHERIFF_SIDE_LABELS, THOUGHT_LABELS } from '../../labels';
 import { AVATAR_PALETTE, INK } from '../../theme/tokens';
 
 const livePulse = keyframes`
@@ -597,14 +597,20 @@ export default function ActivityCard() {
         />
       );
     case 'night_thought':
+      // 引擎代行的动作不是这个座位的决定：眉标换成中性说法，正文只留占位理由，
+      // 否则「不行动：本轮未提交决策」会被读成玩家自己决定不动手。
       return (
         <ThoughtView
-          label={THOUGHT_LABELS[entry.payload.action_type] ?? '夜间思考'}
+          label={entry.payload.degraded
+            ? DEGRADED_ACTION_LABEL
+            : THOUGHT_LABELS[entry.payload.action_type] ?? '夜间思考'}
           seat={entry.payload.seat}
           text={
-            entry.payload.target_seat === null
-              ? `不行动：${entry.payload.reasoning || '（无理由）'}`
-              : `目标 ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`
+            entry.payload.degraded
+              ? entry.payload.reasoning || '（无理由）'
+              : entry.payload.target_seat === null
+                ? `不行动：${entry.payload.reasoning || '（无理由）'}`
+                : `目标 ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`
           }
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
@@ -626,13 +632,16 @@ export default function ActivityCard() {
       return (
         <ChatView
           seat={entry.payload.seat}
-          text={entry.payload.target_seat === null
-            ? `弃票：${entry.payload.reasoning || '（无理由）'}`
-            : `票 → ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`}
+          text={entry.payload.degraded
+            // 系统代投的狼票：正文只留占位理由，「弃票」会读成这匹狼自己弃权。
+            ? entry.payload.reasoning || '（无理由）'
+            : entry.payload.target_seat === null
+              ? `弃票：${entry.payload.reasoning || '（无理由）'}`
+              : `票 → ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`}
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}
-          label="狼群投票"
+          label={entry.payload.degraded ? DEGRADED_ACTION_LABEL : '狼群投票'}
           tag="WOLF VOTE"
           metaKind="狼票"
         />

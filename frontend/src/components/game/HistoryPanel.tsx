@@ -5,9 +5,9 @@ import { useGameStore } from '../../store/gameStore';
 import { fetchGameMemories } from '../../api/client';
 import type { PlayerMemory, PublicReplayEvent } from '../../store/types';
 import {
-  DEATH_CAUSE_LABELS, EVENT_TAGS, KNOWLEDGE_LABELS, MEMORY_ACTION_LABELS,
-  MEMORY_EVENT_LABELS, NIGHT_ACTION_LABELS, PLAYER_STATUS_LABELS, ROLE_LABELS,
-  SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
+  DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, EVENT_TAGS, KNOWLEDGE_LABELS,
+  MEMORY_ACTION_LABELS, MEMORY_EVENT_LABELS, NIGHT_ACTION_LABELS,
+  PLAYER_STATUS_LABELS, ROLE_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
 } from '../../labels';
 
 interface Props {
@@ -382,7 +382,8 @@ function EventCard({
     case 'wolf_vote':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号 → {event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`}（{event.payload.reasoning}）
+          {event.payload.seat}号 → {event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`}
+          （{event.payload.degraded ? `${DEGRADED_ACTION_LABEL}：` : ''}{event.payload.reasoning}）
         </Typography>
       );
       break;
@@ -409,14 +410,17 @@ function EventCard({
       );
       break;
     case 'night_thought': {
-      const { action_type, seat, target_seat, reasoning } = event.payload;
+      const { action_type, seat, target_seat, reasoning, degraded } = event.payload;
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
+            {degraded ? DEGRADED_ACTION_LABEL : THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
-            {target_seat === null ? `不行动：${reasoning}` : `目标${target_seat}号：${reasoning}`}
+            {/* 代行动作没有「目标/不行动」可言，正文只留中性说明。 */}
+            {degraded
+              ? reasoning
+              : target_seat === null ? `不行动：${reasoning}` : `目标${target_seat}号：${reasoning}`}
           </Typography>
         </>
       );

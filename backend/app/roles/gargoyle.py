@@ -23,8 +23,8 @@ from collections.abc import Mapping
 
 from app.core.effect_applier import derive_effect_id
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
 from app.roles.hidden_wolf import hidden_wolf_role_spec
@@ -58,7 +58,9 @@ def _gargoyle_reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int,
     role_label: str | None, **common: object,
 ) -> GameEffect:
-    if command.action_type == "check" and command.target_seat is not None:
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "check" and command.target_seat is not None:
         answer = f"，其身份是「{role_label}」" if role_label else ""
         thought = f"决定查验 {command.target_seat} 号玩家{answer}：{command.reasoning or '无理由'}"
     else:
@@ -73,6 +75,7 @@ def _gargoyle_reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": command.target_seat,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

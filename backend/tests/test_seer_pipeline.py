@@ -88,7 +88,7 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
         "event_type": "SEER_REASONING",
         "payload": {
             "seat": 1, "action_type": "check", "target_seat": 2,
-            "reasoning": "ok", "thought": "决定查验 2 号玩家：ok",
+            "reasoning": "ok", "degraded": False, "thought": "决定查验 2 号玩家：ok",
         },
     }
     result = effects[3]
@@ -107,7 +107,7 @@ def test_resolve_pass_emits_reasoning_event() -> None:
         "event_type": "SEER_REASONING",
         "payload": {
             "seat": 1, "action_type": "pass", "target_seat": None,
-            "reasoning": "ok", "thought": "决定今晚不查验：ok",
+            "reasoning": "ok", "degraded": False, "thought": "决定今晚不查验：ok",
         },
     }
     assert effects[0].visibility == ("PUBLIC",)

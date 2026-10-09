@@ -684,7 +684,8 @@ class GameEngine:
                     votes.append(result)
                     self.game_logger.log_audience_action(
                         self.game_id, state.round_number, "night", "WOLF_VOTE",
-                        {"seat": seat, "target_seat": result.target_seat, "reasoning": result.reasoning},
+                        {"seat": seat, "target_seat": result.target_seat,
+                         "reasoning": result.reasoning, "degraded": result.degraded},
                     )
                     pending = replace(pending, wolf_votes=tuple(votes))
                     self._pending_night_batch = pending
@@ -898,7 +899,13 @@ class GameEngine:
             )
             thought = payload.get("thought")
             seat = payload.get("seat")
-            if type(thought) is str and type(seat) is int and seat > 0:
+            # A degraded payload is the engine's own placeholder, not something the
+            # seat decided. Writing it into the private history would make the next
+            # prompt show the model "its own" past reasoning ("决定今晚不使用药水：
+            # 系统异常，本轮未行动") for a decision it never made — the seat then
+            # plays on a memory that never happened. The god view still sees the
+            # action: the public event is logged above either way.
+            if payload.get("degraded") is not True and type(thought) is str and type(seat) is int and seat > 0:
                 player = self.state.players.get(seat)
                 if player is not None:
                     self.conversation_log.add_thought(

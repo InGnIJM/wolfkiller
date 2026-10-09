@@ -63,7 +63,9 @@ from app.core.role_runtime import (
 )
 from app.core.scheduler import Scheduler
 from app.core.sheriff_flow import ballot_weight
-from app.models.pipeline import ActionCommand as PipelineActionCommand, SchedulePoint
+from app.models.pipeline import (
+    DEGRADED_REASONING, ActionCommand as PipelineActionCommand, SchedulePoint,
+)
 from app.models.contracts import AcceptedAction, ActionCommand as ContractActionCommand
 from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
@@ -208,9 +210,36 @@ def _pipeline_command(payload: object, contract) -> PipelineActionCommand:
     reject them outright. Single-target contracts keep the historical path byte
     for byte, so no existing behaviour moves.
     """
+    # ``degraded`` 是引擎自己盖的章，模型答复不得自带。它是**声明**字段，
+    # 所以 ``extra="forbid"`` 拦不住它；而一个自封的降级会让本人历史被跳过、
+    # 上帝视角把真实决策显示成「系统代行」。载荷恒是 mapping
+    # （``StructuredResponse.payload`` 就是 ``dict``），所以这里不需要类型分支。
+    payload = {
+        key: value for key, value in dict(payload).items() if key != "degraded"
+    }
     if getattr(contract, "multi_target_actions", None):
         payload = coerce_payload_to_schema(dict(payload), contract.json_schema())
     return PipelineActionCommand.model_validate(payload)
+
+
+def _durable_command_payload(command: PipelineActionCommand) -> dict[str, object]:
+    """Serialise a command for the durable ledger **without** losing ``degraded``.
+
+    ``ActionCommand.degraded`` is ``exclude=True`` on purpose: ``stable_digest()``
+    hashes ``model_dump()``, and a field in the dump would reorder two otherwise
+    identical fallback commands inside one aggregate contract. But the durable
+    provider path *is* the production path whenever a repository is attached, and
+    it round-trips every command through ``model_dump()`` + ``model_validate`` —
+    so without this helper the flag died exactly where it matters, and the write
+    entry went on counting a fallback as a spent card (one provider outage could
+    silently void the hunter's gun).
+    """
+    payload = command.model_dump()
+    if command.degraded:
+        # Written only when true, so archived rows keep their historical byte
+        # shape and a row without the key still decodes back to ``False``.
+        payload["degraded"] = True
+    return payload
 
 
 def _exception_diagnostics(error: BaseException) -> dict[str, object]:
@@ -2145,6 +2174,10 @@ class GameService:
                     "seat": vote.seat, "target_seat": vote.target_seat,
                     "reasoning": vote.reasoning,
                     "round_number": engine.state.round_number,
+                    # 引擎代投的狼票必须自报家门，否则实时上帝视角把它读成
+                    # 这匹狼自己弃票（game.log 的回放路径已经带了同一个键）。
+                    # 只在为真时写：旧检查点没有这个键，投影器按过滤集处理。
+                    **({"degraded": True} if vote.degraded else {}),
                 }
             else:
                 event_type = "STEP_COMMITTED"
@@ -2697,11 +2730,16 @@ class GameService:
         """
         def provider(request, context, attempt, *, prompt_sink=None):
             if self._pack_ballot_point(request, context):
+                # A collected wolf ballot carries its own provenance: the real
+                # votes keep ``degraded=False`` and only the engine-produced
+                # placeholder below is marked, so the pack's aggregate never
+                # reads a genuine kill as a system action.
                 command = director.collected_vote(request.actor_seat)
                 return command if command is not None else PipelineActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None,
-                    reasoning="系统异常，本轮未行动",
+                    reasoning=DEGRADED_REASONING,
+                    degraded=True,
                 )
             role_spec = snapshot.require(request.role_id)
             engine = self._engines.get(context.game_id)
@@ -2821,10 +2859,14 @@ class GameService:
                         )
                 command = None
             if command is None or command.action_type not in request.contract.action_types:
+                # Provider failure, unusable answer, or an action type outside the
+                # contract: all three are the engine deciding for the seat, so the
+                # placeholder must say so instead of reading like a player's reason.
                 return PipelineActionCommand(
                     action_type=request.contract.fallback_action_type,
                     target_seat=None,
-                    reasoning="系统异常，本轮未行动",
+                    reasoning=DEGRADED_REASONING,
+                    degraded=True,
                 )
             return command
 
@@ -2856,7 +2898,7 @@ class GameService:
 
             def provider_call():
                 command = provider(request, context, attempt, prompt_sink=sink)
-                return command.model_dump(), None
+                return _durable_command_payload(command), None
 
             result = self._model_invocations.invoke_sync(
                 game_id=context.game_id,

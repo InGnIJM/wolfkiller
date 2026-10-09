@@ -11,6 +11,7 @@ from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.models.game import GamePhase
+from app.models.pipeline import DEGRADED_REASONING
 from app.api.schemas import PublicWinnerResponse
 from app.api.websocket.ws_handler import WSManager
 from app.roles.registry import builtin_registry
@@ -511,7 +512,10 @@ class TestGameService:
 
         vote = engine._director.wolf_vote_turn(engine.state, 1, [], [])
 
-        assert vote.reasoning == "系统异常，本轮未行动"
+        # The engine cast this ballot, and it says so: the placeholder must not
+        # read like the seat's own decision (the god view publishes it).
+        assert vote.reasoning == DEGRADED_REASONING
+        assert vote.degraded is True
         log_path = tmp_path / "games" / game_id / "game.log"
         assert log_path.exists(), "wolf model error should be persisted"
         record = json.loads(log_path.read_text("utf-8").splitlines()[-1])
@@ -2477,7 +2481,8 @@ class TestCommandProvider:
         command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
 
         assert command.action_type == "pass"
-        assert command.reasoning == "系统异常，本轮未行动"
+        assert command.reasoning == DEGRADED_REASONING
+        assert command.degraded is True
         # One blind retry used to be the entire budget; every attempt is now spent
         # before the night action is forfeited.
         assert llm.invoke_action.call_count == module._PIPELINE_RETRY_POLICY.attempts
@@ -2529,7 +2534,8 @@ class TestCommandProvider:
         command = provider(self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0)
 
         assert command.action_type == "pass"
-        assert command.reasoning == "系统异常，本轮未行动"
+        assert command.reasoning == DEGRADED_REASONING
+        assert command.degraded is True
         assert any(
             "Failed to persist model error" in record.message
             for record in caplog.records
@@ -2799,6 +2805,9 @@ class TestCommandProvider:
         assert command.action_type == "kill"
         assert command.target_seat == 2
         assert command.reasoning == "怀疑2号"
+        # A real ballot keeps its own provenance: marking the pack's collected
+        # votes degraded would publish every genuine kill as a system action.
+        assert command.degraded is False
         llm.get_model.assert_not_called()
 
     def test_provider_falls_back_when_collected_wolf_vote_missing(self):
@@ -2820,7 +2829,8 @@ class TestCommandProvider:
         command = provider(request, MagicMock(game_id="g"), 0)
         assert command.action_type == "pass"
         assert command.target_seat is None
-        assert command.reasoning == "系统异常，本轮未行动"
+        assert command.reasoning == DEGRADED_REASONING
+        assert command.degraded is True
         llm.get_model.assert_not_called()
 
 

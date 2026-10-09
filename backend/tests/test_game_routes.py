@@ -8,6 +8,7 @@ from typing import get_args
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.routes import game_routes
 from app.services import audience_projector
@@ -1202,6 +1203,66 @@ def test_every_public_audience_action_type_has_a_replay_branch() -> None:
     assert missing == []
 
 
+#: 可选字段的样本值。门禁必须把它们**一起**发出去：只发必填字段的那版曾经全绿，
+#: 而 `degraded` 恰恰是被公开 DTO 拒收的那个键。
+_OPTIONAL_KEY_SAMPLES: dict[str, object] = {
+    "degraded": True,
+    "day_plan": "明天我跳预言家",
+    "reasoning": "推理内容",
+    "weighted_counts": {"2": 2},
+}
+
+#: `_public_operation_events` 只产出 `{event_type, payload}`，时间戳由
+#: `_public_replay_events` 统一补；直接构造回放 DTO 时要自己带上它。
+_PUBLIC_TIMESTAMP = "2026-08-12T12:34:56Z"
+
+
+def test_every_projected_public_payload_is_accepted_by_the_replay_dto() -> None:
+    """投影器放行的键，公开回放 DTO 必须全部接受 —— **含可选键**。
+
+    这条门禁的由来（两类真实的 500，都是同一个病因）：
+
+    * `degraded` 进了投影器白名单与回放分支，却没进 `api/schemas.py` 的
+      `PublicNightThoughtResponse` / `PublicWolfVoteResponse`，而 `_PublicResponse`
+      是 `extra="forbid"` —— 含降级动作的对局一打开回放就 500；
+    * `pool_seats` / `silenced_seats` 的回放分支发 list，DTO 却声明 tuple +
+      `strict=True`，实测 **13/253 局**的 `/api/games/{id}/logs` 直接 500。
+
+    判别力来自「必填 + 可选各发一份」：只发必填版本时这条门禁是全绿的，因为可选键
+    根本不在样本里。产出必须恰好一条，否则「行被静默丢弃」会被读成通过。
+    """
+    classified = _REPLAY_FROM_OTHER_RECORDS | _NO_REPLAY_MECHANISM
+    rejected: list[str] = []
+    missing: list[str] = []
+
+    for event_type, (public_type, allowed) in sorted(_projector_declared_events().items()):
+        if event_type in classified:
+            continue
+        optional = game_routes._AUDIENCE_ACTION_OPTIONAL.get(event_type, frozenset())
+        payload = _log_payload(event_type, allowed)
+        payload.update({
+            key: _OPTIONAL_KEY_SAMPLES[key]
+            for key in optional if key in _OPTIONAL_KEY_SAMPLES
+        })
+        record = _replay_record("audience_action", {
+            "event_type": event_type, "payload": payload,
+        }, phase="speech")
+        events = game_routes._public_operation_events(record)
+        if len(events) != 1 or events[0]["event_type"] != public_type:
+            missing.append(f"{event_type} -> {public_type}: 产出 {events!r}")
+            continue
+        try:
+            GameLogsResponse(game_id="g", events=[
+                {**events[0], "timestamp": _PUBLIC_TIMESTAMP},
+            ])
+        except ValidationError as error:
+            detail = " ".join(str(error).split())
+            rejected.append(f"{event_type} -> {public_type}: {detail}")
+
+    assert missing == []
+    assert rejected == []
+
+
 def test_wolf_chat_carries_the_day_plan_and_accepts_records_without_it() -> None:
     """狼聊的「次日计划」要进旧档回放；**已有旧记录没有该字段，不能被丢掉**。
 
@@ -2064,7 +2125,11 @@ async def test_get_game_logs_serializes_staged_night_events_end_to_end(monkeypat
     assert events[1]["payload"] == {
         "round_number": 1, "seat": 1, "text": "我怀疑2号", "day_plan": None,
     }
-    assert events[2]["payload"] == {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "像神"}
+    # `degraded` 与 `day_plan` 同款：旧记录没有这个键，DTO 用 `None` 表示缺省。
+    assert events[2]["payload"] == {
+        "round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "像神",
+        "degraded": None,
+    }
     assert events[3]["payload"] == {"round_number": 1, "seat": 3, "text": "考虑救人"}
     assert events[4]["payload"] == {"round_number": 1, "seat": 4, "text": "查验2号"}
 

@@ -2,8 +2,9 @@ import { Box, Typography, keyframes } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
 import type { GamePhase, PublicReplayEvent } from '../../store/types';
 import {
-  CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, NIGHT_ACTION_LABELS, NIGHT_ACTION_ROLE_NAMES,
-  NIGHT_EVENT_ROLE_NAMES, PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
+  CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, NIGHT_ACTION_LABELS,
+  NIGHT_ACTION_ROLE_NAMES, NIGHT_EVENT_ROLE_NAMES, PLAYER_STATUS_LABELS,
+  SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
 } from '../../labels';
 import { BACKDROP } from '../../theme/tokens';
 
@@ -270,8 +271,11 @@ function EventSummary({
       break;
     }
     case 'night_thought': {
+      // 引擎代行时「某角色思考中」是错的：它没有思考，是引擎替它提交的。
       const who = THOUGHT_ROLE_NAMES[entry.payload.action_type] ?? '角色';
-      text = `${who}思考中`;
+      text = entry.payload.degraded
+        ? `${entry.payload.seat}号${DEGRADED_ACTION_LABEL}`
+        : `${who}思考中`;
       tone = '#C4B5FD';
       break;
     }
@@ -281,9 +285,11 @@ function EventSummary({
       break;
     case 'wolf_vote':
       // 狼票走狼队频道的粉色，与白天投票/警票的金色摘要区分昼夜
-      text = entry.payload.target_seat === null
-        ? `${entry.payload.seat}号弃票`
-        : `${entry.payload.seat}号票给 ${entry.payload.target_seat}号`;
+      text = entry.payload.degraded
+        ? `${entry.payload.seat}号${DEGRADED_ACTION_LABEL}`
+        : entry.payload.target_seat === null
+          ? `${entry.payload.seat}号弃票`
+          : `${entry.payload.seat}号票给 ${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
     case 'night_action':

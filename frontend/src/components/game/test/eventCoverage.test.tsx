@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useGameStore } from '../../../store/gameStore';
 import type { PublicReplayEvent } from '../../../store/types';
+import { DEGRADED_ACTION_LABEL } from '../../../labels';
 import ActivityCard from '../ActivityCard';
 import CenterDisplay from '../CenterDisplay';
 import HistoryPanel from '../HistoryPanel';
@@ -285,6 +286,36 @@ const CASES: SurfaceCase[] = [
   },
 ];
 
+/**
+ * 引擎代行的动作：类型与上面重复（所以不进 CASES，那张表要求类型唯一），
+ * 但多了 `degraded` 标记，渲染路径不同。三个渲染面都必须照样显示它 ——
+ * 否则模型故障会从上帝视角消失，而复盘里恰恰要求失败可见。
+ */
+const DEGRADED_CASES: { what: string; event: PublicReplayEvent }[] = [
+  {
+    what: '引擎代行的夜间动作（系统代行）',
+    event: {
+      ...at,
+      event_type: 'night_thought',
+      payload: {
+        action_type: 'witch_reasoning', seat: 8, target_seat: null,
+        reasoning: '本轮未提交决策', degraded: true, round_number: 2,
+      },
+    },
+  },
+  {
+    what: '引擎代投的狼票（系统代行）',
+    event: {
+      ...at,
+      event_type: 'wolf_vote',
+      payload: {
+        seat: 1, target_seat: null, reasoning: '本轮未提交决策',
+        degraded: true, round_number: 2,
+      },
+    },
+  },
+];
+
 function mount(surface: Surface, event: PublicReplayEvent): HTMLElement {
   useGameStore.setState({
     gameId: 'game-1',
@@ -338,6 +369,16 @@ describe('render-surface event coverage', () => {
         } else {
           expect(verdict).toBe(false);
         }
+      });
+
+      it.each(DEGRADED_CASES)('$what', ({ event }) => {
+        const container = mount(surface, event);
+
+        expect(showsEvent(surface, container)).toBe(true);
+        // 「可见」不等于「读得对」：这一格从前只断言看得见，所以两个渲染面继续把
+        // 引擎的兜底读成玩家自己的决定（「不行动：本轮未提交决策」/「弃票」）。
+        // 三个面都必须写明这是系统代行。
+        expect(container.textContent ?? '').toContain(DEGRADED_ACTION_LABEL);
       });
     });
   }

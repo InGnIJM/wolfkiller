@@ -710,3 +710,21 @@
   建立资源（stub 在 `NIGHT_ACTION` 里模拟 `Scheduler.issue` 的行为），
   `tests/test_game_engine.py::test_first_night_roster_excludes_a_hidden_wolf_without_resources_yet`
   就是这么钉住它的。
+
+## 被 `exclude=True` 挡在账本之外的字段
+- Trigger: 给 `ActionCommand` 这类冻结模型加了「不该进 digest」的字段（`Field(exclude=True)`），
+  并指望它在恢复或账本往返之后还在。Action: 先确认那条路径是不是
+  `model_dump()` + `model_validate()` —— 排除字段在这一跳就没了，而**生产路径**（挂了
+  repository 时走 durable 包装）正是这一跳。降级标记 `degraded` 就这样在 77 个测试全绿的
+  情况下失效：那些测试都把假 provider 直接注入 `Scheduler`，绕过了账本，于是写入口照旧把
+  兜底计进 `game` 配额，猎人枪仍会被一次 provider 故障静默作废。修法是显式序列化
+  （`game_service._durable_command_payload()`，只在为真时补键，旧行形状逐字节不变），
+  门禁必须架在**真实调用点**上（`tests/test_degraded_durable.py` 走 `_command_provider`
+  的 durable 分支；把调用点改回 `model_dump()` 它就会红）。
+- Trigger: 回放接口 500 而单测全绿。Action: 比对公开 DTO 的字段集与回放分支实际产出的键 ——
+  `_PublicResponse` 是 `extra="forbid"`，投影器与路由放行了一个新键而 `api/schemas.py`
+  没同步就是 500（`degraded` 如此）。另外 `strict=True` 下 list 进不了 `tuple[...]` 字段：
+  `pool_seats` / `silenced_seats` 的回放分支发 list、DTO 声明 tuple，实测 **13/253 局**
+  的 `/api/games/{id}/logs` 打不开。门禁是
+  `tests/test_game_routes.py::test_every_projected_public_payload_is_accepted_by_the_replay_dto`，
+  它必须把 `_AUDIENCE_ACTION_OPTIONAL` 里的**可选键也发一份**——只发必填字段的那版是全绿的。

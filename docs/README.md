@@ -8,7 +8,7 @@ Wolf Killer 的文档库。新手从根目录 [README](../README.md) 开始；�
 | [architecture.md](architecture.md) | 模块划分、角色流水线、状态机、持久化、前端架构 | 开发者 |
 | [development.md](development.md) | 环境变量、本地开发、测试与门禁、数据存储、踩坑记录 | 开发者 |
 | [benchmark.md](benchmark.md) | 耐久 benchmark API/CLI、指标口径与导出 | 跑评测 / 看报告的人 |
-| [plans/](plans/) | **现行实施计划**（头部写进度与残留）：网易板型扩板、创建向导重设计、prompt 原文采集 | 想知道还剩什么没做的人 |
+| [plans/](plans/) | **现行实施计划**（头部写进度与残留）：网易板型扩板（阶段 3.6/4/5/6 未开始）、创建向导重设计（已完成）、prompt 原文采集（已完成）、[统一模型调用](plans/2026-10-07-unified-model-invocation.md)（P0/P1 已落地，**P2–P5 未开始**） | 想知道还剩什么没做的人 |
 | [notes/](notes/) | 工作笔记；含评测快照与可视化讲解 | 按需 |
 | [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md) | 2026-09-16 本机混座评测快照（61 局完成） | 看历史评测结论 |
 | [notes/2026-10-06-rule-execution-audit.md](notes/2026-10-06-rule-execution-audit.md) | 2026-10-06 最近 6 局规则执行漏洞审计 | 查规则实现缺陷 |

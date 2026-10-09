@@ -17,6 +17,7 @@ from app.models.pipeline import (
     ActionCommand as PipelineActionCommand,
     ActionContext as PipelineActionContext,
     ActionContract as PipelineActionContract,
+    EffectKind,
     GameEffect,
     RoleSpec as PipelineRoleSpec,
     RuleViolation,
@@ -244,6 +245,15 @@ class RoleRegistry:
         ):
             if limit is not None and limit <= 0:
                 raise ValueError("contract limit must be positive")
+        # A per_game_limit of 1 is the one-shot card, and its quota counter and
+        # its resource are two ledgers for the same fact. Only the resource is
+        # allowed to be the authority: `record_accepted_action` deliberately does
+        # not spend the game quota on an engine-made command, so that one model
+        # failure cannot void the card. That is safe exactly while the resource
+        # enforces the one-shot — require the pairing rather than trusting every
+        # new role to remember it.
+        if contract.per_game_limit == 1 and EffectKind.CONSUME_RESOURCE not in contract.allowed_effects:
+            raise ValueError("a per_game_limit contract must consume a resource")
         if not contract.allowed_effects <= spec.allowed_effects:
             raise ValueError("effect permission exceeds role declaration")
         if not contract.visibility_namespaces <= spec.visibility_namespaces:

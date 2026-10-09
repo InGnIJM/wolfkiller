@@ -16,8 +16,8 @@ from collections.abc import Mapping
 
 from app.core.effect_applier import derive_effect_id
 from app.models.pipeline import (
-    ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
-    RuleViolation, SchedulePoint,
+    DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
+    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
 from app.roles.pure_white import ROLE_CHECK_NAMESPACE
@@ -56,7 +56,9 @@ def _reasoning_effect(
     context: ActionContext, command: ActionCommand, ordinal: int, *,
     kills: bool, **common: object,
 ) -> GameEffect:
-    if command.action_type == "check" and command.target_seat is not None:
+    if command.degraded:
+        thought = DEGRADED_THOUGHT
+    elif command.action_type == "check" and command.target_seat is not None:
         verdict = "，正是纯白之女，当夜处决" if kills else ""
         thought = (
             f"决定查验 {command.target_seat} 号玩家{verdict}："
@@ -74,6 +76,7 @@ def _reasoning_effect(
                 "action_type": command.action_type,
                 "target_seat": command.target_seat,
                 "reasoning": command.reasoning,
+                "degraded": command.degraded,
                 "thought": thought,
             },
         },

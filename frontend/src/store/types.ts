@@ -219,6 +219,12 @@ export interface WolfVotePayload {
   seat: number;
   target_seat: number | null;
   reasoning: string;
+  /**
+   * 引擎代行：该狼票由引擎代投，不是这匹狼自己的选择。
+   * 旧档没有这个键，公开 DTO 会把缺省序列化成 `null`（与 `day_plan` 同款），
+   * 所以渲染处一律按真值判断，`null` 等同于「不是代行」。
+   */
+  degraded?: boolean;
 }
 
 /** Published when the knight flips and duels one seat after the speeches. */
@@ -277,6 +283,12 @@ export interface NightThoughtPayload {
     | 'mask_reasoning';
   target_seat: number | null;
   reasoning: string;
+  /**
+   * 引擎代行——这条不是玩家提交的决策（模型调用失败或答复连续不可用时的兜底）。
+   * 旧档记录没有这个键，公开 DTO 会把缺省序列化成 `null`（与 `day_plan` 同款），
+   * 渲染处一律按真值判断，`null` 等同于「不是代行」。
+   */
+  degraded?: boolean;
 }
 
 export interface PlayerMemory {
