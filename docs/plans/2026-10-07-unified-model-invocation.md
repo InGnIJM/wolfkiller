@@ -18,6 +18,24 @@
 | P4 | 降级策略统一（`exhausted_bucket` 接管 6 处手写默认值） | ⬜ 未开始 | — |
 | P5 | 可见性与口径（账本 `outcome` → 报表 / `TECHNICAL_ABSTAIN` 覆盖警长票 / 投影字段门禁） | ⬜ 未开始 | — |
 
+> **2026-10-09 补充（P2–P5 状态不变，但迁移时必须保留下面两条）**：在制品「降级动作自报家门」
+> 已随 `503c92a` 提交，评测口径的三处有界修复随 `410c97f` 提交。与本计划直接相关的两点：
+>
+> 1. **durable 通道靠 `game_service._durable_command_payload()` 保住 `degraded`**：该字段是
+>    `exclude=True`（`stable_digest()` 要它不进 `model_dump()`），而 durable 包装用
+>    `model_dump()` + `model_validate` 往返 —— 直接用 `model_dump()` 会让标记在生产路径上消失，
+>    写入口照旧把兜底计进 `game` 配额。**P2/P3 迁移到 `InvocationRunner` 时必须保留这一行为**，
+>    门禁是 `tests/test_degraded_durable.py`（它走真实 `_command_provider`，把调用点改回去即红）。
+> 2. **A1 的「四处一致」其实还有第五处：公开回放 DTO**。`degraded` 进了投影器白名单与回放分支、
+>    却没进 `api/schemas.py`，含降级动作的对局在 `/api/games/{id}/logs` 上直接 500。
+>    新门禁 `tests/test_game_routes.py::test_every_projected_public_payload_is_accepted_by_the_replay_dto`
+>    覆盖「投影器放行的键（含**可选键**）必须被公开 DTO 接受」；同一条门禁也守住了
+>    `pool_seats` / `silenced_seats` 的 list/tuple 之争（实测 13/253 局回放 500）。
+>
+> 仍未落地的与本计划相关的 P0 项（`docs/notes/2026-10-07-eval-review.md` §五）：
+> 三条路回传 token usage（`game_service.py:2358/2400/2870` 仍返回 `None`）、账本 `outcome`
+> 与三处可见性门禁、技术弃票按票种统计与警长票失败可见性、`retry_rate` 与报告保留策略。
+
 ### P1 实际落地的行为变化
 
 1. **repair 分支从死代码变为可达**：解析失败现在抛 `UnusableModelOutput`（`ValueError` 子类，`ValueError` 的既有两个 `except` 分支不受影响），`classify_failure` 归入 `REPAIR` → 夜间 / 流水线 / 发言 / 投票四条梯子的第 2、3 次尝试从此会附格式提醒重问，而不是原样重发。实测四套策略的分类：`UnusableModelOutput`/pydantic `ValidationError` → repair；`ToolCallError`、超时、未分类 → 各自的旧分类不变（对齐 `tests/test_failure_classification.py`）。
