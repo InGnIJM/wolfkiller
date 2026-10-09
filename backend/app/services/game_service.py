@@ -25,7 +25,7 @@ from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.agents.llm_client import (
     LLMClient, LLMClientConfig, classify_provider_error, derive_strict_base_url,
-    env_default_client_config,
+    env_default_client_config, merge_usage,
 )
 from app.agents.retry import (
     KIND_REPAIR,
@@ -661,32 +661,52 @@ def _prompt_digest() -> str:
     return hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
 
 
-def _accepts_capture(func) -> bool:
-    """Whether a role callable can take the prompt-capture sink.
+def _accepts_parameter(func, name: str) -> bool:
+    """Whether a role callable declares ``name`` (or swallows anything).
 
-    Production roles are ``BaseRole`` subclasses and always can. Test doubles
-    often keep the historical three-argument shape, so the durable wrapper adapts
-    to both rather than forcing every double to grow a parameter.
+    Production roles are ``BaseRole`` subclasses and take both extras. Test
+    doubles often keep the historical three-argument shape, so the durable
+    wrapper adapts to both rather than forcing every double to grow a parameter.
     """
     try:
         parameters = inspect.signature(func).parameters
     except (TypeError, ValueError):
         return False
     return any(
-        name == "capture" or parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for name, parameter in parameters.items()
+        parameter_name == name or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter_name, parameter in parameters.items()
     )
 
 
-def _capture_adapter(func):
-    """Adapt a role callable to ``(state, conversation_log, payload, sink)``."""
-    if not _accepts_capture(func):
-        async def call(state, conversation_log, payload, sink):
-            return await func(state, conversation_log, payload)
-        return call
+def _accepts_capture(func) -> bool:
+    """Whether a role callable can take the prompt-capture sink."""
+    return _accepts_parameter(func, "capture")
 
-    async def call(state, conversation_log, payload, sink):
-        return await func(state, conversation_log, payload, capture=sink)
+
+def _accepts_chunk(func) -> bool:
+    """Whether a role callable can take the speech streaming callback."""
+    return _accepts_parameter(func, "on_chunk")
+
+
+def _capture_adapter(func):
+    """Adapt a role callable to ``(state, conversation_log, payload, sink, on_chunk)``.
+
+    ``on_chunk`` must travel through this adapter: without it the durable
+    ``speak`` wrapper could not accept the engine's callback, the engine's
+    ``TypeError`` fallback fired on every speech, and ``SPEECH_STREAM`` was
+    silently never published in production.
+    """
+    takes_capture = _accepts_capture(func)
+    takes_chunk = _accepts_chunk(func)
+
+    async def call(state, conversation_log, payload, sink, on_chunk=None):
+        extra: dict[str, object] = {}
+        if takes_capture:
+            extra["capture"] = sink
+        if takes_chunk and on_chunk is not None:
+            extra["on_chunk"] = on_chunk
+        return await func(state, conversation_log, payload, **extra)
+    return call
     return call
 
 
@@ -2374,7 +2394,7 @@ class GameService:
             call_request_action = _capture_adapter(original_request_action)
 
             async def durable_speak(
-                state, conversation_log, context, *,
+                state, conversation_log, context, *, on_chunk=None,
                 _seat=seat, _role=role, _call=call_speak,
             ):
                 position = f"round:{state.round_number}:speech:{context}:seat:{_seat}"
@@ -2385,8 +2405,18 @@ class GameService:
                 sink = None if capture is None else PromptSink()
 
                 async def provider_call():
-                    value = await _call(state, conversation_log, context, sink)
-                    return ({"text": value, "is_none": value is None}, None)
+                    # ``on_chunk`` must survive the wrapper: dropping it made the
+                    # engine's TypeError fallback fire on every speech, so the live
+                    # typewriter stream never ran in production. A cache hit does
+                    # not replay chunks (no provider call happens at all).
+                    value = await _call(state, conversation_log, context, sink, on_chunk)
+                    return (
+                        {"text": value, "is_none": value is None},
+                        # The role's own ladder accumulates its tokens; without
+                        # this every speech request was stored with NULL usage
+                        # (the report's completeness rate sat at 42%).
+                        _usage_mapping(getattr(_role, "_last_call_usage", None)),
+                    )
 
                 result = await invocations.invoke(
                     game_id=game_id, request_id=request_id, actor_seat=_seat,
@@ -2428,7 +2458,7 @@ class GameService:
                         "command": accepted.command.model_dump(),
                         "technical_failure_code": accepted.technical_failure_code,
                         "timeout_type": accepted.timeout_type,
-                    }, None)
+                    }, _usage_mapping(getattr(_role, "_last_call_usage", None)))
 
                 result = await invocations.invoke(
                     game_id=game_id,
@@ -2728,7 +2758,7 @@ class GameService:
         ActionCommand. Parse failures degrade to the contract's safe fallback
         so a point never stalls on a malformed model response.
         """
-        def provider(request, context, attempt, *, prompt_sink=None):
+        def provider(request, context, attempt, *, prompt_sink=None, usage_sink=None):
             if self._pack_ballot_point(request, context):
                 # A collected wolf ballot carries its own provenance: the real
                 # votes keep ``degraded=False`` and only the engine-produced
@@ -2813,6 +2843,11 @@ class GameService:
                         )
                         command = _pipeline_command(result.payload, request.contract)
                         failure = None
+                        if usage_sink is not None:
+                            # Every rung of the ladder costs tokens; the durable
+                            # hop records one usage per logical request, so they
+                            # are summed here rather than dropped.
+                            usage_sink.append(getattr(result, "usage", None))
                         break
                     except Exception as error:
                         failure = error
@@ -2897,8 +2932,14 @@ class GameService:
             sink = None if capture is None else PromptSink()
 
             def provider_call():
-                command = provider(request, context, attempt, prompt_sink=sink)
-                return _durable_command_payload(command), None
+                usage_sink: list[object] = []
+                command = provider(
+                    request, context, attempt, prompt_sink=sink, usage_sink=usage_sink,
+                )
+                merged = None
+                for item in usage_sink:
+                    merged = merge_usage(merged, item)
+                return _durable_command_payload(command), _usage_mapping(merged)
 
             result = self._model_invocations.invoke_sync(
                 game_id=context.game_id,

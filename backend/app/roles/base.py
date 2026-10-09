@@ -11,11 +11,14 @@ from app.models.actions import VoteAction, is_last_words_eligible
 from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import (
     LLMClient,
+    LLMUsage,
     TIMEOUT_ERRORS,
     TRANSIENT_PROVIDER_ERRORS,
     _content_text,
     classify_provider_error,
     extract_partial_speech,
+    extract_usage,
+    merge_usage,
 )
 from app.agents.output_parser import (
     OutputParser,
@@ -192,6 +195,14 @@ class BaseRole:
         # plain JSON content instead of a native tool call. The caller reads it
         # to label the telemetry row, exactly like ``_speech_used_fallback``.
         self._action_tool_content_salvaged = False
+        # Token usage of the current logical call, merged across the whole retry
+        # ladder, plus the last single attempt's own usage. The durable wrappers
+        # read the merged value after the call (the ledger can only record one
+        # usage per logical request) and the per-attempt telemetry rows read the
+        # single-attempt value. Both reset at the start of ``speak`` /
+        # ``request_action`` so a later call can never inherit them.
+        self._last_call_usage: LLMUsage | None = None
+        self._last_attempt_usage: LLMUsage | None = None
 
     @property
     def is_good(self) -> bool:
@@ -210,6 +221,9 @@ class BaseRole:
         """Generate speech. Uses tool calling with validation for day_speech and last_words.
         Returns the speech text, or None if validation failed.
         """
+        # One logical call = one usage total; the ladder below accumulates into it.
+        self._last_call_usage = None
+        self._last_attempt_usage = None
         prompt = self.prompt_builder.build_speech_prompt(
             state, self.seat, self.role_name, conversation_log, context
         )
@@ -232,6 +246,7 @@ class BaseRole:
             elapsed_ms=int((time.monotonic() - started) * 1000),
             retried=False,
             parse_result="ok" if speech else "parse_failed",
+            usage=self._last_call_usage,
         )
         return speech
 
@@ -344,6 +359,7 @@ class BaseRole:
             parse_result="fallback" if self._speech_used_fallback else "ok",
             failure_code=failure_code,
             timeout_type=timeout_type,
+            usage=self._last_call_usage,
         )
         return speech
 
@@ -555,6 +571,9 @@ class BaseRole:
         *, capture=None,
     ) -> AcceptedAction:
         """Request, strictly parse, and atomically accept one issued action."""
+        # One logical call = one usage total; the three-stage ladder accumulates.
+        self._last_call_usage = None
+        self._last_attempt_usage = None
         prompt = self._build_contract_action_prompt(state, conversation_log, request)
         messages = [
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
@@ -699,6 +718,9 @@ class BaseRole:
             elapsed_ms=elapsed_ms, retried=retried, parse_result=parse_result,
             failure_code=failure_code, timeout_type=timeout_type,
             window_id=request.idempotency_key,
+            # One row per attempt, so it reports that attempt's own tokens — not
+            # the ladder total (which the ledger records once).
+            usage=self._last_attempt_usage,
         )
 
     def _log_llm_call(
@@ -707,6 +729,7 @@ class BaseRole:
         attempt: int, prompt_chars: int, elapsed_ms: int, retried: bool,
         parse_result: str | None, failure_code: str | None = None,
         timeout_type: str | None = None, window_id: str | None = None,
+        usage: LLMUsage | None = None,
     ) -> None:
         """Write one universal LLM call record used by benchmark analysis."""
         log_call = getattr(conversation_log, "log_llm_call", None)
@@ -721,6 +744,11 @@ class BaseRole:
             retried=retried, parse_result=parse_result,
             failure_code=failure_code, timeout_type=timeout_type,
             window_id=window_id,
+            # Token columns used to be NULL on every speech/vote row, which is
+            # why the report's token completeness rate sat at 42%.
+            prompt_tokens=(usage.prompt_tokens if usage is not None else None),
+            completion_tokens=(usage.completion_tokens if usage is not None else None),
+            total_tokens=(usage.total_tokens if usage is not None else None),
         )
 
     def _action_timeout_seconds(self, *, retried: bool, final: bool = False) -> float:
@@ -1020,6 +1048,7 @@ class BaseRole:
             if mapped is not error:
                 raise mapped from error
             raise
+        self._record_usage(extract_usage(response))
         if not getattr(response, "tool_calls", None):
             # Reasoning models (e.g. MiMo) answer tool-bound requests with a
             # Hermes-style <tool_call> block as plain content. Accept it when
@@ -1062,6 +1091,7 @@ class BaseRole:
             if callable(action_model) else self.llm_client.get_model()
         )
         response = await model.ainvoke(messages)
+        self._record_usage(extract_usage(response))
         content = _content_text(getattr(response, "content", ""))
         if not content:
             raise ActionValidationError(
@@ -1086,6 +1116,7 @@ class BaseRole:
             coro,
             timeout=self._action_timeout_seconds(retried=False, final=False),
         )
+        self._record_usage(extract_usage(response))
         return response.content if hasattr(response, "content") else str(response)
 
     async def _invoke_llm_with_tools(
@@ -1131,11 +1162,13 @@ class BaseRole:
                     ),
                     timeout=self._action_timeout_seconds(retried=False, final=False),
                 )
+            # The JSON gateway reports usage itself; the ledger and the telemetry
+            # rows both read what this attempt cost.
+            self._record_usage(getattr(result, "usage", None))
             return ToolCallResult(
                 function_name=tool_name,
                 arguments=result.payload,
             )
-
         model = self.llm_client.get_model_with_tools(tools)
         messages = [
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
@@ -1164,5 +1197,19 @@ class BaseRole:
             f"Seat {self.seat} LLM response: "
             f"has_tool_calls={has_tool_calls}"
         )
+        # A streamed answer comes back as plain text, so it carries no usage —
+        # that attempt stays `usage_known=0` rather than reporting a fake zero.
+        self._record_usage(extract_usage(response))
 
         return self.output_parser.parse_tool_call(response)
+
+    def _record_usage(self, usage: LLMUsage | None) -> None:
+        """Accumulate one attempt's token usage.
+
+        ``_last_attempt_usage`` labels the per-attempt telemetry row;
+        ``_last_call_usage`` is the ladder total the durable wrappers hand to the
+        ledger (one usage per logical request, so the attempts must be summed —
+        the JSON fallback's tokens are real cost and used to be dropped).
+        """
+        self._last_attempt_usage = usage
+        self._last_call_usage = merge_usage(self._last_call_usage, usage)

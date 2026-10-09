@@ -1688,3 +1688,70 @@ class TestRetryBudgetPolicy:
         policy = role._backoff_policy(RetryPolicy(base_delay_seconds=0.5))
 
         assert policy.base_delay_seconds == 0.5
+
+
+class RecordingConversationLog(ConversationLog):
+    """A conversation log that keeps the telemetry rows instead of discarding them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[dict] = []
+
+    def log_llm_call(self, round_num, seat, phase, **data) -> None:
+        self.rows.append({"round_num": round_num, "seat": seat, "phase": phase, **data})
+
+
+def _with_usage(message: AIMessage, prompt: int, completion: int) -> AIMessage:
+    message.usage_metadata = {
+        "input_tokens": prompt, "output_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+    return message
+
+
+class TestTokenUsageAccounting:
+    """发言/投票必须把 token 交回账本与遥测：这一格从前永远是 NULL。
+
+    报告里的 `token_usage.completeness_rate` 因此只有 42% —— 夜间流水线回传、
+    白天两条路（发言、投票）一律传 `None`。usage 的唯一来源是 provider 答复：
+    JSON 网关走 `StructuredResponse.usage`，原生工具/文本通道走 `usage_metadata`。
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_speech_ladder_sums_usage_and_labels_the_telemetry_row(self):
+        client = ClientStub(tools=[
+            _with_usage(AIMessage(content="普通文本，没有调用函数。"), 10, 2),
+            _with_usage(
+                tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。"),
+                20, 5,
+            ),
+        ])
+        role = make_role(client=client)
+        log = RecordingConversationLog()
+
+        text = await role.speak(make_state(), log, "day_speech")
+
+        assert text.startswith("我认为三号玩家")
+        # The ledger records one usage per logical request, so the ladder total
+        # is what it must carry; the telemetry row is per logical call too.
+        assert (role._last_call_usage.prompt_tokens, role._last_call_usage.completion_tokens) == (30, 7)
+        assert role._last_call_usage.total_tokens == 37
+        # The last attempt alone, for a per-attempt row.
+        assert role._last_attempt_usage.total_tokens == 25
+        speech_rows = [row for row in log.rows if row["call_kind"] == "speech"]
+        assert len(speech_rows) == 1
+        assert speech_rows[0]["total_tokens"] == 37
+        assert speech_rows[0]["prompt_tokens"] == 30
+        assert speech_rows[0]["completion_tokens"] == 7
+
+    @pytest.mark.asyncio
+    async def test_an_answer_without_usage_metadata_reports_no_tokens(self):
+        """没有 usage 的答复（含流式纯文本）必须留空而不是记 0。"""
+        client = ClientStub(tools=[tool_msg("speak", "我认为三号玩家的发言非常可疑，值得重点关注。")])
+        role = make_role(client=client)
+        log = RecordingConversationLog()
+
+        await role.speak(make_state(), log, "day_speech")
+
+        assert role._last_call_usage is None
+        assert log.rows[0]["total_tokens"] is None
