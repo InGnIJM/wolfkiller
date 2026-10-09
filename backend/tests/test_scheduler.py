@@ -1519,3 +1519,61 @@ def test_recording_a_silenced_skip_without_a_fault_collector_only_logs(caplog) -
 
     assert sch._faults.get() is None
     assert any("Skipping silenced seat" in record.message for record in caplog.records)
+
+
+class _PermissionSpy(EffectApplier):
+    """Record the permission each apply saw — it is what carries ``degraded``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.permissions: list[EffectPermission] = []
+
+    def apply(self, state, effects, permission):  # type: ignore[override]
+        self.permissions.append(permission)
+        return super().apply(state, effects, permission)
+
+
+def _run_aggregate(provider) -> tuple[PointResult, _PermissionSpy]:
+    registry = snapshot(spec("r", contract("group", aggregate=True)))
+    game = state("r", "r")
+    spy = _PermissionSpy()
+    engine = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(), spy, provider,
+    )
+    return engine.run_point(game, SchedulePoint.NIGHT_ACTION), spy
+
+
+def _degraded_answer(*_args, **_kwargs) -> ActionCommand:
+    return ActionCommand(
+        action_type="pass", target_seat=None, reasoning=DEGRADED_REASONING, degraded=True,
+    )
+
+
+def test_an_all_degraded_aggregate_reaches_the_write_entry_as_degraded() -> None:
+    """A group whose every member is the engine's placeholder is the engine's action.
+
+    The group context used to be re-projected fresh (``degraded=False``), so the
+    write entry counted a fully-degraded shared contract as a real submission and
+    the "degraded never spends a card" invariant silently stopped holding for
+    aggregate contracts. Only the *all*-degraded case is marked: one real answer
+    makes the aggregate a decision.
+    """
+    result, spy = _run_aggregate(_degraded_answer)
+
+    assert result.events[0]["payload"]["count"] == 2
+    assert [permission.degraded for permission in spy.permissions] == [True]
+
+
+def test_a_mixed_aggregate_is_not_marked_degraded() -> None:
+    calls = {"n": 0}
+
+    def provider(*_args, **_kwargs) -> ActionCommand:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _degraded_answer()
+        return ActionCommand(action_type="act", target_seat=None, reasoning="我来")
+
+    _, spy = _run_aggregate(provider)
+
+    assert calls["n"] == 2
+    assert [permission.degraded for permission in spy.permissions] == [False]

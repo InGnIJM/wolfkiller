@@ -714,6 +714,13 @@ class Scheduler:
                 group_key = _digest(*(sorted(request.action_key for request in bound)))
                 group_request = self._bind(bound[0], state, action_key=group_key)
                 group_context = self.projector.project(state, group_request, self.registry)
+                if all(command.degraded for command in commands):
+                    # Every member of the group is the engine's placeholder, so the
+                    # aggregate is the engine's action too — otherwise the write entry
+                    # counts it as a real submission and the "degraded never spends a
+                    # card" invariant breaks for shared contracts. A mixed group stays
+                    # unmarked: one real answer is a decision, not a system action.
+                    group_context = self._as_degraded(group_context)
                 try: effects = self._rule_call("aggregate", lambda: self.resolver.aggregate_effects(group_context, role, contract, commands))
                 except RuleExecutionError:
                     if all(command.action_type == contract.fallback_action_type for command in commands): raise PipelinePaused("rule execution failed") from None
