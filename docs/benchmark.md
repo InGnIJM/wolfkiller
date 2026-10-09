@@ -2,7 +2,9 @@
 
 本文说明 WolfKiller 的 benchmark 工具链：如何采集数据、如何跑批量对局评测，以及各指标的定义。
 
-最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。**最近两次运行的复盘与现行指标缺陷清单见 [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md)**：在那一批修完之前，本页「指标定义」一节的决策质量（阵营/神职分类走角色名字符串）、`requests.failure_rate`（流水线兜底不计失败）、`attempts.token_usage.completeness_rate`（发言/投票/夜间流水线不回传 usage）与 `retry_rate`（恒为 0）四项都不要当权威口径。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
+最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。**最近两次运行的复盘与现行指标缺陷清单见 [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md)**：在那一批修完之前，本页「指标定义」一节的决策质量（阵营/神职分类走角色名字符串）与 `requests.failure_rate`（流水线兜底不计失败）两项仍不要当权威口径。
+
+**2026-10-09 已修**（同一批复盘里的另两项）：`attempts.token_usage.completeness_rate` —— 发言/投票/夜间流水线三条路现在都把 usage 交回账本与 `llm_calls.log`（`BaseRole._record_usage`，流式纯文本没有 usage 就留空，不记假 0）；`retry_rate` —— `attempts.retry_rate` 已**下线**（重试发生在一次 `provider_call` 内部，`model_attempts` 每逻辑请求只有一行，该键结构性恒 0），真实内层重试率是 `llm.llm_retry_rate`，来源是 `llm_calls.log` 的 `retried` 标记；`attempts.retried_requests` 保留，但它的语义是**恢复重派发**次数，不是梯子重试。同一批还加了报告保留窗口：`benchmark_reports` 每个 `(run_id, metric_version)` 只保留最新两份（此前从不清理，单个 run 曾累积 3404 行 / 149MB）。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
 
 ## 两层基准
 

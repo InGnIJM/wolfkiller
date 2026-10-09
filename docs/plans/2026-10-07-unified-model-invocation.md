@@ -1,7 +1,7 @@
 # 统一模型调用：InvocationRunner 组件
 
 > 日期：2026-10-07
-> 状态：**进行中** —— P0 组件 / P1 repair 分类已落地（覆盖率门禁 100% 绿，4463 测试通过），P2–P5 未开始。
+> 状态：**进行中** —— P0 组件 / P1 repair 分类已落地；P2–P5 部分落地（见下表），覆盖率门禁 100% 绿（4600 测试通过）。
 > 范围：`backend/app/agents/`、`backend/app/roles/base.py`、`backend/app/services/game_service.py`、`backend/app/core/sheriff_flow.py`、评测口径（`benchmark_metrics.py` / `audience_projector.py`）
 > 问题来源：`docs/notes/2026-10-07-eval-review.md`（§2.4/2.5/2.11/3.1、§4 跨层不统一清单）
 
@@ -13,10 +13,10 @@
 | --- | --- | --- | --- |
 | P0 | 组件与纯函数（分类读取 / 结果类型 / 梯子 / 降级策略），不动调用点 | ✅ | `app/agents/invocation.py`（650 行，含 docstring）、`tests/test_invocation_runner.py`（45 例） |
 | P1 | 解析失败改抛 `UnusableModelOutput`，repair 分支生效；失败码带上解析层 token | ✅ | `app/agents/llm_client.py`（`_structured_response` / `_require_schema_fields`）、`app/agents/retry.py`（`FailureClass` / `classify_failure`）、`app/services/game_service.py`（`_model_failure_code` / `_exception_diagnostics`）、`tests/test_failure_classification.py`（16 例）、`tests/test_game_service.py` |
-| P2 | 迁移 `_command_provider` 与 `_night_turn`/`_night_invoke` | ⬜ 未开始 | — |
-| P3 | 迁移 `durable_speak` / `durable_request_action`（含流式与投票 repair） | ⬜ 未开始 | — |
-| P4 | 降级策略统一（`exhausted_bucket` 接管 6 处手写默认值） | ⬜ 未开始 | — |
-| P5 | 可见性与口径（账本 `outcome` → 报表 / `TECHNICAL_ABSTAIN` 覆盖警长票 / 投影字段门禁） | ⬜ 未开始 | — |
+| P2 | 迁移 `_command_provider` 与 `_night_turn`/`_night_invoke` | ⬜ 未开始（三条路已先回传 usage，见下） | — |
+| P3 | 迁移 `durable_speak` / `durable_request_action`（含流式与投票 repair） | ⚠️ 成果已落、梯子未迁移 | 三条路回传 usage（`BaseRole._record_usage`）；`durable_speak` 修回 `on_chunk` 转发（生产上流式此前静默失效）。**梯子留在 `roles/base.py`**：组件只有 `kind` 没有 attempt 序号、没有 strict→JSON→压缩提示的传输升级、`timeout_type` 在任何路径都只能是 `None`、capture 在组件内 flush 与「先过消费闸门再 flush」的次序冲突（audit G2/G4/G6/G7）—— 硬搬会变成组件 + 角色两份梯子 |
+| P4 | 降级策略统一（`exhausted_bucket` 接管 6 处手写默认值） | ⚠️ 决策点已接、六处尚未全部改走工厂 | 一次性契约（`per_game_limit == 1`）耗尽改为可恢复暂停：`DecisionPaused` / `Scheduler._command` 放行 / 账本记 `unknown` / 监听器落 `paused` / 同点只暂停一次。`_pause_once_or_degrade` 目前只接在 `_command_provider` 的兜底分支；夜间导演、白天弃票、警长票仍是各自手写的默认值（行为与 `exhausted_bucket` 一致，但没有统一走工厂） |
+| P5 | 可见性与口径（账本 `outcome` → 报表 / `TECHNICAL_ABSTAIN` 覆盖警长票 / 投影字段门禁） | ⚠️ 部分 | 已落：报告保留窗口、真实 `llm_retry_rate`、回放 DTO 门禁补可选键样本断言。未落：账本 `call` 信封 → 报表的 `degraded` 类（要等 P2/P3 迁移把信封写进生产行）、警长票失败可见性（新观众事件）、技术弃票按票种统计 |
 
 > **2026-10-09 补充（P2–P5 状态不变，但迁移时必须保留下面两条）**：在制品「降级动作自报家门」
 > 已随 `503c92a` 提交，评测口径的三处有界修复随 `410c97f` 提交。与本计划直接相关的两点：
@@ -194,3 +194,5 @@ class InvocationRunner:
 4. `tests/test_projection_field_gate.py`（P5）：投影字段 ⊆ 领域事件字段。
 
 **必须保持绿**：`test_llm_call_telemetry.py`、`test_llm_usage_capture.py`、`test_game_service_durable_regressions.py`、`test_base_role.py`、`test_vote_result_projection.py`、`test_night_flow.py`、`test_audience_technical_abstain.py`。
+
+> **2026-10-09 执行记录（本次）**：P2 未开始；P3 只落成果（usage + 流式）不搬梯子；P4 落了「让 PAUSE 真正可用」的一跳，六处默认值仍分头手写；P5 落了保留窗口 / `llm_retry_rate` / 门禁补丁，账本信封与警长票可见性未落。**文档与代码不符的十处**（本次核对，以代码为准）：`CallSpec` 首字段 `game_id` 必填、`FailureRecord.attempts`（非 `attempt`）、`encode(value, outcome)` 两参、`__init__` 还有 `sink_factory`、`run_sync/run_async` 另有 `prompt_chars/model_id/provider_profile/execution_generation/recovery` 五个关键字参数、信封键是 `payload`/`call`（不是 `outcome`）、`exhausted_bucket` 形参类型是 `object | None`、§2 的五行号已过期、P1-1 声称 repair 覆盖投票（投票梯子不调用 `retry_plan`）、`build_prompt_record` 注释说「四个调用点」实际是五个。

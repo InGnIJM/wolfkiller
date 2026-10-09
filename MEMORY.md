@@ -728,3 +728,28 @@
   的 `/api/games/{id}/logs` 打不开。门禁是
   `tests/test_game_routes.py::test_every_projected_public_payload_is_accepted_by_the_replay_dto`，
   它必须把 `_AUDIENCE_ACTION_OPTIONAL` 里的**可选键也发一份**——只发必填字段的那版是全绿的。
+- Trigger: 「让一次性契约失败可以恢复」被当成一条策略开关。Action: 先查异常由谁捕获 ——
+  `PipelinePaused` 当时无人区分来源，`Scheduler._command` 把 provider 的**任何**异常包成
+  `PipelinePaused("command provider failed")` 再抛，监听器一律落 `failed`，于是「暂停」在
+  落地前就等于「让一次模型故障打死整局」。补的四跳缺一不可：① 用子类 `DecisionPaused` 把
+  「预算耗尽」与「真的崩了」分开（后者必须继续 `failed`，否则缺陷被藏进可恢复状态）；
+  ② `_command` 放行该子类（不包装、不再问第二次 provider）；③ 账本把它记成 `unknown`
+  而不是 `failed` —— `failed` 永久不可派发，暂停局续跑后再也拿不回那个请求，`unknown` +
+  一次性 `reserve_recovery_retry` 才是续跑路径；④ 监听器落 `paused` 且**不置 ERROR phase**。
+  另外必须有「同一点只暂停一次」的上界：benchmark executor 会自动续跑 paused 局，永久故障
+  的 provider 会把这个点无限暂停下去。
+- Trigger: 一个「统一调用层」组件写好了、覆盖率 100%、却没有生产调用点。Action: 先按调用点
+  逐条核对组件能表达什么，再决定搬不搬。`InvocationRunner` 表达不了白天两条梯子：`send` 只有
+  `kind` 没有 attempt 序号、没有 strict→JSON→压缩提示的传输升级、`timeout_type` 在任何路径
+  都只能是 `None`、capture 在组件内 flush 与「先过消费闸门再 flush」次序冲突。**先落成果、
+  后搬梯子**：把 usage 回传（`BaseRole._record_usage` → durable 包装 → 账本）与流式回调转发
+  先做掉，梯子原地不动 —— 前者修的是报表口径（token 覆盖率 42%），后者修的是一个静默回归
+  （`durable_speak` 不接受 `on_chunk`，引擎的 TypeError 兜底每次都触发，生产环境的
+  `SPEECH_STREAM` 从未发布过）。判据是「这个能力是否只在组件内部才有意义」，不是「组件是否
+  已经存在」。
+- Trigger: 指标恒为 0 或覆盖率长期偏低，被当成「数据还不够」。Action: 先问这个数**在结构上
+  能不能非零**。`attempts.retry_rate` 恒 0 是因为重试发生在一次 `provider_call` **内部**，
+  `model_attempts` 每逻辑请求只写一行 —— 这个键永远不会动，正确做法是下线它，并把真实来源
+  （`llm_calls.log` 的 `retried`）接进 `llm.llm_retry_rate`；token 覆盖率 42% 是因为三条路
+  一律给账本传 `None`，不是 provider 没给。同类：`benchmark_reports` 每次事实变化插一整份、
+  从不清理（单 run 3404 行 / 149MB），读者的 `ORDER BY … LIMIT 1` 只用最新一行。
