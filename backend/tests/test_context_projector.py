@@ -364,18 +364,23 @@ def test_actor_resources_and_private_facts_are_minimal_and_role_name_agnostic(
     state: GameState, registry: RegistrySnapshot
 ) -> None:
     projector = ContextProjector()
+    # 资源读 canonical 视图（`runtime.role_resources`），不读 `PlayerState.has_*`。
+    state._pipeline_runtime = _Runtime(
+        role_resources={4: {"antidote": 1, "poison": 0}, 5: {"gun": 1}},
+    )
     witch = projector.project(state, _request(registry, 4, "witch"), registry)
     hunter = projector.project(state, _request(registry, 5, "hunter"), registry)
 
-    assert witch.resources == {"antidote": True, "poison": False}
+    assert witch.resources == {"antidote": 1, "poison": 0}
     assert witch.facts["wolf_kill_target"] == 6
-    assert hunter.resources == {"gun": True}
+    assert hunter.resources == {"gun": 1}
     assert hunter.actor_alive is False
     assert "wolf_kill_target" not in hunter.facts
 
-    state.players[4].has_antidote = False
+    # 用掉解药只改 canonical 视图，镜像字段不再是任何人的输入。
+    state._pipeline_runtime.role_resources[4]["antidote"] = 0
     no_antidote = projector.project(state, _request(registry, 4, "witch"), registry)
-    assert no_antidote.resources == {"antidote": False, "poison": False}
+    assert no_antidote.resources == {"antidote": 0, "poison": 0}
     assert no_antidote.facts["wolf_kill_target"] == 6
 
 
@@ -939,9 +944,16 @@ def test_accepted_summary_requires_mapping_and_private_defaults_are_detached(
     assert context.facts["future_mapping"] == {"seats": (1,)}
 
 
-def test_legacy_resource_aliases_are_the_only_player_attribute_reads(
+def test_declared_resources_read_their_declaration_not_the_legacy_mirror(
     state: GameState,
 ) -> None:
+    """没有 canonical 资源时读声明，不读 `PlayerState.has_*` 镜像。
+
+    这三个镜像字段（`has_antidote` / `has_poison` / `has_gun`）在生产代码里只读不写 ——
+    资源早已统一走 `runtime.role_resources` 与唯一写入口。拿一个永不更新的字段当回落，
+    等于把「还没有 runtime」悄悄读成「没有枪/没有药」。字段本身必须留着：检查点解码对
+    玩家行做精确字段集校验，删掉会让所有现存检查点解不开。
+    """
     contract = _contract("ACTOR", contract_id="legacy-action")
     spec = RoleSpec(
         role_id="witch",
@@ -965,9 +977,9 @@ def test_legacy_resource_aliases_are_the_only_player_attribute_reads(
     )
 
     assert context.resources == {
-        "antidote": True,
-        "has_poison": False,
-        "gun": True,
+        "antidote": False,
+        "has_poison": True,
+        "gun": False,
         "role": "default-role",
     }
 

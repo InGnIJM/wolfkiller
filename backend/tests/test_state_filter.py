@@ -50,9 +50,12 @@ class TestStateFilter:
     @pytest.mark.parametrize("antidote,poison", [(True, True), (True, False), (False, True), (False, False)])
     @pytest.mark.parametrize("target", [3, None])
     def test_witch_day_view_keeps_target_regardless_of_potions(self, antidote, poison, target):
+        from app.core.effect_applier import _Runtime
         state = wolf_state()
-        state.players[4].has_antidote = antidote
-        state.players[4].has_poison = poison
+        # 资源只从 canonical 视图读（`PlayerState.has_*` 是只读不写的旧镜像）。
+        state._pipeline_runtime = _Runtime(
+            role_resources={4: {"antidote": int(antidote), "poison": int(poison)}},
+        )
         state.last_wolf_kill_target = target
         view = StateFilter().filter_for_role(state, 4, "wolf-killer-witch")
 

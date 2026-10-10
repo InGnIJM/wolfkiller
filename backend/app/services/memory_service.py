@@ -66,9 +66,12 @@ class MemoryService:
         knowledge: dict = {
             "teammates": [],
             "check_results": [],
-            "has_antidote": bool(resources.get("antidote", player.has_antidote)),
-            "has_poison": bool(resources.get("poison", player.has_poison)),
-            "has_gun": bool(resources.get("gun", player.has_gun)),
+            # Canonical resources only: the ``PlayerState.has_*`` mirrors are
+            # legacy checkpoint passengers, never a source of truth (see
+            # ``ContextProjector._actor_resources``).
+            "has_antidote": bool(resources.get("antidote", 0)),
+            "has_poison": bool(resources.get("poison", 0)),
+            "has_gun": bool(resources.get("gun", 0)),
             "last_wolf_kill_target": None,
         }
 

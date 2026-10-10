@@ -52,11 +52,6 @@ _EVENT_TOKEN = re.compile(r"^(?:[a-z][a-z0-9_.-]*|[A-Z][A-Z0-9_]*)$")
 _OPAQUE_EVENT_ID = re.compile(r"^event:[0-9a-f]{16,64}$")
 _MAX_INT = 2_147_483_647
 _MAX_SUMMARIES = 64
-_RESOURCE_ADAPTERS = {
-    "antidote": "has_antidote", "has_antidote": "has_antidote",
-    "poison": "has_poison", "has_poison": "has_poison",
-    "gun": "has_gun", "has_gun": "has_gun",
-}
 # Selected-target namespaces a contract may request. Everything outside these
 # whitelists stays private: a role learns only the target facts the game rules
 # make observable, never another seat's private resources or hidden statuses.
@@ -533,12 +528,15 @@ class ContextProjector:
             if key in canonical:
                 resources[key] = canonical[key]
                 continue
-            attribute = _RESOURCE_ADAPTERS.get(key)
-            resources[key] = (
-                getattr(actor, attribute)
-                if attribute is not None
-                else ContextProjector._copy_json_value(default)
-            )
+            # A declared resource with no canonical value reads as its
+            # declaration. The legacy ``PlayerState.has_antidote/has_poison/
+            # has_gun`` mirrors are deliberately *not* consulted: nothing in
+            # this codebase writes them any more (the engine writes
+            # ``runtime.role_resources`` through the one write entry), so they
+            # could only ever answer the value they were constructed with — and
+            # a field that never updates is how "no runtime yet" hides as
+            # "no gun".
+            resources[key] = ContextProjector._copy_json_value(default)
         return resources
 
     @classmethod

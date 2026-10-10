@@ -127,6 +127,12 @@ class PlayerState:
     role: str
     camp: str
     is_alive: bool = True
+    # Legacy mirrors of the gun and the two potions: the engine wrote them until
+    # the generic role pipeline moved every resource into ``runtime.role_resources``
+    # (2026-08-13). They stay in the dataclass because the checkpoint decoder
+    # checks the player row's field set *exactly* — dropping them would make every
+    # existing checkpoint fail to decode. Nothing writes them any more and nothing
+    # reads them as a source of truth: the resource view is canonical.
     has_antidote: bool = False
     has_poison: bool = False
     has_gun: bool = False

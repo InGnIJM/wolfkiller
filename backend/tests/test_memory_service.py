@@ -85,8 +85,11 @@ class TestMemoryService:
         ]
 
     def test_memory_content_includes_private_knowledge_and_history(self, tmp_path):
+        from app.core.effect_applier import _Runtime
         service = MemoryService(str(tmp_path))
         state = make_state()
+        # 药在 canonical 视图里；`PlayerState.has_*` 只是检查点兼容字段，不再被读。
+        state._pipeline_runtime = _Runtime(role_resources={5: {"antidote": 1, "poison": 0}})
 
         service.save_memories(state)
 
@@ -159,7 +162,12 @@ class TestMemoryService:
         assert witch["private_knowledge"]["has_antidote"] is False
         assert witch["private_knowledge"]["has_poison"] is True
 
-    def test_witch_potions_fall_back_to_legacy_when_runtime_has_no_seat(self, tmp_path):
+    def test_potions_read_the_canonical_view_only(self, tmp_path):
+        """canonical 里没有该座位 → 读成「没有药」，不回落到 `PlayerState.has_*`。
+
+        那三个镜像字段在生产代码里只读不写（资源统一走 `runtime.role_resources`），
+        回落只会把「还没有 runtime」显示成「没有枪/没有药」之外的假象。
+        """
         from app.core.effect_applier import _Runtime
         service = MemoryService(str(tmp_path))
         state = make_state()
@@ -170,5 +178,5 @@ class TestMemoryService:
         witch = json.loads(
             (service.get_memory_dir(state.game_id) / "seat_5_wolf-killer-witch.json").read_text("utf-8")
         )
-        assert witch["private_knowledge"]["has_antidote"] is True
+        assert witch["private_knowledge"]["has_antidote"] is False
         assert witch["private_knowledge"]["has_poison"] is False
