@@ -1064,9 +1064,14 @@ def test_the_silent_roles_are_scored_from_their_reasoning_events() -> None:
             {"event": "PURE_WHITE_REASONING", "seat": 1, "target_seat": None},
             {"event": "WOLF_WITCH_REASONING", "seat": 2, "target_seat": 1},
             {"event": "WOLF_WITCH_REASONING", "seat": 2, "target_seat": 5},
+            # 四个查验角色都可以弃权：没有目标的行不算机会。
+            {"event": "WOLF_WITCH_REASONING", "seat": 2, "target_seat": None},
             {"event": "GARGOYLE_REASONING", "seat": 4, "target_seat": 3},
+            {"event": "GARGOYLE_REASONING", "seat": 4, "target_seat": 5},
+            {"event": "GARGOYLE_REASONING", "seat": 4, "target_seat": None},
             {"event": "DEMON_HUNTER_REASONING", "seat": 6, "target_seat": 3},
             {"event": "DEMON_HUNTER_REASONING", "seat": 6, "target_seat": 5},
+            {"event": "DEMON_HUNTER_REASONING", "seat": 6, "target_seat": None},
             {"event": "DANCE_POOL", "seat": 7, "pool_seats": [3, 5, 7]},
             {"event": "DANCE_POOL", "seat": 7, "pool_seats": [5, 6, 7]},
             {"event": "MASK_GRANTED", "seat": 8, "target_seat": 3, "in_pool": True},
@@ -1079,7 +1084,7 @@ def test_the_silent_roles_are_scored_from_their_reasoning_events() -> None:
 
     assert decision["pure_white_check_hit_rate"] == 0.5
     assert decision["wolf_witch_check_hit_rate"] == 0.5
-    assert decision["gargoyle_check_hit_rate"] == 1.0
+    assert decision["gargoyle_check_hit_rate"] == 0.5
     assert decision["demon_hunter_hunt_hit_rate"] == 0.5
     assert decision["dance_pool_wolf_rate"] == 0.5
     assert decision["mask_in_pool_rate"] == 0.5
@@ -1089,7 +1094,7 @@ def test_the_silent_roles_are_scored_from_their_reasoning_events() -> None:
             "demon_hunter_hunts", "dance_pools", "mask_grants",
         )
     } == {
-        "pure_white_checks": 2, "wolf_witch_checks": 2, "gargoyle_checks": 1,
+        "pure_white_checks": 2, "wolf_witch_checks": 2, "gargoyle_checks": 2,
         "demon_hunter_hunts": 2, "dance_pools": 2, "mask_grants": 2,
     }
 

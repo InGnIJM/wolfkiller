@@ -1631,3 +1631,24 @@ def test_a_decision_pause_is_neither_retried_nor_rewrapped() -> None:
         scheduler(registry, provider).run_point(game, SchedulePoint.NIGHT_ACTION)
 
     assert attempts == [0]
+
+
+def test_a_rejected_answer_without_a_fault_collector_is_only_logged() -> None:
+    """故障行要一个故障收集器；没有它时只记日志，不能因此抛异常。
+
+    `Scheduler._command` 是引擎内部调用点，`_record_rejected_action` 也允许在没有
+    `run_point` 提供的收集器时被调到 —— 判违规是拒绝一个回答，不是打断对局。
+    """
+    def provider(request, context, attempt):
+        return ActionCommand(action_type="invalid", target_seat=None, reasoning="x")
+
+    registry = snapshot(spec("r", contract("c")))
+    sched = scheduler(registry, provider)
+    game = state("r")
+    request = sched.issue(game, SchedulePoint.NIGHT_ACTION, registry)[0]
+    context = sched.projector.project(game, request, registry)
+
+    command, _ = sched._command(game, request, context)
+
+    assert command.action_type == "pass"
+    assert command.degraded is True
