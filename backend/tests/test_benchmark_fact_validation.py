@@ -43,11 +43,19 @@ def test_mixed_uncertainty_excludes_invalid_blocks_and_incomplete_player_facts()
     assert mixed[0]["valid_seats"] == 1
     assert mixed[0]["block_count"] == 1
     assert mixed[0]["low"] is None and mixed[0]["high"] is None
+    # 单 block 的区间不存在，报告必须说清原因，而不是报一个「跑过 2000 次」的样本数。
+    assert mixed[0]["samples"] == 0
+    assert mixed[0]["insufficient_blocks"] is True
 
 
 def test_empty_resampled_blocks_do_not_generate_nan_intervals():
-    assert _bootstrap_block_ratio({0: (0, 0), 1: (0, 0)}) == (None, None)
-    assert _bootstrap_block_ratio({0: (0, 0), 1: (1, 1)}) == (1.0, 1.0)
+    # 第三个值是真正抽到的重采样次数：分母全 0 时一次都没抽到，报告必须写 0，
+    # 不能再报配置里的 2000（那会让 null 区间读起来像算过的）。
+    # 单块：一次都没抽（0）；有块但分母全 0：抽了 2000 次、只是没有可用的比例，
+    # 区间同样缺失，但样本数不是 0 —— 报告另用 insufficient_* 说明原因。
+    assert _bootstrap_block_ratio({0: (0, 0), 1: (0, 0)}) == (None, None, 2000)
+    assert _bootstrap_block_ratio({0: (0, 0), 1: (1, 1)}) == (1.0, 1.0, 2000)
+    assert _bootstrap_block_ratio({0: (1, 1)}) == (None, None, 0)
 
 
 def test_invalid_paired_items_do_not_create_latency_pairs():
@@ -68,3 +76,16 @@ def test_missing_model_selection_is_rejected_by_scheduler_without_inventing_a_de
     ).frozen_specification()
     with pytest.raises(ValueError, match="requires model configurations"):
         BenchmarkService._mixed_schedule(specification)
+
+
+def test_paired_regression_without_pairs_reports_no_samples():
+    """没有可配对的 pair：`samples` 写 0 并标注原因，不再写配置里的 2000。"""
+    report = BenchmarkMetrics.compute(
+        games=[], items=[], model_requests=[], model_attempts=[],
+    )
+    paired = report["summary"]["paired_regression"]["bootstrap"]
+    assert paired["samples"] == 0
+    assert paired["insufficient_pairs"] is True
+    assert paired["low"] is None and paired["high"] is None
+    assert paired["seed"] == 1729 and paired["confidence"] == 0.95
+

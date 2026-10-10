@@ -606,9 +606,19 @@ def _mixed_observations(
 
 def _bootstrap_block_ratio(
     blocks: Mapping[int, tuple[int, int]],
-) -> tuple[float | None, float | None]:
+) -> tuple[float | None, float | None, int]:
+    """Return the block-bootstrap interval and how many resamples were drawn.
+
+    The third value is the honest one: a single block cannot be resampled at all,
+    so zero draws happened and the report must say ``samples: 0`` — it used to
+    print the configured 2000 next to a ``null`` interval, which reads as
+    "computed from 2000 resamples" when nothing ran. Blocks that exist but whose
+    drawn denominators are all zero *are* resampled 2000 times; their interval is
+    absent because no draw carried an observation, and the caller says so with
+    its own flag rather than by faking the sample count.
+    """
     if len(blocks) < 2:
-        return None, None
+        return None, None, 0
     ordered = [blocks[key] for key in sorted(blocks)]
     generator = random.Random(_BOOTSTRAP_SEED)
     values: list[float] = []
@@ -617,8 +627,13 @@ def _bootstrap_block_ratio(
         denominator = sum(value[0] for value in sampled)
         if denominator:
             values.append(sum(value[1] for value in sampled) / denominator)
+    if not values:
+        return None, None, _BOOTSTRAP_SAMPLES
     tail = (1.0 - _CONFIDENCE) / 2.0
-    return _percentile(values, tail), _percentile(values, 1.0 - tail)
+    return (
+        _percentile(values, tail), _percentile(values, 1.0 - tail),
+        _BOOTSTRAP_SAMPLES,
+    )
 
 
 def _mixed_uncertainty(
@@ -642,7 +657,7 @@ def _mixed_uncertainty(
             index: (counts[0], counts[1])
             for index, counts in bucket["blocks"].items()
         }
-        low, high = _bootstrap_block_ratio(blocks)
+        low, high, samples = _bootstrap_block_ratio(blocks)
         valid_seats = sum(counts[0] for counts in blocks.values())
         wins = sum(counts[1] for counts in blocks.values())
         row = {
@@ -650,9 +665,14 @@ def _mixed_uncertainty(
             "games": len(bucket["games"]), "valid_seats": valid_seats,
             "wins": wins, "win_rate": _rate(wins, valid_seats),
             "block_count": len(blocks), "confidence": _CONFIDENCE,
-            "samples": _BOOTSTRAP_SAMPLES, "seed": _BOOTSTRAP_SEED,
+            "samples": samples, "seed": _BOOTSTRAP_SEED,
             "low": low, "high": high,
         }
+        if samples == 0:
+            # Say *why* the interval is absent: one block cannot be resampled at
+            # all, so nothing was drawn. A bare ``null`` next to
+            # ``samples: 2000`` was read as a computed interval for months.
+            row["insufficient_blocks"] = True
         row[dimension] = group
         result.append(row)
     return result
@@ -698,6 +718,10 @@ def _bootstrap(differences: Sequence[float]) -> dict[str, Any]:
         "high": None,
     }
     if not differences:
+        # No pair to resample: report zero samples drawn and say so, instead of
+        # claiming the configured 2000 next to an absent interval.
+        result["samples"] = 0
+        result["insufficient_pairs"] = True
         return result
     generator = random.Random(_BOOTSTRAP_SEED)
     count = len(differences)
