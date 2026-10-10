@@ -63,6 +63,22 @@ interface PerformanceRow {
   value: number | null;
 }
 
+function boardCoverageText(coverage: Record<string, unknown>): string | null {
+  const boards = Array.isArray(coverage.boards) ? coverage.boards : [];
+  if (boards.length === 0) return null;
+  const parts = boards.map((raw) => {
+    const item = record(raw);
+    const counts = record(item.role_counts);
+    const seats = Object.values(counts).reduce<number>(
+      (total, value) => total + (typeof value === 'number' ? value : 0), 0,
+    );
+    const games = typeof item.games === 'number' ? item.games : 0;
+    return `${seats} 人局 × ${games}`;
+  });
+  const seer = coverage.seer_present === false ? '；本批不含预言家，预言家相关指标无样本' : '';
+  return `板型覆盖：${parts.join('；')}${seer}`;
+}
+
 function performanceRows(report: BenchmarkReport | null): PerformanceRow[] {
   if (!report) return [];
   const modelRows = record(report.metrics).model_performance;
@@ -165,6 +181,8 @@ export default function BenchmarkDetailPage() {
   const decision = decisionSummary(report);
   const decisionSamples = record(decision?.samples);
   const decisionGames = numberAt(decision, 'samples', 'games');
+  const coverage = record(reportSummary.coverage);
+  const boardSummary = boardCoverageText(coverage);
   const status = current.status;
 
   return (
@@ -235,6 +253,9 @@ export default function BenchmarkDetailPage() {
           <Typography variant="body2" color="text.secondary">
             跨局池化口径，见 docs/benchmark.md；{decisionGames === null ? '' : `基于 ${decisionGames} 局有决策明细的对局。`}狼票集中度不在此展示：跨局池化后不可解读（需按轮次重算）。
           </Typography>
+          {boardSummary === null ? null : (
+            <Typography variant="body2" color="text.secondary">{boardSummary}</Typography>
+          )}
         </Box>
         {decision === null ? (
           <Alert severity="info">本次报告没有决策质量数据（旧版本报告，或这些对局缺少 summary.json 明细）。</Alert>

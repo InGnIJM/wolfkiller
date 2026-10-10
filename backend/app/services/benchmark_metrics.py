@@ -31,7 +31,9 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from app.benchmark.metrics import compute_decision_metrics, compute_decision_samples
+from app.benchmark.metrics import (
+    compute_board_coverage, compute_decision_metrics, compute_decision_samples,
+)
 
 
 #: v3 adds the pooled ``decision`` section (see ``app/benchmark/metrics.py``);
@@ -90,6 +92,9 @@ class BenchmarkMetrics:
                     **compute_decision_metrics(facts["summaries"]),
                     "samples": compute_decision_samples(facts["summaries"]),
                 },
+                # Which boards produced the pooled numbers, and whether the
+                # run could answer the seer questions at all.
+                "coverage": compute_board_coverage(facts["summaries"]),
                 "requests": _request_metrics(facts["model_requests"]),
                 "attempts": _attempt_metrics(facts["model_attempts"]),
                 "model_performance": _model_performance(

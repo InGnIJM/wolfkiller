@@ -1112,3 +1112,54 @@ def test_the_silent_roles_report_no_sample_rather_than_zero() -> None:
         "dance_pool_wolf_rate", "mask_in_pool_rate",
     ):
         assert decision[key] is None, key
+
+
+def test_board_coverage_names_the_boards_and_whether_a_seer_played() -> None:
+    """报告要能看出「这批只跑了一种板型、而且没有预言家」。
+
+    评测板型由 run 的 scenario 固定，池化指标旁边从前没有任何地方能看出它出自哪种配置
+    （复盘 §2.12）。覆盖率从每局 summary 自己的 roles 推导，所以归档的 run 也答得出来。
+    """
+    from app.benchmark.metrics import compute_board_coverage
+
+    seer_board = {"roles": {
+        "1": {"role": "wolf-killer-seer", "camp": "good"},
+        "2": {"role": "wolf-killer-werewolf", "camp": "werewolf"},
+    }}
+    village_board = {"roles": {
+        "1": {"role": "wolf-killer-villager", "camp": "good"},
+    }}
+
+    coverage = compute_board_coverage([seer_board, seer_board, village_board])
+
+    assert coverage == {
+        "boards": [
+            {"role_counts": {
+                "wolf-killer-seer": 1, "wolf-killer-werewolf": 1,
+            }, "games": 2},
+            {"role_counts": {"wolf-killer-villager": 1}, "games": 1},
+        ],
+        "seer_present": True,
+    }
+    # 多局同板型合并，且「没有预言家」是一等信号而不是靠读 role_counts 推断。
+    assert compute_board_coverage([village_board, village_board]) == {
+        "boards": [{"role_counts": {"wolf-killer-villager": 1}, "games": 2}],
+        "seer_present": False,
+    }
+
+
+def test_board_coverage_tolerates_junk_summaries() -> None:
+    from app.benchmark.metrics import compute_board_coverage
+
+    assert compute_board_coverage([None, "nope", {"roles": "junk"}, {"roles": {}}]) == {
+        "boards": [], "seer_present": False,
+    }
+    # 半截的 role 行（没有 role 字段）不进板型，但同一局的其它行照常计数。
+    assert compute_board_coverage([{"roles": {
+        "1": {"role": "wolf-killer-villager", "camp": "good"},
+        "2": {"camp": "good"},
+        "3": 3,
+    }}]) == {
+        "boards": [{"role_counts": {"wolf-killer-villager": 1}, "games": 1}],
+        "seer_present": False,
+    }

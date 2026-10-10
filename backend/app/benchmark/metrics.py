@@ -367,6 +367,44 @@ def _max_target_votes(targets: dict[str, int]) -> int:
     return max(targets.values()) if targets else 0
 
 
+def compute_board_coverage(summaries: list[dict]) -> dict:
+    """Which boards a run actually played, and whether a seer was in any of them.
+
+    A run's scenario pins one board for every item, so "this run is a single
+    composition, and it has no seer" used to be invisible: readers saw pooled
+    rates without knowing what produced them (eval review §2.12). Derived from
+    each summary's own ``roles``, so an archived run keeps answering without the
+    scenario having to be re-read.
+    """
+    boards: dict[tuple[tuple[str, int], ...], int] = {}
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        roles = summary.get("roles")
+        if not isinstance(roles, dict):
+            continue
+        counts: dict[str, int] = {}
+        for info in roles.values():
+            role = info.get("role") if isinstance(info, dict) else None
+            if isinstance(role, str) and role:
+                counts[role] = counts.get(role, 0) + 1
+        if not counts:
+            continue
+        key = tuple(sorted(counts.items()))
+        boards[key] = boards.get(key, 0) + 1
+    return {
+        "boards": [
+            {"role_counts": dict(key), "games": games}
+            for key, games in sorted(
+                boards.items(), key=lambda item: (-item[1], item[0]),
+            )
+        ],
+        # The seer is the one role the metric review called out by name: a run
+        # without it cannot answer the seer questions at all.
+        "seer_present": any("wolf-killer-seer" in dict(key) for key in boards),
+    }
+
+
 def compute_compliance_metrics(summaries: list[dict]) -> dict:
     llm_calls = 0
     fallbacks = 0

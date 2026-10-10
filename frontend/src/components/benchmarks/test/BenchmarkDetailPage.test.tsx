@@ -74,7 +74,11 @@ function decisionTable(): HTMLElement {
 describe('benchmark decision quality', () => {
   it('renders every decision ratio with sample sizes and both witch use counts', async () => {
     vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
-      status: 'ready', provisional: false, summary: { decision: decisionBlock },
+      status: 'ready', provisional: false,
+      summary: { decision: decisionBlock, coverage: {
+        boards: [{ role_counts: { 'wolf-killer-seer': 1, 'wolf-killer-villager': 3 }, games: 4 }],
+        seer_present: true,
+      } },
     });
     await showDetail();
     const table = decisionTable();
@@ -95,6 +99,8 @@ describe('benchmark decision quality', () => {
     expect(rowCells(table, '猎魔人狩猎中狼率')).toEqual(['猎魔人狩猎中狼率', '50.0%', '2']);
     expect(rowCells(table, '舞池含狼率')).toEqual(['舞池含狼率', '33.3%', '3']);
     expect(rowCells(table, '假面入池率')).toEqual(['假面入池率', '100.0%', '3']);
+    // 单板型必须看得见：读者要知道池化数字出自哪种配置。
+    expect(screen.getByText('板型覆盖：4 人局 × 4')).toBeInTheDocument();
   });
 
   it('falls back to an info alert for older reports without a decision block', async () => {
@@ -241,3 +247,20 @@ describe('benchmark report completion', () => {
     await waitFor(() => expect(screen.getByText('占用中')).toBeInTheDocument());
   });
 });
+
+  it('warns when the run played a single board without a seer', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false,
+      summary: {
+        decision: decisionBlock,
+        coverage: {
+          boards: [{ role_counts: { 'wolf-killer-villager': 12 }, games: 30 }],
+          seer_present: false,
+        },
+      },
+    });
+    await showDetail();
+
+    expect(screen.getByText(/12 人局 × 30/)).toBeInTheDocument();
+    expect(screen.getByText(/本批不含预言家/)).toBeInTheDocument();
+  });
