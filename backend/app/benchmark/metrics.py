@@ -14,6 +14,8 @@ from typing import Optional
 from app.roles.registry import builtin_registry
 
 _WEREWOLF_CAMP = "werewolf"
+#: The one seat the Wolf Witch's check is aimed at (role ids are stable).
+PURE_WHITE_ROLE = "wolf-killer-pure-white"
 _GOD_TAG = "god"
 _WOLF_TAG = "wolf"
 _ROUNDS_KEY = "rounds"
@@ -152,7 +154,13 @@ def compute_decision_metrics(summaries: list[dict]) -> dict:
 
     The seer, witch and hunter metrics do not need the actor's identity:
     only whether the targeted seat actually was a werewolf (or, for wolf
-    kills, a god role).
+    kills, a god role). The same rule scores the roles that act silently —
+    the Pure White, the Wolf Witch, the Gargoyle, the Demon Hunter and the
+    Dancer read their target's true camp from ``roles``.
+
+    Not scored here, deliberately: the Gravekeeper has no model-facing action
+    at all (its information is engine-derived), and the Dream Weaver, the
+    Nightmare and the Wolf Beauty have no single "hit" their decision aims at.
     """
     return _decision_pool(summaries).to_metrics()
 
@@ -172,6 +180,12 @@ def compute_decision_samples(summaries: list[dict]) -> dict:
         "wolf_kills": counters.get("wolf_kills", 0),
         "good_votes": counters.get("good_votes", 0),
         "exiles": counters.get("exiles", 0),
+        "pure_white_checks": counters.get("pure_white_checks", 0),
+        "wolf_witch_checks": counters.get("wolf_witch_checks", 0),
+        "gargoyle_checks": counters.get("gargoyle_checks", 0),
+        "demon_hunter_hunts": counters.get("demon_hunter_hunts", 0),
+        "dance_pools": counters.get("dance_pools", 0),
+        "mask_grants": counters.get("mask_grants", 0),
     }
 
 
@@ -208,6 +222,43 @@ class _DecisionPool:
             self._add("wolf_kills")
             if _is_god(target_role):
                 self._add("wolf_kill_god_hits")
+        elif event == "PURE_WHITE_REASONING":
+            # These four roles publish no outcome event of their own: the
+            # reasoning row *is* the decision, and its ``target_seat`` is absent
+            # when the model passed (a decline is not an opportunity).
+            if target is not None:
+                self._add("pure_white_checks")
+                if _is_wolf_role(target_role):
+                    self._add("pure_white_check_hits")
+        elif event == "WOLF_WITCH_REASONING":
+            if target is not None:
+                self._add("wolf_witch_checks")
+                # A role-id comparison, not a tag: the Pure White is a god like
+                # any other, and role ids are never deleted, so archived
+                # summaries stay classifiable.
+                if target_role == PURE_WHITE_ROLE:
+                    self._add("wolf_witch_check_hits")
+        elif event == "GARGOYLE_REASONING":
+            if target is not None:
+                self._add("gargoyle_checks")
+                if _is_wolf_role(target_role):
+                    self._add("gargoyle_check_hits")
+        elif event == "DEMON_HUNTER_REASONING":
+            if target is not None:
+                self._add("demon_hunter_hunts")
+                if _is_wolf_role(target_role):
+                    self._add("demon_hunter_hunt_hits")
+        elif event == "DANCE_POOL":
+            self._add("dance_pools")
+            pooled = action.get("pool_seats")
+            if isinstance(pooled, (list, tuple)) and any(
+                _is_wolf_role(roles.get(str(seat))) for seat in pooled
+            ):
+                self._add("dance_pool_wolf_hits")
+        elif event == "MASK_GRANTED":
+            self._add("mask_grants")
+            if action.get("in_pool") is True:
+                self._add("mask_in_pool_hits")
 
     def add_vote(self, vote: object, roles: dict[str, str]) -> None:
         if not isinstance(vote, dict):
@@ -279,6 +330,30 @@ class _DecisionPool:
             ),
             "exile_god_misfire_rate": _rate(
                 counters.get("exile_god_misfires", 0), counters.get("exiles", 0),
+            ),
+            "pure_white_check_hit_rate": _rate(
+                counters.get("pure_white_check_hits", 0),
+                counters.get("pure_white_checks", 0),
+            ),
+            "wolf_witch_check_hit_rate": _rate(
+                counters.get("wolf_witch_check_hits", 0),
+                counters.get("wolf_witch_checks", 0),
+            ),
+            "gargoyle_check_hit_rate": _rate(
+                counters.get("gargoyle_check_hits", 0),
+                counters.get("gargoyle_checks", 0),
+            ),
+            "demon_hunter_hunt_hit_rate": _rate(
+                counters.get("demon_hunter_hunt_hits", 0),
+                counters.get("demon_hunter_hunts", 0),
+            ),
+            "dance_pool_wolf_rate": _rate(
+                counters.get("dance_pool_wolf_hits", 0),
+                counters.get("dance_pools", 0),
+            ),
+            "mask_in_pool_rate": _rate(
+                counters.get("mask_in_pool_hits", 0),
+                counters.get("mask_grants", 0),
             ),
             "wolf_vote_concentration": (
                 _rate(_max_target_votes(wolf_targets), wolf_votes)

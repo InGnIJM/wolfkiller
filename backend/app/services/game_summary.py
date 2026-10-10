@@ -21,6 +21,13 @@ _SUMMARY_FILENAME = "summary.json"
 _TRACKED_EVENTS = frozenset({
     "WEREWOLF_KILL", "SEER_CHECK", "WITCH_SAVE", "WITCH_POISON",
     "HUNTER_SHOT", "WOLF_KING_SHOT", "GUARD_PROTECT",
+    # Roles whose skill has no dedicated outcome event: their *decision* is the
+    # only public trace, so the decision metrics have nothing to score without
+    # these. Deliberately not the seer/witch/guard/hunter reasoning events —
+    # those roles already publish an outcome event above, and tracking both
+    # would double-count every night.
+    "PURE_WHITE_REASONING", "WOLF_WITCH_REASONING", "GARGOYLE_REASONING",
+    "DEMON_HUNTER_REASONING", "DANCE_POOL", "MASK_GRANTED",
 })
 
 
@@ -176,12 +183,21 @@ def _summarize(
                     data.get("payload")
                     if isinstance(data.get("payload"), dict) else {}
                 )
-                _round_bucket(rounds, rnd)["night_actions"].append({
+                row = {
                     "event": event_type,
                     "seat": payload.get("seat"),
                     "target_seat": payload.get("target_seat"),
                     "result": payload.get("result"),
-                })
+                }
+                # Two events carry the fact a hit rate needs beyond the target:
+                # which seats were in the pool, and whether the mask landed in
+                # it. Only written when the event has them, so every existing
+                # row keeps its shape.
+                if "pool_seats" in payload:
+                    row["pool_seats"] = payload.get("pool_seats")
+                if "in_pool" in payload:
+                    row["in_pool"] = payload.get("in_pool")
+                _round_bucket(rounds, rnd)["night_actions"].append(row)
         elif op == "model_error":
             model_errors += 1
         elif op == "stage_telemetry":

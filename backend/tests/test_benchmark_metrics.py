@@ -235,6 +235,13 @@ def test_decision_samples_count_the_denominators() -> None:
         "wolf_kills": 2,
         "good_votes": 5,
         "exiles": 2,
+        # 新角色的分母：这两个 fixture 里没有它们的行，所以全是 0。
+        "pure_white_checks": 0,
+        "wolf_witch_checks": 0,
+        "gargoyle_checks": 0,
+        "demon_hunter_hunts": 0,
+        "dance_pools": 0,
+        "mask_grants": 0,
     }
 
 
@@ -247,6 +254,12 @@ def test_decision_samples_ignore_junk_entries() -> None:
         "wolf_kills": 0,
         "good_votes": 0,
         "exiles": 0,
+        "pure_white_checks": 0,
+        "wolf_witch_checks": 0,
+        "gargoyle_checks": 0,
+        "demon_hunter_hunts": 0,
+        "dance_pools": 0,
+        "mask_grants": 0,
     }
 
 
@@ -1023,3 +1036,79 @@ def test_vote_metrics_split_the_two_ballots_and_read_the_vote_receipt() -> None:
     # 合计口径保留，但分母是两种票之和。
     assert report["terminal_votes"] == 6
     assert report["technical_abstained"] == 3
+
+
+def test_the_silent_roles_are_scored_from_their_reasoning_events() -> None:
+    """没有专属结果事件的新角色，靠 reasoning 行评分。
+
+    纯白之女 / 狼巫 / 石像鬼 / 猎魔人的技能只留一条 `*_REASONING` 公开行（命中真值在
+    summary 的 roles 里），舞者与假面的关键事实在 `pool_seats` / `in_pool` 上。这些事件
+    从前不在 `_TRACKED_EVENTS` 里，于是新角色的命中率结构性缺失。
+    """
+    summary = {
+        "game_id": "g-new",
+        "roles": {
+            "1": {"role": "wolf-killer-pure-white", "camp": "good"},
+            "2": {"role": "wolf-killer-wolf-witch", "camp": "werewolf"},
+            "3": {"role": "wolf-killer-werewolf", "camp": "werewolf"},
+            "4": {"role": "wolf-killer-gargoyle", "camp": "werewolf"},
+            "5": {"role": "wolf-killer-villager", "camp": "good"},
+            "6": {"role": "wolf-killer-demon-hunter", "camp": "good"},
+            "7": {"role": "wolf-killer-dancer", "camp": "good"},
+            "8": {"role": "wolf-killer-mask", "camp": "werewolf"},
+        },
+        "rounds": {"2": {"night_actions": [
+            {"event": "PURE_WHITE_REASONING", "seat": 1, "target_seat": 3},
+            {"event": "PURE_WHITE_REASONING", "seat": 1, "target_seat": 5},
+            # 模型弃权（没有目标）不算一次机会。
+            {"event": "PURE_WHITE_REASONING", "seat": 1, "target_seat": None},
+            {"event": "WOLF_WITCH_REASONING", "seat": 2, "target_seat": 1},
+            {"event": "WOLF_WITCH_REASONING", "seat": 2, "target_seat": 5},
+            {"event": "GARGOYLE_REASONING", "seat": 4, "target_seat": 3},
+            {"event": "DEMON_HUNTER_REASONING", "seat": 6, "target_seat": 3},
+            {"event": "DEMON_HUNTER_REASONING", "seat": 6, "target_seat": 5},
+            {"event": "DANCE_POOL", "seat": 7, "pool_seats": [3, 5, 7]},
+            {"event": "DANCE_POOL", "seat": 7, "pool_seats": [5, 6, 7]},
+            {"event": "MASK_GRANTED", "seat": 8, "target_seat": 3, "in_pool": True},
+            {"event": "MASK_GRANTED", "seat": 8, "target_seat": 5, "in_pool": False},
+        ]}},
+    }
+
+    decision = compute_decision_metrics([summary])
+    samples = compute_decision_samples([summary])
+
+    assert decision["pure_white_check_hit_rate"] == 0.5
+    assert decision["wolf_witch_check_hit_rate"] == 0.5
+    assert decision["gargoyle_check_hit_rate"] == 1.0
+    assert decision["demon_hunter_hunt_hit_rate"] == 0.5
+    assert decision["dance_pool_wolf_rate"] == 0.5
+    assert decision["mask_in_pool_rate"] == 0.5
+    assert {
+        key: samples[key] for key in (
+            "pure_white_checks", "wolf_witch_checks", "gargoyle_checks",
+            "demon_hunter_hunts", "dance_pools", "mask_grants",
+        )
+    } == {
+        "pure_white_checks": 2, "wolf_witch_checks": 2, "gargoyle_checks": 1,
+        "demon_hunter_hunts": 2, "dance_pools": 2, "mask_grants": 2,
+    }
+
+
+def test_the_silent_roles_report_no_sample_rather_than_zero() -> None:
+    """没有这些角色的板子：比率是 None（无机会），不是 0.0（试过但没中）。"""
+    summary = {
+        "game_id": "g-old",
+        "roles": {"1": {"role": "wolf-killer-seer", "camp": "good"}},
+        "rounds": {"1": {"night_actions": [
+            {"event": "SEER_CHECK", "seat": 1, "target_seat": 1},
+        ]}},
+    }
+
+    decision = compute_decision_metrics([summary])
+
+    for key in (
+        "pure_white_check_hit_rate", "wolf_witch_check_hit_rate",
+        "gargoyle_check_hit_rate", "demon_hunter_hunt_hit_rate",
+        "dance_pool_wolf_rate", "mask_in_pool_rate",
+    ):
+        assert decision[key] is None, key

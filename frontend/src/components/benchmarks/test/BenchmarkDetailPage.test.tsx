@@ -35,6 +35,8 @@ const DECISION_MISSING_ALERT = '本次报告没有决策质量数据（旧版本
 const decisionSamples = {
   games: 12, seer_checks: 20, witch_poisons: 4, hunter_shots: 3,
   wolf_kills: 18, good_votes: 96, exiles: 12,
+  pure_white_checks: 6, wolf_witch_checks: 5, gargoyle_checks: 4,
+  demon_hunter_hunts: 2, dance_pools: 3, mask_grants: 3,
 };
 
 // 后端本轮新增的形状；集中度两项刻意保留在 fixture 里，确保页面绝不把它们渲染出来。
@@ -51,6 +53,12 @@ const decisionBlock = {
   exile_god_misfire_rate: 0.1,
   wolf_vote_concentration: 0.9,
   wolf_vote_distinct_targets: 7,
+  pure_white_check_hit_rate: 0.6667,
+  wolf_witch_check_hit_rate: 0.4,
+  gargoyle_check_hit_rate: 0.25,
+  demon_hunter_hunt_hit_rate: 0.5,
+  dance_pool_wolf_rate: 0.3333,
+  mask_in_pool_rate: 1.0,
   samples: decisionSamples,
 };
 
@@ -64,7 +72,7 @@ function decisionTable(): HTMLElement {
 }
 
 describe('benchmark decision quality', () => {
-  it('renders the eight decision ratios with sample sizes and both witch use counts', async () => {
+  it('renders every decision ratio with sample sizes and both witch use counts', async () => {
     vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
       status: 'ready', provisional: false, summary: { decision: decisionBlock },
     });
@@ -80,6 +88,13 @@ describe('benchmark decision quality', () => {
     expect(rowCells(table, '放逐误伤神职率')).toEqual(['放逐误伤神职率', '10.0%', '12']);
     expect(rowCells(table, '女巫用解药')).toEqual(['女巫用解药', '3', '—']);
     expect(rowCells(table, '女巫用毒')).toEqual(['女巫用毒', '2', '—']);
+    // 没有专属结果事件的新角色：命中率同样带样本量。
+    expect(rowCells(table, '纯白之女验中狼率')).toEqual(['纯白之女验中狼率', '66.7%', '6']);
+    expect(rowCells(table, '狼巫验中纯白率')).toEqual(['狼巫验中纯白率', '40.0%', '5']);
+    expect(rowCells(table, '石像鬼验中狼率')).toEqual(['石像鬼验中狼率', '25.0%', '4']);
+    expect(rowCells(table, '猎魔人狩猎中狼率')).toEqual(['猎魔人狩猎中狼率', '50.0%', '2']);
+    expect(rowCells(table, '舞池含狼率')).toEqual(['舞池含狼率', '33.3%', '3']);
+    expect(rowCells(table, '假面入池率')).toEqual(['假面入池率', '100.0%', '3']);
   });
 
   it('falls back to an info alert for older reports without a decision block', async () => {
