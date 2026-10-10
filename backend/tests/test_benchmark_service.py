@@ -221,7 +221,7 @@ def test_report_uses_frozen_database_facts_and_is_reproducible(tmp_path) -> None
         report2 = service.generate_report(run["run_id"])
         assert report2 == report1
         assert report1["input_digest"] == report2["input_digest"]
-        assert report1["metric_version"] == "v3"
+        assert report1["metric_version"] == "v4"
         assert report1["planned_count"] == 1
         assert report1["terminal_count"] == 1
         assert report1["completed_count"] == 1

@@ -430,6 +430,13 @@ def test_write_report_persists_json_and_markdown(tmp_path: Path) -> None:
     )
 
 
+#: An empty per-kind vote bucket, as `_request_metrics` reports it.
+VOTE_BUCKET_EMPTY = {
+    "terminal": 0, "technical": 0, "voluntary": 0, "failed": 0,
+    "technical_abstain_rate": None, "voluntary_abstain_rate": None,
+}
+
+
 def _native_metric_facts() -> dict:
     players = [
         {"seat": 1, "role_id": "wolf-killer-seer", "camp_id": "good"},
@@ -540,7 +547,7 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
     facts = _native_metric_facts()
     report = BenchmarkMetrics.compute(**facts)
 
-    assert report["metric_version"] == "v3"
+    assert report["metric_version"] == "v4"
     assert len(report["input_digest"]) == 64
     summary = report["summary"]
     assert summary["games"] == {
@@ -568,6 +575,8 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
         "valid_rate": 0.75,
         "success_rate": 0.5, "abstain_rate": 0.25, "failure_rate": 0.25,
         "fallback_rate": 0.25, "technical_abstain_rate": None,
+        # 两个票种各算各的：这些请求没有 action_position，所以两边都是空桶。
+        "votes": {"exile": VOTE_BUCKET_EMPTY, "sheriff": VOTE_BUCKET_EMPTY},
         "logical_latency_ms": {
             "count": 0, "p50": None, "p95": None, "p99": None,
         },
@@ -846,17 +855,17 @@ def test_native_request_metrics_separate_terminal_quality_fallback_and_vote_abst
             },
             {
                 "request_id": "technical-vote", "status": "failed",
-                "action_position": "round:1:day:vote:seat:2",
+                "action_position": "game:1:vote_casting:1:cast_vote:v2:2",
                 "created_at": "2026-01-01T00:00:01Z",
                 "updated_at": "2026-01-01T00:00:01.750000Z",
             },
             {
                 "request_id": "cancelled", "status": "cancelled",
-                "action_position": "round:1:day:vote:seat:3",
+                "action_position": "game:1:vote_casting:1:cast_vote:v2:3",
             },
             {
                 "request_id": "unknown", "status": "unknown",
-                "action_position": "round:1:day:vote:seat:4",
+                "action_position": "round:1:night:sheriff_vote:seat:4",
             },
         ],
     )
@@ -870,6 +879,11 @@ def test_native_request_metrics_separate_terminal_quality_fallback_and_vote_abst
     assert requests["terminal_votes"] == 1
     assert requests["technical_abstained"] == 1
     assert requests["technical_abstain_rate"] == 1.0
+    assert requests["votes"]["exile"] == {
+        "terminal": 1, "technical": 1, "voluntary": 0, "failed": 1,
+        "technical_abstain_rate": 1.0, "voluntary_abstain_rate": 0.0,
+    }
+    assert requests["votes"]["sheriff"]["terminal"] == 0
     assert requests["logical_latency_ms"] == {
         "count": 2, "p50": 500.0, "p95": 725.0, "p99": 745.0,
     }
@@ -955,3 +969,57 @@ def test_paired_latency_excludes_interrupted_and_incomplete_pairs() -> None:
     }]
     assert paired["bootstrap"]["low"] == 20.0
     assert paired["bootstrap"]["high"] == 20.0
+
+
+def test_vote_metrics_split_the_two_ballots_and_read_the_vote_receipt() -> None:
+    """放逐票与警长票各有各的分母；技术弃票认 receipt，不认请求状态。
+
+    实测（全库 258 局）：放逐 8411 张票里技术弃票 2864、自愿弃票 157；警长 859 张里
+    自愿 pass 7、失败 45。旧口径只数「status=failed」，分子 67、低估约 43 倍，而且
+    两个票种共用一个分母。放逐票的命令嵌在 `normalized_result["command"]` 里，警长票
+    在顶层 —— 所以票类计数必须读内层，而全局 `_result` 保持不变。
+    """
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    def exile(seat: int, *, action: str, failure: str | None = None) -> dict:
+        payload: dict = {"command": {"action_type": action, "target_seat": None}}
+        if failure is not None:
+            payload["technical_failure_code"] = failure
+        return {
+            "request_id": f"exile-{seat}", "status": "consumed",
+            "action_position": f"game:2:vote_casting:1:cast_vote:v2:{seat}",
+            "normalized_result": payload,
+        }
+
+    report = BenchmarkMetrics.compute(
+        games=[], items=[], model_attempts=[], model_requests=[
+            exile(1, action="vote"),
+            exile(2, action="abstain", failure="provider_connection_error"),
+            exile(3, action="abstain"),
+            {
+                "request_id": "exile-failed", "status": "failed",
+                "action_position": "game:2:vote_casting:1:cast_vote:v2:4",
+            },
+            {
+                "request_id": "sheriff-pass", "status": "consumed",
+                "action_position": "round:2:night:sheriff_vote:seat:1",
+                "normalized_result": {"action_type": "pass", "target_seat": None},
+            },
+            {
+                "request_id": "sheriff-failed", "status": "failed",
+                "action_position": "round:2:night:sheriff_vote:seat:2",
+            },
+        ],
+    )["summary"]["requests"]
+
+    assert report["votes"]["exile"] == {
+        "terminal": 4, "technical": 2, "voluntary": 1, "failed": 1,
+        "technical_abstain_rate": 0.5, "voluntary_abstain_rate": 0.25,
+    }
+    assert report["votes"]["sheriff"] == {
+        "terminal": 2, "technical": 1, "voluntary": 1, "failed": 1,
+        "technical_abstain_rate": 0.5, "voluntary_abstain_rate": 0.5,
+    }
+    # 合计口径保留，但分母是两种票之和。
+    assert report["terminal_votes"] == 6
+    assert report["technical_abstained"] == 3

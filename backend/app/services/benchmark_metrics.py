@@ -34,8 +34,11 @@ from typing import Any
 from app.benchmark.metrics import compute_decision_metrics, compute_decision_samples
 
 
-#: v3 adds the pooled ``decision`` section (see ``app/benchmark/metrics.py``).
-METRIC_VERSION = "v3"
+#: v3 adds the pooled ``decision`` section (see ``app/benchmark/metrics.py``);
+#: v4 splits the vote metrics by ballot (exile / sheriff), reports the new roles'
+#: check hit rates, and stops printing a bootstrap sample count for runs that
+#: were never resampled.
+METRIC_VERSION = "v4"
 _BOOTSTRAP_SEED = 1729
 _BOOTSTRAP_SAMPLES = 2000
 _CONFIDENCE = 0.95
@@ -301,9 +304,40 @@ def _logical_latency_ms(request: Mapping[str, Any]) -> float | None:
     return _rounded(elapsed) if elapsed >= 0 else None
 
 
-def _is_vote(request: Mapping[str, Any]) -> bool:
-    position = request.get("action_position")
-    return isinstance(position, str) and "vote" in position.lower()
+#: The two ballots a vote request can belong to.
+_VOTE_KINDS = ("exile", "sheriff")
+
+
+def _vote_kind(action_position: object) -> str | None:
+    """Which ballot a request is, read from the durable action position.
+
+    Both kinds contain the substring "vote", which is why the old ``_is_vote``
+    pooled their denominators into one technical-abstention rate. The position
+    strings are written by the two call sites: an exile ballot is
+    ``<game>:<round>:vote_casting:<vote_round>:cast_vote:v2:<seat>``
+    (``VoteWindow.action_key``) and a sheriff ballot is
+    ``round:<round>:night:sheriff_vote:seat:<seat>`` (``night_invoke``).
+    """
+    if not isinstance(action_position, str):
+        return None
+    if ":vote_casting:" in action_position:
+        return "exile"
+    if ":night:sheriff_vote:seat:" in action_position:
+        return "sheriff"
+    return None
+
+
+def _vote_receipt(request: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The vote command itself: exile ballots nest it under ``command``.
+
+    Deliberately vote-scoped. ``_result`` keeps its existing meaning for every
+    other request kind (a speech's ``{"text": ...}``, a pipeline action's
+    top-level command), so ``_request_class`` and the fallback marker do not
+    move with this fix.
+    """
+    result = _result(request)
+    command = result.get("command")
+    return command if isinstance(command, Mapping) else result
 
 
 def _is_fallback(request: Mapping[str, Any], category: str) -> bool:
@@ -328,15 +362,39 @@ def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     terminal_votes = 0
     fallback = 0
     latencies: list[float] = []
+    votes: dict[str, dict[str, int]] = {
+        kind: {"terminal": 0, "technical": 0, "voluntary": 0, "failed": 0}
+        for kind in _VOTE_KINDS
+    }
     for request in requests:
         category = _request_class(request)
         counts[category] += 1
         action = _result(request).get("action_type")
         eligible = category in {"successful", "abstained", "failed"}
-        is_vote = _is_vote(request)
-        if eligible and is_vote:
+        kind = _vote_kind(request.get("action_position"))
+        # A technical abstention is a receipt, not a request status: the exile
+        # path stores the failure code next to the command, and a ballot the
+        # ledger never resolved is a failure too. Reading the request status
+        # alone missed 2864 of 2886 technical abstentions.
+        technical = bool(_result(request).get("technical_failure_code")) or category == "failed"
+        if eligible and kind is not None:
+            bucket = votes[kind]
+            bucket["terminal"] += 1
             terminal_votes += 1
-        if eligible and (action == "technical_abstain" or (category == "failed" and is_vote)):
+            receipt = _vote_receipt(request)
+            vote_action = receipt.get("action_type")
+            vote_action = vote_action.lower() if isinstance(vote_action, str) else ""
+            if technical:
+                bucket["technical"] += 1
+                bucket["failed"] += int(category == "failed")
+            elif vote_action in _ABSTAIN_ACTIONS:
+                bucket["voluntary"] += 1
+        if eligible and (
+            action == "technical_abstain" or (kind is not None and technical)
+        ):
+            # The flat key stays the total across both ballots, and keeps
+            # counting the payload that literally names the abstention (an
+            # engine-cast ballot that carries no vote receipt at all).
             technical_abstained += 1
         if eligible and _is_fallback(request, category):
             fallback += 1
@@ -366,6 +424,17 @@ def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "failure_rate": _rate(counts["failed"], eligible_terminal),
         "fallback_rate": _rate(fallback, eligible_terminal),
         "technical_abstain_rate": _rate(technical_abstained, terminal_votes),
+        # The two ballots have different failure modes (the exile path has a
+        # receipt and a ladder; the sheriff path returns nothing on an
+        # exception), so their abstention rates must not share a denominator.
+        "votes": {
+            kind: {
+                **bucket,
+                "technical_abstain_rate": _rate(bucket["technical"], bucket["terminal"]),
+                "voluntary_abstain_rate": _rate(bucket["voluntary"], bucket["terminal"]),
+            }
+            for kind, bucket in votes.items()
+        },
         "logical_latency_ms": {
             "count": len(latencies),
             "p50": _percentile(latencies, 0.50),
