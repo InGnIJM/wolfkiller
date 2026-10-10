@@ -216,7 +216,7 @@ export default function BenchmarkDetailPage() {
 
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Box><Typography component="h2" variant="h6">模型表现</Typography><Typography variant="body2" color="text.secondary">胜率按模型、角色或阵营查看；样本量与数值同时展示。</Typography></Box>
+          <Box><Typography component="h2" variant="h6">模型表现</Typography><Typography variant="body2" color="text.secondary">胜率按模型、角色或阵营查看；样本量与数值同时展示。</Typography><Typography variant="body2" color="text.secondary">每行是「模型 × 角色/阵营」切片里的座位样本：座位、板型与阵营开局随机分配，这不是模型 A/B 对比，不能据此判断模型强弱。</Typography></Box>
           <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel id="performance-filter-label">分组筛选</InputLabel><Select labelId="performance-filter-label" label="分组筛选" value={dimension} onChange={(event) => setDimension(event.target.value as typeof dimension)}><MenuItem value="all">全部</MenuItem><MenuItem value="role">按角色</MenuItem><MenuItem value="camp">按阵营</MenuItem></Select></FormControl>
         </Box>
         {rows.length === 0 ? <Alert severity="info">报告尚无模型分组数据，任务运行后可刷新报告。</Alert> : (

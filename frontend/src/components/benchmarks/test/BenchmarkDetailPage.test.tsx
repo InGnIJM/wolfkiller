@@ -90,6 +90,8 @@ describe('benchmark decision quality', () => {
     expect(screen.getByText(DECISION_MISSING_ALERT)).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: '决策质量表' })).not.toBeInTheDocument();
     expect(screen.getByText('模型表现')).toBeInTheDocument();
+    // 这张表按座位切片统计，不是模型 A/B：口径必须写在表头，别让读者读成模型强弱。
+    expect(screen.getByText(/这不是模型 A\/B 对比/)).toBeInTheDocument();
   });
 
   it('treats a non-object decision block as missing instead of crashing', async () => {

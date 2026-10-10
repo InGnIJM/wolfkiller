@@ -553,6 +553,13 @@ def _model_performance(
             "samples": samples,
             "wins": wins,
             "win_rate": _rate(wins, samples),
+            # Every seat is its own sample and the board, camp and role are
+            # assigned at random, so two models' rates are not an A/B: a model
+            # that happened to sit in more wolf seats wins more often. The flag
+            # rides on every row because that is how the table and the exports
+            # are read, and a page-level caption alone does not travel with the
+            # data.
+            "not_an_ab": True,
         }
         row[dimension] = group
         rows.append(row)

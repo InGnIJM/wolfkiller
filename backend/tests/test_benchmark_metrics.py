@@ -791,6 +791,8 @@ def test_model_performance_excludes_unusable_seats_and_keeps_camp_only_rows() ->
     assert report["summary"]["model_performance"] == [{
         "id": "a:camp:good", "model": "a", "samples": 1,
         "wins": 1, "win_rate": 1.0, "camp": "good",
+        # 座位是随机分配的，这张表不是模型 A/B：标记随行一起走。
+        "not_an_ab": True,
     }]
 
 
