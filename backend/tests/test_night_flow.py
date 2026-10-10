@@ -924,6 +924,20 @@ def test_narration_known():
         NightDirector.narration("witch_open")
 
 
+def test_the_wolf_open_line_follows_whether_the_pack_will_discuss():
+    """独狼或被封印的狼窝不会讨论，那一拍就不能说「开始讨论今晚的行动」。
+
+    讨论只在存活狼窝 > 1 且未被封印时进行（引擎 stage 3），而 stage 2 的节拍从前
+    无条件承诺它：独狼夜与封印夜观众听到「开始讨论」之后没有任何狼聊。
+    """
+    assert NightDirector.wolf_open_narration(discusses=True) == (
+        "狼人请睁眼", "开始讨论今晚的行动。",
+    )
+    assert NightDirector.wolf_open_narration(discusses=False) == (
+        "狼人请睁眼", "请选择今晚的行动。",
+    )
+
+
 def test_witch_narration_matches_kill_target():
     assert NightDirector.witch_narration(4) == ("女巫请睁眼", "昨晚有人被袭击。")
     assert NightDirector.witch_narration(None) == ("女巫请睁眼", "昨晚风平浪静，无人被袭击。")

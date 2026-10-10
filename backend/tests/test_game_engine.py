@@ -81,6 +81,7 @@ class _FakeDirector:
         self.discussion_briefings: list[object] = []
         self.vote_briefings: list[object] = []
     def narration(self, kind): return ("标题", "正文")
+    def wolf_open_narration(self, *, discusses): return ("标题", "正文")
     def witch_narration(self, kill_target): return ("标题", "正文")
     def dawn_narration(self, deaths): return ("天亮了", "昨晚是平安夜，没有人死亡。" if not deaths else "昨晚有人死了。")
     def wolf_discussion_turn(self, state, seat, history, briefing=NightBriefing(), random_hint=None):
@@ -293,8 +294,20 @@ class _NarrationDirector(_FakeDirector):
     """Names every beat after its own key so the emitted order is assertable."""
 
     def narration(self, kind): return (kind, kind)
+    def wolf_open_narration(self, *, discusses):
+        # Order is what this fake asserts, so the wolves' beat keeps one name
+        # whether or not a discussion follows; the wording is decided by the
+        # real NightDirector and is pinned in `test_night_flow.py`.
+        return ("wolf_open", "wolf_open")
     def witch_narration(self, kill_target): return ("witch_open", kill_target)
     def dawn_narration(self, deaths): return ("dawn", deaths)
+
+
+class _WolfBeatDirector(_FakeDirector):
+    """Names the wolves' beat after the decision it was handed."""
+
+    def wolf_open_narration(self, *, discusses):
+        return ("wolf_open" if discusses else "wolf_solo", "x")
 
 
 def _night_with(seats: dict[int, str]) -> GameEngine:
@@ -345,6 +358,39 @@ async def test_the_night_opens_before_any_role_is_woken() -> None:
         if "守卫请睁眼" in beats:
             # 角色台词仍排在狼人节拍之前（既有顺序不变）。
             assert beats.index("守卫请睁眼") < beats.index("wolf_open")
+
+
+@pytest.mark.asyncio
+async def test_the_wolf_beat_matches_whether_the_pack_will_discuss() -> None:
+    """狼人那一拍不能承诺一场不会发生的讨论。
+
+    stage 2 从前无条件播「开始讨论今晚的行动」，而讨论只在「存活狼窝 > 1 且未被封印」
+    时进行：独狼（例如只剩石像鬼带刀）或被封印的夜里，观众听到「开始讨论」之后
+    什么也没有。台词按 `len(wolves) > 1 and not _pack_sealed(wolves)` 选。
+    """
+    def night(seats):
+        engine = _night_with(seats)
+        for seat, role_id in seats.items():
+            engine.state.players[seat].camp = (
+                "werewolf" if role_id == "wolf-killer-werewolf" else "good"
+            )
+        engine._director = _WolfBeatDirector()
+        return engine
+
+    two = night({1: "wolf-killer-werewolf", 2: "wolf-killer-werewolf",
+                 3: "wolf-killer-villager"})
+    await two._execute_staged_night()
+    assert "wolf_open" in _beats(two)
+
+    solo = night({1: "wolf-killer-werewolf", 3: "wolf-killer-villager"})
+    await solo._execute_staged_night()
+    assert "wolf_solo" in _beats(solo)
+
+    sealed = night({1: "wolf-killer-werewolf", 2: "wolf-killer-werewolf",
+                    3: "wolf-killer-villager"})
+    sealed._pack_sealed = MagicMock(return_value=True)
+    await sealed._execute_staged_night()
+    assert "wolf_solo" in _beats(sealed)
 
 
 @pytest.mark.asyncio
@@ -1067,6 +1113,12 @@ async def test_a_silenced_pack_skips_discussion_and_records_no_votes(tmp_path) -
         def narration(self, kind):
             self.narrations.append(kind)
             return super().narration(kind)
+
+        def wolf_open_narration(self, *, discusses):
+            # The wolves' beat has its own entry point (it is worded by whether
+            # a discussion follows), so the recorder has to see it too.
+            self.narrations.append("wolf_open")
+            return super().wolf_open_narration(discusses=discusses)
 
     director = NarrationRecorder()
     scheduler = RecordingScheduler()

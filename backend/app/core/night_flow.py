@@ -552,6 +552,20 @@ class NightDirector:
         return _NARRATIONS[kind]
 
     @staticmethod
+    def wolf_open_narration(*, discusses: bool) -> tuple[str, str]:
+        """The wolves' opening beat, worded to match what actually happens next.
+
+        The pack discusses only when more than one of its members is alive and
+        none of them is silenced; the caller decides that, and ``pack_sealed``
+        is its own beat right after. Promising a discussion unconditionally made
+        a lone wolf — or a sealed camp — hear "开始讨论今晚的行动" followed by
+        nothing at all.
+        """
+        if discusses:
+            return _NARRATIONS["wolf_open"]
+        return ("狼人请睁眼", "请选择今晚的行动。")
+
+    @staticmethod
     def witch_narration(kill_target: int | None) -> tuple[str, str]:
         """Witch opening line must match whether a wolf kill actually happened."""
         if kill_target is None:

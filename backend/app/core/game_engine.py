@@ -632,20 +632,28 @@ class GameEngine:
                 f"night_point:{self.state.round_number}:{_NIGHT_POINTS[0].value}"
             )
 
-        if pending.stage == 2:
-            title, text = director.narration("wolf_open")
-            await self._narrate(title, text)
-            pending = replace(pending, stage=3); self._pending_night_batch = pending
-
         # Resolved *after* the night's first schedule point has run: role
         # resources are established inside ``Scheduler.issue`` (the only setup
         # call site) and no point runs before the night starts, so deriving the
         # pack earlier reads ``no_wolf_pack`` as absent and counts a hidden wolf
         # as a pack member — chat, kill vote, seal check and roster line alike.
+        # Stage 2's beat needs the same answer (it must not promise a discussion
+        # the pack will not hold), so the derivation sits above it; stage 2 still
+        # runs after stage 1, which is the only thing this requires.
         wolves = [
             seat for seat in sorted(state.players)
             if in_wolf_pack(state, seat) and state.players[seat].is_alive
         ]
+
+        if pending.stage == 2:
+            # "开始讨论今晚的行动" is a promise: the pack talks only when more
+            # than one of its members is alive and none of them is silenced.
+            # Stage 3 re-decides the same question for real, right after.
+            title, text = director.wolf_open_narration(
+                discusses=len(wolves) > 1 and not self._pack_sealed(wolves),
+            )
+            await self._narrate(title, text)
+            pending = replace(pending, stage=3); self._pending_night_batch = pending
 
         if pending.stage == 3:
             if self._pack_sealed(wolves):
