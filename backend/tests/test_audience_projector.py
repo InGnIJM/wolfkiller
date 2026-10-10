@@ -1,5 +1,7 @@
 """Audience projection must emit the documented public payload keys."""
 
+from app.models.actions import DeathReport
+from app.models.game import GameConfig, GamePhase, GameState, PlayerState
 from app.services.audience_projector import AudienceProjector, _EVENTS
 
 
@@ -238,3 +240,53 @@ def test_a_status_already_using_player_seat_is_preserved() -> None:
     assert projected[0]["payload"] == {
         "player_seat": 3, "status": "wounded", "round_number": 1,
     }
+
+
+def _election_state(cause: str = "wolf_kill") -> GameState:
+    state = GameState(game_id="g", config=GameConfig(enable_sheriff=True))
+    state.players = {
+        1: PlayerState(1, "wolf-killer-werewolf", "werewolf", is_alive=False),
+        2: PlayerState(2, "wolf-killer-villager", "good"),
+    }
+    state.phase = GamePhase.SHERIFF_ELECTION
+    state.round_number = 1
+    state.death_history.append(DeathReport(1, cause, 1))
+    return state
+
+
+def test_the_snapshot_hides_a_death_the_table_has_not_heard_yet() -> None:
+    """竞选窗口内首夜死者还没公布，快照必须与事件时间轴同口径。
+
+    快照从前直接读真实 state：观众流的 `death` 事件排在竞选之后，而 `players` 与
+    `death_history` 在竞选期间就把他标成已死 —— 官方顺序是「先让警徽落地、再念死讯」，
+    这期间他照常上警、发言、投票。
+    """
+    snapshot = AudienceProjector().snapshot(_election_state(), execution_status="running")
+
+    assert snapshot["players"]["1"]["is_alive"] is True
+    assert snapshot["death_history"] == []
+
+
+def test_the_snapshot_shows_the_same_death_once_it_is_announced() -> None:
+    """竞选结束后（phase=dawn）同一份 state 必须如实显示死亡。"""
+    state = _election_state()
+    state.phase = GamePhase.DAWN
+
+    snapshot = AudienceProjector().snapshot(state, execution_status="running")
+
+    assert snapshot["players"]["1"]["is_alive"] is False
+    assert snapshot["death_history"] == [
+        {"player_seat": 1, "cause": "wolf_kill", "round_number": 1},
+    ]
+
+
+def test_the_snapshot_keeps_an_immediately_announced_death() -> None:
+    """竞选期自爆是当场公布的死因，不能被「未公布」投影复活。"""
+    snapshot = AudienceProjector().snapshot(
+        _election_state(cause="self_explode"), execution_status="running",
+    )
+
+    assert snapshot["players"]["1"]["is_alive"] is False
+    assert snapshot["death_history"] == [
+        {"player_seat": 1, "cause": "self_explode", "round_number": 1},
+    ]

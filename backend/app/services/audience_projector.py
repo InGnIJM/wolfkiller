@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from app.core.sheriff_flow import unannounced_death_seats
 from app.models.game import GameState
 
 
@@ -202,6 +203,15 @@ class AudienceProjector:
 
     def snapshot(self, state: GameState, *, execution_status: str,
                  recovery_block_code: str | None = None) -> dict[str, object]:
+        # The first night settles before the election but is announced after it,
+        # so for the length of that window the table has not heard the deaths
+        # yet: the snapshot must agree with the event timeline it accompanies.
+        # A seat whose death is unannounced is still playing (it campaigns,
+        # speaks and votes), and its death row must not appear in the god view's
+        # death list either. Outside the window the set is empty and nothing
+        # moves. The election's own self-explode is announced where it happens,
+        # so it is never in this set.
+        unannounced = unannounced_death_seats(state)
         return {
             "game_id": state.game_id,
             "phase": state.phase.value,
@@ -212,7 +222,7 @@ class AudienceProjector:
             "players": {
                 str(seat): {
                     "seat_number": player.seat_number,
-                    "is_alive": player.is_alive,
+                    "is_alive": player.is_alive or seat in unannounced,
                     "is_sheriff": player.is_sheriff,
                     "role": player.role,
                     "camp": player.camp,
@@ -223,6 +233,9 @@ class AudienceProjector:
             "sheriff": state.sheriff,
             "speeches": [item.to_dict() for item in state.speeches],
             "votes": [item.to_dict() for item in state.votes],
-            "death_history": [item.to_dict() for item in state.death_history],
+            "death_history": [
+                item.to_dict() for item in state.death_history
+                if item.player_seat not in unannounced
+            ],
             "win_result": state.win_result,
         }
