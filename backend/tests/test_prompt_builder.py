@@ -746,7 +746,7 @@ class TestPromptBuilderHelpers:
         assert "已上警，但不在本轮PK发言名单中" in prompt
         assert "你属于警下玩家" not in prompt
 
-    def test_badge_roster_omits_pre_election_deaths_and_keeps_later_ones(self):
+    def test_badge_roster_keeps_every_seat_that_never_ran(self):
         state = self._badge_state(candidates=(1, 2))
         state.death_history = [
             DeathReport(8, "wolf_kill", 1),
@@ -759,10 +759,34 @@ class TestPromptBuilderHelpers:
             if row.startswith("- 警下玩家")
         )
 
-        assert self._badge_seats(off_badge) == {3, 4, 5, 6, 7, 9}
-        assert "开选前已死亡的座位不在这两份名单里" in (
+        # 首夜被刀的 8 号在死讯公布前是有投票权的警下玩家（竞选先于死讯），
+        # 白天再看时它仍作为「从未上警」留在名单里。
+        assert self._badge_seats(off_badge) == {3, 4, 5, 6, 7, 8, 9}
+        assert "警下=开选时在场且从未上警的座位" in (
             PromptBuilder._badge_context_line(state)
         )
+
+    def test_campaign_prompt_hides_a_death_the_election_has_not_announced(self):
+        """竞选提示词不能泄露还没公布的死讯（官方：竞选在公布死讯之前）。"""
+        state = self._badge_state(active=(1, 2), step="campaign")
+        state.players[9].is_alive = False
+        state.death_history = [DeathReport(9, "wolf_kill", 1)]
+
+        prompt = PromptBuilder().build_speech_prompt(
+            state, 1, "wolf-killer-werewolf", make_log(), "sheriff_campaign",
+        )
+
+        assert "存活玩家：<alive_count value=\"9\"/>" in prompt
+        assert "9号" in prompt
+        assert "已出局玩家：无人出局" in prompt
+
+        # 死讯公布之后（天亮及以后）同一座位必须显示为出局。
+        state.phase = GamePhase.SPEECH
+        later = PromptBuilder().build_speech_prompt(
+            state, 1, "wolf-killer-werewolf", make_log(), "day_speech",
+        )
+        assert "已出局玩家：9号" in later
+        assert "存活玩家：<alive_count value=\"8\"/>" in later
 
     def test_badge_progress_falls_back_outside_campaign_and_pk(self):
         withdrawing = self._badge_state(step="withdraw")

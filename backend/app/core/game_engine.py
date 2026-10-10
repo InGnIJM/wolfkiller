@@ -38,13 +38,16 @@ from app.core.sheriff_flow import (
     decide_after_withdraw,
     decide_tally,
     badge_loss_message,
+    election_seats,
     eligible_sheriff_voters,
+    night_batch_deaths,
     night_death_seats,
     set_sheriff,
     sheriff_active,
     should_run_election,
-    speech_order,
+    day_speech_order,
     speech_sides,
+    unannounced_death_seats,
 )
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.core.registry_identity import frozen_registry_digest
@@ -133,6 +136,11 @@ def _discussion_consensus(wolves: list[int], history: list[str], leads: dict[int
 _TURNS_PER_WOLF = 6
 _MIN_DISCUSSION_ROUNDS = 2
 
+#: First stage of the deferred night announcement (see
+#: ``GameEngine._announce_pending_night_deaths``): the night-completion path
+#: parks the slot here when the sheriff election owes the announcement.
+_ANNOUNCE_STAGE = 10
+
 
 @dataclass(frozen=True)
 class _PendingDeath:
@@ -174,7 +182,7 @@ class _PendingNightCompletion:
         if type(self.result) is not PipelineResult: raise TypeError("result must be exact PipelineResult")
         if self.deaths is not None and (type(self.deaths) is not tuple or any(type(item) is not _PendingDeath for item in self.deaths)): raise TypeError("invalid pending deaths")
         if type(self.event_cursor) is not int or self.event_cursor < 0 or self.deaths is None and self.event_cursor or self.deaths is not None and self.event_cursor > len(self.deaths): raise ValueError("invalid event cursor")
-        if type(self.stage) is not int or not 0 <= self.stage <= 9: raise ValueError("invalid completion stage")
+        if type(self.stage) is not int or not 0 <= self.stage <= 14: raise ValueError("invalid completion stage")
         if self.win_result is not None and type(self.win_result) is not _PendingWin: raise TypeError("invalid pending win")
         if type(self.win_checked) is not bool or type(self.win_invalid) is not bool: raise TypeError("invalid win flags")
 
@@ -555,6 +563,38 @@ class GameEngine:
                 continue
             await self._narrate(line[0], line[1])
 
+    async def _narrate_declared_openers(self, point: SchedulePoint) -> Optional[int]:
+        """Play the opening lines the seats about to act at ``point`` declare.
+
+        Used where the engine owns a beat that names a role: ``NIGHT_SEER_ACTION``
+        is shared by every identity-checking skill, and the witch's point is shared
+        by the Wolf Beauty's charm, so a board whose skill sits there used to hear
+        the wrong role's line (a pure-white board heard the seer, a wolf-beauty-only
+        board heard the witch). Each actor says its own line instead. Returns how
+        many actors declared **none** — the caller's signal that its generic beat
+        still has an owner, which is how the witch keeps her dynamic line (it
+        carries tonight's knife fact, so it cannot be a static declaration) while a
+        role that declares its own never hears it. The beat is also the fallback
+        for a role added later that declares nothing, so nothing goes silent.
+        ``None`` means the registry is unavailable and the caller cannot judge, so
+        its beat must play: never silence a script we cannot evaluate.
+        """
+        scheduler = self._pipeline_scheduler
+        specs = getattr(getattr(scheduler, "registry", None), "specs", None)
+        if not isinstance(specs, Mapping):
+            return None
+        undeclared = 0
+        for seat in self._night_openers(point):
+            spec = specs.get(self.state.players[seat].role)
+            line = None if spec is None else getattr(spec, "opening_narration", None)
+            # Malformed or absent lines are skipped rather than raising: the
+            # script is presentation, and a stale archive must still play.
+            if type(line) is not tuple or len(line) != 2:
+                undeclared += 1
+                continue
+            await self._narrate(line[0], line[1])
+        return undeclared
+
     async def _log_stage_audience(self, result: PointResult) -> None:
         observation = RolePipeline.observe_v2(result)
         self._log_audience_events(
@@ -573,6 +613,13 @@ class GameEngine:
             # has run. Its request list is the only thing that knows which roles
             # are alive *and* unlocked tonight, so a skill that starts on a later
             # night is never called early.
+            #
+            # The night's opening beat belongs *before* that point: stage 1 has to
+            # narrate after its point runs, so leaving "天黑请闭眼" on the wolves'
+            # beat (stage 2) made the audience hear a role called to open its eyes
+            # before the night was even declared (95 of ~200 games).
+            title, text = director.narration("night_open")
+            await self._narrate(title, text)
             pending = replace(pending, stage=1); self._pending_night_batch = pending
 
         if pending.stage == 1:
@@ -710,8 +757,15 @@ class GameEngine:
             )
 
         if pending.stage == 6:
-            # The Seer's line, one stage ahead of its own point (stage 7).
-            if self._night_openers(SchedulePoint.NIGHT_SEER_ACTION):
+            # The identity-check line, one stage ahead of its own point (stage 7).
+            # That point is shared by every skill that reads an identity, so the
+            # roles about to act there say their own line; the driver's beat (which
+            # names the Seer) plays only while an actor on the point declares none
+            # — a fallback for a role added later, never for one that speaks.
+            undeclared = await self._narrate_declared_openers(
+                SchedulePoint.NIGHT_SEER_ACTION,
+            )
+            if undeclared != 0 and self._night_openers(SchedulePoint.NIGHT_SEER_ACTION):
                 title, text = director.narration("seer_open")
                 await self._narrate(title, text)
             pending = replace(pending, stage=7); self._pending_night_batch = pending
@@ -726,9 +780,15 @@ class GameEngine:
             )
 
         if pending.stage == 8:
-            # The Witch's line, one stage ahead of its own point (stage 9). The
-            # text depends on tonight's knife, which stage 5 already resolved.
-            if self._night_openers(SchedulePoint.NIGHT_WITCH_ACTION):
+            # The medication/charm line, one stage ahead of its own point
+            # (stage 9). The actors say their own lines; the Witch declares none
+            # because her line carries tonight's knife (stage 5 already resolved
+            # it), so the beat plays whenever an undeclared actor is on the point
+            # — which is exactly the Witch, and a fallback for a role added later.
+            undeclared = await self._narrate_declared_openers(
+                SchedulePoint.NIGHT_WITCH_ACTION,
+            )
+            if undeclared != 0 and self._night_openers(SchedulePoint.NIGHT_WITCH_ACTION):
                 title, text = director.witch_narration(state.last_wolf_kill_target)
                 await self._narrate(title, text)
             pending = replace(pending, stage=9); self._pending_night_batch = pending
@@ -743,7 +803,16 @@ class GameEngine:
             )
 
         if pending.stage == 10:
-            raw = await self._execute_v2_point(_NIGHT_POINTS[4])
+            # The night's closing batch settles the damage. On a night the
+            # election owes an announcement its death windows stay shut here:
+            # they open once the deaths are public, so the seat they kill decides
+            # with the badge (and the first speeches) in hand.
+            raw = await self._execute_v2_point(
+                _NIGHT_POINTS[4],
+                defer_event_types=(
+                    ("PLAYER_DIED",) if self._defers_night_announcement() else ()
+                ),
+            )
             pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=11)
             self._pending_night_batch = pending
             await self._log_stage_audience(raw)
@@ -752,9 +821,13 @@ class GameEngine:
             )
 
         if pending.stage == 11:
-            deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
-            title, text = director.dawn_narration(deaths)
-            await self._narrate(title, text, phase="dawn")
+            # A night the election owes an announcement is read out by the
+            # election path instead (official first day: badge first, deaths
+            # after), so the dawn beat belongs to ``_announce_pending_night_deaths``.
+            if not self._defers_night_announcement():
+                deaths = [d.player_seat for d in state.death_history if d.round_number == state.round_number]
+                title, text = director.dawn_narration(deaths)
+                await self._narrate(title, text, phase="dawn")
             pending = replace(pending, stage=12); self._pending_night_batch = pending
 
         observations = tuple(RolePipeline.observe_v2(raw) for raw in pending.raw_results)
@@ -816,9 +889,14 @@ class GameEngine:
             return False
         return any(is_silenced(runtime.statuses, seat) for seat in wolves)
 
-    async def _execute_v2_point(self, point: SchedulePoint) -> PointResult:
+    async def _execute_v2_point(
+        self, point: SchedulePoint, *, defer_event_types: tuple[str, ...] = (),
+    ) -> PointResult:
         pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
-        result = await asyncio.to_thread(pipeline.execute_v2_point, self.state, point)
+        result = await asyncio.to_thread(
+            pipeline.execute_v2_point, self.state, point,
+            defer_event_types=defer_event_types,
+        )
         self._log_hook_faults(point, result.faults)
         return result
 
@@ -942,19 +1020,19 @@ class GameEngine:
         if pending.deaths is None:
             pending = replace(pending, deaths=self._pipeline_night_deaths(pending.result))
             self._pending_night_completion = pending
-        while pending.event_cursor < len(pending.deaths):
-            snapshot = pending.deaths[pending.event_cursor]
-            await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id,
-                death=DeathReport(snapshot.seat, snapshot.cause, snapshot.round_number))
-            self._reveal_on_death(snapshot.seat)
-            pending = replace(pending, event_cursor=pending.event_cursor + 1); self._pending_night_completion = pending
-            await self._durable_checkpoint(
-                f"night_death:{self.state.round_number}:{snapshot.seat}"
-            )
+        # Official first day: the badge is decided first and the judge reads the
+        # night's deaths afterwards, so the first night of a sheriff game settles
+        # here but is announced by the election path (``stage 10`` below). The
+        # rest of this method is unchanged for every other night.
+        defer = self._defers_night_announcement()
+        if not defer:
+            await self._publish_pending_night_deaths()
+            pending = self._pending_night_completion
         await self._maybe_reassign_badge()
         if pending.stage == 0:
-            self.game_logger.log_deaths(self.game_id, self.state.round_number,
-                [DeathReport(item.seat, item.cause, item.round_number).to_dict() for item in pending.deaths])
+            if not defer:
+                self.game_logger.log_deaths(self.game_id, self.state.round_number,
+                    [DeathReport(item.seat, item.cause, item.round_number).to_dict() for item in pending.deaths])
             pending = replace(pending, stage=1); self._pending_night_completion = pending
         if pending.stage == 1:
             if self.memory_service: self.memory_service.save_memories(self.state)
@@ -969,6 +1047,12 @@ class GameEngine:
                 snapshot = None if value is None else _PendingWin(value.winning_camp, value.reason)
                 pending = replace(pending, win_checked=True, win_result=snapshot)
                 self._pending_night_completion = pending
+            if pending.win_result is not None and defer:
+                # A decided game never reaches the election, so nobody else can
+                # read the deaths out: announce them here, before the ending.
+                self._pending_night_completion = replace(pending, stage=_ANNOUNCE_STAGE)
+                await self._announce_pending_night_deaths()
+                pending = self._pending_night_completion
             pending = replace(pending, stage=3); self._pending_night_completion = pending
         if pending.stage == 3:
             if pending.win_result is not None:
@@ -1008,10 +1092,128 @@ class GameEngine:
         if pending.stage == 9:  # pragma: no branch - stages advance sequentially to 9
             await self.event_bus.publish(BusEvent.PHASE_CHANGED, game_id=self.game_id,
                 phase=self.state.phase.value, round_number=self.state.round_number, state=self.state)
-            self._pending_night_completion = None
+            # A night the election owes an announcement keeps its slot, parked at
+            # stage 10, so the election path can still read the batch out; every
+            # other night (and a night that already ended the game) releases it.
+            self._pending_night_completion = (
+                replace(pending, stage=_ANNOUNCE_STAGE)
+                if defer and pending.win_result is None
+                else None
+            )
             await self._durable_checkpoint(
                 f"night_complete:{self.state.round_number}:{self.state.phase.value}"
             )
+
+    def _still_on_the_table(self, seat: int) -> bool:
+        """True while the seat plays: alive, or dead but not yet announced.
+
+        The election runs before the judge reads the night's deaths, so a seat
+        whose death is recorded but unannounced still campaigns and votes; a seat
+        that died *during* the election (a self-explode) is off the table at once.
+        """
+        player = self.state.players.get(seat)
+        if player is None:
+            return False
+        return player.is_alive or seat in unannounced_death_seats(self.state)
+
+    def _defers_night_announcement(self) -> bool:
+        """True when the night's deaths wait for the sheriff election.
+
+        Official first day: the election runs before the judge reads the deaths,
+        so the first night of a sheriff game must not publish or narrate them
+        here. State-only and stable across a resume — the phase is still NIGHT
+        for every stage of this method that runs before the transition.
+        """
+        return self.state.round_number == 1 and should_run_election(self.state)
+
+    async def _publish_pending_night_deaths(self) -> None:
+        """Publish the night's death batch: bus, reveal, ``night_death:`` step."""
+        pending = self._pending_night_completion
+        while pending is not None and pending.event_cursor < len(pending.deaths):
+            snapshot = pending.deaths[pending.event_cursor]
+            await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id,
+                death=DeathReport(snapshot.seat, snapshot.cause, snapshot.round_number))
+            self._reveal_on_death(snapshot.seat)
+            pending = replace(pending, event_cursor=pending.event_cursor + 1)
+            self._pending_night_completion = pending
+            await self._durable_checkpoint(
+                f"night_death:{self.state.round_number}:{snapshot.seat}"
+            )
+
+    async def _announce_pending_night_deaths(self) -> None:
+        """Finish a night the election owes an announcement (stages 10..13).
+
+        Called from the election's own completion sites, and from the win path of
+        ``_resume_pipeline_night`` when the night already ended the game. The
+        stage lives in the persisted completion slot and every stage transition
+        is committed, so a crash between two stages resumes at the next one
+        instead of repeating a narration or a death. The slot is left at the
+        "announcement done" stage: the caller decides whether to release it.
+        """
+        pending = self._pending_night_completion
+        if pending is None or pending.stage < _ANNOUNCE_STAGE:
+            return
+        if pending.deaths is None:
+            # Defensive: the completion path always fills the batch before it
+            # parks the slot, but a slot restored from a hand-built checkpoint
+            # may still owe the derivation.
+            pending = replace(pending, deaths=self._pipeline_night_deaths(pending.result))
+            self._pending_night_completion = pending
+        if pending.stage == _ANNOUNCE_STAGE:
+            title, text = self._director.dawn_narration(
+                [item.seat for item in pending.deaths],
+            )
+            await self._narrate(title, text, phase="dawn")
+            await self._advance_announcement(_ANNOUNCE_STAGE + 1)
+        if self._pending_night_completion.stage == _ANNOUNCE_STAGE + 1:
+            await self._publish_pending_night_deaths()
+            await self._advance_announcement(_ANNOUNCE_STAGE + 2)
+        if self._pending_night_completion.stage == _ANNOUNCE_STAGE + 2:
+            self.game_logger.log_deaths(
+                self.game_id, self.state.round_number,
+                [DeathReport(item.seat, item.cause, item.round_number).to_dict()
+                 for item in self._pending_night_completion.deaths],
+            )
+            await self._advance_announcement(_ANNOUNCE_STAGE + 3)
+        if self._pending_night_completion.stage == _ANNOUNCE_STAGE + 3:
+            await self._run_deferred_night_reactions()
+            await self._advance_announcement(_ANNOUNCE_STAGE + 4)
+
+    async def _run_deferred_night_reactions(self) -> None:
+        """Open the night's death windows now that the deaths are public.
+
+        Seeded with the night's own batch, exactly like an exile's window: the
+        seat the night killed decides here — a shot, a revenge — with the badge
+        and the day's opening speeches already in hand. The engine knows nothing
+        about which contract answers; a night with no deaths opens no window.
+        """
+        pending = self._pending_night_completion
+        if pending is None or not pending.deaths:
+            return
+        commit = self._synthetic_commit(
+            f"night:{self.state.round_number}",
+            tuple(
+                self._died_event(
+                    DeathReport(item.seat, item.cause, item.round_number),
+                )
+                for item in pending.deaths
+            ),
+        )
+        await self._run_response_point(SchedulePoint.DAWN_REACTION, commit)
+        reaction = await self._settle_and_publish()
+        await self._durable_checkpoint(
+            f"night_reaction:{self.state.round_number}:{self._seat_list(reaction)}"
+        )
+
+    async def _advance_announcement(self, stage: int) -> None:
+        """Move the completion slot to the next announcement stage, durably."""
+        pending = self._pending_night_completion
+        if pending is None:
+            return
+        self._pending_night_completion = replace(pending, stage=stage)
+        await self._durable_checkpoint(
+            f"night_announce:{self.state.round_number}:{stage}"
+        )
 
     def _log_sheriff_audience(self, event_type: str, payload: dict[str, object]) -> None:
         self.game_logger.log_audience_action(
@@ -1041,6 +1243,10 @@ class GameEngine:
             raise RuntimeError("sheriff election requires SHERIFF_ELECTION")
         self.state.phase = GamePhase.SHERIFF_ELECTION
         if self.state.sheriff_election_complete:
+            # Resume path: the election finished before the interruption, so the
+            # deferred announcement (idempotent, stage-driven) is what is left.
+            await self._announce_pending_night_deaths()
+            self._pending_night_completion = None
             self.sm.transition(SM_Event.SHERIFF_ELECTION_COMPLETE)
             await self._broadcast_phase_change()
             return
@@ -1049,8 +1255,12 @@ class GameEngine:
         if office.step in {"", "run"}:
             office.step = "run"
             ran: set[int] = set(office.candidates)
-            alive = frozenset(self.state.alive_players())
-            pending_seats = [seat for seat in sorted(alive) if seat not in ran]
+            # The election runs before the deaths are read out, so the first
+            # night's victims are still on the table: they choose whether to run,
+            # speak, and vote like every other seat (official rule — the badge is
+            # decided first).
+            seats = frozenset(election_seats(self.state))
+            pending_seats = [seat for seat in sorted(seats) if seat not in ran]
             for seat in pending_seats:
                 player = self.state.players[seat]
                 wolf = player.camp == Camp.WEREWOLF
@@ -1071,7 +1281,7 @@ class GameEngine:
                 await self._durable_checkpoint(
                     f"sheriff_run:{self.state.round_number}:{seat}:{choice}"
                 )
-            outcome = decide_after_runs(frozenset(ran), frozenset(self.state.alive_players()))
+            outcome = decide_after_runs(frozenset(ran), seats)
             if outcome != "campaign":
                 winner = next(iter(ran)) if outcome == "auto" else None
                 await self._finish_election(winner, outcome)
@@ -1081,7 +1291,7 @@ class GameEngine:
         if office.step == "campaign":
             for seat in sorted(office.active):
                 player = self.state.players.get(seat)
-                if player is None or not player.is_alive:
+                if player is None or not self._still_on_the_table(seat):
                     continue
                 speech_text = await self.speak(seat, "sheriff_campaign")
                 if speech_text:
@@ -1096,7 +1306,7 @@ class GameEngine:
             remaining: set[int] = set()
             for seat in sorted(office.candidates):
                 player = self.state.players.get(seat)
-                if player is None or not player.is_alive:
+                if player is None or not self._still_on_the_table(seat):
                     continue
                 wolf = player.camp == Camp.WEREWOLF
                 choice = await asyncio.to_thread(
@@ -1118,7 +1328,7 @@ class GameEngine:
             office.active = remaining
             outcome = decide_after_withdraw(
                 frozenset(office.candidates), frozenset(remaining),
-                frozenset(self.state.alive_players()),
+                frozenset(election_seats(self.state)),
             )
             if outcome != "vote":
                 winner = next(iter(remaining)) if outcome == "auto" else None
@@ -1132,7 +1342,7 @@ class GameEngine:
             return
         for seat in sorted(office.pk_seats):
             player = self.state.players.get(seat)
-            if player is None or not player.is_alive:
+            if player is None or not self._still_on_the_table(seat):
                 continue
             speech_text = await self.speak(seat, "sheriff_campaign")
             if speech_text:
@@ -1151,14 +1361,14 @@ class GameEngine:
         director = self._sheriff_director
         office = self.state.sheriff_office
         voters = eligible_sheriff_voters(
-            frozenset(office.candidates), frozenset(self.state.alive_players()),
+            frozenset(office.candidates), frozenset(election_seats(self.state)),
         )
         counts: dict[int, int] = {}
         ballots: dict[int, int | None] = {}
         legal = set(candidates)
         for seat in sorted(voters):
             player = self.state.players.get(seat)
-            if player is None or not player.is_alive:
+            if player is None or not self._still_on_the_table(seat):
                 continue
             wolf = player.camp == Camp.WEREWOLF
             choice = await asyncio.to_thread(
@@ -1200,7 +1410,7 @@ class GameEngine:
             message = badge_loss_message(
                 reason,
                 frozenset(self.state.sheriff_office.candidates),
-                frozenset(self.state.alive_players()),
+                frozenset(election_seats(self.state)),
                 frozenset(self.state.sheriff_office.active),
             )
         else:
@@ -1217,6 +1427,10 @@ class GameEngine:
         await self._durable_checkpoint(
             f"sheriff_elected:{self.state.round_number}:{seat or 'none'}:{reason}"
         )
+        # The badge has landed: now the judge reads the night's deaths out, which
+        # is the official order (the election runs before the death announcement).
+        await self._announce_pending_night_deaths()
+        self._pending_night_completion = None
         if not await self._check_game_over():
             self.sm.transition(SM_Event.SHERIFF_ELECTION_COMPLETE)
         await self._broadcast_phase_change()
@@ -1247,6 +1461,10 @@ class GameEngine:
         await self._durable_checkpoint(
             f"sheriff_explode:{self.state.round_number}:{seat}"
         )
+        # A self-explode ends the election on the spot; the night's deaths are
+        # still read out right here (the docs' "仍报死讯和首夜遗言").
+        await self._announce_pending_night_deaths()
+        self._pending_night_completion = None
         if not await self._check_game_over():
             self.sm.transition(SM_Event.SHERIFF_ELECTION_COMPLETE)
         await self._broadcast_phase_change()
@@ -1366,7 +1584,15 @@ class GameEngine:
     async def _execute_dawn(self) -> None:
         await asyncio.sleep(self._phase_delay * 0.5)
 
-        round_deaths = self.get_night_deaths()
+        # Only the night's own batch is read out as "last night": a reaction
+        # death (a shot fired through the night's response window) and the
+        # election's self-explode carry their own announcement, and repeating
+        # them here would date them to the night.
+        batch = set(night_batch_deaths(self.state))
+        round_deaths = [
+            death for death in self.get_night_deaths()
+            if death.player_seat in batch
+        ]
         self.conversation_log.add_death_announcement(round_deaths, self.state.round_number)
 
         self.sm.transition(SM_Event.DAWN_COMPLETE)
@@ -1706,12 +1932,10 @@ class GameEngine:
         sheriff_seat = self.state.sheriff
         if sheriff_active(self.state) and side and sheriff_seat is not None:
             seats = [seat for seat, _ in alive]
-            deaths = night_death_seats(self.state)
-            anchor = deaths[0] if len(deaths) == 1 else sheriff_seat
             by_seat = {seat: player for seat, player in alive}
             return [
                 (seat, by_seat[seat])
-                for seat in speech_order(seats, anchor, side)
+                for seat in day_speech_order(self.state, side, seats)
                 if seat in by_seat
             ]
         if not alive or not self.state.death_history:
@@ -2154,12 +2378,30 @@ class GameEngine:
         runtime.revision += 1
         self.state.death_history.extend(reports)
         await self._publish_deaths(reports)
+        self._announce_delayed_deaths(reports)
         # A delayed death is announced by no other step, so it names its own.
         for death in reports:
             await self._durable_checkpoint(
                 f"delayed_death:{death.round_number}:{death.player_seat}"
             )
         return reports
+
+    def _announce_delayed_deaths(self, deaths: tuple[DeathReport, ...]) -> None:
+        """Tell the table, in the public record, that these seats just left.
+
+        The night batch (``_publish_pending_night_deaths``), a day interruption
+        and an exile each write their own announcement; a death that lands after
+        the speeches on a delayable seat wrote none, so the public history jumped
+        from "everyone vote 2号" straight to a ballot that no longer listed 2号,
+        and the players could only tell by spotting the seat in the authoritative
+        dead list. No cause is named, deliberately: the marks that schedule such a
+        death stay private, and naming one would hand the table the identity of
+        whoever left it.
+        """
+        seats = "、".join(f"{death.player_seat}号" for death in deaths)
+        self.conversation_log.add_system_message(
+            f"{seats}玩家出局。", self.state.round_number, "public",
+        )
 
     async def _publish_deaths(self, deaths: tuple[DeathReport, ...]) -> None:
         for death in deaths:

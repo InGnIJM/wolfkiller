@@ -236,6 +236,8 @@ WOLF_BEAUTY_SPEC = RoleSpec(
         WOLF_BEAUTY_REVENGE_CONTRACT,
     ),
     initial_private_data={LAST_CHARMED_KEY: None},
+    # Its charm shares the witch's point, so it declares its own line there.
+    opening_narration=("狼美人请睁眼", "请魅惑一名玩家（不能连续两晚同一人）。"),
     # Wolf Beauty may never be the wolf team's own kill target. The kill
     # contract is shared byte-identically with the whole camp, so the rule
     # travels as a declared resource and ``validate_werewolf_action`` rejects

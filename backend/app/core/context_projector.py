@@ -15,6 +15,7 @@ from app.core.role_runtime import (
     has_role_marker, role_action_counters, role_private_data_view,
     role_private_facts_view, role_resource_view,
 )
+from app.core.sheriff_flow import public_alive_seats, public_dead_seats
 from app.core.wolf_pack import (
     NO_WOLF_PACK_RESOURCE, actor_sees_pack, pack_seats,
 )
@@ -434,14 +435,12 @@ class ContextProjector:
             cls._positive_int(seat, "player seat")
         sheriff = cls._optional_positive_int(state.sheriff, "sheriff")
         facts: dict[str, object] = {
-            "alive_seats": tuple(
-                sorted(seat for seat, player in state.players.items() if player.is_alive)
-            ),
-            "dead_seats": tuple(
-                sorted(
-                    seat for seat, player in state.players.items() if not player.is_alive
-                )
-            ),
+            # Public liveness, not raw state: on the first day of a sheriff game
+            # the night's deaths are announced *after* the election, so a seat
+            # already recorded dead is still on the table. Handing the raw flags
+            # to a prompt would leak the very death the election hides.
+            "alive_seats": public_alive_seats(state),
+            "dead_seats": public_dead_seats(state),
             "phase": state.phase.value if hasattr(state.phase, "value") else state.phase,
             "round_number": state.round_number,
             "public_role_rules": tuple(

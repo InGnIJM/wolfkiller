@@ -691,6 +691,36 @@ def test_night_commit_routes_public_deaths_through_response_queue(cause, reacts)
     assert result.state_digest == result.commits[-1].state_digest
 
 
+def test_defer_event_types_keeps_the_nights_own_windows_shut() -> None:
+    """`defer_event_types` 只把这一批事件的反应窗口挡在本次运行之外。
+
+    夜死批次在警长竞选之后才公布，所以杀死座位的反应（猎人开枪）必须等到那一步
+    再开窗：本次运行既不问模型，也不结算它的伤害；事件本身照常出现在结果里。
+    """
+    registry = builtin_registry.freeze()
+    game = GameState("deferred-window", phase=GamePhase.NIGHT, round_number=1, players={
+        1: PlayerState(1, "wolf-killer-hunter", "good"),
+        2: PlayerState(2, "wolf-killer-villager", "good"),
+    })
+    game._pipeline_runtime = _Runtime(
+        role_resources={1: {"gun": 1}},
+        pending_damage=({"target": 1, "amount": 1, "cause": "wolf_kill"},),
+    )
+    calls = []
+    def provider(request, context, attempt):
+        calls.append(request.actor_seat)
+        return ActionCommand(action_type="shoot", target_seat=2, reasoning="ok")
+
+    result = scheduler(registry, provider).run_point(
+        game, SchedulePoint.NIGHT_COMMIT, defer_event_types=("PLAYER_DIED",),
+    )
+
+    assert calls == []
+    assert [event["event_type"] for event in result.events] == ["PLAYER_DIED"]
+    assert game.players[2].is_alive is True
+    assert game._pipeline_runtime.role_resources[1] == {"gun": 1}
+
+
 def _chain_damage(context: ActionContext, command: ActionCommand) -> tuple[GameEffect, ...]:
     if command.action_type != "hit" or command.target_seat is None:
         return ()

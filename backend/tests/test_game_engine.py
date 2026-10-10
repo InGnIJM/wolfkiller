@@ -280,9 +280,9 @@ async def test_staged_night_narrates_the_openings_of_the_roles_that_acted() -> N
 
     await engine._execute_staged_night()
 
-    # The night script opens the reported stream: the role lines come first, and
-    # only those (the director's own beats follow).
-    assert [call.args for call in engine._narrate.call_args_list][:2] == [
+    # 夜幕开场先播（stage 0），随后才是角色自己声明的台词；导演的其它节拍在最后。
+    assert [call.args for call in engine._narrate.call_args_list][:3] == [
+        ("标题", "正文"),
         ("舞者请睁眼", "请邀请三名玩家共舞。"),
         ("守卫请睁眼", "请选择今晚要守护的玩家。"),
     ]
@@ -325,6 +325,29 @@ def _beats(engine: GameEngine) -> list[str]:
 
 
 @pytest.mark.asyncio
+async def test_the_night_opens_before_any_role_is_woken() -> None:
+    """每个夜晚的第一条旁白必须是夜幕开场。
+
+    开眼旁白在 stage 1（`NIGHT_ACTION` 跑完之后，因为只有请求列表知道谁真的行动）
+    播，引擎自己的节拍在 stage 2；夜幕开场从前跟着 stage 2 的狼人那句一起播，
+    于是有 `NIGHT_ACTION` 角色的夜里观众先听到「守卫/猎魔人请睁眼」、再听到
+    「天黑请闭眼」（近 200 局里 95 局命中，守卫板每夜如此）。
+    """
+    for seats in (
+        {1: "wolf-killer-guard", 3: "wolf-killer-villager"},
+        {1: "wolf-killer-villager", 2: "wolf-killer-werewolf"},
+    ):
+        engine = _night_with(seats)
+        await engine._execute_staged_night()
+        beats = _beats(engine)
+
+        assert beats[0] == "night_open", (seats, beats)
+        if "守卫请睁眼" in beats:
+            # 角色台词仍排在狼人节拍之前（既有顺序不变）。
+            assert beats.index("守卫请睁眼") < beats.index("wolf_open")
+
+
+@pytest.mark.asyncio
 async def test_the_seer_beat_precedes_the_seers_own_night() -> None:
     """「预言家请睁眼」现在排在预言家行动之前，女巫随后。
 
@@ -339,13 +362,83 @@ async def test_the_seer_beat_precedes_the_seers_own_night() -> None:
     })
     await engine._execute_staged_night()
     beats = _beats(engine)
-    assert beats.index("seer_open") < beats.index("witch_open")
-    assert beats.index("wolf_open") < beats.index("seer_open")
+    # 身份查验点的台词由角色声明（预言家声明的那句与引擎节拍逐字相同），女巫仍是
+    # 引擎节拍：这条断言验的是「谁先被叫醒」，不是台词来自哪张表。
+    assert beats.index("预言家请睁眼") < beats.index("witch_open")
+    assert beats.index("wolf_open") < beats.index("预言家请睁眼")
+
+
+@pytest.mark.asyncio
+async def test_the_identity_check_line_comes_from_whoever_acts_there() -> None:
+    """没有预言家的板子不该听到「预言家请睁眼」。
+
+    查验点（`NIGHT_SEER_ACTION`）是共享的：纯白之女与狼巫都挂在这里，旧实现播的
+    是引擎硬编码的预言家台词（2026-10-07 复盘 3.3，实测 113 个夜晚里播了 93 次
+    「预言家请睁眼」，而那块板没有预言家）。
+    """
+    engine = _night_with({
+        1: "wolf-killer-pure-white",
+        2: "wolf-killer-wolf-witch",
+        3: "wolf-killer-villager",
+    })
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    assert "seer_open" not in beats
+    assert "纯白之女请睁眼" in beats and "狼巫请睁眼" in beats
+
+
+@pytest.mark.asyncio
+async def test_every_shared_point_speaks_through_its_own_roles() -> None:
+    """共享点上的台词属于在场的角色，不是引擎写死的那个角色。
+
+    查验点（预言家 / 纯白之女 / 狼巫 / 石像鬼）与用药点（女巫 / 狼美人）都是共享
+    的：只声明了一部分角色时，另一部分会听到别人的台词。这条用例逐个板子验证
+    「谁在场就播谁的台词」，且引擎节拍不插话。
+    """
+    cases = [
+        # (seats, 期望出现的台词, 期望不出现的引擎节拍)
+        ({1: "wolf-killer-gargoyle", 3: "wolf-killer-villager"},
+         ["石像鬼请睁眼"], ["seer_open"]),
+        ({1: "wolf-killer-wolf-beauty", 2: "wolf-killer-werewolf",
+          3: "wolf-killer-villager"}, ["狼美人请睁眼"], ["witch_open", "seer_open"]),
+        ({1: "wolf-killer-seer", 2: "wolf-killer-witch", 3: "wolf-killer-villager"},
+         ["预言家请睁眼", "witch_open"], ["seer_open"]),
+        ({1: "wolf-killer-pure-white", 2: "wolf-killer-wolf-witch",
+          3: "wolf-killer-villager"}, ["纯白之女请睁眼", "狼巫请睁眼"], ["seer_open", "witch_open"]),
+    ]
+    for seats, present, absent in cases:
+        engine = _night_with(seats)
+        await engine._execute_staged_night()
+        beats = _beats(engine)
+        for line in present:
+            assert line in beats, (seats, line, beats)
+        for line in absent:
+            assert line not in beats, (seats, line, beats)
+
+
+@pytest.mark.asyncio
+async def test_a_role_that_declares_no_line_keeps_the_engine_beat() -> None:
+    """没有任何角色声明台词时，引擎节拍照旧兜底（旧档与未来角色不会静音）。"""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    engine = _night_with({1: "wolf-killer-seer", 3: "wolf-killer-villager"})
+    snapshot = builtin_registry.freeze()
+    engine._pipeline_scheduler.registry = SimpleNamespace(specs={
+        **snapshot.specs,
+        "wolf-killer-seer": replace(
+            snapshot.require("wolf-killer-seer"), opening_narration=(),
+        ),
+    })
+
+    await engine._execute_staged_night()
+
+    assert "seer_open" in _beats(engine)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("dead", "absent"), [
-    ("wolf-killer-seer", "seer_open"),
+    ("wolf-killer-seer", "预言家请睁眼"),
     ("wolf-killer-witch", "witch_open"),
     ("wolf-killer-villager", "dawn"),
 ])
@@ -364,8 +457,9 @@ async def test_a_dead_role_is_not_woken(dead, absent) -> None:
     await engine._execute_staged_night()
     beats = _beats(engine)
     if absent == "dawn":
-        # A living seer and witch: both beats still play.
-        assert "seer_open" in beats and "witch_open" in beats
+        # A living seer and witch: both lines still play (the identity-check one
+        # is the seer's declared line now, the witch's is the engine beat).
+        assert "预言家请睁眼" in beats and "witch_open" in beats
     else:
         assert absent not in beats
 
@@ -410,7 +504,7 @@ async def test_the_night_script_is_silent_without_a_usable_registry() -> None:
 async def test_execute_night_is_single_flight_for_concurrent_callers() -> None:
     entered, release = asyncio.Event(), asyncio.Event(); calls = []
     engine = GameEngine("single", pipeline_scheduler=object(), director=_FakeDirector())
-    async def point(value):
+    async def point(value, **_kwargs):
         calls.append(value)
         if value is SchedulePoint.NIGHT_WOLF_VOTE: entered.set(); await release.wait()
         return PointResult((), (), (), value.value)
@@ -425,7 +519,7 @@ async def test_execute_night_is_single_flight_for_concurrent_callers() -> None:
 async def test_cancelled_night_waiter_does_not_cancel_owner() -> None:
     entered, release = asyncio.Event(), asyncio.Event()
     engine = GameEngine("cancel", pipeline_scheduler=object(), director=_FakeDirector())
-    async def point(value):
+    async def point(value, **_kwargs):
         if value is SchedulePoint.NIGHT_WOLF_VOTE: entered.set(); await release.wait()
         return PointResult((), (), (), value.value)
     engine._execute_v2_point = point
@@ -439,7 +533,7 @@ async def test_cancelled_night_waiter_does_not_cancel_owner() -> None:
 @pytest.mark.asyncio
 async def test_start_rejects_active_night_owner_and_stop_does_not_reset_state() -> None:
     release = asyncio.Event(); engine = GameEngine("lifecycle", pipeline_scheduler=object(), director=_FakeDirector())
-    async def point(value):
+    async def point(value, **_kwargs):
         if value is SchedulePoint.NIGHT_WOLF_VOTE: await release.wait()
         return PointResult((), (), (), value.value)
     engine._execute_v2_point = point
@@ -868,6 +962,8 @@ def test_pending_snapshots_validate_exact_types_and_ranges() -> None:
     death = game_engine_module._PendingDeath(1, "wolf_kill", 1)
     win = game_engine_module._PendingWin("good", "all_wolves_dead")
     game_engine_module._PendingNightCompletion(result, (death,), 1, 7, win, True, False)
+    # 10..13 are the deferred announcement stages a sheriff night parks in.
+    game_engine_module._PendingNightCompletion(result, (death,), 0, 13)
     for call in (
         lambda: game_engine_module._PendingDeath(True, "x", 1),
         lambda: game_engine_module._PendingDeath(1, "wolf_kill", -1),
@@ -876,7 +972,7 @@ def test_pending_snapshots_validate_exact_types_and_ranges() -> None:
         lambda: game_engine_module._PendingNightCompletion(object()),
         lambda: game_engine_module._PendingNightCompletion(result, (object(),)),
         lambda: game_engine_module._PendingNightCompletion(result, (), 1, 0),
-        lambda: game_engine_module._PendingNightCompletion(result, (), 0, 10),
+        lambda: game_engine_module._PendingNightCompletion(result, (), 0, 15),
         lambda: game_engine_module._PendingNightCompletion(result, win_result=object()),
     ):
         with pytest.raises((TypeError, ValueError)): call()
@@ -1091,6 +1187,10 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
             night_ops.append(("night_deaths", None))
 
     assert night_ops == [
+        # This scheduler carries no registry, so the engine cannot read declared
+        # lines and keeps its own beats for every window (never silence a script
+        # it cannot evaluate).
+        ("narration", "标题"),   # 夜幕开场（stage 0），先于任何角色开眼
         ("narration", "标题"),
         ("audience_action", "WOLF_VOTE"),
         ("audience_action", "WEREWOLF_KILL"),
@@ -1100,7 +1200,7 @@ async def test_staged_night_logs_full_operation_order(tmp_path) -> None:
         ("night_deaths", None),
     ]
     assert [record["phase"] for record in records if record["operation"] == "narration"] == [
-        "night", "night", "night", "dawn",
+        "night", "night", "night", "night", "dawn",
     ]
     assert records[-1]["operation"] == "phase_change"
 
@@ -2529,6 +2629,31 @@ class TestGameEngine:
         await engine._execute_dawn()
 
         assert engine.sm.get_state() == GamePhase.LAST_WORDS
+
+    @pytest.mark.asyncio
+    async def test_dawn_reads_out_only_the_nights_own_batch(self):
+        """天亮播报只念夜死批次：夜死座位开的枪另有一拍，不能算作「昨夜」。"""
+        roles = make_9_mock_roles()
+        engine = GameEngine(game_id="test", roles=roles, event_bus=EventBus())
+        engine._assign_roles()
+        engine.phase_delay = 0.01
+        engine.sm.set_state(GamePhase.DAWN)
+        engine.state.round_number = 1
+        engine.state.death_history.extend([
+            DeathReport(player_seat=1, cause="wolf_kill", round_number=1),
+            DeathReport(player_seat=2, cause="hunter_shot", round_number=1),
+        ])
+        engine.state.players[1].is_alive = False
+        engine.state.players[2].is_alive = False
+
+        await engine._execute_dawn()
+
+        announcement = [
+            record.content for record in engine.conversation_log.records
+            if record.scope.value == "public" and "天亮了" in record.content
+        ]
+        assert announcement and "1 号" in announcement[-1]
+        assert "2 号" not in announcement[-1]
 
     @pytest.mark.asyncio
     async def test_execute_last_words(self):

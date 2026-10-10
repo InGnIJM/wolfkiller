@@ -644,7 +644,8 @@ class Scheduler:
         slot = Scheduler._slot(slot)
         return f"{phase}#{slot}" if slot else phase
 
-    def run_point(self, state: GameState, point: SchedulePoint, *, slot: str = "") -> PointResult:
+    def run_point(self, state: GameState, point: SchedulePoint, *, slot: str = "",
+                  defer_event_types: tuple[str, ...] = ()) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
         slot = self._slot(slot)
         with _execution_lock(state):
@@ -656,13 +657,15 @@ class Scheduler:
             token = self._faults.set(faults)
             try:
                 result = self._point_result(saved) if saved is not None and saved.complete_result is not None else \
-                    self._run_point_locked(state, point, faults, key, saved, journal, slot)
+                    self._run_point_locked(state, point, faults, key, saved, journal, slot,
+                                           defer_event_types)
                 return result
             finally: self._faults.reset(token)
 
     def _run_point_locked(self, state: GameState, point: SchedulePoint,
                           faults: list[Mapping[str, object]], key: PointKey,
-                          saved: PointCheckpoint | None, journal, slot: str = "") -> PointResult:
+                          saved: PointCheckpoint | None, journal, slot: str = "",
+                          defer_event_types: tuple[str, ...] = ()) -> PointResult:
         if saved is None:
             issued = () if point is SchedulePoint.NIGHT_COMMIT else self.issue(state, point, self.registry, slot=slot)
         else: issued = saved.issued
@@ -751,8 +754,17 @@ class Scheduler:
                     retry=self._fallback_aggregate_effects(state, bound, contexts, role, contract),
                 )
             for commit_index in range(before, len(commits)):
-                pending.extend(PendingEvent(commit_index, ordinal, 0)
-                               for ordinal, _ in enumerate(commits[commit_index].events))
+                # ``defer_event_types`` keeps a point's *own* reaction windows out
+                # of this run without touching the events themselves: the engine
+                # re-seeds them later through a dedicated point (the first night's
+                # deaths are announced after the sheriff election, so the seat
+                # they kill must decide then, not here). Only the first run is
+                # affected — a saved checkpoint carries its own pending list.
+                pending.extend(
+                    PendingEvent(commit_index, ordinal, 0)
+                    for ordinal, event in enumerate(commits[commit_index].events)
+                    if event["event_type"] not in defer_event_types
+                )
             saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
                                     tuple(pending), WorkCursor("main", index + 1, 0), work_count=work_count)
             journal.put(key, saved)

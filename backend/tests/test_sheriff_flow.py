@@ -20,6 +20,8 @@ from app.core.sheriff_flow import (
     decide_after_withdraw,
     decide_tally,
     eligible_sheriff_voters,
+    election_seats,
+    night_batch_deaths,
     night_death_seats,
     off_badge_seats,
     office_enabled,
@@ -29,15 +31,18 @@ from app.core.sheriff_flow import (
     parse_side,
     parse_vote,
     parse_withdraw,
+    public_alive_seats,
+    public_dead_seats,
     set_sheriff,
     sheriff_active,
     should_run_election,
     speech_order,
     speech_sides,
+    unannounced_death_seats,
 )
 from app.core.conversation_log import ConversationLog
 from app.models.actions import DeathReport
-from app.models.game import Camp, GameConfig, GameState, PlayerState
+from app.models.game import Camp, GameConfig, GamePhase, GameState, PlayerState
 
 
 def _state(*, enable: bool = True, seats: int = 5, sheriff: int | None = None) -> GameState:
@@ -152,52 +157,80 @@ def test_badge_transfer_and_tear() -> None:
     assert state.sheriff_office.badge_destroyed is True
 
 
-def test_off_badge_seats_skip_first_night_deaths_and_keep_later_ones() -> None:
+def test_off_badge_seats_list_everyone_who_never_ran() -> None:
+    """警下名单是「竞选时在场且从未上警」的历史事实，不再按死亡过滤。
+
+    首夜被刀的座位在死讯公布前照样上警、发言、投警长票（官方：竞选在公布死讯
+    之前），所以它属于参选名单；白天再看到它时，它已经作为「从未上警者」留在
+    名单里 —— 与「后来才死的座位仍留在名单里」是同一条规则。
+    """
     state = _state(seats=9)
     state.sheriff_office.candidates = {1, 2}
     state.death_history = [
         DeathReport(3, "wolf_kill", 2),
         DeathReport(4, "poison", 1),
-        DeathReport(5, "love_death", 1),
+        DeathReport(5, "charm", 1),
         DeathReport(6, "hunter_shot", 1),
         DeathReport(7, "exile", 1),
         DeathReport(8, "hunter_shot", 1),
         DeathReport(9, "self_explode", 1),
     ]
 
-    assert off_badge_seats(state) == (3, 5, 7, 8, 9)
-
-
-def test_off_badge_seats_skip_a_charm_death_from_the_first_night() -> None:
-    """首夜被毒的狼美人会带走一名殉情者，那人在开选时已经死了。
-
-    死因白名单漏了 `charm`，于是竞选提示词把一具尸体写成「警下、有投票权」，
-    模型据此算票数、也可能把它当作可拉票的对象。
-    """
-    state = _state(seats=9)
-    state.sheriff_office.candidates = {1, 2}
-    state.death_history = [
-        DeathReport(3, "poison", 1),
-        DeathReport(4, "charm", 1),
-    ]
-
-    assert off_badge_seats(state) == (5, 6, 7, 8, 9)
-
-
-def test_off_badge_seats_keep_a_charm_death_that_follows_an_exile() -> None:
-    """白天被放逐的狼美人带走的殉情者，开选时还活着，必须留在警下名单。
-
-    这条守住上面那个修复的边界：`charm` 进入「开选前」白名单后，判定就依赖
-    `death_history` 的顺序与 `exile` 的截断，不能再退化成"只要有 charm 就排除"。
-    """
-    state = _state(seats=9)
-    state.sheriff_office.candidates = {1, 2}
-    state.death_history = [
-        DeathReport(3, "exile", 1),
-        DeathReport(4, "charm", 1),
-    ]
-
     assert off_badge_seats(state) == (3, 4, 5, 6, 7, 8, 9)
+
+
+def test_unannounced_deaths_are_only_the_first_nights_batch() -> None:
+    """未公布死亡 = 首夜批次：竞选窗口内、非当场公布死因。"""
+    state = _state(seats=9)
+    state.round_number = 1
+    state.phase = GamePhase.SHERIFF_ELECTION
+    state.death_history = [
+        DeathReport(3, "wolf_kill", 1),
+        DeathReport(4, "poison", 1),
+        DeathReport(5, "verify_kill", 1),
+        DeathReport(6, "hunt", 1),
+        DeathReport(7, "dance", 1),
+        DeathReport(8, "self_explode", 1),
+    ]
+
+    assert unannounced_death_seats(state) == frozenset({3, 4, 5, 6, 7})
+    assert election_seats(state) == frozenset(state.alive_players()) | {3, 4, 5, 6, 7}
+
+
+def test_unannounced_deaths_end_when_the_round_is_read_out() -> None:
+    """死讯公布后（天亮及以后）就没有「未公布死亡」了；旧轮次也永远不是。"""
+    state = _state(seats=9)
+    state.round_number = 1
+    state.phase = GamePhase.SHERIFF_ELECTION
+    state.death_history = [DeathReport(3, "wolf_kill", 1)]
+    state.players[3].is_alive = False
+
+    assert unannounced_death_seats(state) == frozenset({3})
+    assert public_alive_seats(state) == (1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert public_dead_seats(state) == ()
+
+    state.phase = GamePhase.DAWN
+    assert unannounced_death_seats(state) == frozenset()
+    assert public_alive_seats(state) == (1, 2, 4, 5, 6, 7, 8, 9)
+    assert public_dead_seats(state) == (3,)
+
+    state.round_number = 2
+    state.phase = GamePhase.SHERIFF_ELECTION
+    assert unannounced_death_seats(state) == frozenset()
+
+
+def test_night_batch_deaths_skip_the_causes_announced_where_they_happen() -> None:
+    state = _state(seats=9)
+    state.round_number = 1
+    state.death_history = [
+        DeathReport(3, "wolf_kill", 1),
+        DeathReport(4, "self_explode", 1),
+        DeathReport(5, "poison", 1),
+        DeathReport(6, "exile", 1),
+        DeathReport(7, "knight_duel", 1),
+    ]
+
+    assert night_batch_deaths(state) == (3, 5)
 
 
 def test_night_death_seats_are_current_round_only() -> None:
@@ -250,8 +283,10 @@ def test_director_prompts_include_sheriff_rules_and_only_current_tools() -> None
     assert "sheriff_left" in director.side_prompt(state, 2, (SHERIFF_LEFT, SHERIFF_RIGHT))[1]["content"]
     assert "撕毁" in director.badge_prompt(state, 2, (3, 4))[1]["content"]
     assert "无" in director.badge_prompt(state, 2, ())[1]["content"]
-    # 交/撕徽提示词过去是唯一不带上下的警长提示词：预言家因此不知道自己
-    # 刚验出的是金水还是查杀，也就无从用警徽去标记这次查验。
+    # 交/撕徽提示词曾经不带上文（当时还以为它是唯一一条，其实选发言方向那条同样
+    # 没有）：预言家因此不知道自己刚验出的是金水还是查杀，也就无从用警徽去标记
+    # 这次查验。现在两条都走 `_context_block`，并由
+    # `test_every_sheriff_prompt_carries_identity_and_the_office_lists` 遍历把关。
     badge_human = director.badge_prompt(state, 2, (3, 4))[1]["content"]
     assert "你是2号，身份：" in badge_human
     assert "你的私有事实" in badge_human
@@ -472,7 +507,9 @@ def test_sheriff_context_block_lists_off_badge_voters() -> None:
         line for line in human.splitlines() if line.startswith("未上警座位")
     )
     seats = {int(seat) for seat in re.findall(r"(\d+)号", off_badge)}
-    assert 9 not in seats
+    # 首夜被刀的 9 号在死讯公布前仍是有投票权的警下玩家，名单必须留着它：
+    # 竞选发生在公布死讯之前，把它写成「不在名单里」等于提前泄死讯。
+    assert 9 in seats
     assert {6, 7, 8, 10, 11, 12} <= seats
 
 
@@ -882,3 +919,126 @@ def test_sheriff_badge_schema_does_not_require_a_target_for_tear() -> None:
 
     assert director.badge_turn(_rich_state(), 2, (5, 6)) == ("tear", None, "警徽不留人")
     assert "target_seat" not in captured["required"]
+
+
+def _candidate_line(human: str) -> str:
+    return next(line for line in human.splitlines() if line.startswith("已上警座位"))
+
+
+def test_the_run_prompt_lists_the_seats_that_already_ran() -> None:
+    """上警循环里的「当前候选人」必须有真值。
+
+    `office.active` 只在 run 循环结束（game_engine.py:1282）与退水循环结束
+    （:1321）之后才写：上警阶段读它必然为空，于是每一张「已经有人上警」的提示词
+    都写着「已上警座位：4号、5号；当前候选人：无」——同一行自相矛盾。实测近 200 局
+    里 72 局命中，而测试 fixture 总是手写 `active`，所以一直没被发现。
+    """
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    office = state.sheriff_office
+    office.step = "run"
+    office.candidates = {4, 5}
+    office.active = set()
+
+    human = Director().campaign_prompt(state, 6, wolf=False)[1]["content"]
+
+    assert _candidate_line(human) == "已上警座位：4号、5号；当前候选人：4号、5号。"
+
+
+def test_the_withdraw_stage_keeps_the_full_candidate_list() -> None:
+    """退水阶段读的还是 active（此时它等于本轮全部上警座位），渲染不变。"""
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    office = state.sheriff_office
+    office.step = "withdraw"
+    office.candidates = {4, 5, 9}
+    office.active = {4, 5, 9}
+
+    human = Director().withdraw_prompt(state, 4, wolf=False)[1]["content"]
+
+    assert _candidate_line(human) == "已上警座位：4号、5号、9号；当前候选人：4号、5号、9号。"
+
+
+def test_the_side_prompt_carries_the_anchor_the_alive_list_and_both_orders() -> None:
+    """警长选发言方向的提示词必须能支撑这个决定。
+
+    从前它只有一句「你是警长9号。请选择今天的发言方向 side，只能是：…」：不知道
+    昨晚谁死了（锚点）、不知道存活名单、也没人告诉他 left/right 对应座号方向
+    —— 系统提示反而写着座位号不含空间含义，所以这个选择只能瞎猜。提示词现在给出
+    死者、存活名单与两个选项各自的真实顺序，且顺序来自引擎同一套
+    `speech_anchor` / `speech_order`。
+    """
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    set_sheriff(state, 9)
+    state.players[6].is_alive = False
+    state.death_history = [DeathReport(6, "wolf_kill", 1)]
+
+    human = Director().side_prompt(state, 9, (DEATH_LEFT, DEATH_RIGHT))[1]["content"]
+
+    assert "你是9号，身份：" in human          # 身份/阵营
+    assert "你的私有事实" in human              # 私有事实（查验、药）
+    assert "未上警座位" in human                # 警上/警下
+    assert "昨夜死亡：6号" in human             # 锚点
+    assert "存活玩家：1号、2号、3号、4号、5号、7号、8号、9号、10号、11号、12号" in human
+    # death_left = 死者下一号起升序 → 7 号先；death_right = 死者上一号起降序 → 5 号先。
+    assert "death_left" in human and "7号先发言" in human
+    assert "death_right" in human and "5号先发言" in human
+    assert "从昨夜死者下一号起按座号升序" in human
+
+
+def test_the_side_prompt_survives_an_empty_table() -> None:
+    """边界：没有可选座位时预览退化成「无人可发言」，不抛异常。"""
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    set_sheriff(state, 9)
+    for player in state.players.values():
+        player.is_alive = False
+
+    human = Director().side_prompt(state, 9, (DEATH_LEFT, DEATH_RIGHT))[1]["content"]
+
+    assert "昨夜死亡：无人" in human
+    assert human.count("无人可发言") == 2
+
+
+def test_every_sheriff_prompt_carries_identity_and_the_office_lists() -> None:
+    """所有警长提示词的最低上下文：身份/阵营、私有事实、警上/警下名单。
+
+    `_context_block` 是每个提示词各自拼的，漏掉它不会有任何结构性报错：交/撕徽
+    漏过一次（预言家看不见刚验出的金水，撕掉了本该用来传查验的警徽），发言方向
+    又漏了一次（选择退化成抛硬币）。这条不变量遍历全部构造器，新加提示词漏拼
+    上下文即红。
+    """
+    state = _rich_state()
+    set_sheriff(state, 9)
+    director = SheriffDirector()
+    prompts = {
+        "campaign": director.campaign_prompt(state, 2, wolf=False),
+        "withdraw": director.withdraw_prompt(state, 2, wolf=False),
+        "vote": director.vote_prompt(state, 4, (5, 9)),
+        "badge": director.badge_prompt(state, 9, (1, 3)),
+        "side": director.side_prompt(state, 9, (DEATH_LEFT, DEATH_RIGHT)),
+    }
+
+    for name, prompt in prompts.items():
+        human = prompt[1]["content"]
+        assert "身份：" in human, name
+        assert "你的私有事实" in human, name
+        assert "未上警座位" in human, name
+
+
+def test_the_side_prompt_preview_matches_the_shared_order() -> None:
+    """提示词里的顺序预览来自共享的 `day_speech_order`，不是第二份实现。"""
+    from app.core.sheriff_flow import SheriffDirector as Director, day_speech_order
+    state = _rich_state()
+    set_sheriff(state, 9)
+    state.players[6].is_alive = False
+    state.death_history = [DeathReport(6, "wolf_kill", 1)]
+
+    human = Director().side_prompt(state, 9, (DEATH_LEFT, DEATH_RIGHT))[1]["content"]
+
+    for side in (DEATH_LEFT, DEATH_RIGHT):
+        expected = day_speech_order(state, side)
+        sequence = " → ".join(f"{seat}号" for seat in expected)
+        assert f"{side}（" in human
+        assert f"{expected[0]}号先发言；顺序 {sequence}。" in human

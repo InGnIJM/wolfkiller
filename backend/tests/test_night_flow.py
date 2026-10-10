@@ -911,8 +911,10 @@ def test_wolf_vote_turn_pass_missing_reasoning(state: GameState):
 
 
 def test_narration_known():
-    assert NightDirector.narration("wolf_open") == ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。")
-    assert NightDirector.narration("wolf_open") == ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。")
+    # 夜幕开场是 stage 0 的独立节拍：NIGHT_ACTION 的角色台词在 stage 1 播，
+    # 「天黑请闭眼」不能跟着狼人那句一起排在它们后面。
+    assert NightDirector.narration("night_open") == ("天黑请闭眼", "请所有玩家闭眼，夜间行动依次进行。")
+    assert NightDirector.narration("wolf_open") == ("狼人请睁眼", "开始讨论今晚的行动。")
     # 角色开眼旁白已改为声明式（RoleSpec.opening_narration），导演表里不再有它：
     # 逐个角色断言，见各自的扩展测试。
     with pytest.raises(ValueError):

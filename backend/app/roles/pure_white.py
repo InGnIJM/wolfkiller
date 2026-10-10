@@ -159,6 +159,7 @@ PURE_WHITE_SPEC = RoleSpec(
     role_id="wolf-killer-pure-white",
     display_name="Pure White",
     camp_id="good",
+    opening_narration=("纯白之女请睁眼", "请查验一名玩家的具体身份；第二夜起验中狼人即当夜处决。"),
     contracts=(PURE_WHITE_CHECK_CONTRACT,),
     initial_private_data={CHECK_NAMESPACE: (), ROLE_CHECK_NAMESPACE: ()},
     allowed_effects=frozenset({

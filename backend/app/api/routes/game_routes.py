@@ -793,7 +793,10 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
         seat = payload.get("seat"); text = payload.get("text")
-        if not _is_positive_int(seat) or not isinstance(text, str) or not text or len(text) > 200:
+        # No length bound: the DTO accepts free text and the audience projection
+        # serves it unbounded. The old 200-char cap silently dropped every longer
+        # wolf message from the file replay (see `PublicWolfChatMessageResponse`).
+        if not _is_positive_int(seat) or not isinstance(text, str) or not text:
             _drop_replay_row("audience_action", "invalid_seat_or_text", event_type)
             return []
         public_type = {"WOLF_CHAT_MESSAGE": "wolf_chat_message",

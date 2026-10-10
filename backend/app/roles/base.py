@@ -36,6 +36,7 @@ from app.agents.retry import (
 )
 from app.core.action_validator import ActionValidationError, ActionValidator
 from app.core.vote_service import eligible_exile_targets
+from app.core.sheriff_flow import unannounced_death_seats
 from app.models.contracts import AcceptedAction, ActionCommand, ActionRequest
 from app.models.pipeline import (
     ActionCommand as PipelineActionCommand,
@@ -487,7 +488,7 @@ class BaseRole:
         player = state.players.get(self.seat)
         if player is None:
             return False, f"校验失败：{self.seat}号玩家不存在于游戏中"
-        if not player.is_alive:
+        if not player.is_alive and self.seat not in unannounced_death_seats(state):
             return False, f"校验失败：{self.seat}号玩家已出局，无法竞选发言。"
         if state.phase.value != "sheriff_election":
             return False, (

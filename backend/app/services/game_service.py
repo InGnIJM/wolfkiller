@@ -144,9 +144,9 @@ PUBLIC_NIGHT_SUBSTEPS = frozenset({
 
 # Domain event types a daytime pipeline window may emit that are already
 # published through a dedicated checkpoint: deaths through the
-# ``night_death:`` / ``day_interrupted:`` / ``day_reaction:`` /
-# ``exile_reaction:`` / ``delayed_death:`` steps, the card flip through
-# ``exile_cancelled:`` (which synthesises ``EXILE_CANCELLED`` and
+# ``night_death:`` / ``night_reaction:`` / ``day_interrupted:`` /
+# ``day_reaction:`` / ``exile_reaction:`` / ``delayed_death:`` steps, the card
+# flip through ``exile_cancelled:`` (which synthesises ``EXILE_CANCELLED`` and
 # ``PLAYER_REVEALED`` from state). Replaying them with the window would
 # publish every one of them twice.
 _DAY_POINT_SKIPPED_EVENTS = frozenset({
@@ -322,17 +322,33 @@ def _model_error_diagnostics(error: Exception, llm_client) -> dict[str, object]:
     return details
 
 
-def _log_night_llm_telemetry(
+def _summed_usage(usages: "list[object]"):
+    """Sum one ladder's per-rung usage into a single record (``None`` if unreported)."""
+    merged = None
+    for item in usages:
+        merged = merge_usage(merged, item)
+    return merged
+
+
+def _log_llm_telemetry(
     game_logger, game_id: str, round_number: int, seat: int, *,
     tool_name: str, model_id: Optional[str], prompt_chars: int,
     elapsed_ms: int = 0, usage=None, attempts: int = 1,
     parse_result: str, failure_code: Optional[str] = None,
+    call_kind: str = "night", transport: str = "night_json",
 ) -> None:
-    """Write one wolf-channel LLM call record; telemetry must never break the night flow."""
+    """Write one model-call record; telemetry must never break the game flow.
+
+    Both the wolf channel and the generic role pipeline come through here: the
+    summary reads ``llm_calls.log`` and nothing else, so a path that skips this
+    row is invisible in its call count, token total and failure rate (the
+    pipeline's skill actions were missing exactly that way, while the durable
+    ledger had them all).
+    """
     try:
         game_logger.log_llm_call(
             game_id, round_number, "night", seat,
-            call_kind="night", contract_id=tool_name, transport="night_json",
+            call_kind=call_kind, contract_id=tool_name, transport=transport,
             attempt=attempts, model_id=model_id, prompt_chars=prompt_chars,
             elapsed_ms=elapsed_ms,
             prompt_tokens=(usage.prompt_tokens if usage else None),
@@ -343,7 +359,7 @@ def _log_night_llm_telemetry(
         )
     except Exception:
         logger.exception(
-            "Failed to persist wolf llm telemetry for game=%s seat=%s",
+            "Failed to persist llm telemetry for game=%s seat=%s",
             game_id, seat,
         )
 
@@ -1611,7 +1627,7 @@ class GameService:
                                 "Failed to persist wolf model error for game=%s seat=%s",
                                 game_id, seat,
                             )
-                        _log_night_llm_telemetry(
+                        _log_llm_telemetry(
                             engine_ref.game_logger, game_id,
                             engine_ref.state.round_number, seat,
                             tool_name=tool_name,
@@ -1622,7 +1638,7 @@ class GameService:
                         )
                     raise
                 if engine_ref is not None:
-                    _log_night_llm_telemetry(
+                    _log_llm_telemetry(
                         engine_ref.game_logger, game_id,
                         engine_ref.state.round_number, seat,
                         tool_name=tool_name,
@@ -1898,16 +1914,36 @@ class GameService:
         payload: dict[str, object]
         event_type: str
         if label == "game_initialized":
-            event_type = "GAME_INITIALIZED"
-            payload = {
-                "players": engine.state.get_public_state()["players"],
-                "config": {
-                    "role_counts": dict(engine.state.config.role_counts),
-                    "reveal_on_death": engine.state.config.reveal_on_death,
-                    "enable_sheriff": engine.state.config.enable_sheriff,
-                    "witch_self_save": engine.state.config.witch_self_save,
+            # The opening transitions (role_deal → night) are broadcast without a
+            # checkpoint of their own — roles are not dealt yet when they happen —
+            # so this step is the first durable beat of the game and carries the
+            # phase the table is actually in. Without it the spectator stream had
+            # no phase row at all until the first dawn, and the first night was
+            # labelled "waiting" for its whole length.
+            return [{
+                "event_id": f"domain:{event_id}:0",
+                "event_type": "GAME_INITIALIZED",
+                "payload": {
+                    "players": engine.state.get_public_state()["players"],
+                    "config": {
+                        "role_counts": dict(engine.state.config.role_counts),
+                        "reveal_on_death": engine.state.config.reveal_on_death,
+                        "enable_sheriff": engine.state.config.enable_sheriff,
+                        "witch_self_save": engine.state.config.witch_self_save,
+                    },
                 },
-            }
+                "visibility": ["PUBLIC"],
+                "schema_version": 1,
+            }, {
+                "event_id": f"domain:{event_id}:1",
+                "event_type": "PHASE_CHANGED",
+                "payload": {
+                    "phase": engine.state.phase.value,
+                    "round_number": engine.state.round_number,
+                },
+                "visibility": ["PUBLIC"],
+                "schema_version": 1,
+            }]
         elif (
             label.startswith("phase:")
             and engine.state.phase is GamePhase.GAME_OVER
@@ -2115,6 +2151,30 @@ class GameService:
                 return events
             event_type = "STEP_COMMITTED"
             payload = {"position": label}
+        elif label.startswith("night_reaction:"):
+            # ``<label>:<round>:<seat-seat...>`` names the seats the night's
+            # response window settled once the deaths had been read out (a shot
+            # fired by a seat the night killed, and whoever it took with it).
+            # The window runs after the announcement, so this step is where its
+            # public events and its deaths reach the audience.
+            seats = [int(part) for part in label.split(":")[-1].split("-") if part]
+            deaths = [
+                item for item in engine.state.death_history
+                if item.round_number == engine.state.round_number
+                and item.player_seat in seats
+            ]
+            events = _pending_window_rows(engine, event_id)
+            events.extend({
+                "event_id": f"domain:{event_id}:{len(events) + index}",
+                "event_type": "PLAYER_DIED",
+                "payload": death.to_dict(),
+                "visibility": ["PUBLIC"],
+                "schema_version": 1,
+            } for index, death in enumerate(deaths))
+            if events:
+                return events
+            event_type = "STEP_COMMITTED"
+            payload = {"position": label}
         elif label.startswith("day_interrupted:") or label.startswith("day_reaction:"):
             # ``<label>:<round>:<vote_round>:<actor>:<seat-seat...>`` names the
             # seats settled by a daytime interruption (and its reaction window).
@@ -2164,6 +2224,18 @@ class GameService:
         ):
             event_type = "GAME_OVER"
             payload = dict(engine.state.win_result)
+        elif label.startswith("night_complete:"):
+            # Every night after the first ends through this step, and so does the
+            # first night's fork into the sheriff election — the phase transition
+            # itself is broadcast on the bus, but only a step label reaches the
+            # spectator stream. Without this row the audience never saw a `dawn`
+            # marker (the death announcement stayed labelled "night") nor the
+            # `sheriff_election` one.
+            event_type = "PHASE_CHANGED"
+            payload = {
+                "phase": engine.state.phase.value,
+                "round_number": engine.state.round_number,
+            }
         elif label.startswith("wolf_discussion:"):
             pending = getattr(engine, "_pending_night_batch", None)
             history = getattr(pending, "discussion_history", ()) if pending is not None else ()
@@ -2625,7 +2697,7 @@ class GameService:
             engine = engine_box.get("engine")
             if engine is not None:
                 turn = turn_box.get("turn")
-                _log_night_llm_telemetry(
+                _log_llm_telemetry(
                     engine.game_logger, state.game_id, state.round_number, seat,
                     tool_name=tool_name,
                     model_id=getattr(client, "model_name", None),
@@ -2889,6 +2961,8 @@ class GameService:
                 # stays the value reported in the game log, so the inner counter
                 # must not shadow it.
                 try_number = 0
+                ladder_started = time.monotonic()
+                ladder_usage: list[object] = []
                 while True:
                     try_number += 1
                     try:
@@ -2897,6 +2971,7 @@ class GameService:
                         )
                         command = _pipeline_command(result.payload, request.contract)
                         failure = None
+                        ladder_usage.append(getattr(result, "usage", None))
                         if usage_sink is not None:
                             # Every rung of the ladder costs tokens; the durable
                             # hop records one usage per logical request, so they
@@ -2947,6 +3022,32 @@ class GameService:
                             context.game_id, request.actor_seat,
                         )
                 command = None
+            telemetry_logger = getattr(engine, "game_logger", None)
+            if telemetry_logger is not None:
+                # The pipeline's own calls used to leave no telemetry row at all:
+                # the summary reads ``llm_calls.log`` and nothing else, so every
+                # skill action (a guard, a check, a save, a duel, a verdict) was
+                # missing from its call count, its token total and its failure
+                # rate, even though the durable ledger had them. One row per
+                # logical request, with the ladder's summed usage. A stub engine
+                # without a logger simply records nothing.
+                _log_llm_telemetry(
+                    telemetry_logger, context.game_id, context.round_number,
+                    request.actor_seat,
+                    tool_name=request.contract.contract_id,
+                    model_id=getattr(llm_client, "model_name", None),
+                    prompt_chars=sum(
+                        len(str(item.content or "")) for item in messages
+                    ),
+                    elapsed_ms=int((time.monotonic() - ladder_started) * 1000),
+                    usage=_summed_usage(ladder_usage),
+                    attempts=try_number,
+                    parse_result=("ok" if failure is None else "error"),
+                    failure_code=(
+                        None if failure is None else _model_failure_code(failure)
+                    ),
+                    call_kind="action", transport="action_tool",
+                )
             if command is None or command.action_type not in request.contract.action_types:
                 # Provider failure, unusable answer, or an action type outside the
                 # contract: all three are the engine deciding for the seat, so the

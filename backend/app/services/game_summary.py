@@ -82,6 +82,33 @@ def _round_bucket(rounds: dict, rnd: object) -> dict:
     return bucket
 
 
+def _death_key(death: object) -> tuple:
+    if not isinstance(death, dict):
+        return ()
+    return (death.get("player_seat"), death.get("cause"), death.get("round_number"))
+
+
+def _merge_deaths(bucket: dict, deaths: object) -> None:
+    """Append one round's death batch, skipping seats it already recorded.
+
+    ``log_deaths`` fires once per batch — the night's settlement, a day
+    interruption, a delayed death — and several batches can land in one round,
+    so a round's deaths are the union of its batches in time order. Assignment
+    instead of merging dropped everything but the last batch (13 of ~200 games
+    lost a seat that way, including the night kill of a round whose day a
+    Crimson Envoy went on to interrupt). The key check makes a replayed batch
+    idempotent: a crash between ``log_deaths`` and the stage advance re-runs
+    stage 0 over the same seats, and a summary must not count a seat twice.
+    """
+    seen = {_death_key(existing) for existing in bucket["deaths"]}
+    for death in (deaths if isinstance(deaths, list) else []):
+        key = _death_key(death)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        bucket["deaths"].append(death)
+
+
 def _int_or_zero(value: object) -> int:
     return value if type(value) is int else 0
 
@@ -123,10 +150,7 @@ def _summarize(
             if type(rnd) is int:
                 final_round = rnd
         elif op == "night_deaths":
-            _round_bucket(rounds, rnd)["deaths"] = [
-                death for death in (data.get("deaths") or [])
-                if isinstance(death, dict)
-            ]
+            _merge_deaths(_round_bucket(rounds, rnd), data.get("deaths"))
         elif op == "speak":
             text = data.get("text")
             _round_bucket(rounds, rnd)["speeches"].append({

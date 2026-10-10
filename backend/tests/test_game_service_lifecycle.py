@@ -499,10 +499,32 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
 
     initialized = GameService._checkpoint_domain_events(
         engine, "00000001:game_initialized",
-    )[0]
-    assert initialized["event_type"] == "GAME_INITIALIZED"
-    assert initialized["payload"]["config"]["reveal_on_death"] is True
-    assert initialized["payload"]["config"]["enable_sheriff"] is False
+    )
+    assert [item["event_type"] for item in initialized] == [
+        "GAME_INITIALIZED", "PHASE_CHANGED",
+    ]
+    assert initialized[0]["payload"]["config"]["reveal_on_death"] is True
+    assert initialized[0]["payload"]["config"]["enable_sheriff"] is False
+    # 开局那两次转换没有自己的检查点（身份还没发），所以这一格必须把当时的阶段
+    # 一并播出去 —— 否则第一夜整段在观众流里停在「等待中」。
+    assert initialized[1]["payload"] == {
+        "phase": state.phase.value, "round_number": state.round_number,
+    }
+    assert initialized[0]["event_id"] != initialized[1]["event_id"]
+
+    # 夜晚收尾的那次转换同样没有 `phase:` 标签：没有这一行，观众流里就没有
+    # 「天亮」和「警长竞选」的阶段事件（报死讯那一拍会一直挂着「黑夜」）。
+    state.phase = GamePhase.DAWN
+    night_done = GameService._checkpoint_domain_events(
+        engine, "00000001b:night_complete:1:dawn",
+    )
+    assert night_done == [{
+        "event_id": night_done[0]["event_id"],
+        "event_type": "PHASE_CHANGED",
+        "payload": {"phase": "dawn", "round_number": state.round_number},
+        "visibility": ["PUBLIC"],
+        "schema_version": 1,
+    }]
 
     state.phase = GamePhase.SPEECH
     phase = GameService._checkpoint_domain_events(
@@ -643,6 +665,19 @@ def test_checkpoint_domain_event_matrix_covers_public_and_fallback_events() -> N
     )
     assert empty_explode[0]["payload"] == {}
     assert empty_explode[1]["payload"]["reason"] == "explode"
+
+    # 夜死批次的响应窗口（夜死座位开的枪）在死讯公布之后跑，它的公开事件与
+    # 死者由 `night_reaction:` 这一步发布，空窗口退化成 STEP_COMMITTED。
+    quiet_night = GameService._checkpoint_domain_events(
+        engine, "00000009d:night_reaction:2:",
+    )[0]
+    assert quiet_night["event_type"] == "STEP_COMMITTED"
+    assert quiet_night["visibility"] == []
+    fired = GameService._checkpoint_domain_events(
+        engine, "00000009e:night_reaction:2:1",
+    )[0]
+    assert fired["event_type"] == "PLAYER_DIED"
+    assert fired["payload"]["cause"] == "wolf_kill"
 
     fallback = GameService._checkpoint_domain_events(
         engine, "00000010:exile_reaction:2:1:9",

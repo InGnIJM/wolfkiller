@@ -2229,6 +2229,114 @@ class TestCommandProvider:
         llm.invoke_action.assert_called_once()
         llm.get_model.assert_not_called()
 
+    def test_provider_records_one_llm_call_row(self, tmp_path):
+        """流水线的技能调用必须在 llm_calls.log 留痕。
+
+        `summary.json` 的 `llm.*` 只读这份文件，而技能调用从前只落耐久账本
+        （`model_requests`，action_position 是一串 digest）：实测最新一局账本
+        135 次 / 1,045,787 tokens，summary 只有 129 次 / 1,003,621 tokens，差的
+        正好是守卫×3、预言家×1、女巫×2 —— 次数、token、失败率一起漏。
+        """
+        import json
+        import random
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from app.agents.llm_client import LLMUsage
+        from app.core.game_logger import GameLogger
+        from app.core.night_flow import NightDirector
+        from app.roles.registry import builtin_registry
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        llm = MagicMock()
+        llm.model_name = "probe-model"
+        llm.invoke_action.return_value = SimpleNamespace(
+            payload={
+                "schema_version": 1, "action_type": "check",
+                "target_seat": 2, "reasoning": "x",
+            },
+            usage=LLMUsage(10, 5, 15),
+        )
+        engine = MagicMock()
+        engine.game_logger = GameLogger(str(tmp_path))
+        engine.conversation_log.get_conversations_for_role.return_value = []
+        engine.state = None
+        engine._rng = random.Random(3)
+        service._engines["g"] = engine
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        provider = service._command_provider(
+            snapshot, renderer, lambda seat: llm,
+            NightDirector(snapshot, lambda messages: None),
+        )
+        request = self._request("wolf-killer-seer")
+        context = SimpleNamespace(
+            game_id="g", round_number=1, phase="night", facts={},
+        )
+
+        provider(request, context, 0)
+
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "games" / "g" / "llm_calls.log")
+            .read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        assert len(rows) == 1
+        data = rows[0]["data"]
+        assert data["call_kind"] == "action"
+        assert data["contract_id"] == request.contract.contract_id
+        assert data["parse_result"] == "ok"
+        assert data.get("failure_code") is None
+        assert data["total_tokens"] == 15 and data["model_id"] == "probe-model"
+        assert data["retried"] is False
+
+    def test_provider_records_a_failed_llm_call_row(self, tmp_path):
+        """失败也要留痕：summary 的 llm.errors / retried 靠这一行。"""
+        import json
+        import random
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from app.core.game_logger import GameLogger
+        from app.core.night_flow import NightDirector
+        from app.roles.registry import builtin_registry
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        llm = MagicMock()
+        llm.model_name = "probe-model"
+        llm.invoke_action.side_effect = ValueError("model gateway rejected structured response")
+        engine = MagicMock()
+        engine.game_logger = GameLogger(str(tmp_path))
+        engine.conversation_log.get_conversations_for_role.return_value = []
+        engine.state = None
+        engine._rng = random.Random(3)
+        service._engines["g"] = engine
+        renderer = MagicMock()
+        renderer.render.return_value = "prompt"
+        provider = service._command_provider(
+            snapshot, renderer, lambda seat: llm,
+            NightDirector(snapshot, lambda messages: None),
+        )
+        context = SimpleNamespace(
+            game_id="g", round_number=1, phase="night", facts={},
+        )
+
+        provider(self._request("wolf-killer-seer"), context, 0)
+
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "games" / "g" / "llm_calls.log")
+            .read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        assert len(rows) == 1
+        data = rows[0]["data"]
+        assert data["parse_result"] == "error"
+        assert data["failure_code"]
+        assert data["retried"] is True and data["attempt"] > 1
+        assert data.get("total_tokens") is None
+
     def test_provider_falls_back_on_bad_json_or_network_error(self, caplog):
         service = GameService(WSManager(), EventBus())
         from unittest.mock import MagicMock

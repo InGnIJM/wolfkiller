@@ -157,7 +157,11 @@ _NARRATIONS: dict[str, tuple[str, str]] = {
     # Role openings are not here: each role declares its own line
     # (``RoleSpec.opening_narration``) and the engine narrates the ones that
     # actually act. This table only holds the beats the driver itself owns.
-    "wolf_open": ("天黑请闭眼", "狼人请睁眼，开始讨论今晚的行动。"),
+    # ``night_open`` opens the night *before* the first schedule point; the
+    # wolves' line is a separate beat, because that point runs (and its roles are
+    # called) before the pack is asked to discuss anything.
+    "night_open": ("天黑请闭眼", "请所有玩家闭眼，夜间行动依次进行。"),
+    "wolf_open": ("狼人请睁眼", "开始讨论今晚的行动。"),
     "seer_open": ("预言家请睁眼", "请查验一名玩家的身份。"),
     # The pack is silenced for the night (a feared wolf). Worded without any
     # role name so the engine never has to know which skill caused it.

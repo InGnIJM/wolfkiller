@@ -17,7 +17,7 @@ from app.core.wolf_pack import actor_sees_pack, in_wolf_pack, pack_seats
 from app.core.role_runtime import (
     role_private_facts_view, role_resource_view,
 )
-from app.models.game import Camp, GameState
+from app.models.game import Camp, GamePhase, GameState
 from app.models.conversation import ConversationScope
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,17 @@ SHERIFF_LEFT = "sheriff_left"
 SHERIFF_RIGHT = "sheriff_right"
 DEATH_LEFT = "death_left"
 DEATH_RIGHT = "death_right"
+
+#: What each side choice means in seat numbers. The engine maps left to
+#: ascending and right to descending (``speech_order``); the prompt has to say so
+#: because nothing else does — the system prompt only states that the sheriff
+#: chooses the day's start.
+_SIDE_HINTS: dict[str, str] = {
+    SHERIFF_LEFT: "从警长下一号起按座号升序",
+    SHERIFF_RIGHT: "从警长上一号起按座号降序",
+    DEATH_LEFT: "从昨夜死者下一号起按座号升序",
+    DEATH_RIGHT: "从昨夜死者上一号起按座号降序",
+}
 
 _EXPLODE = "explode"
 _RUN = "run"
@@ -176,49 +187,129 @@ def night_death_seats(state: GameState) -> tuple[int, ...]:
     )
 
 
+def speech_anchor(state: GameState, sheriff_seat: Optional[int]) -> int:
+    """The seat the day's rotation is anchored on.
+
+    Exactly one night death anchors the order on that death (``death_left`` /
+    ``death_right``), a peaceful or multi-death night anchors it on the sheriff
+    (``sheriff_left`` / ``sheriff_right``).
+    """
+    deaths = night_death_seats(state)
+    if len(deaths) == 1:
+        return deaths[0]
+    return sheriff_seat or 0
+
+
+def day_speech_order(
+    state: GameState, side: str, seats: Optional[Sequence[int]] = None,
+) -> list[int]:
+    """The seats in the order they will speak today, for one side choice.
+
+    The sheriff's prompt previews these orders and the engine rotates with the
+    same call, so what the badge picks is what actually runs — the preview can
+    never drift into a second implementation. ``seats`` defaults to the living
+    seats the table believes in; the engine passes the list it is about to
+    rotate (a resumed round may already exclude seats that spoke).
+    """
+    ordered = list(seats) if seats is not None else list(public_alive_seats(state))
+    return speech_order(ordered, speech_anchor(state, state.sheriff), side)
+
+
 #: The election runs once, after the first night.
 _ELECTION_ROUND = 1
 
-#: Recorded before any seat can choose to run. This is every cause the first
-#: night can produce: the wolf kill, the witch's poison and the hunter's shot —
-#: plus `charm`, because a wolf beauty poisoned on the first night takes her
-#: charmed victim with her before the election starts. `knight_duel` is absent
-#: because the duel only happens after the day's speeches.
-_PRE_ELECTION_DEATH_CAUSES = frozenset({
-    "wolf_kill", "poison", "hunter_shot", "charm", "wolf_king_shot",
-    "reflect", "dream_death",
+#: Causes announced where they happen, never in the dawn batch. An exile and the
+#: election's own self-explode belong to the day that produces them; a knight
+#: duel only happens after the day's speeches; and the night's response windows
+#: (a shot fired by a seat the night killed, and the revenge it can trigger) run
+#: *after* the deaths are read out, so their victims are announced on that beat.
+#: Every *other* cause is recorded by the night settlement and read out by the
+#: dawn announcement — which is why the election can run before anyone is
+#: publicly dead.
+_ANNOUNCED_IMMEDIATELY = frozenset({
+    "exile", "self_explode", "knight_duel",
+    "hunter_shot", "wolf_king_shot", "charm",
 })
 
-#: These causes begin at the election or the day after it. A death of one of
-#: the causes above that appears later in the same round happened to someone
-#: who was alive when the election started.
-_POST_ELECTION_DEATH_CAUSES = frozenset({"exile", "self_explode"})
+
+def _phase_value(state: GameState) -> str:
+    phase = state.phase
+    return phase.value if hasattr(phase, "value") else str(phase)
 
 
-def seats_dead_before_election(state: GameState) -> frozenset[int]:
-    """Seats that died on the first night, before they could run for sheriff."""
-    dead: set[int] = set()
-    for death in state.death_history:
-        if death.round_number != _ELECTION_ROUND:
-            continue
-        if death.cause in _POST_ELECTION_DEATH_CAUSES:
-            break
-        if death.cause in _PRE_ELECTION_DEATH_CAUSES:
-            dead.add(death.player_seat)
-    return frozenset(dead)
+def unannounced_death_seats(state: GameState) -> frozenset[int]:
+    """Seats recorded dead whose death the table has not heard yet.
+
+    Only the sheriff election can open that window: the first night is settled
+    before the election but announced after it (official flow — the judge reads
+    the deaths once the badge has landed). A seat listed here is still playing:
+    it may run for sheriff, speak on badge, and vote. Everywhere else the set is
+    empty, and a seat that died in an earlier round is long announced.
+    """
+    if state.round_number != _ELECTION_ROUND:
+        return frozenset()
+    if _phase_value(state) not in ("night", "sheriff_election"):
+        return frozenset()
+    return frozenset(
+        death.player_seat
+        for death in state.death_history
+        if death.round_number == _ELECTION_ROUND
+        and death.cause not in _ANNOUNCED_IMMEDIATELY
+    )
+
+
+def election_seats(state: GameState) -> frozenset[int]:
+    """Everyone who takes part in the sheriff election.
+
+    The living plus the first night's dead: officially the deaths are read out
+    *after* the badge lands, so the night's victims campaign like everyone else.
+    """
+    return frozenset(state.alive_players()) | unannounced_death_seats(state)
+
+
+def night_batch_deaths(state: GameState) -> tuple[int, ...]:
+    """Seats the dawn announcement reads out this round, in death order.
+
+    A hunter's shot and the election's self-explode are announced on their own
+    beat, so they never ride along in the night's batch.
+    """
+    return tuple(
+        death.player_seat
+        for death in state.death_history
+        if death.round_number == state.round_number
+        and death.cause not in _ANNOUNCED_IMMEDIATELY
+    )
+
+
+def public_alive_seats(state: GameState) -> tuple[int, ...]:
+    """Seats the table still believes are playing, in seat order."""
+    unannounced = unannounced_death_seats(state)
+    return tuple(sorted(
+        seat for seat, player in state.players.items()
+        if player.is_alive or seat in unannounced
+    ))
+
+
+def public_dead_seats(state: GameState) -> tuple[int, ...]:
+    """Seats whose deaths the table has already heard, in seat order."""
+    unannounced = unannounced_death_seats(state)
+    return tuple(sorted(
+        seat for seat, player in state.players.items()
+        if not player.is_alive and seat not in unannounced
+    ))
 
 
 def off_badge_seats(state: GameState) -> tuple[int, ...]:
-    """Seats that were alive at the election and never ran, in seat order.
+    """Seats that never ran for sheriff, in seat order.
 
-    A seat that stayed off badge remains listed after a later death. A seat
-    that was already dead when the election started is omitted.
+    The roster is a historical fact about the election, so a seat that stayed
+    off badge remains listed after a later death — including the first night's
+    victims, who are on the table until the deaths are read out.
     """
-    excluded = seats_dead_before_election(state)
     candidates = state.sheriff_office.candidates
     return tuple(sorted(
         seat for seat in state.players
-        if seat not in candidates and seat not in excluded
+        if seat not in candidates
     ))
 
 
@@ -417,7 +508,13 @@ class SheriffDirector:
         )
         office = state.sheriff_office
         ran = "、".join(f"{seat}号" for seat in sorted(office.candidates)) or "无"
-        active = "、".join(f"{seat}号" for seat in sorted(office.active)) or "无"
+        # ``active`` is only written after the run loop (game_engine.py:1282) and
+        # again after the withdrawals (:1321): during the run stage it is still
+        # empty, so reading it there told every seat who had already run that
+        # nobody was a candidate ("已上警座位：4号、5号；当前候选人：无"). In the
+        # run stage the candidates are exactly the seats that have run so far.
+        contesting = office.candidates if office.step == "run" else office.active
+        active = "、".join(f"{seat}号" for seat in sorted(contesting)) or "无"
         off_badge = "、".join(f"{seat}号" for seat in off_badge_seats(state)) or "无"
         lines.append(f"已上警座位：{ran}；当前候选人：{active}。")
         lines.append(f"未上警座位（警下，拥有警长投票权）：{off_badge}。")
@@ -533,8 +630,38 @@ class SheriffDirector:
         return self._messages(self._system(), human)
 
     def side_prompt(self, state: GameState, seat: int, sides: Sequence[str]) -> list[dict[str, str]]:
+        """The sheriff picks where today's speaking starts.
+
+        This used to be the only sheriff prompt with no context at all — it named
+        the two options and nothing else, so the sheriff did not know who died
+        tonight (the anchor), which seats are alive, or that left/right even maps
+        onto seat order (the system prompt says seat numbers carry no spatial
+        meaning). The rule could not do what it promises — the badge decides who
+        speaks first — because the choice was a coin flip. The prompt now hands
+        over the anchor, the living seats and each option's real order, read from
+        the same ``speech_anchor`` / ``speech_order`` the engine rotates with.
+        """
+        deaths = night_death_seats(state)
+        alive = public_alive_seats(state)
+        dead_line = "、".join(f"{item}号" for item in deaths) or "无人"
+        alive_line = "、".join(f"{item}号" for item in alive) or "无"
+        previews = []
+        for side in sides:
+            order = day_speech_order(state, side)
+            if order:
+                head = f"{order[0]}号先发言"
+                sequence = " → ".join(f"{item}号" for item in order)
+            else:
+                head, sequence = "无人可发言", "无"
+            previews.append(
+                f"{side}（{_SIDE_HINTS.get(side, side)}）：{head}；顺序 {sequence}。"
+            )
         human = (
-            f"你是警长{seat}号。请选择今天的发言方向 side，只能是：{'、'.join(sides)}。"
+            f"你是警长{seat}号，请选择今天的发言方向。\n"
+            f"{self._context_block(state, seat, wolf=False)}"
+            f"昨夜死亡：{dead_line}；存活玩家：{alive_line}。\n"
+            + "\n".join(previews)
+            + f"\n请选择 side，只能是：{'、'.join(sides)}。"
         )
         return self._messages(self._system(), human)
 

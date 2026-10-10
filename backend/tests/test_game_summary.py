@@ -238,6 +238,81 @@ def test_summary_tolerates_malformed_records(tmp_path: Path) -> None:
     assert summary["llm"]["elapsed_ms"]["p50"] is None
 
 
+def test_every_death_batch_of_a_round_survives_the_summary(tmp_path: Path) -> None:
+    """一轮里的多批死亡必须合并，不能被后一批覆盖。
+
+    ``log_deaths`` 在一轮里会被调用多次：夜死批次、白天中断（自爆/决斗）、
+    延迟死亡（`hunt` / 毒伤 / 中枪）。从前汇总是赋值而不是追加，第二、三批
+    把前面的整批挤掉 —— 实测最新一局 r1 只剩自爆的 5 号、丢掉夜刀的 6 号，
+    r3 只剩被狩猎的 2 号、丢掉夜刀的 8 号（近 200 局里 13 局命中）。
+    """
+    log = [
+        {"timestamp": "t0", "round": 0, "phase": "role_deal",
+         "operation": "role_init",
+         "data": {"players": {"6": {"role": "wolf-killer-witch", "camp": "good"}}}},
+        {"timestamp": "t1", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [{"player_seat": 6, "cause": "wolf_kill", "round_number": 1}]}},
+        {"timestamp": "t2", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [{"player_seat": 5, "cause": "self_explode", "round_number": 1}]}},
+        {"timestamp": "t3", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": []}},
+        {"timestamp": "t4", "round": 2, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [{"player_seat": 8, "cause": "wolf_kill", "round_number": 2}]}},
+        {"timestamp": "t5", "round": 2, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [{"player_seat": 2, "cause": "hunt", "round_number": 2}]}},
+        {"timestamp": "t6", "round": 3, "phase": "game_over", "operation": "game_over",
+         "data": {"winner": "good", "reason": "all_wolves_dead"}},
+    ]
+    _write_lines(tmp_path / "games" / "gb" / "game.log", log)
+
+    summary = build_game_summary(str(tmp_path), "gb")
+
+    assert summary["rounds"]["1"]["deaths"] == [
+        {"player_seat": 6, "cause": "wolf_kill", "round_number": 1},
+        {"player_seat": 5, "cause": "self_explode", "round_number": 1},
+    ]
+    assert summary["rounds"]["2"]["deaths"] == [
+        {"player_seat": 8, "cause": "wolf_kill", "round_number": 2},
+        {"player_seat": 2, "cause": "hunt", "round_number": 2},
+    ]
+
+
+def test_a_replayed_batch_is_not_counted_twice(tmp_path: Path) -> None:
+    """崩溃恢复重跑 stage 0 会把同一批再写一次；汇总要幂等。"""
+    death = {"player_seat": 4, "cause": "wolf_kill", "round_number": 1}
+    log = [
+        {"timestamp": "t1", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [death]}},
+        {"timestamp": "t2", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [dict(death)]}},
+    ]
+    _write_lines(tmp_path / "games" / "gr" / "game.log", log)
+
+    summary = build_game_summary(str(tmp_path), "gr")
+
+    assert summary["rounds"]["1"]["deaths"] == [death]
+
+
+def test_malformed_death_rows_never_break_a_batch(tmp_path: Path) -> None:
+    """非 dict 行、非 list 的 deaths 都跳过，合法行照旧进汇总。"""
+    log = [
+        {"timestamp": "t1", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": [
+             {"player_seat": 3, "cause": "wolf_kill", "round_number": 1},
+             "junk", 7, None,
+         ]}},
+        {"timestamp": "t2", "round": 1, "phase": "dawn", "operation": "night_deaths",
+         "data": {"deaths": "junk"}},
+    ]
+    _write_lines(tmp_path / "games" / "gm" / "game.log", log)
+
+    summary = build_game_summary(str(tmp_path), "gm")
+
+    assert summary["rounds"]["1"]["deaths"] == [
+        {"player_seat": 3, "cause": "wolf_kill", "round_number": 1},
+    ]
+
+
 def test_write_and_round_trip(tmp_path: Path) -> None:
     _seed_game(tmp_path)
 

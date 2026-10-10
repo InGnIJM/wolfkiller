@@ -1910,7 +1910,7 @@ def test_public_reasoning_event_rejects_malformed_records(event_type, payload):
         ("WITCH_THOUGHT", {"seat": 1, "text": 7}),
         ("WITCH_THOUGHT", {"seat": 1, "text": "t", "extra": True}),
         ("SEER_THOUGHT", {"seat": 1, "text": ""}),
-        ("SEER_THOUGHT", {"seat": 1, "text": "t" * 201}),
+        ("SEER_THOUGHT", {"seat": 1, "text": 7}),
         ("SEER_THOUGHT", {"seat": 1, "text": "t", "extra": True}),
         ("WOLF_VOTE", "not-a-dict"),
         ("WOLF_VOTE", {"seat": 0, "target_seat": 2, "reasoning": "r"}),
@@ -2139,6 +2139,31 @@ async def test_get_game_logs_serializes_staged_night_events_end_to_end(monkeypat
     }
     assert events[3]["payload"] == {"round_number": 1, "seat": 3, "text": "考虑救人"}
     assert events[4]["payload"] == {"round_number": 1, "seat": 4, "text": "查验2号"}
+
+
+def test_replay_keeps_a_long_wolf_chat_message() -> None:
+    """狼聊没有长度契约：400 字的一条必须原样回放，而不是被静默丢掉。
+
+    文件回放曾按 200 字丢行（`PublicWolfChatMessageResponse` 也写着 200），而
+    观众投影一直是无上限的 —— 同一事件在两条公开路径上给出不同内容。近 40 局
+    的狼聊里有 39% 超过 200 字，所以这条丢的是大多数。
+    """
+    long_text = "狼" * 400
+    record = {
+        "timestamp": "2026-01-01T00:00:01Z", "round": 1, "phase": "night",
+        "operation": "audience_action", "seat": None,
+        "data": {"event_type": "WOLF_CHAT_MESSAGE", "payload": {"seat": 1, "text": long_text}},
+    }
+
+    projected = game_routes._public_operation_events(record)
+    assert projected == [{
+        "event_type": "wolf_chat_message",
+        "payload": {"round_number": 1, "seat": 1, "text": long_text},
+    }]
+    # 公开 DTO 必须接受同一份载荷：只改一端会让 /logs 从「静默丢」变成 500。
+    replay = game_routes._public_replay_events([], [record])
+    response = GameLogsResponse(game_id="g", events=replay)
+    assert response.events[0].payload.text == long_text
 
 
 @pytest.mark.asyncio

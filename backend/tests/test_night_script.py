@@ -39,17 +39,33 @@ def test_every_first_point_role_declares_a_distinct_opening_line() -> None:
 
 
 def test_roles_outside_that_point_stay_silent() -> None:
-    """夜间旁白只覆盖首个调度点：预言家/女巫的窗口由导演自己播报。"""
+    """首个调度点之外只有「共享查验点」用角色台词。
+
+    查验点（`NIGHT_SEER_ACTION`）由预言家 / 纯白之女 / 狼巫 / 石像鬼共用，用药点
+    （`NIGHT_WITCH_ACTION`）由女巫 / 狼美人共用，所以这些角色各自声明台词（否则没有
+    预言家的板子会听到「预言家请睁眼」、只有狼美人的板子会听到「女巫请睁眼」，
+    2026-10-07 复盘 3.3）。女巫那句依赖当晚刀口、狼刀那句由引擎自己播，两者都不声明
+    —— 节拍只属于没声明台词的角色。
+    """
     snapshot = builtin_registry.freeze()
-    for role_id in ("wolf-killer-seer", "wolf-killer-witch", "wolf-killer-werewolf"):
+    for role_id in ("wolf-killer-witch", "wolf-killer-werewolf"):
         assert snapshot.require(role_id).opening_narration == ()
+    for role_id in (
+        "wolf-killer-seer", "wolf-killer-pure-white", "wolf-killer-wolf-witch",
+        "wolf-killer-gargoyle", "wolf-killer-wolf-beauty",
+    ):
+        title, text = snapshot.require(role_id).opening_narration
+        assert title and text
 
 
 def test_the_director_table_no_longer_carries_role_openings() -> None:
     """角色开眼旁白归角色自己声明，导演表只留引擎拥有的节拍。"""
     import pytest
 
-    assert NightDirector.narration("wolf_open")[0] == "天黑请闭眼"
+    # 夜幕开场与狼人开眼是两个节拍：「天黑请闭眼」由 stage 0 播（先于任何角色
+    # 台词），狼人那句只属于狼队讨论窗口。
+    assert NightDirector.narration("night_open")[0] == "天黑请闭眼"
+    assert NightDirector.narration("wolf_open")[0] == "狼人请睁眼"
     assert NightDirector.narration("pack_sealed")[0] == "狼人阵营被封印"
     with pytest.raises(ValueError):
         NightDirector.narration("guard_open")

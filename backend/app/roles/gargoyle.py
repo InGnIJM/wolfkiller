@@ -151,6 +151,10 @@ GARGOYLE_SPEC = hidden_wolf_role_spec(
     extra_contracts=(GARGOYLE_CHECK_CONTRACT,),
     extra_effects=GARGOYLE_CHECK_CONTRACT.allowed_effects,
     initial_private_data={"checked_seats": (), ROLE_CHECK_NAMESPACE: ()},
+    # The identity-check point is shared (seer / pure white / wolf witch / this),
+    # so every skill sitting on it declares its own line; the engine's beat is
+    # only for a role that declares none.
+    opening_narration=("石像鬼请睁眼", "请查验一名存活玩家的具体身份。"),
     instructions=(
         "你是石像鬼（狼人阵营，但**不属于狼窝**）：你不参与狼队的夜间讨论与狼刀投票，"
         "其他狼也不知道你是谁，你同样看不到他们是谁——你只知道场上还剩几只狼。"

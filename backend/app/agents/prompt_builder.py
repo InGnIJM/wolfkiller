@@ -5,7 +5,7 @@ from app.agents.prompt_renderer import PromptRenderer
 from app.agents.state_filter import StateFilter
 from app.agents.game_rules import DAY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from app.core.conversation_log import ConversationLog
-from app.core.sheriff_flow import off_badge_seats
+from app.core.sheriff_flow import off_badge_seats, public_alive_seats, public_dead_seats
 from app.core.vote_service import eligible_exile_targets
 from app.core.wolf_pack import in_wolf_pack
 from app.models.conversation import ConversationScope
@@ -139,8 +139,8 @@ class PromptBuilder:
             self._xml_record("public_statement", record, 200)
             for record in current_public
         ) or "(none)"
-        alive_seats = json.dumps(sorted(state.alive_players()), separators=(",", ":"))
-        dead_seats = json.dumps(sorted(state.dead_players()), separators=(",", ":"))
+        alive_seats = json.dumps(list(public_alive_seats(state)), separators=(",", ":"))
+        dead_seats = json.dumps(list(public_dead_seats(state)), separators=(",", ":"))
         compact_view = {
             "resources": view.get("resources") or {},
             "facts": {
@@ -272,7 +272,7 @@ class PromptBuilder:
 
     @staticmethod
     def _format_alive_players(state: GameState) -> str:
-        alive = state.alive_players()
+        alive = public_alive_seats(state)
         seats = "、".join(f"{seat}号" for seat in alive) or "无"
         return f'<alive_count value="{len(alive)}"/> {seats}'
 
@@ -280,7 +280,8 @@ class PromptBuilder:
     def _format_dead_players(state: GameState) -> str:
         specs = builtin_registry.freeze().specs
         labels = []
-        for seat, player in state.dead_players().items():
+        for seat in public_dead_seats(state):
+            player = state.players[seat]
             label = f"{seat}号"
             if player.revealed_role:
                 try:
@@ -606,7 +607,7 @@ class PromptBuilder:
         ) or "无"
         return (
             f"- 警上玩家（本局曾上警）：{on_badge}\n"
-            f"- 警下玩家（开选时存活且从未上警）：{off_badge_text}\n"
+            f"- 警下玩家（开选时在场且从未上警）：{off_badge_text}\n"
         )
 
     @staticmethod
@@ -616,7 +617,8 @@ class PromptBuilder:
             return ""
         return (
             "- 警上/警下是固定事实，以上方名单为唯一依据：警上=本局实际上警的座位，"
-            "警下=开选时存活且从未上警的座位。开选前已死亡的座位不在这两份名单里。"
+            "警下=开选时在场且从未上警的座位。竞选先于公布死讯，首夜出局的座位当时"
+            "同样上警或投票，因此照旧留在名单里。"
             "不得凭印象把警下玩家说成警上；"
             "警下玩家本来就不在竞选发言名单里，不得因其未在竞选阶段发言而质疑其身份。\n"
         )

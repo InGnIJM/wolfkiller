@@ -137,6 +137,32 @@ def test_execute_v2_point_forwards_a_slot_only_when_requested() -> None:
     assert scheduler.calls == ["", "r1-s2"]
 
 
+def test_execute_v2_point_forwards_deferred_event_types_only_when_requested() -> None:
+    """夜死批次的反应窗口延后时，调度点必须收到那份「不在这里开窗」的清单。"""
+    class DeferScheduler:
+        def __init__(self) -> None: self.calls = []
+        def run_point(self, state, schedule_point, *, slot="", defer_event_types=()):
+            self.calls.append((slot, defer_event_types)); return point()
+
+    scheduler = DeferScheduler()
+    pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+    pipeline.execute_v2_point(GameState("g"), SchedulePoint.NIGHT_COMMIT)
+    pipeline.execute_v2_point(
+        GameState("g"), SchedulePoint.NIGHT_COMMIT,
+        defer_event_types=("PLAYER_DIED",),
+    )
+    assert scheduler.calls == [("", ()), ("", ("PLAYER_DIED",))]
+
+    with pytest.raises(TypeError, match="defer_event_types"):
+        pipeline.execute_v2_point(
+            GameState("g"), SchedulePoint.NIGHT_COMMIT, defer_event_types="PLAYER_DIED",
+        )
+    with pytest.raises(TypeError, match="defer_event_types"):
+        pipeline.execute_v2_point(
+            GameState("g"), SchedulePoint.NIGHT_COMMIT, defer_event_types=(1,),
+        )
+
+
 def test_observe_v2_is_pure_repeatable_and_never_executes_scheduler() -> None:
     scheduler = FakeScheduler(point())
     pipeline = RolePipeline(PipelineMode.V2, None, scheduler)

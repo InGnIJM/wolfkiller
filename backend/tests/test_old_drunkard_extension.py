@@ -34,6 +34,13 @@ DRUNKARD, VILLAGER, WOLF, HUNTER = (
 )
 
 
+def _public_system_messages(engine) -> list[str]:
+    return [
+        record.content for record in engine.conversation_log.get_public()
+        if record.speaker_seat is None
+    ]
+
+
 def test_spec_marks_immunity_and_delay_without_any_contract() -> None:
     assert OLD_DRUNKARD_SPEC.role_id == DRUNKARD
     assert OLD_DRUNKARD_SPEC.camp_id == "good"
@@ -320,6 +327,53 @@ def test_a_frozen_mark_still_clones_into_a_plain_set(tmp_path) -> None:
 
     assert type(cloned.statuses[1]) is set
     assert cloned.statuses[1] == {DELAYED_DEATH_STATUS}
+
+
+@pytest.mark.asyncio
+async def test_a_delayed_death_is_announced_in_the_public_record(tmp_path) -> None:
+    """延迟落地的死亡必须有公开公告。
+
+    夜死批次、白天中断与放逐各写一条系统消息，延迟死亡（老酒鬼的毒伤/中枪、
+    猎魔人的狩猎）从前一条都没有：公开记录从「全场归票 2 号」直接跳到没有 2 号的
+    票型，只有权威状态的「已出局玩家」里能看出他没了。5 次历史样本全如此。
+    """
+    engine = _engine(tmp_path, "drunkard-announce")
+    engine.state._pipeline_runtime.pending_damage = (
+        {"target": 1, "amount": 1, "cause": "poison"},
+    )
+    engine._pipeline_scheduler.settle_pending(engine.state)
+
+    reports = await engine._resolve_delayed_deaths()
+
+    assert [(item.player_seat, item.cause) for item in reports] == [(1, "poison")]
+    assert _public_system_messages(engine) == ["1号玩家出局。"]
+
+
+@pytest.mark.asyncio
+async def test_a_delayed_batch_announces_every_seat_once(tmp_path) -> None:
+    """一批多死时只写一条公告，座位列全。"""
+    engine = _engine(tmp_path, "drunkard-announce-batch")
+    runtime = engine.state._pipeline_runtime
+    runtime.statuses[1] = {POISONED_STATUS, DELAYED_DEATH_STATUS}
+    runtime.statuses[7] = {WOUNDED_STATUS, DELAYED_DEATH_STATUS}
+
+    reports = await engine._resolve_delayed_deaths()
+
+    assert sorted(item.player_seat for item in reports) == [1, 7]
+    assert _public_system_messages(engine) == ["1号、7号玩家出局。"]
+
+
+@pytest.mark.asyncio
+async def test_the_hunt_path_is_announced_by_the_same_step(tmp_path) -> None:
+    """hunt 与毒伤走同一条公告路径（引擎只认通用状态，不认角色）。"""
+    engine = _engine(tmp_path, "hunt-announce")
+    runtime = engine.state._pipeline_runtime
+    runtime.statuses[6] = {"hunted", DELAYED_DEATH_STATUS}
+
+    reports = await engine._resolve_delayed_deaths()
+
+    assert [(item.player_seat, item.cause) for item in reports] == [(6, "hunt")]
+    assert _public_system_messages(engine) == ["6号玩家出局。"]
 
 
 @pytest.mark.asyncio

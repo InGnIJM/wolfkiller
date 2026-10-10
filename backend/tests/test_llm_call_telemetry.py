@@ -15,7 +15,7 @@ from app.models.contracts import ActionRequest
 from app.models.game import GamePhase, GameState, PlayerState
 from app.roles.base import BaseRole
 from app.roles.registry import builtin_registry
-from app.services.game_service import _log_night_llm_telemetry
+from app.services.game_service import _log_llm_telemetry
 
 
 class ModelStub:
@@ -413,7 +413,7 @@ class TestNightTelemetry:
 
         logger = GameLogger(data_dir=str(tmp_path))
 
-        _log_night_llm_telemetry(
+        _log_llm_telemetry(
             logger, "g1", 2, 3,
             tool_name="werewolf_discussion", model_id="deepseek-x",
             prompt_chars=2500, elapsed_ms=3200,
@@ -432,7 +432,7 @@ class TestNightTelemetry:
     def test_error_record_carries_failure_code(self, tmp_path: Path):
         logger = GameLogger(data_dir=str(tmp_path))
 
-        _log_night_llm_telemetry(
+        _log_llm_telemetry(
             logger, "g1", 2, 3,
             tool_name="werewolf_kill", model_id="deepseek-x",
             prompt_chars=1800, parse_result="error",
@@ -449,10 +449,10 @@ class TestNightTelemetry:
             def log_llm_call(self, *args, **kwargs):
                 raise RuntimeError("disk full")
 
-        _log_night_llm_telemetry(
+        _log_llm_telemetry(
             BrokenLogger(), "g1", 1, 1,
             tool_name="werewolf_kill", model_id="m", prompt_chars=10,
             parse_result="ok",
         )
 
-        assert any("wolf llm telemetry" in message for message in caplog.messages)
+        assert any("llm telemetry" in message for message in caplog.messages)

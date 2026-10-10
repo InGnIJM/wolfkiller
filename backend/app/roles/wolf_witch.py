@@ -153,6 +153,7 @@ WOLF_WITCH_SPEC = RoleSpec(
     role_id="wolf-killer-wolf-witch",
     display_name="Wolf Witch",
     camp_id="werewolf",
+    opening_narration=("狼巫请睁眼", "请查验一名非狼阵营玩家的具体身份；第二夜起验中纯白之女即当夜处决。"),
     contracts=(WEREWOLF_KILL_CONTRACT, WOLF_WITCH_CHECK_CONTRACT),
     initial_private_data={ROLE_CHECK_NAMESPACE: ()},
     allowed_effects=frozenset({

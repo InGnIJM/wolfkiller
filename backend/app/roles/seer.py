@@ -111,6 +111,10 @@ SEER_SPEC = RoleSpec(
     role_id="wolf-killer-seer",
     display_name="Seer",
     camp_id="good",
+    # The identity-check point is shared, so every skill sitting on it declares
+    # its own line; the driver's beat is only the fallback for a role that does
+    # not (it names the Seer, which such a board may not even have).
+    opening_narration=("预言家请睁眼", "请查验一名玩家的身份。"),
     schema_version=2,
     contracts=(ActionContract(
         contract_id="seer_check",

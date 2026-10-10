@@ -564,14 +564,19 @@ class TestSchemas:
         assert PublicNarrationResponse(
             round_number=1, title="天" * 100, text="文" * 200,
         ).text == "文" * 200
+        # Wolf chat / thought text has no length bound: the audience projection
+        # serves it unbounded, so the file replay must accept it too.
+        assert len(PublicWolfChatMessageResponse(
+            round_number=1, seat=1, text="文" * 400,
+        ).text) == 400
         assert PublicWolfChatMessageResponse(
             round_number=1, seat=1, text="文" * 200,
         ).seat == 1
-        assert PublicWitchThoughtResponse(
-            round_number=1, seat=1, text="文" * 200,
-        ).round_number == 1
+        assert len(PublicWitchThoughtResponse(
+            round_number=1, seat=1, text="文" * 400,
+        ).text) == 400
         assert PublicSeerThoughtResponse(
-            round_number=1, seat=1, text="文" * 200,
+            round_number=1, seat=1, text="文" * 400,
         ).round_number == 1
         assert PublicWolfVoteResponse(
             round_number=1, seat=1, target_seat=None, reasoning="r" * 500,
@@ -586,11 +591,9 @@ class TestSchemas:
             (PublicNarrationResponse, {"round_number": 1, "title": "t", "text": "t" * 201}),
             (PublicWolfChatMessageResponse, {"round_number": 1, "seat": 0, "text": "t"}),
             (PublicWolfChatMessageResponse, {"round_number": 1, "seat": 1, "text": ""}),
-            (PublicWolfChatMessageResponse, {"round_number": 1, "seat": 1, "text": "t" * 201}),
             (PublicWolfVoteResponse, {"round_number": 1, "seat": 1, "target_seat": 0, "reasoning": "r"}),
             (PublicWolfVoteResponse, {"round_number": 1, "seat": 1, "target_seat": 2, "reasoning": "r" * 501}),
             (PublicWitchThoughtResponse, {"round_number": 1, "seat": 0, "text": "t"}),
-            (PublicWitchThoughtResponse, {"round_number": 1, "seat": 1, "text": "t" * 201}),
             (PublicSeerThoughtResponse, {"round_number": 1, "seat": 0, "text": "t"}),
             (PublicSeerThoughtResponse, {"round_number": 1, "seat": 1, "text": ""}),
         ],

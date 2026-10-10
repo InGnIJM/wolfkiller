@@ -332,7 +332,11 @@ class PublicNarrationResponse(_PublicResponse):
 class PublicWolfChatMessageResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
-    text: Annotated[str, Field(min_length=1, max_length=200)]
+    #: No length bound: wolf chat is free model text and the audience projection
+    #: serves it unbounded (`AudienceEventResponse.payload` is an open dict). The
+    #: old 200-char cap made the file replay silently drop every longer message
+    #: (39% of them in a 40-game sample) while the live stream kept them.
+    text: Annotated[str, Field(min_length=1)]
     #: 该次发言给出的次日计划；旧日志里没有这个字段，所以是可选的。
     day_plan: Optional[Annotated[str, Field(min_length=1, max_length=400)]] = None
 
@@ -350,13 +354,15 @@ class PublicWolfVoteResponse(_PublicResponse):
 class PublicWitchThoughtResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
-    text: Annotated[str, Field(min_length=1, max_length=200)]
+    #: Same contract as the wolf chat text: unbounded, matching the audience
+    #: projection. Both share one projector branch, so they share the bound.
+    text: Annotated[str, Field(min_length=1)]
 
 
 class PublicSeerThoughtResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
-    text: Annotated[str, Field(min_length=1, max_length=200)]
+    text: Annotated[str, Field(min_length=1)]
 
 
 class PublicExileCancelledResponse(_PublicResponse):

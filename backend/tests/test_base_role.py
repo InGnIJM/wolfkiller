@@ -515,6 +515,11 @@ class TestBaseRoleProperties:
         state.players = {1: PlayerState(1, "wolf-killer-villager", "good", is_alive=False)}
         valid, reason = role._validate_sheriff_campaign(state)
         assert valid is False and "已出局" in reason
+        # 首夜被刀但死讯尚未公布的座位照常竞选（官方：竞选在公布死讯之前）。
+        state.death_history = [DeathReport(1, "wolf_kill", 1)]
+        valid, _reason = role._validate_sheriff_campaign(state)
+        assert valid is True
+        state.death_history = []
         state.players[1].is_alive = True
         state.phase = GamePhase.SPEECH
         valid, reason = role._validate_sheriff_campaign(state)

@@ -26,9 +26,7 @@ from pathlib import Path
 import pytest
 
 from app.core.night_settlement import _DELAYED_DEATH_CAUSES, _DELAY_CAUSES
-from app.core.sheriff_flow import (
-    _POST_ELECTION_DEATH_CAUSES, _PRE_ELECTION_DEATH_CAUSES,
-)
+from app.core.sheriff_flow import _ANNOUNCED_IMMEDIATELY
 from app.models.actions import _DAYTIME_LAST_WORDS_CAUSES
 from app.models.game import GamePhase
 from app.models.values import DeathCause, WinReason
@@ -80,29 +78,32 @@ def test_the_vocabulary_stays_plain_strings_on_the_wire() -> None:
 def test_every_rule_subset_stays_inside_the_catalogue() -> None:
     """A rule that lists causes must not be able to invent one."""
     assert set(_SHOOT_REASONS) <= DEATH_CAUSES
-    assert set(_PRE_ELECTION_DEATH_CAUSES) <= DEATH_CAUSES
+    assert set(_ANNOUNCED_IMMEDIATELY) <= DEATH_CAUSES
     assert set(_DELAY_CAUSES) <= DEATH_CAUSES
     assert set(_DELAYED_DEATH_CAUSES.values()) <= DEATH_CAUSES
     assert set(_DAYTIME_LAST_WORDS_CAUSES) <= DEATH_CAUSES
     assert _DUEL_CAUSE in DEATH_CAUSES
 
 
-def test_pre_and_post_election_death_causes_partition_the_catalogue() -> None:
-    """开选前/后的死因白名单必须恰好划分整个目录。
+def test_the_immediately_announced_causes_are_exactly_the_day_ones() -> None:
+    """「当场公布」的死因白名单只列白天的死因，其余一律算昨夜死亡。
 
-    子集门禁只能抓「凭空发明一个死因」，抓不到「漏掉一个」：`charm` 漏在开选前
-    白名单里时，首夜被毒的狼美人带走的殉情者会被竞选提示词写成「警下、有投票
-    权」，而所有子集断言依然全绿。骑士决斗只发生在全体发言之后，开选前不可能
-    出现，因此显式排除。
+    这份名单从「开选前死因白名单」翻转成了「当场公布白名单」：旧写法漏掉
+    `verify_kill` / `hunt` / `dance` 时，首夜被纯白处决、被猎魔人带走或死于舞池的
+    座位会被竞选提示词写成「警下、有投票权」（所有子集断言依然全绿）。翻转之后
+    「漏掉」在结构上不可能发生 —— 只有显式列出的白天死因不进夜死批次。
+
+    夜间响应窗口（夜死座位开的枪、以及它触发的殉情）在死讯公布之后才跑，所以
+    它们的死因同样属于「当场公布」。
     """
-    # 显式排除项都是「第 2 夜起才可能出现」的死因：竞选只发生在第 1 夜之后，
-    # 所以它们既不属于「昨夜死亡」也不属于「开选后死亡」，而是根本不可能出现。
-    assert (
-        _PRE_ELECTION_DEATH_CAUSES | _POST_ELECTION_DEATH_CAUSES
-        | {"knight_duel", "verify_kill", "hunt", "dance"}
-        == DEATH_CAUSES
+    assert _ANNOUNCED_IMMEDIATELY == {
+        "exile", "self_explode", "knight_duel",
+        "hunter_shot", "wolf_king_shot", "charm",
+    }
+    # 夜死批次（补集）必须仍然包含首夜会真实出现的死因。
+    assert {"wolf_kill", "poison", "reflect", "dream_death"} <= (
+        DEATH_CAUSES - _ANNOUNCED_IMMEDIATELY
     )
-    assert not (_PRE_ELECTION_DEATH_CAUSES & _POST_ELECTION_DEATH_CAUSES)
 
 
 FRONTEND_LABELS = (
