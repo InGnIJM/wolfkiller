@@ -16,7 +16,7 @@
 | P2 | 迁移 `_command_provider` 与 `_night_turn`/`_night_invoke` | ⬜ 未开始（三条路已先回传 usage，见下） | — |
 | P3 | 迁移 `durable_speak` / `durable_request_action`（含流式与投票 repair） | ⚠️ 成果已落、梯子未迁移 | 三条路回传 usage（`BaseRole._record_usage`）；`durable_speak` 修回 `on_chunk` 转发（生产上流式此前静默失效）。**梯子留在 `roles/base.py`**：组件只有 `kind` 没有 attempt 序号、没有 strict→JSON→压缩提示的传输升级、`timeout_type` 在任何路径都只能是 `None`、capture 在组件内 flush 与「先过消费闸门再 flush」的次序冲突（audit G2/G4/G6/G7）—— 硬搬会变成组件 + 角色两份梯子 |
 | P4 | 降级策略统一（`exhausted_bucket` 接管 6 处手写默认值） | ⚠️ 决策点已接、六处尚未全部改走工厂 | 一次性契约（`per_game_limit == 1`）耗尽改为可恢复暂停：`DecisionPaused` / `Scheduler._command` 放行 / 账本记 `unknown` / 监听器落 `paused` / 同点只暂停一次。`_pause_once_or_degrade` 目前只接在 `_command_provider` 的兜底分支；夜间导演、白天弃票、警长票仍是各自手写的默认值（行为与 `exhausted_bucket` 一致，但没有统一走工厂） |
-| P5 | 可见性与口径（账本 `outcome` → 报表 / `TECHNICAL_ABSTAIN` 覆盖警长票 / 投影字段门禁） | ⚠️ 部分 | 已落：报告保留窗口、真实 `llm_retry_rate`、回放 DTO 门禁补可选键样本断言。未落：账本 `call` 信封 → 报表的 `degraded` 类（要等 P2/P3 迁移把信封写进生产行）、警长票失败可见性（新观众事件）、技术弃票按票种统计 |
+| P5 | 可见性与口径（账本 `outcome` → 报表 / `TECHNICAL_ABSTAIN` 覆盖警长票 / 投影字段门禁） | ⚠️ 部分 | 已落：报告保留窗口、真实 `llm_retry_rate`、回放 DTO 门禁补可选键样本断言。**2026-10-10 补记**：技术弃票按票种统计已落（`requests.votes.{exile,sheriff}`，认 receipt 不认请求状态，`METRIC_VERSION` → v4；见 `docs/notes/2026-10-10-known-unfixed-and-metric-leftovers.md`）。未落：账本 `call` 信封 → 报表的 `degraded` 类（要等 P2/P3 迁移把信封写进生产行）、警长票失败可见性（新观众事件） |
 
 > **2026-10-09 补充（P2–P5 状态不变，但迁移时必须保留下面两条）**：在制品「降级动作自报家门」
 > 已随 `503c92a` 提交，评测口径的三处有界修复随 `410c97f` 提交。与本计划直接相关的两点：

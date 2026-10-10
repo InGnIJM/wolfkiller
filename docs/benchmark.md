@@ -13,7 +13,7 @@
 | 评测层（仓库内 `scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v3 JSON 含决策质量**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（8 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v3 JSON 含决策质量**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
@@ -66,17 +66,17 @@ REST 资源为：`POST/GET /api/benchmarks`、`GET /api/benchmarks/{id}`、`DELE
 
 ## 指标定义
 
-API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 `v3`（v3 = 在 v2 基础上加入 `summary.decision` 决策质量段；命中率与样本量都进 digest，所以对局的决策明细变化会重算报告）。digest 对四张冻结事实表**加各局 summary**做规范 JSON 排序后计算，因此数据库行顺序、字典键顺序与 summary 传入顺序都不影响同一输入的报告；迟到的 token 用量写回会改变 digest 并生成新报告。
+API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 `v4`（v3 = 在 v2 基础上加入 `summary.decision` 决策质量段；**v4 = 票类指标按票种拆分、补新角色命中率、样本不足时不再报 `samples: 2000`、新增 `summary.coverage` 板型覆盖**；命中率与样本量都进 digest，所以对局的决策明细变化会重算报告）。口径变化必须 bump：报告缓存按 `(run_id, metric_version, input_digest)` 命中，不 bump 会继续返回旧形状；`request_report` 首次轮询还可能拿到上一次的旧版本报告，可用 `POST /api/benchmarks/{id}/report/rebuild` 强制重建。digest 对四张冻结事实表**加各局 summary**做规范 JSON 排序后计算，因此数据库行顺序、字典键顺序与 summary 传入顺序都不影响同一输入的报告；迟到的 token 用量写回会改变 digest 并生成新报告。
 
 ### 当前原生报告口径
 
 - `games.total` 是能从 benchmark 条目关联到数据库对局的数量；`games.completed` 仅计有明确 winner 的对局。阵营胜率分母是 `completed`，不是计划局数；平均轮数/有效耗时各自只使用存在且非负的值。座位/角色胜率的分母是完成对局中该座位或角色具有可判定阵营的出现次数。
-- `requests.total` 是全部持久化逻辑模型请求。成功、显式弃权和失败互斥分类，三种 rate 都以 `requests.total` 为分母；`requests.unknown` 单独给出进程中断后仍待恢复的请求数；没有请求时 rate 为 `null`。
+- `requests.total` 是全部持久化逻辑模型请求。成功、显式弃权和失败互斥分类，三种 rate 都以 `requests.total` 为分母；`requests.unknown` 单独给出进程中断后仍待恢复的请求数；没有请求时 rate 为 `null`。**票类指标按票种拆分**：`requests.votes.exile` 与 `requests.votes.sheriff` 各给 terminal / technical / voluntary / failed 与自己的技术弃票率 —— 两种票的 `action_position` 都含 `vote`，混在一个分母里读不出「谁在弃票」（放逐 8411 张票里技术弃票 2864、自愿 157；警长 859 张里自愿 `pass` 7、失败 45）。技术弃票认**票的 receipt**（放逐票的命令嵌在 `normalized_result.command` 里，带 `technical_failure_code`），不认请求状态：只看 `status=failed` 时分子只有 67，低估约 43 倍。扁平键 `technical_abstained` / `terminal_votes` / `technical_abstain_rate` 保留为两种票的合计。
 - 延迟分位数只以具有非负 `elapsed_ms` 的模型尝试为分母，成功与失败尝试都可进入。`attempts.token_usage` 提供 `known_*_tokens`、已知/未知 attempt 数与 `completeness_rate`；旧的 `known_tokens`、`unknown_usage_count` 和 `usage_completeness_rate` 字段继续保留。未知用量不是 0，不能用已知合计除以全部尝试推算平均成本。
-- `model_performance` 根据冻结座位模型分配和终局玩家真值，分别按模型×角色、模型×阵营给出样本数、胜局数和胜率。缺少 winner、座位模型或玩家阵营的记录不会被推断。
+- `model_performance` 根据冻结座位模型分配和终局玩家真值，分别按模型×角色、模型×阵营给出样本数、胜局数和胜率。缺少 winner、座位模型或玩家阵营的记录不会被推断。**每一行带 `not_an_ab: true`**：每个座位是一个独立样本，座位/板型/阵营开局随机分配，同批对局被切成多个切片 —— 这不是模型 A/B 对比，评测页表头也这么写。
 - `data_quality.interruptions` 汇总对局中断次数，`recovery_retries` 汇总已消费的恢复重试授权，`recovery_attempts` 统计恢复代次中实际开始的 provider attempt。
 - paired regression 只纳入 baseline 与 candidate 都有可判定 score 的完整 pair。每个 pair 先求两侧平均，再计算 `candidate - baseline`；`pair_count` 是有效 pair 数，缺一侧的 pair 不进入均值或区间。
-- 95% cluster bootstrap 的抽样单位是完整 pair（同一 pair 的两侧始终一起保留），对 pair difference 有放回抽样 2,000 次，固定种子 1729，并取 percentile 区间。它控制 pair 内相关性和结果可复现性；pair 为 0 时上下界为 `null`，小样本区间也不应当作显著性证明。
+- 95% cluster bootstrap 的抽样单位是完整 pair（同一 pair 的两侧始终一起保留），对 pair difference 有放回抽样 2,000 次，固定种子 1729，并取 percentile 区间。它控制 pair 内相关性和结果可复现性；pair 为 0 时上下界为 `null`，小样本区间也不应当作显著性证明。**`samples` 是真正抽到的次数**：单 block 无法重采样 → `0` 并带 `insufficient_blocks: true`；空 pair → `0` 并带 `insufficient_pairs: true`（从前这两种情形都照写配置里的 2000，`null` 区间读起来像算过的）。
 
 下列旧 `summary.json` 聚合指标用于兼容导出，分母另列如下。
 
@@ -96,6 +96,8 @@ API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 
 - 狼刀命中神职率：`WEREWOLF_KILL` 目标为神职（预言家/女巫/猎人/守卫）的比例。
 - 好人投票命中率 / 弃票率：好人阵营座位投票目标为狼人的比例 / 弃票比例。
 - 放逐命中狼率 / 误伤神职率：被放逐座位为狼人 / 神职的比例。**票型带 `weighted_counts`（半票加权）**：放逐结果按 `ballot_weight` 判定（警长 3、其余 2），只看人头数 `counts` 会在有警长时把「谁出局」读成平局甚至反超；两个数都进观众流与回放。
+- **板型覆盖（`summary.coverage`）**：`boards` 列出这批实际打过的板型（按每局 `summary.roles` 归并，含局数），`seer_present` 标明有没有预言家 —— 评测板型由 run 的 scenario 固定，池化指标旁边从前没有任何地方能看出它出自哪种配置，「单一板型且没有预言家」只能靠人翻 scenario。评测页在决策质量面板显示「板型覆盖：N 人局 × M」，无预言家时明确提示。
+- 纯白之女 / 狼巫 / 石像鬼 / 猎魔人 / 舞者 / 假面：这些角色没有专属结果事件，指标读它们的 `*_REASONING` 决策行与 `DANCE_POOL.pool_seats` / `MASK_GRANTED.in_pool`；弃权（没有目标）不算一次机会。不评分：守墓人（零契约、无模型动作）、摄梦人/噩梦之影/狼美人（没有单一「命中」定义）。
 - 狼队投票集中度：把**全部完成局**的狼票按目标座位号加总后，最多票目标的占比。混座局里座位号不代表同一身份，跨局值会接近均匀分布，**不能当协同度**。要看狼白天是否对齐，按每一轮、该轮存活狼的票面单独算集中度。
   ⚠️ 因此**评测页刻意不展示** `wolf_vote_concentration` / `wolf_vote_distinct_targets`（API 报告里仍保留，Markdown 报告在用）；页面上那一节只给其余 8 个比率与 2 个计数。
 

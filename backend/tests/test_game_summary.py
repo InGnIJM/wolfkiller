@@ -363,3 +363,38 @@ def test_rejected_actions_are_counted_per_round_not_as_slow_rules(tmp_path: Path
     assert summary["engine"]["slow_rules"] == [{
         "stage": "night_action", "label": "validation", "elapsed_ms": 12,
     }]
+
+
+def test_the_new_roles_decision_rows_carry_what_a_hit_rate_needs(tmp_path: Path) -> None:
+    """舞池与假面的关键事实要进 summary：池内座位与「是否在池内」。
+
+    其它事件的行形状逐字节不变（没带这两个键的事件不多写键），否则旧报告会因为
+    summary 变化重新 digest —— 那是期望行为，但不该由无关事件触发。
+    """
+    log = [
+        {"timestamp": "t0", "round": 0, "phase": "role_deal", "operation": "role_init",
+         "data": {"players": {"1": {"role": "wolf-killer-dancer", "camp": "good"}}}},
+        {"timestamp": "t1", "round": 2, "phase": "night", "operation": "audience_action",
+         "data": {"event_type": "DANCE_POOL",
+                  "payload": {"seat": 1, "pool_seats": [1, 2, 3], "round_number": 2}}},
+        {"timestamp": "t2", "round": 2, "phase": "night", "operation": "audience_action",
+         "data": {"event_type": "MASK_GRANTED",
+                  "payload": {"seat": 4, "target_seat": 2, "in_pool": True, "round_number": 2}}},
+        {"timestamp": "t3", "round": 2, "phase": "night", "operation": "audience_action",
+         "data": {"event_type": "PURE_WHITE_REASONING",
+                  "payload": {"seat": 5, "action_type": "check", "target_seat": 6,
+                              "reasoning": "查 6 号", "degraded": False, "thought": "…"}}},
+        {"timestamp": "t4", "round": 2, "phase": "game_over", "operation": "game_over",
+         "data": {"winner": "good", "reason": "all_wolves_dead"}},
+    ]
+    _write_lines(tmp_path / "games" / "gn" / "game.log", log)
+
+    summary = build_game_summary(str(tmp_path), "gn")
+
+    assert summary["rounds"]["2"]["night_actions"] == [
+        {"event": "DANCE_POOL", "seat": 1, "target_seat": None, "result": None,
+         "pool_seats": [1, 2, 3]},
+        {"event": "MASK_GRANTED", "seat": 4, "target_seat": 2, "result": None,
+         "in_pool": True},
+        {"event": "PURE_WHITE_REASONING", "seat": 5, "target_seat": 6, "result": None},
+    ]

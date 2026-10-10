@@ -761,3 +761,44 @@
   覆盖 378MB 的文件是灾难），正确做法是把脚本交给能访问该库的进程/机器去跑：
   `python scripts/cleanup_stale_benchmarks.py --data-dir data`（默认 dry run，`--apply` 才删，
   先取 SQLite `.backup`）。
+
+## 检查点字段集是硬约束，契约 digest 只是 drift
+- Trigger: 要给 `ActionContract` 或 `PlayerState` 加/删一个字段。Action: 先分清两类代价 ——
+  契约字段进 `to_json()`（`_json_value` 遍历所有字段，含默认值），**每个**契约的
+  `stable_digest()` 都变，`recovery_compat` 对「本局用到的契约」判 `CONTRACT_DIGEST_DRIFT`
+  （`force=true` 可续）；而 `PlayerState` 的字段集由 `checkpoint_codec._exact` **对称**校验
+  （`set(row) != names` 即抛），删字段是**硬失败**、没有 force 的余地，加字段要在 `_exact`
+  之前补 `setdefault` 垫片（config 已有先例）。所以「不可放弃」的强制走角色 hook（零 digest
+  影响），三个资源镜像只能留字段、收敛读取。
+
+## 只读不写的字段是旧档兼容桥，不是遗留垃圾
+- Trigger: 某个字段在 `app/` 里只读不写，想删掉它。Action: 先 `git log -S "<字段> = True"`
+  查它最后被谁写过，再看编解码器与回落点。`PlayerState.has_antidote/has_poison/has_gun` 的
+  最后一次写入在 `4cc79ac` 被删，同一天的 `17ff15b` 把它们做成「runtime 查不到时的回落」——
+  是**刻意**的旧档兼容桥，而且字段本身被 `_exact` 钉死，删了就解不开旧档。正确做法是收敛
+  读取路径（canonical 优先、缺失读声明）、加 AST 门禁禁止再写
+  （`tests/test_player_resource_mirrors.py`），而不是删字段。
+
+## 校验时刻 `context.degraded` 还没盖上
+- Trigger: 要在 `validate_*` hook 里区分「模型答的」与「引擎兜底的」。Action: 只读
+  `command.degraded`。`Scheduler._fallback` 是「先校验兜底命令、再 `_as_degraded(context)`」，
+  所以校验那一刻 `context.degraded` 仍是 `False`；读它会连引擎自己的兜底一起拒掉，
+  `PipelinePaused("fallback command invalid")` 直接打死整局。另一面：违例分支从前不记任何
+  东西，补一条 `action_rejected` 故障行（`game_summary` 按轮计数 `rounds.*.rejected_actions`，
+  不要塞进 `slow_rules`）才能把「模型弃权」与「provider 故障」分开。
+
+## 指标口径变了必须 bump METRIC_VERSION
+- Trigger: 改了报告里任何键集或口径。Action: bump `METRIC_VERSION` —— 报告缓存按
+  `(run_id, metric_version, input_digest)` 命中，不 bump 就继续返回旧形状；`request_report`
+  首次轮询还可能拿到上一次的旧版本报告，用 `POST /api/benchmarks/{id}/report/rebuild` 强制重建。
+  另外「样本数」要写**真正抽到的次数**：单 block 无法重采样时写 `0` + `insufficient_blocks`，
+  空 pair 写 `0` + `insufficient_pairs`，而不是照抄配置里的 2000（`null` 区间配 2000 会被读成
+  「算过」）。
+
+## 两种票共用一个分母读不出结论
+- Trigger: 要做「技术弃票率」这类票类指标。Action: 先按 `action_position` 分票种（放逐
+  `<game>:<round>:vote_casting:<vote_round>:cast_vote:v2:<seat>`、警长
+  `round:<r>:night:sheriff_vote:seat:<n>`），再认**票的 receipt** —— 放逐票的命令嵌在
+  `normalized_result["command"]` 里，外层读 `action_type` 永远为空，只认 `status=failed` 时
+  分子低估约 43 倍（实测 67 vs 2886）。修的时候**不要动全局 `_result`**（speech 的
+  `{"text": …}` 与夜间流水线顶层命令的语义会跟着变），加一个票专用的读取器。
