@@ -20,6 +20,7 @@ from app.core.sheriff_flow import (
 )
 from app.models.actions import DeathReport, VoteAction
 from app.models.game import GameConfig, GamePhase, PlayerState
+from app.services.game_summary import build_game_summary
 import app.core.game_engine as game_engine_module
 
 
@@ -51,7 +52,7 @@ class ScriptedSheriff:
         return (*self.badge, self.badge_reason)
 
 
-def _engine(*, seats=4, wolves=1, enable=True) -> GameEngine:
+def _engine(*, seats=4, wolves=1, enable=True, data_dir="data", reveal=False) -> GameEngine:
     god = 0 if seats <= wolves else 1
     config = GameConfig(
         role_counts={
@@ -60,8 +61,9 @@ def _engine(*, seats=4, wolves=1, enable=True) -> GameEngine:
             "wolf-killer-villager": max(seats - wolves - god, 0),
         },
         enable_sheriff=enable,
+        reveal_on_death=reveal,
     )
-    engine = GameEngine("sheriff-engine", config=config, event_bus=EventBus())
+    engine = GameEngine("sheriff-engine", config=config, event_bus=EventBus(), data_dir=data_dir)
     for seat in range(1, seats + 1):
         if seat <= wolves:
             role, camp = "wolf-killer-werewolf", "werewolf"
@@ -198,6 +200,48 @@ async def test_election_explode_swallows_badge_and_skips_the_day() -> None:
     assert interrupted is True
     assert engine.sm.get_state() is GamePhase.NIGHT
     assert engine.state.sheriff_office.skip_remaining_day is False
+
+
+@pytest.mark.asyncio
+async def test_an_election_explode_is_logged_as_a_death_batch(tmp_path) -> None:
+    """竞选期自爆也是一次死亡：必须落进 ``night_deaths`` 批次。
+
+    它从前只发 ``PLAYER_DIED``（总线 + 观众流），从不调 ``log_deaths``，于是
+    ``summary.json`` 的 ``rounds.*.deaths`` 与 ``/logs`` 文件回放都看不到这一死 ——
+    观众流有、两条公开路径没有。白天自爆与延迟死亡一直走 ``log_deaths``，只有竞选
+    这一支漏了。这条用例走真实竞选循环，再把写出来的 ``game.log`` 喂给真正的
+    ``build_game_summary``，所以两边任何一处回退都会红。
+    """
+    engine = _engine(wolves=2, data_dir=str(tmp_path))
+    engine._sheriff_director = ScriptedSheriff(campaign=["explode"])
+    await engine._execute_sheriff_election()
+
+    rows = [
+        json.loads(line)
+        for line in (
+            tmp_path / "games" / "sheriff-engine" / "game.log"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    batches = [row for row in rows if row["operation"] == "night_deaths"]
+    assert [row["data"]["deaths"] for row in batches] == [
+        [{"player_seat": 1, "cause": "self_explode", "round_number": 1}],
+    ]
+
+    summary = build_game_summary(str(tmp_path), "sheriff-engine")
+    assert summary["rounds"]["1"]["deaths"] == [
+        {"player_seat": 1, "cause": "self_explode", "round_number": 1},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_election_explode_reveals_its_identity_when_the_table_reveals(tmp_path) -> None:
+    """明牌局里自爆同样要公布身份：``_publish_deaths`` 对每一死都调 ``_reveal_on_death``。"""
+    engine = _engine(wolves=2, data_dir=str(tmp_path), reveal=True)
+    engine._sheriff_director = ScriptedSheriff(campaign=["explode"])
+    await engine._execute_sheriff_election()
+
+    public = [record.content for record in engine.conversation_log.get_public()]
+    assert "1号玩家出局，身份是：Werewolf。" in public
 
 
 @pytest.mark.asyncio
@@ -853,7 +897,11 @@ async def test_a_decided_night_announces_and_skips_the_election() -> None:
 
 @pytest.mark.asyncio
 async def test_an_explode_still_reads_the_night_out() -> None:
-    """竞选中自爆：自爆当场公布，夜死批次紧随其后公布（docs 口径）。"""
+    """竞选中自爆：自爆当场公布，夜死批次紧随其后公布（docs 口径）。
+
+    两条批次都要落 ``night_deaths``：自爆自己是一条（它从前不落，于是
+    ``rounds.*.deaths`` 与 ``/logs`` 都看不到这一死），夜死是另一条。
+    """
     engine = _night_engine()
     engine.event_bus.publish = AsyncMock()
     engine.game_logger.log_deaths = MagicMock()
@@ -865,7 +913,12 @@ async def test_an_explode_still_reads_the_night_out() -> None:
 
     assert engine.state.players[1].is_alive is False
     assert engine._pending_night_completion is None
-    engine.game_logger.log_deaths.assert_called_once()
+    assert [
+        call.args[2] for call in engine.game_logger.log_deaths.call_args_list
+    ] == [
+        [{"player_seat": 1, "cause": "self_explode", "round_number": 1}],
+        [{"player_seat": 4, "cause": "wolf_kill", "round_number": 1}],
+    ]
     engine._narrate.assert_awaited()
     assert engine.sm.get_state() is GamePhase.DAWN
 

@@ -1458,6 +1458,17 @@ class GameEngine:
         await self.event_bus.publish(
             BusEvent.PLAYER_DIED, game_id=self.game_id, death=death,
         )
+        self._reveal_on_death(seat)
+        # The election's self-explode is a death like any other, so it belongs in
+        # the same durable batch the night's settlement uses: without it the seat
+        # was missing from ``summary.json``'s ``rounds.*.deaths`` and from the
+        # ``/logs`` replay, and only the god-view audience stream knew it died.
+        # Written before the step's checkpoint so a crash cannot lose it; the
+        # batch is replayed as a whole, exactly like the night batch, and the
+        # summary's ``(seat, cause, round)`` de-duplication absorbs the replay.
+        self.game_logger.log_deaths(
+            self.game_id, self.state.round_number, [death.to_dict()],
+        )
         await self._durable_checkpoint(
             f"sheriff_explode:{self.state.round_number}:{seat}"
         )
