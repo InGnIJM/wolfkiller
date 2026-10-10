@@ -76,7 +76,8 @@ def _round_bucket(rounds: dict, rnd: object) -> dict:
     if bucket is None:
         bucket = {
             "speeches": [], "votes": [], "deaths": [], "night_actions": [],
-            "technical_abstains": 0, "exiled": None, "tally": {},
+            "technical_abstains": 0, "rejected_actions": 0,
+            "exiled": None, "tally": {},
         }
         rounds[key] = bucket
     return bucket
@@ -192,6 +193,13 @@ def _summarize(
                         phase_ms.get(stage, 0) + _int_or_zero(data.get("elapsed_ms"))
                     )
             elif scope == "hook":
+                if data.get("code") == "action_rejected":
+                    # The model answered something the rules forbid and the
+                    # engine stood in with the contract's fallback. Counted per
+                    # round so a report can tell a giving-up model from an
+                    # outage; the slow-rule bucket keeps only real timings.
+                    _round_bucket(rounds, rnd)["rejected_actions"] += 1
+                    continue
                 slow_rules.append({
                     "stage": data.get("stage"),
                     "label": data.get("label"),

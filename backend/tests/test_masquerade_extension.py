@@ -22,7 +22,7 @@ from app.core.role_runtime import initialize_role_resources
 from app.core.scheduler import Scheduler
 from app.models.game import Camp, GameConfig, GamePhase, GameState, PlayerState
 from app.models.pipeline import (
-    ActionCommand, ActionContext, EffectKind, SchedulePoint,
+    DEGRADED_REASONING, ActionCommand, ActionContext, EffectKind, SchedulePoint,
 )
 from app.roles.dancer import (
     DANCE_POOL_CONTRACT, DANCE_VEIL_SOURCE, DANCER_SPEC, POOLED_KEY, Dancer,
@@ -108,7 +108,22 @@ def test_a_seat_can_only_join_one_pool_per_game() -> None:
     assert validate_dance_pool(context(pooled=(5,)), command((2, 3, 4))) == ()
     violations = validate_dance_pool(context(pooled=(3,)), command((2, 3, 4)))
     assert [item.code for item in violations] == ["pool_repeat_forbidden"]
-    assert validate_dance_pool(context(pooled=(3,)), command(None, action="pass")) == ()
+
+
+def test_the_dance_cannot_be_declined_by_the_model() -> None:
+    """官方规则是「每晚必须」，而 `pass` 同时是合法动作与引擎安全阀。
+
+    引擎的兜底命令带 `degraded`（`Scheduler._fallback`），必须放行；模型自己答的
+    `pass` 不再被接受，否则「不可放弃」只是提示词里的一句话。
+    """
+    violations = validate_dance_pool(context(pooled=(3,)), command(None, action="pass"))
+    assert [item.code for item in violations] == ["dance_mandatory"]
+
+    degraded = ActionCommand(
+        action_type="pass", target_seat=None, reasoning=DEGRADED_REASONING,
+        degraded=True,
+    )
+    assert validate_dance_pool(context(pooled=(3,)), degraded) == ()
 
 
 def test_the_generic_validator_enforces_the_count_and_liveness() -> None:
@@ -264,6 +279,49 @@ def test_the_scheduler_runs_one_three_target_command_end_to_end() -> None:
     assert swept.statuses[2] == set()
     assert swept.statuses[4] == set()
     assert swept.pending_damage == ()
+
+
+def test_a_model_that_declines_the_dance_gets_the_engine_placeholder() -> None:
+    """模型答 `pass` 不再是合法决定：被拒一次、重问一次、仍拒则由引擎兜底。
+
+    `pass` 必须留在 `action_types` 里（注册表要求 fallback 属于动作集合且不能要求目标），
+    所以校验器放行的是**带 `degraded` 的**兜底命令，判据读 `command.degraded` 而不是
+    `context.degraded`（后者在校验那一刻还没盖上 —— 读错会把引擎自己的兜底也拒掉，
+    直接 PipelinePaused 打死整局）。
+    """
+    registry = dancer_registry()
+    state = GameState(
+        "g", config=GameConfig(role_counts={DANCER: 1}), phase=GamePhase.NIGHT,
+        round_number=2,
+        players={
+            1: PlayerState(1, DANCER, Camp.GOOD),
+            2: PlayerState(2, VILLAGER, Camp.GOOD),
+            3: PlayerState(3, VILLAGER, Camp.GOOD),
+            4: PlayerState(4, WOLF, Camp.WEREWOLF),
+        },
+    )
+    state._pipeline_runtime = _Runtime()
+
+    attempts: list[int] = []
+
+    def provider(request, context_, attempt):
+        attempts.append(attempt)
+        return ActionCommand(action_type="pass", target_seat=None, reasoning="今晚不跳")
+
+    scheduler = Scheduler(
+        registry, ContextProjector(), ActionValidator(), ActionResolver(),
+        EffectApplier(), provider,
+    )
+    result = scheduler.run_point(state, SchedulePoint.NIGHT_ACTION)
+
+    assert attempts == [0, 1]
+    # No pool formed: the engine's placeholder wrote nothing but a thought.
+    assert state._pipeline_runtime.private_data.get(1, {}) == {}
+    assert state._pipeline_runtime.statuses.get(2, set()) == set()
+    assert [fault["code"] for fault in result.faults] == [
+        "action_rejected", "action_rejected",
+    ]
+    assert {fault["violation"] for fault in result.faults} == {"dance_mandatory"}
 
 
 def test_a_dancer_in_the_pool_shields_its_members_through_the_write_boundary() -> None:

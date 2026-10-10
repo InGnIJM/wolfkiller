@@ -17,7 +17,9 @@ from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.night_settlement import settle
 from app.models.game import GameState
-from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
+from app.models.pipeline import (
+    DEGRADED_REASONING, ActionCommand, ActionContext, EffectKind, SchedulePoint,
+)
 from app.roles.dream_weaver import (
     DREAM_DEATH_CAUSE, DREAM_WEAVER_REVENGE_CONTRACT, DREAM_WEAVER_SPEC,
     DreamWeaver, dream_weaver_applicable, dream_weaver_revenge_applicable,
@@ -123,10 +125,26 @@ def test_applicable_is_just_liveness() -> None:
 
 def test_validation_forbids_dreaming_itself() -> None:
     assert validate_dream_weaver_action(context(), command("dream", 2)) == ()
-    assert validate_dream_weaver_action(context(), command("pass")) == ()
     assert [violation.code for violation in
             validate_dream_weaver_action(context(), command("dream", 1))] == [
         "dream_self_forbidden"]
+
+
+def test_the_weave_cannot_be_declined_by_the_model() -> None:
+    """「每晚必须指定一名梦游者，不可放弃」现在由校验器强制。
+
+    `pass` 必须留在 `action_types` 里（注册表要求 fallback 属于动作集合、且不能要求
+    目标），所以引擎兜底的 `pass` 带 `degraded` 放行，模型自己答的 `pass` 被拒。
+    """
+    assert [violation.code for violation in
+            validate_dream_weaver_action(context(), command("pass"))] == [
+        "dream_mandatory"]
+
+    degraded = ActionCommand(
+        action_type="pass", target_seat=None, reasoning=DEGRADED_REASONING,
+        degraded=True,
+    )
+    assert validate_dream_weaver_action(context(), degraded) == ()
 
 
 def test_generic_validator_requires_a_target_and_a_living_one() -> None:

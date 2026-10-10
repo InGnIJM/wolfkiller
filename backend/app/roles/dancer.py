@@ -14,7 +14,9 @@ Two things make this role unusual.
 The dance is mandatory from the second night on (the rules say 必须), but the
 registry forbids a fallback action that requires a target, so ``pass`` exists as
 the engine's safety valve and only ever fires when the model itself fails —
-exactly like the Dream Weaver's.
+exactly like the Dream Weaver's. ``validate_dance_pool`` now enforces that
+sentence: a *model-submitted* ``pass`` is a rule violation
+(``roles/mandatory.py``), while the engine's own ``degraded`` placeholder passes.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from app.models.pipeline import (
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
+from app.roles.mandatory import engine_only_fallback_violation
 
 #: The pool shield: cancels the knife only, and never the "guard + antidote"
 #: breach — the dance veil is not a guard.
@@ -63,6 +66,11 @@ def dancer_applicable(context: ActionContext) -> bool:
 def validate_dance_pool(
     context: ActionContext, command: ActionCommand,
 ) -> tuple[RuleViolation, ...]:
+    declined = engine_only_fallback_violation(
+        command, fallback="pass", code="dance_mandatory",
+    )
+    if declined:
+        return declined
     if command.action_type != "pool" or command.target_seats is None:
         return ()
     pooled = set(_pooled_seats(context))

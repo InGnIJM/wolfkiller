@@ -28,7 +28,7 @@ from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, Work
 from app.models.game import GameState
 from app.models.pipeline import (
     DEGRADED_REASONING, ActionCommand, ActionContext, ActionContract, EffectKind,
-    IssuedActionRequest, RoleSpec, SchedulePoint,
+    IssuedActionRequest, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
 
@@ -409,7 +409,34 @@ class Scheduler:
                 # (an outage fallback, not an answer) must reach the write entry
                 # as degraded too, or the accept would consume the card's quota.
                 return command, self._as_degraded(rule_context) if command.degraded else rule_context
+            self._record_rejected_action(request, violations, attempt)
         return self._fallback(state, request, context)
+
+    def _record_rejected_action(
+        self, request: IssuedActionRequest, violations: tuple[RuleViolation, ...],
+        attempt: int,
+    ) -> None:
+        """Record a rule rejection of the model's own answer.
+
+        The command is dropped and re-asked once, then replaced by the
+        contract's fallback. Without a fault row the only trace of "the model
+        answered something the rules forbid" was that fallback, which reads
+        exactly like a provider outage — so a benchmark could not tell a model
+        giving up from an engine standing in.
+        """
+        logger.warning(
+            "Action rejected: seat=%s contract=%s attempt=%d violation=%s",
+            request.actor_seat, request.contract.contract_id, attempt,
+            violations[0].code if violations else "unknown",
+        )
+        if (faults := self._faults.get()) is not None:
+            faults.append({
+                "code": "action_rejected",
+                "contract_id": request.contract.contract_id,
+                "actor_seat": request.actor_seat,
+                "attempt": attempt,
+                "violation": violations[0].code if violations else "unknown",
+            })
 
     def _fallback(self, state: GameState, request: IssuedActionRequest,
                   context: ActionContext) -> tuple[ActionCommand, ActionContext]:

@@ -328,3 +328,38 @@ def test_write_game_summary_creates_directory(tmp_path: Path) -> None:
     path = write_game_summary(str(tmp_path), "fresh", {"game_id": "fresh"})
 
     assert json.loads(Path(path).read_text(encoding="utf-8")) == {"game_id": "fresh"}
+
+
+def test_rejected_actions_are_counted_per_round_not_as_slow_rules(tmp_path: Path) -> None:
+    """模型答了规则禁止的动作 → 引擎兜底：这条故障要能数出来。
+
+    调度点从前对「回答合法但被规则拒绝」不记任何东西，故障行的唯一痕迹是兜底命令本身，
+    读起来和 provider 故障一模一样。现在按轮计数（`slow_rules` 只留真正的耗时行），
+    报表才能把「模型弃权」与「引擎代行」分开。
+    """
+    log = [
+        {"timestamp": "t0", "round": 1, "phase": "night",
+         "operation": "stage_telemetry",
+         "data": {"scope": "hook", "stage": "night_action", "code": "action_rejected",
+                  "contract_id": "dance_pool", "actor_seat": 1, "attempt": 0,
+                  "violation": "dance_mandatory"}},
+        {"timestamp": "t1", "round": 1, "phase": "night",
+         "operation": "stage_telemetry",
+         "data": {"scope": "hook", "stage": "night_action", "code": "action_rejected",
+                  "contract_id": "dance_pool", "actor_seat": 1, "attempt": 1,
+                  "violation": "dance_mandatory"}},
+        {"timestamp": "t2", "round": 1, "phase": "night",
+         "operation": "stage_telemetry",
+         "data": {"scope": "hook", "stage": "night_action", "label": "validation",
+                  "elapsed_ms": 12}},
+        {"timestamp": "t3", "round": 2, "phase": "game_over",
+         "operation": "game_over", "data": {"winner": "good", "reason": "all_wolves_dead"}},
+    ]
+    _write_lines(tmp_path / "games" / "gr" / "game.log", log)
+
+    summary = build_game_summary(str(tmp_path), "gr")
+
+    assert summary["rounds"]["1"]["rejected_actions"] == 2
+    assert summary["engine"]["slow_rules"] == [{
+        "stage": "night_action", "label": "validation", "elapsed_ms": 12,
+    }]

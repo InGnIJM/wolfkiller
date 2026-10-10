@@ -16,9 +16,10 @@ Three rules, none of which needs role-specific engine code:
   excluded.
 
 Note on "may not decline": the registry forbids a fallback action that requires
-a target (``registry.py:203``), so ``pass`` has to exist as the engine's safety
-valve. The prompt states the choice is mandatory; ``pass`` only ever appears
-when the model itself fails.
+a target (``roles/registry.py``), so ``pass`` has to exist as the engine's safety
+valve. ``validate_dream_weaver_action`` rejects a *model-submitted* ``pass``
+(``roles/mandatory.py``), so the rule is machine-checked now and not just stated
+in the prompt; the engine's own placeholder carries ``degraded`` and passes.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from app.models.pipeline import (
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
+from app.roles.mandatory import engine_only_fallback_violation
 from app.roles.target_memory import (
     is_consecutive_repeat, last_target, target_memory,
 )
@@ -56,6 +58,11 @@ def dream_weaver_applicable(context: ActionContext) -> bool:
 def validate_dream_weaver_action(
     context: ActionContext, command: ActionCommand,
 ) -> tuple[RuleViolation, ...]:
+    declined = engine_only_fallback_violation(
+        command, fallback="pass", code="dream_mandatory",
+    )
+    if declined:
+        return declined
     if command.action_type == "dream" and command.target_seat == context.actor_seat:
         return (RuleViolation(
             "dream_self_forbidden", "the Dream Weaver cannot dream itself",
