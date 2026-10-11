@@ -15,6 +15,8 @@ import Security from '@mui/icons-material/Security';
 import LocalBar from '@mui/icons-material/LocalBar';
 import Favorite from '@mui/icons-material/Favorite';
 import FavoriteBorder from '@mui/icons-material/FavoriteBorder';
+import AutoAwesome from '@mui/icons-material/AutoAwesome';
+import Air from '@mui/icons-material/Air';
 import Visibility from '@mui/icons-material/Visibility';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { INK, ROLE_COLORS } from '../../theme/tokens';
@@ -42,6 +44,8 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-wolf-beauty': { Icon: Favorite, label: '狼美人', color: ROLE_COLORS.wolf_beauty.color },
   'wolf-killer-old-drunkard': { Icon: LocalBar, label: '老酒鬼', color: ROLE_COLORS.old_drunkard.color },
   'wolf-killer-lonely-girl': { Icon: FavoriteBorder, label: '孤独少女', color: ROLE_COLORS.villager.color },
+  'wolf-killer-awakened-seer': { Icon: AutoAwesome, label: '觉醒预言家', color: ROLE_COLORS.seer.color },
+  'wolf-killer-fragrance-phantom': { Icon: Air, label: '寻香魅影', color: ROLE_COLORS.werewolf.color },
 };
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标

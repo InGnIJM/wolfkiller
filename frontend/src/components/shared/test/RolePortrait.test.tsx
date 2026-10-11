@@ -29,7 +29,7 @@ describe('RolePortrait', () => {
     // 立绘不入库，所以「没图」有两种来源：角色没登记（下面这个），或登记了但
     // 磁盘上没文件（新克隆，见 `theme.test.ts` 里对 `roleArt` 的断言）。两条
     // 路径都回退卡背 —— 卡背不是空白，叠了一层角色名。
-    const { container } = render(<RolePortrait roleId="wolf-killer-awakened-seer" width={64} />);
+    const { container } = render(<RolePortrait roleId="wolf-killer-not-a-real-role" width={64} />);
     expect(portraitImage(container)).toHaveAttribute('src', CARD_BACK);
     expect(screen.getByText('未知身份')).toBeInTheDocument();
   });
@@ -40,7 +40,7 @@ describe('RolePortrait', () => {
   });
 
   it('can turn the watermark off', () => {
-    render(<RolePortrait roleId="wolf-killer-awakened-seer" width={64} showLabel={false} />);
+    render(<RolePortrait roleId="wolf-killer-not-a-real-role" width={64} showLabel={false} />);
     expect(screen.queryByText('未知身份')).not.toBeInTheDocument();
   });
 

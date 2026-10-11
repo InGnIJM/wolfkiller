@@ -26,7 +26,7 @@ def test_public_event_catalogue_is_frozen() -> None:
         "speech", "speaking", "death", "vote", "vote_result", "winner",
         "night_action", "night_thought", "technical_abstain",
         "exile_cancelled", "self_explode", "crimson_explode",
-        "dance_pool", "mask_granted",
+        "dance_pool", "mask_granted", "fragrance_bond",
         "knight_duel", "wolf_beauty_charm", "wraith_illusion",
         "wolf_beauty_revenge",
         "wolf_chat_message", "wolf_vote",

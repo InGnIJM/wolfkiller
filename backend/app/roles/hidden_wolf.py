@@ -134,6 +134,8 @@ def hidden_wolf_role_spec(
     extra_effects: frozenset[EffectKind] = frozenset(),
     initial_private_data: Mapping[str, object] | None = None,
     opening_narration: tuple[str, str] = (),
+    bond_slot: str = "",
+    projected_facts: frozenset[str] = frozenset(),
 ) -> RoleSpec:
     """Build a hidden-wolf ``RoleSpec`` around the shared lone-kill contract.
 
@@ -157,4 +159,5 @@ def hidden_wolf_role_spec(
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
         max_count=1, instructions=instructions,
         opening_narration=opening_narration,
+        bond_slot=bond_slot, projected_facts=projected_facts,
     )

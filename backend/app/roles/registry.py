@@ -44,6 +44,8 @@ from app.roles.nightmare import NIGHTMARE_SPEC, Nightmare
 from app.roles.dancer import DANCER_SPEC, Dancer
 from app.roles.mask import MASK_SPEC, Mask
 from app.roles.lonely_girl import LONELY_GIRL_SPEC, LonelyGirl
+from app.roles.awakened_seer import AWAKENED_SEER_SPEC, AwakenedSeer
+from app.roles.fragrance_phantom import FRAGRANCE_PHANTOM_SPEC, FragrancePhantom
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
 from app.roles.awakened_wolf_beauty import (
@@ -190,6 +192,11 @@ class RoleRegistry:
             )
         if not spec.visibility_namespaces <= _VISIBLE_NAMESPACES:
             raise ValueError("unknown visibility namespace")
+        if spec.bond_slot and spec.bond_slot not in spec.initial_private_data:
+            # The queue reads the slot straight off the seat, and the projector
+            # is what turns a *declared* slot into a fact. A bond slot nobody
+            # declared would open windows for a hook that cannot see its pair.
+            raise ValueError("bond slot must be declared in initial_private_data")
         for contract in spec.contracts:
             # Several roles may share one contract (e.g. a whole camp voting
             # through the same aggregate) only when the declarations are
@@ -501,6 +508,8 @@ builtin_registry.register_pipeline(NIGHTMARE_SPEC)
 builtin_registry.register_pipeline(DANCER_SPEC)
 builtin_registry.register_pipeline(MASK_SPEC)
 builtin_registry.register_pipeline(LONELY_GIRL_SPEC)
+builtin_registry.register_pipeline(AWAKENED_SEER_SPEC)
+builtin_registry.register_pipeline(FRAGRANCE_PHANTOM_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -678,6 +687,25 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-lonely-girl", Camp.GOOD, LonelyGirl, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-awakened-seer", Camp.GOOD, AwakenedSeer, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec(
+        "wolf-killer-fragrance-phantom",
+        Camp.WEREWOLF,
+        FragrancePhantom,
+        (
+            _contract(
+                "hidden_wolf_kill",
+                GamePhase.NIGHT,
+                ("kill", "pass"),
+                frozenset({"kill"}),
+                resolution_priority=10,
+            ),
+        ),
+    )
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-gargoyle", Camp.WEREWOLF, Gargoyle, ())

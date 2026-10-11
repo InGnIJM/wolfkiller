@@ -56,7 +56,7 @@ _CONFIRMATION_CODES = frozenset({
 _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-    "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in",
+    "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in", "bond_death",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
@@ -96,6 +96,7 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WOLF_BEAUTY_REVENGE": frozenset({"seat", "target_seat", "cause", "round_number"}),
     "STATUS_ADDED": frozenset({"seat", "status", "round_number"}),
     "CRIMSON_EXPLODE": frozenset({"seat", "silenced_seats", "round_number"}),
+    "FRAGRANCE_BOND": frozenset({"seat", "target_seats", "round_number"}),
     "DANCE_POOL": frozenset({"seat", "pool_seats", "round_number"}),
     "MASK_GRANTED": frozenset({"seat", "target_seat", "in_pool", "round_number"}),
 }
@@ -160,6 +161,12 @@ _REASONING_EVENT_TYPES = {
     ),
     "AWAKENED_BEAUTY_REASONING": (
         "awakened_beauty_reasoning", frozenset({"charm", "pass"}),
+    ),
+    "AWAKENED_SEER_REASONING": (
+        "awakened_seer_reasoning", frozenset({"check", "pass"}),
+    ),
+    "FRAGRANCE_PHANTOM_REASONING": (
+        "fragrance_phantom_reasoning", frozenset({"bond", "pass"}),
     ),
 }
 
@@ -747,6 +754,20 @@ def _public_role_skill_event(
     day cards, the seat display and the chronicle); the old-archive replay simply
     never learned them, so they vanished on that path.
     """
+    if event_type == "FRAGRANCE_BOND":
+        seat = payload.get("seat")
+        seats = payload.get("target_seats")
+        if not _is_positive_int(seat):
+            _drop_replay_row("audience_action", "invalid_bond", event_type)
+            return []
+        if not isinstance(seats, (list, tuple)) or not seats or any(
+            not _is_positive_int(item) for item in seats
+        ):
+            _drop_replay_row("audience_action", "invalid_bond_targets", event_type)
+            return []
+        return [{"event_type": "fragrance_bond", "payload": {
+            "round_number": round_number, "seat": seat,
+            "target_seats": list(seats)}}]
     if event_type == "KNIGHT_DUEL":
         seat = payload.get("seat"); target = payload.get("target_seat")
         camp = payload.get("camp")
@@ -856,7 +877,7 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             return []
         return _public_reasoning_event(event_type, payload, round_number)
     if event_type in ("KNIGHT_DUEL", "WOLF_BEAUTY_CHARM", "WOLF_BEAUTY_REVENGE",
-                      "WRAITH_ILLUSION", "STATUS_ADDED"):
+                      "WRAITH_ILLUSION", "FRAGRANCE_BOND", "STATUS_ADDED"):
         if not _payload_matches(event_type, payload):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []

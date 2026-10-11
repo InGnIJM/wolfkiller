@@ -30,7 +30,8 @@ export type DeathCause =
   | 'hunt'
   | 'dance'
   | 'awakened_hunt'
-  | 'stand_in';
+  | 'stand_in'
+  | 'bond_death';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'
@@ -256,6 +257,12 @@ export interface WraithIllusionPayload {
   target_seat?: number | null;
 }
 
+export interface FragranceBondPayload {
+  round_number: number;
+  seat: number;
+  target_seats: number[];
+}
+
 export interface WolfBeautyRevengePayload {
   round_number: number;
   seat: number;
@@ -291,7 +298,9 @@ export interface NightThoughtPayload {
     | 'dancer_reasoning'
     | 'mask_reasoning'
     | 'awakened_hunter_reasoning'
-    | 'awakened_beauty_reasoning';
+    | 'awakened_beauty_reasoning'
+    | 'awakened_seer_reasoning'
+    | 'fragrance_phantom_reasoning';
   target_seat: number | null;
   reasoning: string;
   /**
@@ -368,6 +377,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'knight_duel', KnightDuelPayload>
   | PublicReplayEnvelope<'wolf_beauty_charm', WolfBeautyCharmPayload>
   | PublicReplayEnvelope<'wraith_illusion', WraithIllusionPayload>
+  | PublicReplayEnvelope<'fragrance_bond', FragranceBondPayload>
   | PublicReplayEnvelope<'wolf_beauty_revenge', WolfBeautyRevengePayload>
   | PublicReplayEnvelope<'sheriff_elected', SheriffElectedPayload>
   | PublicReplayEnvelope<'sheriff_badge', SheriffBadgePayload>

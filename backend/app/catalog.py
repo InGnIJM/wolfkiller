@@ -212,6 +212,28 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "**被夜间出局的觉醒猎人「巡猎」击中时技能无效**，不产生替身。",
         ],
     },
+    "wolf-killer-awakened-seer": {
+        "name_zh": "觉醒预言家", "icon": "seer",
+        "description": "每晚窥视任意两名玩家，只得知其中是否有狼人",
+        "rules": [
+            "属于好人阵营、计入**神职**。",
+            "每晚选择**任意两名存活玩家**（不能选自己），得知的唯一信息是：**这两人中是否有狼人**（不告诉你是哪一个，也不给具体身份）。",
+            "可以连续多晚查验同一对，也可以每晚换人；同一夜只能查一次。",
+            "结果只有你自己知道，是否公开由你决定。",
+        ],
+    },
+    "wolf-killer-fragrance-phantom": {
+        "name_zh": "寻香魅影", "icon": "werewolf",
+        "description": "狼人但不入狼队；首夜知晓一名其他狼人，每晚绑两人，一方出局另一方随之出局（一局一次）",
+        "rules": [
+            "属于狼人阵营，但**开局不入狼队**：不参与夜间狼队讨论与狼刀投票，狼队友也不知道你是谁，**不能自爆**。",
+            "**首夜随机知晓一名其他狼人的位置**（只知道座位，不知道具体是谁的牌）。",
+            "当除你之外的所有狼人全部出局后，你才可以独自刀人。",
+            "每晚可以**任意绑定两名存活玩家**（可以绑自己、也可以绑狼队友）；新的绑定会覆盖上一次。",
+            "当被绑定的两人中一人出局时，**另一人立刻随之出局**（死因 `bond_death`），无论前者因何出局。",
+            "这个连带效果**整局只触发一次**：触发后技能永久失去，之后的夜晚不再能绑定。",
+        ],
+    },
     "wolf-killer-pure-white": {
         "name_zh": "纯白之女", "icon": "pure_white",
         "description": "好人神职，每晚查验一名玩家的具体身份，第二夜起验中狼人即当夜处决",
@@ -587,6 +609,24 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-villager": 3,
             "wolf-killer-lonely-girl": 1,
             "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Fragrance and Fate" board.
+        "id": "twelve-player-fragrance",
+        "name": "十二人寻香识命",
+        "description": "3狼 1寻香魅影 4民 1觉醒预言家 1女巫 1猎人 1守卫",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-fragrance-phantom": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-awakened-seer": 1,
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
             "wolf-killer-guard": 1,

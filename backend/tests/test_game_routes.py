@@ -1098,6 +1098,7 @@ _NO_REPLAY_MECHANISM = frozenset({
 
 #: 日志里这 4 个类型的 payload 形状取自真实 `game.log`（`tests` 之外无第二来源）。
 _LOG_PAYLOAD_OVERRIDES: dict[str, dict] = {
+    "FRAGRANCE_BOND": {"seat": 1, "target_seats": [2, 3], "round_number": 1},
     "KNIGHT_DUEL": {"seat": 1, "target_seat": 2, "camp": "good", "round_number": 1},
     "WOLF_BEAUTY_CHARM": {"seat": 1, "target_seat": 2, "round_number": 1},
     "WOLF_BEAUTY_REVENGE": {"seat": 1, "target_seat": 2, "cause": "exile", "round_number": 1},
@@ -1135,6 +1136,8 @@ _REASONING_ACTIONS = {
     "NIGHTMARE_REASONING": "fear", "DANCER_REASONING": "pool", "MASK_REASONING": "mask",
     "AWAKENED_HUNTER_REASONING": "hunt_forward",
     "AWAKENED_BEAUTY_REASONING": "charm",
+    "AWAKENED_SEER_REASONING": "check",
+    "FRAGRANCE_PHANTOM_REASONING": "bond",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 
@@ -1379,6 +1382,9 @@ def test_sheriff_badge_carries_the_reason_and_accepts_records_without_it() -> No
     ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "camp": "third_party", "round_number": 1}, "invalid_duel"),
     ("WOLF_BEAUTY_CHARM", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_charm"),
     ("WOLF_BEAUTY_CHARM", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_charm_target"),
+    ("FRAGRANCE_BOND", {"seat": 0, "target_seats": [2, 3], "round_number": 1}, "invalid_bond"),
+    ("FRAGRANCE_BOND", {"seat": 1, "target_seats": [], "round_number": 1}, "invalid_bond_targets"),
+    ("FRAGRANCE_BOND", {"seat": 1, "target_seats": [2, 0], "round_number": 1}, "invalid_bond_targets"),
     ("WRAITH_ILLUSION", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_illusion"),
     ("WRAITH_ILLUSION", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_illusion_target"),
     ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 0, "cause": "exile", "round_number": 1}, "invalid_revenge"),

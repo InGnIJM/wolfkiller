@@ -29,7 +29,10 @@ HOOK_SUFFIX = "_reasoning_effect"
 #: Keyword-only extras the hooks add for their own wording. The degraded branch
 #: returns before any of them is read, so any value works there; the second test
 #: uses values that let each role's own branch render.
-HOOK_EXTRAS = {"role_label": "狼人", "in_pool": True, "kills": True, "verdict": "identity"}
+HOOK_EXTRAS = {
+    "role_label": "狼人", "in_pool": True, "kills": True, "verdict": "identity",
+    "has_wolf": True,
+}
 
 
 def _hook_signatures() -> dict[str, list[str]]:
@@ -71,7 +74,7 @@ def _context() -> ActionContext:
 
 def test_every_role_hook_is_discovered() -> None:
     """A guard on the guard: the scan must actually find the whole family."""
-    assert len(HOOK_IDS) == 20, HOOK_IDS
+    assert len(HOOK_IDS) == 22, HOOK_IDS
 
 
 @pytest.mark.parametrize("dotted", HOOK_IDS)

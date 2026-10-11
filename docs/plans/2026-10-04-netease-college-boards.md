@@ -4,7 +4,7 @@
 > 目标：把项目从「11 角色 / 6 预设」扩到「覆盖**官方赛事板型并集 13 个** + 假面舞会（非网易，单列）
 > + 游戏内常规板型 6 个」。~~原来的「网易高校赛 17 板」口径已作废~~ —— 高校赛只有 6 个板型，
 > 17 是各年赛事并集与非网易板混算的结果，重核见 §十五。
-> 状态：**已批准；阶段 0 / 1 / 2 / 3 / 3.5 / 3.6 全部完成；阶段 4 进行中（§9.2 孤独少女已落地，§9.3 寻香识命与 §9.1 奇迹商人未开始）。**§9.2 的实现与本文档初稿的一处差异：胜负归属落在 `core/win_attribution.py` + `WinResult.winners`（可选，只在有孤独少女时出现），没有动 `WinningCamp` 目录与 `Camp` 枚举；`idol` 走 `SET_PRIVATE_DATA` 而非 `RECORD_PRIVATE_FACT`（与假面的 `pool_checks` 同一通道，投影回本人提示词）。**阶段 3.6（觉醒狼美人 + 觉醒猎人 → 十二人暗夜星辰）已落地：契约与机制见 `backend/app/roles/awakened_wolf_beauty.py` / `awakened_hunter.py`，两个角色的官方技能原文与来源见 `docs/gameplay.md` 的角色表；实现里与本文档初稿不同的两处（`stand_in` 替身重定向、`projected_facts` 派生事实）记在上面这两个模块的文档串里。 阶段 3 与 3.5 的逐行实施细节见
+> 状态：**已批准；阶段 0 / 1 / 2 / 3 / 3.5 / 3.6 全部完成；阶段 4 进行中（§9.2 孤独少女、§9.3 寻香识命均已落地，§9.1 奇迹商人未开始；§9.3 的实现差异：多目标投影扩到 `selected_targets`、绑定走 `RoleSpec.bond_slot`（响应队列按声明开窗）而不是 `ADD_RELATION`（关系集表达不了「每晚新的绑定覆盖旧的」）、「首夜随机知晓一名狼人」用派生事实 `wolf_hint_seat`（稳定哈希，无 RNG））。**§9.2 的实现与本文档初稿的一处差异：胜负归属落在 `core/win_attribution.py` + `WinResult.winners`（可选，只在有孤独少女时出现），没有动 `WinningCamp` 目录与 `Camp` 枚举；`idol` 走 `SET_PRIVATE_DATA` 而非 `RECORD_PRIVATE_FACT`（与假面的 `pool_checks` 同一通道，投影回本人提示词）。**阶段 3.6（觉醒狼美人 + 觉醒猎人 → 十二人暗夜星辰）已落地：契约与机制见 `backend/app/roles/awakened_wolf_beauty.py` / `awakened_hunter.py`，两个角色的官方技能原文与来源见 `docs/gameplay.md` 的角色表；实现里与本文档初稿不同的两处（`stand_in` 替身重定向、`projected_facts` 派生事实）记在上面这两个模块的文档串里。 阶段 3 与 3.5 的逐行实施细节见
 > [2026-10-05-phase3-phase3.5-detail.md](2026-10-05-phase3-phase3.5-detail.md)（该文件对本文档
 > §七 / §八 做了 4 处设计纠正，执行以它为准）。
 > 收尾基线：累计 **23 角色 / 15 预设**，后端 4165 passed / 100.00%（statement + branch），

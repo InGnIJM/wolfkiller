@@ -139,7 +139,7 @@ describe('roleArt', () => {
 
   it('未登记的角色回退卡背，绝不借用别人的图', () => {
     expect(roleArt('wolf-killer-not-a-role')).toBe(CARD_BACK);
-    expect(roleArt('wolf-killer-awakened-seer')).toBe(CARD_BACK);
+    expect(roleArt('wolf-killer-not-a-real-role')).toBe(CARD_BACK);
   });
 
   it('没有角色 id 时回退卡背', () => {

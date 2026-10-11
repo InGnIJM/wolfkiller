@@ -334,6 +334,12 @@ function EventSummary({
         : `${entry.payload.seat}号魅惑${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
+    case 'fragrance_bond':
+      // God view: the bound players are never told, and the pair is the whole
+      // point of the beat.
+      text = `${entry.payload.seat}号缠绕${entry.payload.target_seats.join('、')}号`;
+      tone = '#C08FE0';
+      break;
     case 'wraith_illusion':
       // God view: name the stand-in when the event carries it (archives
       // recorded before the field existed do not).

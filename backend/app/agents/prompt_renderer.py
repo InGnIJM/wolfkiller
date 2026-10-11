@@ -15,7 +15,7 @@ _MAX_HISTORY = 20_000
 # names living werewolf seats, so it may reach the pure resolve hook but never
 # the model that picks the direction.
 _HOISTED_FACTS = frozenset(
-    {"public_role_rules", "speeches", "votes", "directional_wolves"}
+    {"public_role_rules", "speeches", "votes", "directional_wolves", "selected_targets"}
 )
 
 

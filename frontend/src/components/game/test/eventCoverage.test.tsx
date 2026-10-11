@@ -208,6 +208,15 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
+    what: '寻香魅影缠绕（上帝视角带被绑两人）',
+    event: {
+      ...at,
+      event_type: 'fragrance_bond',
+      payload: { seat: 6, target_seats: [2, 9], round_number: 1 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '觉醒狼美人挽歌幻象（上帝视角带替身）',
     event: {
       ...at,
@@ -363,7 +372,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(34);
+    expect(listed).toHaveLength(35);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];

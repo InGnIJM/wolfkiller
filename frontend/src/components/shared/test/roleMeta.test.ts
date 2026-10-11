@@ -24,6 +24,8 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-awakened-wolf-beauty', 'wolf_beauty', '觉醒狼美人'],
   ['wolf-killer-old-drunkard', 'old_drunkard', '老酒鬼'],
   ['wolf-killer-lonely-girl', 'villager', '孤独少女'],
+  ['wolf-killer-awakened-seer', 'seer', '觉醒预言家'],
+  ['wolf-killer-fragrance-phantom', 'werewolf', '寻香魅影'],
   ['wolf-killer-pure-white', 'seer', '纯白之女'],
   ['wolf-killer-wolf-witch', 'werewolf', '狼巫'],
   ['wolf-killer-crimson-envoy', 'werewolf', '赤月使徒'],
@@ -70,8 +72,8 @@ describe('roleMeta', () => {
 
   it('falls back to the card back for an id it cannot label', () => {
     // 未登记的角色没有 roleMeta，也就没有角色名可查 —— 只能回退卡背。
-    expect(roleMetaFor('wolf-killer-awakened-seer')).toBeUndefined();
-    expect(roleArt('wolf-killer-awakened-seer')).toBe(CARD_BACK);
+    expect(roleMetaFor('wolf-killer-not-a-real-role')).toBeUndefined();
+    expect(roleArt('wolf-killer-not-a-real-role')).toBe(CARD_BACK);
   });
 
   it('returns undefined for a hidden or unknown identity', () => {

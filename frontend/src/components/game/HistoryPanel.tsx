@@ -23,6 +23,7 @@ function eventTone(event: PublicReplayEvent): string {
     || event.event_type === 'knight_duel'
     || event.event_type === 'wolf_beauty_charm'
     || event.event_type === 'wraith_illusion'
+    || event.event_type === 'fragrance_bond'
     || event.event_type === 'wolf_beauty_revenge'
   ) return '#F4B3B6';
   if (event.event_type === 'narration') return '#7D7468';
@@ -40,7 +41,7 @@ function eventTone(event: PublicReplayEvent): string {
 const NIGHT_TYPES = new Set([
   'night_action', 'wolf_vote', 'witch_thought', 'seer_thought',
   'night_thought', 'wolf_chat_message', 'narration', 'wolf_beauty_charm',
-  'wraith_illusion', 'dance_pool', 'mask_granted',
+  'wraith_illusion', 'dance_pool', 'mask_granted', 'fragrance_bond',
 ]);
 
 // A revenge lands in the phase of the exit that triggered it: an exile or a
@@ -251,6 +252,13 @@ function EventCard({
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
           {event.payload.seat}号骑士翻牌决斗{event.payload.target_seat}号 · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'fragrance_bond':
+      content = (
+        <Typography variant="caption" sx={{ color: 'secondary.main', fontWeight: 500 }}>
+          {`${event.payload.seat}号缠绕${event.payload.target_seats.join('、')}号 · 第${event.payload.round_number}轮`}
         </Typography>
       );
       break;

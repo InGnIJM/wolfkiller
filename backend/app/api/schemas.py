@@ -154,7 +154,7 @@ PublicGamePhase = Literal[
 PublicDeathCause = Literal[
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-    "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in",
+    "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in", "bond_death",
 ]
 PublicWinningCamp = Literal["good", "werewolf"]
 PublicWinReason = Literal[
@@ -229,6 +229,20 @@ class PublicDancePoolResponse(_PublicResponse):
     #: 同 `PublicCrimsonExplodeResponse.silenced_seats`：回放分支发的是 list，
     #: 这里必须是 list（strict 模式下 tuple 会拒绝它）。
     pool_seats: list[PositivePublicInt] = Field(default_factory=list)
+
+
+class PublicFragranceBondResponse(_PublicResponse):
+    """The Fragrance Phantom's pair for the night (the god view only).
+
+    The two bound players are never told, so nothing reaches their prompts; the
+    audience stream publishes it the same way the Wolf Beauty's charm is
+    published.
+    """
+
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    #: 同 `PublicCrimsonExplodeResponse.silenced_seats`：回放分支发 list。
+    target_seats: list[PositivePublicInt] = Field(default_factory=list)
 
 
 class PublicMaskGrantedResponse(_PublicResponse):
@@ -313,6 +327,8 @@ PublicThoughtActionType = Literal[
     "mask_reasoning",
     "awakened_hunter_reasoning",
     "awakened_beauty_reasoning",
+    "awakened_seer_reasoning",
+    "fragrance_phantom_reasoning",
 ]
 
 
@@ -602,6 +618,11 @@ class PublicWraithIllusionReplayEvent(_PublicReplayEvent):
     payload: PublicWraithIllusionResponse
 
 
+class PublicFragranceBondReplayEvent(_PublicReplayEvent):
+    event_type: Literal["fragrance_bond"]
+    payload: PublicFragranceBondResponse
+
+
 class PublicWolfBeautyRevengeReplayEvent(_PublicReplayEvent):
     event_type: Literal["wolf_beauty_revenge"]
     payload: PublicWolfBeautyRevengeResponse
@@ -662,6 +683,7 @@ PublicReplayEvent = Annotated[
         PublicKnightDuelReplayEvent,
         PublicWolfBeautyCharmReplayEvent,
         PublicWraithIllusionReplayEvent,
+        PublicFragranceBondReplayEvent,
         PublicWolfBeautyRevengeReplayEvent,
         PublicPlayerStatusReplayEvent,
         PublicSheriffElectedReplayEvent,

@@ -694,6 +694,22 @@ export default function ActivityCard() {
         </ActivityFrame>
       );
     }
+    case 'fragrance_bond':
+      return (
+        <ActivityFrame tone="#C08FE0">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <SeatAvatar seat={entry.payload.seat} />
+            <Box>
+              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                {`${entry.payload.seat}号缠绕${entry.payload.target_seats.join('、')}号`}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+                {`第${entry.payload.round_number}轮 · 一方出局另一方随之出局`}
+              </Typography>
+            </Box>
+          </Box>
+        </ActivityFrame>
+      );
     case 'wraith_illusion': {
       // God view: who the awakened wolf beauty bound as her stand-in. Archives
       // recorded before the field existed only carry the caster.

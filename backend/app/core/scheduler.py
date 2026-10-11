@@ -23,6 +23,7 @@ from app.core.effect_applier import (
 )
 from app.core.night_settlement import is_silenced, settlement_key
 from app.core.registry_identity import frozen_registry_digest
+from app.core.role_runtime import role_private_data_view
 from app.core.state_transaction import state_transaction_lock
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
@@ -187,6 +188,22 @@ def stable_window_id(game_id: str, source_event_id: str, contract_id: str, actor
     return _digest(game_id, source_event_id, contract_id, actor_seat)
 
 
+def _bonds(state: GameState, seat: int, slot: str, target: int) -> bool:
+    """True when ``seat``'s declared bond slot names the dying ``target``.
+
+    The slot holds a JSON list of seats (see ``RoleSpec.bond_slot``). Anything
+    else — a missing slot, a malformed archive — answers False: a queue that
+    guessed would react on behalf of a bond the rules never made.
+    """
+    value = role_private_data_view(state, seat).get(slot)
+    if type(value) not in (list, tuple): return False
+    # All or nothing: a slot with one malformed entry is an archive the queue
+    # cannot read, and guessing at its good half would drag a player along on a
+    # bond the rules never recorded.
+    if any(type(item) is not int for item in value): return False
+    return target in value
+
+
 class ResponseQueue:
     def __init__(self, registry: RegistrySnapshot, *, max_depth: int = 8, max_events: int = 64):
         if type(registry) is not RegistrySnapshot: raise TypeError("registry must be RegistrySnapshot")
@@ -237,13 +254,34 @@ class ResponseQueue:
         target = event.payload.get("target_seat")
         player = state.players.get(target) if type(target) is int and target > 0 else None
         spec = None if player is None else self.registry.specs.get(player.role)
-        windows = []
-        for contract in () if spec is None else sorted(spec.contracts, key=lambda c: (c.order, spec.role_id, c.contract_id, target)):
-            if event.event_type not in contract.response_event_types: continue
-            if contract.response_reasons and event.reason not in contract.response_reasons: continue
-            if not contract.response_reasons and event.reason is not None: continue
-            windows.append(ResponseWindow(stable_window_id(state.game_id, event.event_id, contract.contract_id, target), event.event_id, contract.contract_id, target, depth))
+        windows = list(self._contract_windows(state, event, target, spec, depth))
+        # A seat that declared a ``bond_slot`` also answers for the deaths of the
+        # seats it bound: the window's actor is the *watcher* (the seat that owns
+        # the skill), not the seat that died. The dying seat keeps its own window
+        # above, so a bond that names its owner is not opened twice.
+        if type(target) is int and target > 0:
+            for seat in sorted(state.players):
+                if seat == target or not state.players[seat].is_alive: continue
+                watcher = self.registry.specs.get(state.players[seat].role)
+                if watcher is None or not watcher.bond_slot: continue
+                if not _bonds(state, seat, watcher.bond_slot, target): continue
+                windows.extend(self._contract_windows(state, event, seat, watcher, depth))
         self._windows[event.event_id] = tuple(windows); return self._windows[event.event_id]
+
+    @staticmethod
+    def _contract_windows(state: GameState, event: DomainEvent, actor: object,
+                          spec: object, depth: int) -> tuple[ResponseWindow, ...]:
+        """Every contract ``spec`` answers this event with, for actor ``actor``."""
+        if spec is None: return ()
+        return tuple(
+            ResponseWindow(
+                stable_window_id(state.game_id, event.event_id, contract.contract_id, actor),
+                event.event_id, contract.contract_id, actor, depth,
+            )
+            for contract in sorted(spec.contracts, key=lambda c: (c.order, spec.role_id, c.contract_id, actor))
+            if event.event_type in contract.response_event_types
+            and (event.reason in contract.response_reasons if contract.response_reasons else event.reason is None)
+        )
 
 
 class Scheduler:

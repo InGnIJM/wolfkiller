@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import hashlib
 import re
 from types import MappingProxyType
 from app.models.actions import SpeechRecord, VoteAction
@@ -101,9 +102,33 @@ def _directional_wolves(state: GameState, actor: PlayerState) -> dict[str, objec
     return {"forward": nearest(1), "backward": nearest(-1)}
 
 
+def _wolf_hint_seat(state: GameState, actor: PlayerState) -> int | None:
+    """One other living wolf's seat, for the Fragrance Phantom's first night.
+
+    The official text says "随机知晓一名其他狼人位置" — one position, not the
+    roster, which is why this is derived per seat instead of handing the role the
+    pack list. There is no RNG in the pipeline (hooks are pure and a resume must
+    recompute the same answer), so the pick is a stable hash of the game id and
+    the seat: arbitrary across games, identical on replay.
+    """
+    others = sorted(
+        seat for seat in pack_seats(state)
+        if seat != actor.seat_number and state.players[seat].is_alive
+    )
+    if not others:
+        return None
+    digest = hashlib.blake2s(
+        f"{state.game_id}:{actor.seat_number}".encode("utf-8"), digest_size=4,
+    ).digest()
+    return others[int.from_bytes(digest, "big") % len(others)]
+
+
 #: ``RoleSpec.projected_facts`` name -> builder. Kept one-to-one with
 #: ``models/pipeline.PROJECTED_FACT_NAMES`` (a gate asserts the sets are equal).
-_DERIVED_FACT_BUILDERS = {"directional_wolves": _directional_wolves}
+_DERIVED_FACT_BUILDERS = {
+    "directional_wolves": _directional_wolves,
+    "wolf_hint_seat": _wolf_hint_seat,
+}
 
 
 
@@ -172,14 +197,43 @@ class ContextProjector:
         if any(actual != bound for actual, bound in expected):
             raise ValueError("context does not match request and registry")
         namespaces = request.contract.selected_target_fact_namespaces
-        if not namespaces or command.target_seat is None:
+        if not namespaces:
             return context
         if not namespaces <= _SELECTED_TARGET_NAMESPACES:
             raise ValueError("unknown selected target fact namespace")
-        target = state.players.get(command.target_seat)
-        if target is None or not target.is_alive:
+        seats = (
+            (command.target_seat,) if command.target_seat is not None
+            else tuple(command.target_seats or ())
+        )
+        selected = tuple(
+            row
+            for seat in seats
+            if (row := self._selected_target_row(state, seat, namespaces)) is not None
+        )
+        if not selected:
             return context
-        selected: dict[str, object] = {"seat": command.target_seat}
+        facts = dict(context.facts)
+        if len(seats) == 1:
+            facts["selected_target"] = selected[0]
+        else:
+            # A multi-target action (the Awakened Seer's pair) sees one row per
+            # seat, in the order the command named them: "is there a wolf among
+            # these two" is answered from both camps at once. Hook-only, exactly
+            # like the singular key.
+            facts["selected_targets"] = selected
+        return ActionContext.from_mapping({
+            field: getattr(context, field)
+            for field in context.__dataclass_fields__
+        } | {"facts": facts})
+
+    def _selected_target_row(
+        self, state: GameState, seat: int, namespaces: frozenset[str],
+    ) -> dict[str, object] | None:
+        """One seat's observable facts, or ``None`` when it is gone."""
+        target = state.players.get(seat)
+        if target is None or not target.is_alive:
+            return None
+        selected: dict[str, object] = {"seat": seat}
         if "camp_label" in namespaces:
             selected["camp_label"] = self._token(
                 target.camp, "selected target camp", 128
@@ -188,7 +242,7 @@ class ContextProjector:
             selected["status_labels"] = tuple(
                 sorted(
                     status
-                    for status in self._target_statuses(state, command.target_seat)
+                    for status in self._target_statuses(state, seat)
                     if status in _PUBLIC_STATUSES
                 )
             )
@@ -203,18 +257,11 @@ class ContextProjector:
             selected["resource_labels"] = tuple(
                 sorted(
                     resource
-                    for resource, amount in self._target_resources(
-                        state, command.target_seat
-                    ).items()
+                    for resource, amount in self._target_resources(state, seat).items()
                     if resource in _PUBLIC_RESOURCES and amount > 0
                 )
             )
-        facts = dict(context.facts)
-        facts["selected_target"] = selected
-        return ActionContext.from_mapping({
-            field: getattr(context, field)
-            for field in context.__dataclass_fields__
-        } | {"facts": facts})
+        return selected
 
     @staticmethod
     def _target_statuses(state: GameState, seat: int) -> frozenset[str]:
@@ -602,6 +649,19 @@ class ContextProjector:
                     for result in (canonical or actor.check_results)[-20:]
                     if (projected := cls._project_check_result(result)) is not None
                 )
+            elif key == "pair_checks":
+                # The Awakened Seer's nightly answer: which two seats were
+                # looked at, and whether a wolf was among them. Without this
+                # branch the record is written and never read back, and the
+                # model keeps seeing the empty declared default.
+                canonical = role_private_facts_view(
+                    state, actor.seat_number, "pair_checks"
+                )
+                facts["pair_checks"] = tuple(
+                    projected
+                    for result in canonical[-20:]
+                    if (projected := cls._project_pair_check_result(result)) is not None
+                )
             elif key == "role_checks":
                 # A role that learns another seat's *exact* identity (the
                 # Gargoyle, and later the Pure White and the Wolf Witch) records
@@ -675,6 +735,24 @@ class ContextProjector:
         ):
             return None
         return {"target": target, "camp": camp}
+
+    @classmethod
+    def _project_pair_check_result(cls, result: object) -> dict[str, object] | None:
+        """One ``pair_checks`` record: the two seats and the wolf answer.
+
+        Malformed records are dropped rather than raised, for the same reason
+        every other private-fact projection drops them: a hooked namespace is
+        written by role code and a resumed archive has to stay readable.
+        """
+        seats = result.get("seats", result.get("target_seats"))
+        if type(seats) not in (list, tuple) or len(seats) != 2:
+            return None
+        if any(type(seat) is not int or seat <= 0 or seat > _MAX_INT for seat in seats):
+            return None
+        has_wolf = result.get("has_wolf", result.get("has_werewolf"))
+        if type(has_wolf) is not bool:
+            return None
+        return {"seats": tuple(seats), "has_wolf": has_wolf}
 
     @classmethod
     def _project_role_check_result(cls, result: object) -> dict[str, object] | None:

@@ -12,6 +12,7 @@ import hashlib
 import inspect
 import json
 import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
@@ -24,6 +25,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_v
 JsonScalar: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonScalar | tuple["JsonValue", ...] | Mapping[str, "JsonValue"]
 MAX_JSON_DEPTH = 64
+#: The token alphabet every effect payload and declared slot name shares.
+_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
 class SchedulePoint(str, Enum):
@@ -383,7 +386,7 @@ class ActionContext(_FrozenValue):
 #: one builder per name (a test asserts the two sets are equal). Every name in
 #: this set is hook-only or prompt-visible by construction — ``directional_wolves``
 #: names living werewolf seats and is therefore hoisted out of the prompt.
-PROJECTED_FACT_NAMES = frozenset({"directional_wolves"})
+PROJECTED_FACT_NAMES = frozenset({"directional_wolves", "wolf_hint_seat"})
 
 
 #: The reasoning a command carries when the engine, not a model, produced it.
@@ -627,6 +630,15 @@ class RoleSpec(_FrozenValue):
     #: there would move every existing contract's digest and force every
     #: resumable game through a `drift` confirmation.
     projected_facts: frozenset[str] = frozenset()
+    #: The private slot holding the seats this role has bound to itself, as a
+    #: JSON list of seats. Non-empty declares that the seat **watches the deaths
+    #: of the seats named there**: the response queue opens a window for it when
+    #: one of them leaves, which is how a bond drags the other member along. The
+    #: slot name is declared here rather than hardcoded in the queue so no core
+    #: module has to know a role, and the slot must also be a key of
+    #: ``initial_private_data`` (the registry asserts it), because the projector
+    #: is what turns a private slot into a fact.
+    bond_slot: str = ""
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
@@ -644,6 +656,10 @@ class RoleSpec(_FrozenValue):
         unknown_facts = self.projected_facts - PROJECTED_FACT_NAMES
         if unknown_facts:
             raise ValueError(f"unknown projected fact(s): {', '.join(sorted(unknown_facts))}")
+        if self.bond_slot:
+            _require_str("bond_slot", self.bond_slot)
+            if not _TOKEN.fullmatch(self.bond_slot):
+                raise ValueError("bond_slot must be a token")
         _require_int("min_count", self.min_count)
         _require_int("max_count", self.max_count, optional=True)
         opening = self.opening_narration

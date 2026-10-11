@@ -54,6 +54,8 @@ class DeathCause(str, Enum):
     AWAKENED_HUNT = "awakened_hunt"
     #: 觉醒狼美人的「挽歌幻象」：被魅惑者顶替她出局。
     STAND_IN = "stand_in"
+    #: 寻香魅影的「氤氲缠绕」：被绑定者随另一方出局。
+    BOND_DEATH = "bond_death"
 
 
 class WinReason(str, Enum):
