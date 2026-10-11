@@ -21,6 +21,7 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-gravekeeper', 'guard', '守墓人'],
   ['wolf-killer-knight', 'knight', '骑士'],
   ['wolf-killer-wolf-beauty', 'wolf_beauty', '狼美人'],
+  ['wolf-killer-awakened-wolf-beauty', 'wolf_beauty', '觉醒狼美人'],
   ['wolf-killer-old-drunkard', 'old_drunkard', '老酒鬼'],
   ['wolf-killer-pure-white', 'seer', '纯白之女'],
   ['wolf-killer-wolf-witch', 'werewolf', '狼巫'],

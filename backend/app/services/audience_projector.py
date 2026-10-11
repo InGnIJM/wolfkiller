@@ -43,6 +43,8 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     # is the god view (the players' own view never receives either event).
     "KNIGHT_DUEL": ("knight_duel", frozenset({"seat", "target_seat", "camp", "round_number"})),
     "WOLF_BEAUTY_CHARM": ("wolf_beauty_charm", frozenset({"seat", "target_seat", "round_number"})),
+    # 觉醒狼美人的挽歌幻象：观众需要看到她把谁当作替身（本人提示词与公开记录都不带）。
+    "WRAITH_ILLUSION": ("wraith_illusion", frozenset({"seat", "target_seat", "round_number"})),
     "WOLF_BEAUTY_REVENGE": ("wolf_beauty_revenge", frozenset({"seat", "target_seat", "cause", "round_number"})),
     # The Crimson Envoy takes nobody along: what the god view needs is which
     # seats it sealed for the coming night.
@@ -83,6 +85,7 @@ _PUBLIC_REASONING_EVENTS = {
     "DANCER_REASONING": "dancer_reasoning",
     "MASK_REASONING": "mask_reasoning",
     "AWAKENED_HUNTER_REASONING": "awakened_hunter_reasoning",
+    "AWAKENED_BEAUTY_REASONING": "awakened_beauty_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

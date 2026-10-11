@@ -45,6 +45,9 @@ from app.roles.dancer import DANCER_SPEC, Dancer
 from app.roles.mask import MASK_SPEC, Mask
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
+from app.roles.awakened_wolf_beauty import (
+    AWAKENED_WOLF_BEAUTY_SPEC, AwakenedWolfBeauty,
+)
 from app.roles.witch import WITCH_SPEC, Witch
 
 
@@ -482,6 +485,7 @@ builtin_registry.register_pipeline(IDIOT_SPEC)
 builtin_registry.register_pipeline(KNIGHT_SPEC)
 builtin_registry.register_pipeline(OLD_DRUNKARD_SPEC)
 builtin_registry.register_pipeline(WOLF_BEAUTY_SPEC)
+builtin_registry.register_pipeline(AWAKENED_WOLF_BEAUTY_SPEC)
 builtin_registry.register_pipeline(WEREWOLF_KING_SPEC)
 builtin_registry.register_pipeline(WOLF_KING_SPEC)
 builtin_registry.register_pipeline(EVIL_KNIGHT_SPEC)
@@ -584,6 +588,22 @@ builtin_registry.register(
         "wolf-killer-wolf-beauty",
         Camp.WEREWOLF,
         WolfBeauty,
+        (
+            _contract(
+                "werewolf_kill",
+                GamePhase.NIGHT,
+                ("kill", "pass"),
+                frozenset({"kill"}),
+                resolution_priority=10,
+            ),
+        ),
+    )
+)
+builtin_registry.register(
+    LegacyRoleSpec(
+        "wolf-killer-awakened-wolf-beauty",
+        Camp.WEREWOLF,
+        AwakenedWolfBeauty,
         (
             _contract(
                 "werewolf_kill",

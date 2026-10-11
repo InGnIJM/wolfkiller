@@ -125,6 +125,13 @@ def resolve_awakened_hunter_action(
     if command.action_type == "pass":
         return (_awakened_hunter_reasoning_effect(context, command, 1, **common),)
     target = _direction_target(context, command)
+    damage: dict[str, object] = {"target": target, "amount": 1, "cause": HUNT_CAUSE}
+    if context.phase == "night":
+        # A shot fired after a *night* death ignores the werewolves' protective
+        # skills; the official example is the Awakened Wolf Beauty's illusion.
+        # The mark rides on the damage so the settlement — not this hook — is
+        # what decides whether a stand-in may replace the target.
+        damage["unreplaceable"] = True
     return (
         GameEffect(
             derive_effect_id(context.action_key, 1), EffectKind.CONSUME_RESOURCE,
@@ -136,7 +143,7 @@ def resolve_awakened_hunter_action(
         GameEffect(
             derive_effect_id(context.action_key, 2), EffectKind.SUBMIT_DAMAGE,
             context.action_key, target_seat=target,
-            payload={"target": target, "amount": 1, "cause": HUNT_CAUSE},
+            payload=damage,
             sort_key=(2,), **common,
         ),
         GameEffect(

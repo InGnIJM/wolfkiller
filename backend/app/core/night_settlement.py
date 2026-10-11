@@ -38,6 +38,18 @@ PROTECTION_SOURCES = _PROTECTION_SOURCES
 #: ``delayable`` it leaves no mark and never dies later: the hit simply does not
 #: land. The Evil Knight is the only built-in holder.
 NIGHT_IMMUNE_RESOURCE = "night_immune"
+#: A seat that declares this marker survives its first lethal hit, and the seat
+#: the marker names dies in its place (the Awakened Wolf Beauty's 挽歌幻象).
+#: The replacement is a direct death, so the stand-in cannot be guarded out of
+#: it, and the hit is judged *before* the shield tiers: the point of the skill is
+#: that it lands whatever was aimed at the victim.
+STAND_IN_RESOURCE = "stand_in"
+#: Set alongside ``stand_in = 0`` when the replacement happens. A once-per-game
+#: effect cannot be expressed by the target marker alone (it starts at zero
+#: before the first charm), so the contract that offers the skill reads this.
+STAND_IN_USED_RESOURCE = "stand_in_used"
+#: The cause a stand-in death is reported with.
+STAND_IN_CAUSE = "stand_in"
 #: Runtime status a seat carries while it may not act this night. Two roles
 #: apply it: the Nightmare (one feared seat, and the whole pack when it fears a
 #: wolf) and the Crimson Envoy (every living good seat after its self-destruct).
@@ -234,6 +246,8 @@ def settle(
     damage: tuple[object, ...], protection: tuple[object, ...],
     seats: set[int], alive: Mapping[int, bool], round_number: int,
     role_resources: Mapping[int, Mapping[str, int]] | None = None,
+    *,
+    substitutions: list[dict[str, int]] | None = None,
 ) -> tuple[tuple[dict[str, object], ...], dict[int, bool], dict[int, tuple[str, ...]]]:
     """Fold pending damage and protection into this round's deaths.
 
@@ -241,6 +255,12 @@ def settle(
     a poisoning or wounding cause survives the settlement: it is reported in the
     third return value together with the statuses the caller must apply, and
     dies on the next day instead.
+
+    A seat that declares ``stand_in`` and takes a lethal hit is replaced: the
+    seat named by that resource dies in its place (a direct death, so no shield
+    can save it) and the victim survives. Passing ``substitutions`` records who
+    replaced whom so the caller can spend the markers in the same commit; the
+    redirect itself happens either way.
     """
     if type(damage) is not tuple or type(protection) is not tuple:
         raise TypeError("pending effects must be tuples")
@@ -267,12 +287,23 @@ def settle(
     exempt_totals: dict[int, int] = {}
     first_exempt_cause: dict[int, str] = {}
     damage_causes: dict[int, set[str]] = {}
+    unreplaceable: set[int] = set()
     for record in damage:
-        target, amount = _record(record, seats, frozenset({"target", "amount", "cause"}))
+        target, amount = _record(
+            record, seats, frozenset({"target", "amount", "cause"}),
+            frozenset({"source", "unreplaceable"}),
+        )
         cause = record["cause"]
         if type(cause) is not str or not cause or len(cause) > 128 or any(
             not (char.isalnum() or char in "_.:-") for char in cause
         ): raise ValueError("invalid pending damage cause")
+        if "unreplaceable" in record and type(record["unreplaceable"]) is not bool:
+            raise ValueError("invalid unreplaceable mark")
+        # A hit the rules call unreplaceable ignores the stand-in entirely: this
+        # is how the Awakened Hunter's night shot beats the Awakened Wolf
+        # Beauty's illusion.
+        if record.get("unreplaceable") is True:
+            unreplaceable.add(target)
         _add(damage_totals, target, amount)
         causes.setdefault(target, cause)
         damage_causes.setdefault(target, set()).add(cause)
@@ -295,6 +326,7 @@ def settle(
         if total > _INT32: raise ValueError("pending amount overflow")
         bucket[source] = total
     resulting_alive = dict(alive); deaths = []; delayed: dict[int, tuple[str, ...]] = {}
+    redirected: dict[int, int] = {}
     for target in sorted(damage_totals):
         shields = protection_by_source.get(target, {})
         named = {source for source in shields if source is not None}
@@ -356,13 +388,57 @@ def settle(
             if held:
                 delayed[target] = held
                 continue
+        substitute = _stand_in_substitute(target, role_resources, alive, unreplaceable)
+        if substitute is not None:
+            # The victim survives this hit and the stand-in dies in its place.
+            # The replacement is settled after the loop so a stand-in who was
+            # also a target tonight dies exactly once, with the cause that
+            # explains why.
+            redirected[target] = substitute
+            continue
         resulting_alive[target] = False
         deaths.append({"seat": target, "cause": cause, "round_number": round_number})
+    if redirected:
+        replaced = set(redirected.values())
+        deaths = [death for death in deaths if death["seat"] not in replaced]
+        for victim, substitute in sorted(redirected.items()):
+            resulting_alive[substitute] = False
+            deaths.append({
+                "seat": substitute, "cause": STAND_IN_CAUSE,
+                "round_number": round_number,
+            })
+            if substitutions is not None:
+                substitutions.append({"victim": victim, "substitute": substitute})
     return tuple(deaths), resulting_alive, delayed
 
 
-def _record(record: object, seats: set[int], fields: frozenset[str]) -> tuple[int, int]:
-    if not isinstance(record, Mapping) or not fields.issubset(record) or frozenset(record) - fields - {"source"}:
+def _stand_in_substitute(
+    target: int, role_resources: Mapping[int, Mapping[str, int]],
+    alive: Mapping[int, bool], unreplaceable: set[int],
+) -> int | None:
+    """The seat that dies in ``target``'s place, or ``None`` when no skill fires.
+
+    Three gates, all read from declarations rather than from a role name: the
+    hit must be replaceable, the seat must hold ``stand_in``, and the named seat
+    must still be alive when the settlement starts — a charm whose target
+    already died tonight replaces nobody.
+    """
+    if target in unreplaceable:
+        return None
+    substitute = role_resources.get(target, {}).get(STAND_IN_RESOURCE, 0)
+    if type(substitute) is not int or substitute <= 0 or substitute == target:
+        return None
+    return substitute if alive.get(substitute) is True else None
+
+
+def _record(record: object, seats: set[int], fields: frozenset[str],
+            extra: frozenset[str] = frozenset({"source"})) -> tuple[int, int]:
+    """Read one pending record: ``fields`` are required, ``extra`` are optional.
+
+    Damage records may carry the ``unreplaceable`` mark and shields a ``source``;
+    anything else is a malformed record and stays fatal.
+    """
+    if not isinstance(record, Mapping) or not fields.issubset(record) or frozenset(record) - fields - extra:
         raise ValueError("invalid pending effect")
     target, amount = record["target"], record["amount"]
     if type(target) is not int or target not in seats:

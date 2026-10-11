@@ -694,6 +694,30 @@ export default function ActivityCard() {
         </ActivityFrame>
       );
     }
+    case 'wraith_illusion': {
+      // God view: who the awakened wolf beauty bound as her stand-in. Archives
+      // recorded before the field existed only carry the caster.
+      const standIn = entry.payload.target_seat;
+      return (
+        <ActivityFrame tone="#F4B3B6">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <SeatAvatar seat={entry.payload.seat} />
+            <Box>
+              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                {standIn == null
+                  ? `${entry.payload.seat}号发动挽歌幻象`
+                  : `${entry.payload.seat}号以${standIn}号为替身`}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+                {standIn == null
+                  ? `第${entry.payload.round_number}轮 · 目标未记录`
+                  : `第${entry.payload.round_number}轮`}
+              </Typography>
+            </Box>
+          </Box>
+        </ActivityFrame>
+      );
+    }
     case 'wolf_beauty_revenge':
       return (
         <DayVerdictView

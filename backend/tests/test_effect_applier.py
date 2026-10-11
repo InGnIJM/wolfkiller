@@ -969,11 +969,32 @@ def test_damage_payload_requires_closed_cause() -> None:
             ]), permission())
 
     legacy = state()
-    with pytest.raises(EffectRejected, match="invalid payload fields"):
+    with pytest.raises(EffectRejected, match="invalid damage payload"):
         EffectApplier().apply(legacy, batch([
             (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1}, 2),
         ]), permission())
     assert not hasattr(legacy, "_pipeline_runtime") and legacy.players[2].is_alive
+
+    # ``unreplaceable`` is the same kind of additive mark a shield's ``source``
+    # is: the record written before it existed stays valid, and the mark itself
+    # must be a boolean because the settlement reads it as a rule.
+    marked = state()
+    EffectApplier().apply(marked, batch([
+        (EffectKind.SUBMIT_DAMAGE, {
+            "target": 2, "amount": 1, "cause": "awakened_hunt", "unreplaceable": True,
+        }, 2),
+    ]), permission())
+    assert marked._pipeline_runtime.pending_damage == (
+        {"target": 2, "amount": 1, "cause": "awakened_hunt", "unreplaceable": True},
+    )
+    for value in ("yes", 1, None):
+        with pytest.raises(EffectRejected, match="invalid unreplaceable mark"):
+            EffectApplier().apply(state(), batch([
+                (EffectKind.SUBMIT_DAMAGE, {
+                    "target": 2, "amount": 1, "cause": "awakened_hunt",
+                    "unreplaceable": value,
+                }, 2),
+            ]), permission())
 
 
 def test_protection_payload_allows_legacy_shape_and_rejects_invalid_source() -> None:

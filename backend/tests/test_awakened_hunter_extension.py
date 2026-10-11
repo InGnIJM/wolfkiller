@@ -151,7 +151,11 @@ def test_forward_hunts_the_next_wolf_and_spends_the_gun() -> None:
         "consume_resource", "submit_damage", "emit_event", "emit_event",
     ]
     assert effects[0].payload == {"target": 1, "resource": "gun", "amount": 1}
-    assert effects[1].payload == {"target": 4, "amount": 1, "cause": "awakened_hunt"}
+    # The default context is a night death, so this shot says it may not be
+    # replaced (the rule the Awakened Wolf Beauty's illusion has to respect).
+    assert effects[1].payload == {
+        "target": 4, "amount": 1, "cause": "awakened_hunt", "unreplaceable": True,
+    }
     assert effects[1].target_seat == 4
     assert effects[2].payload == {
         "event_type": "AWAKENED_HUNT", "payload": {"target_seat": 4},
@@ -162,6 +166,14 @@ def test_forward_hunts_the_next_wolf_and_spends_the_gun() -> None:
         "reasoning": "ok", "degraded": False,
         "thought": "决定正序发动巡猎，带走 4 号玩家：ok",
     }
+
+
+def test_a_daytime_shot_stays_replaceable() -> None:
+    """Only the night shot ignores the wolves' protective skills."""
+    effects = resolve_awakened_hunter_action(
+        context(phase="vote_resolution"), command(),
+    )
+    assert effects[1].payload == {"target": 4, "amount": 1, "cause": "awakened_hunt"}
 
 
 def test_backward_hunts_the_other_side() -> None:

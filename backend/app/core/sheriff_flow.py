@@ -47,6 +47,12 @@ _VOTE = "vote"
 _TRANSFER = "transfer"
 _TEAR = "tear"
 
+#: Declared by a werewolf-camp role whose card forbids self-destruction. It
+#: travels as a resource so the pack-wide kill contract stays byte-identical
+#: across roles, and this module is its only reader: the badge-swallowing move
+#: is a self-destruct too.
+NO_SELF_EXPLODE_RESOURCE = "no_self_explode"
+
 InvokeFn = Callable[[list[dict[str, str]], str, dict[str, object], int], str]
 
 
@@ -586,9 +592,13 @@ class SheriffDirector:
         ``wolf`` at every call site means *werewolf camp*, because a hidden wolf
         still knows what it is. Exploding is a pack move, so it follows pack
         membership instead: a role declaring ``no_wolf_pack`` has no badge to
-        swallow on the team's behalf.
+        swallow on the team's behalf. A role whose card forbids self-destruction
+        declares ``no_self_explode`` — swallowing the badge is the same move, so
+        it stays out too, even though it belongs to the pack.
         """
-        return in_wolf_pack(state, seat)
+        if not in_wolf_pack(state, seat):
+            return False
+        return role_resource_view(state, seat).get(NO_SELF_EXPLODE_RESOURCE, 0) <= 0
 
     def campaign_prompt(self, state: GameState, seat: int, *, wolf: bool) -> list[dict[str, str]]:
         explode = wolf and self._may_explode(state, seat)

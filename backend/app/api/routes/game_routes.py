@@ -56,7 +56,7 @@ _CONFIRMATION_CODES = frozenset({
 _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-    "verify_kill", "hunt", "dance", "awakened_hunt",
+    "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
@@ -72,6 +72,7 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "HUNTER_SHOT": frozenset({"target_seat"}),
     # 觉醒猎人的「巡猎」：命令只带方向，落地的仍是 target_seat，公开形状与猎枪一致。
     "AWAKENED_HUNT": frozenset({"target_seat"}),
+    "WRAITH_ILLUSION": frozenset({"seat", "target_seat", "round_number"}),
     "WOLF_KING_SHOT": frozenset({"target_seat"}),
     "GUARD_PROTECT": frozenset({"target_seat"}),
     "WOLF_CHAT_MESSAGE": frozenset({"seat", "text"}),
@@ -156,6 +157,9 @@ _REASONING_EVENT_TYPES = {
     "AWAKENED_HUNTER_REASONING": (
         "awakened_hunter_reasoning",
         frozenset({"hunt_forward", "hunt_backward", "pass"}),
+    ),
+    "AWAKENED_BEAUTY_REASONING": (
+        "awakened_beauty_reasoning", frozenset({"charm", "pass"}),
     ),
 }
 
@@ -763,6 +767,16 @@ def _public_role_skill_event(
             return []
         return [{"event_type": "wolf_beauty_charm", "payload": {
             "round_number": round_number, "seat": seat, "target_seat": target}}]
+    if event_type == "WRAITH_ILLUSION":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        if not _is_positive_int(seat):
+            _drop_replay_row("audience_action", "invalid_illusion", event_type)
+            return []
+        if target is not None and not _is_positive_int(target):
+            _drop_replay_row("audience_action", "invalid_illusion_target", event_type)
+            return []
+        return [{"event_type": "wraith_illusion", "payload": {
+            "round_number": round_number, "seat": seat, "target_seat": target}}]
     if event_type == "WOLF_BEAUTY_REVENGE":
         seat = payload.get("seat"); target = payload.get("target_seat")
         cause = payload.get("cause")
@@ -842,7 +856,7 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
             return []
         return _public_reasoning_event(event_type, payload, round_number)
     if event_type in ("KNIGHT_DUEL", "WOLF_BEAUTY_CHARM", "WOLF_BEAUTY_REVENGE",
-                      "STATUS_ADDED"):
+                      "WRAITH_ILLUSION", "STATUS_ADDED"):
         if not _payload_matches(event_type, payload):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []

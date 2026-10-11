@@ -334,6 +334,14 @@ function EventSummary({
         : `${entry.payload.seat}号魅惑${entry.payload.target_seat}号`;
       tone = '#F4B3B6';
       break;
+    case 'wraith_illusion':
+      // God view: name the stand-in when the event carries it (archives
+      // recorded before the field existed do not).
+      text = entry.payload.target_seat == null
+        ? `${entry.payload.seat}号发动挽歌幻象`
+        : `${entry.payload.seat}号以${entry.payload.target_seat}号为替身`;
+      tone = '#F4B3B6';
+      break;
     case 'wolf_beauty_revenge':
       text = `${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`;
       tone = '#F4B3B6';

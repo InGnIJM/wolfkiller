@@ -186,6 +186,20 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "其他出局方式（狼刀、放逐、自爆、被决斗或殉情带走）都立即死亡。",
         ],
     },
+    "wolf-killer-awakened-wolf-beauty": {
+        "name_zh": "觉醒狼美人", "icon": "wolf_beauty",
+        "description": "狼人，每隔一晚魅惑一名替身；首次面临出局时由替身代其出局，全局生效一次",
+        "rules": [
+            "属于狼人阵营，夜晚与所有狼队友共用同一次狼刀、共同讨论并投票；**不能自爆**，也不能被狼队选为刀口。",
+            "每隔一晚可以单独发动一次「挽歌幻象」魅惑一名玩家（不能是自己）作为**替身**。",
+            "整局游戏中**第一次面临出局**时，被魅惑的玩家**替代**你出局，你活下来；此后技能永久失去"
+            "（第二次受到伤害或被放逐会直接出局）。",
+            "替身的出局是**直接出局**：守卫、摄梦人的守护都拦不住。夜间被出局时不翻牌；"
+            "被放逐时先翻牌、再由替身出局，替身正常发表遗言。",
+            "替身已经出局、或你还没发动过技能时面临出局，没有人会替代你。",
+            "**被夜间出局的觉醒猎人「巡猎」击中时技能无效**，不产生替身。",
+        ],
+    },
     "wolf-killer-pure-white": {
         "name_zh": "纯白之女", "icon": "pure_white",
         "description": "好人神职，每晚查验一名玩家的具体身份，第二夜起验中狼人即当夜处决",
@@ -528,6 +542,24 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
             "wolf-killer-gravekeeper": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Night Stars" board (七周年, 2024-10-27).
+        "id": "twelve-player-night-stars",
+        "name": "十二人暗夜星辰",
+        "description": "3狼 1觉醒狼美人 4民 1预言家 1女巫 1守卫 1觉醒猎人",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-awakened-wolf-beauty": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-guard": 1,
+            "wolf-killer-awakened-hunter": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",

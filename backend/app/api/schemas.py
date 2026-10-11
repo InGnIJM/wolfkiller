@@ -154,7 +154,7 @@ PublicGamePhase = Literal[
 PublicDeathCause = Literal[
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-    "verify_kill", "hunt", "dance", "awakened_hunt",
+    "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in",
 ]
 PublicWinningCamp = Literal["good", "werewolf"]
 PublicWinReason = Literal[
@@ -309,6 +309,7 @@ PublicThoughtActionType = Literal[
     "dancer_reasoning",
     "mask_reasoning",
     "awakened_hunter_reasoning",
+    "awakened_beauty_reasoning",
 ]
 
 
@@ -453,6 +454,17 @@ class PublicWolfBeautyCharmResponse(_PublicResponse):
     target_seat: Optional[PositivePublicInt] = None
 
 
+class PublicWraithIllusionResponse(_PublicResponse):
+    """The awakened wolf beauty's illusion: who would die in her place.
+
+    Published for the same reason the Wolf Beauty's charm is — this stream is
+    the god view, and no player prompt ever reads it.
+    """
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: Optional[PositivePublicInt] = None
+
+
 class PublicWolfBeautyRevengeResponse(_PublicResponse):
     """The charmed victim dying with the wolf beauty."""
     round_number: NonNegativePublicInt
@@ -582,6 +594,11 @@ class PublicWolfBeautyCharmReplayEvent(_PublicReplayEvent):
     payload: PublicWolfBeautyCharmResponse
 
 
+class PublicWraithIllusionReplayEvent(_PublicReplayEvent):
+    event_type: Literal["wraith_illusion"]
+    payload: PublicWraithIllusionResponse
+
+
 class PublicWolfBeautyRevengeReplayEvent(_PublicReplayEvent):
     event_type: Literal["wolf_beauty_revenge"]
     payload: PublicWolfBeautyRevengeResponse
@@ -641,6 +658,7 @@ PublicReplayEvent = Annotated[
         PublicMaskGrantedReplayEvent,
         PublicKnightDuelReplayEvent,
         PublicWolfBeautyCharmReplayEvent,
+        PublicWraithIllusionReplayEvent,
         PublicWolfBeautyRevengeReplayEvent,
         PublicPlayerStatusReplayEvent,
         PublicSheriffElectedReplayEvent,

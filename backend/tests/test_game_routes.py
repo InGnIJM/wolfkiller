@@ -1090,6 +1090,7 @@ _REASONING_ACTIONS = {
     "DEMON_HUNTER_REASONING": "hunt", "CRIMSON_ENVOY_REASONING": "explode",
     "NIGHTMARE_REASONING": "fear", "DANCER_REASONING": "pool", "MASK_REASONING": "mask",
     "AWAKENED_HUNTER_REASONING": "hunt_forward",
+    "AWAKENED_BEAUTY_REASONING": "charm",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 
@@ -1334,6 +1335,8 @@ def test_sheriff_badge_carries_the_reason_and_accepts_records_without_it() -> No
     ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "camp": "third_party", "round_number": 1}, "invalid_duel"),
     ("WOLF_BEAUTY_CHARM", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_charm"),
     ("WOLF_BEAUTY_CHARM", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_charm_target"),
+    ("WRAITH_ILLUSION", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_illusion"),
+    ("WRAITH_ILLUSION", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_illusion_target"),
     ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 0, "cause": "exile", "round_number": 1}, "invalid_revenge"),
     ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 2, "cause": "love_death", "round_number": 1}, "invalid_revenge"),
     ("STATUS_ADDED", {"seat": 0, "status": "poisoned", "round_number": 1}, "invalid_status"),

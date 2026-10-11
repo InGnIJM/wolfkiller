@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field; from types import MappingProxyType
 from typing import Mapping
 from app.models.game import Camp, GameState; from app.models.pipeline import EffectKind, GameEffect
-from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, NIGHT_SCOPED_STATUSES, PROTECTION_SOURCES, settle, settle_pool, settlement_key, state_digest as _digest
+from app.core.state_transaction import state_transaction_lock; from app.core.night_settlement import DELAYED_DEATH_STATUS, NIGHT_SCOPED_STATUSES, PROTECTION_SOURCES, STAND_IN_RESOURCE, STAND_IN_USED_RESOURCE, settle, settle_pool, settlement_key, state_digest as _digest
 from app.core.role_runtime import clone_action_counts, initialize_role_resources, record_accepted_action, role_resource_view
 INT32_MAX = 2_147_483_647
 _TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -266,6 +266,17 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
             frozenset({"target", "amount", "source"}),
         }:
             raise EffectRejected("invalid protection payload")
+    elif kind is EffectKind.SUBMIT_DAMAGE:
+        # ``unreplaceable`` is the same kind of additive mark `source` is on a
+        # shield: the rules allow the producer to say that this hit may not be
+        # replaced, and every record written before it existed stays valid.
+        if frozenset(payload) not in {
+            frozenset({"target", "amount", "cause"}),
+            frozenset({"target", "amount", "cause", "unreplaceable"}),
+        }:
+            raise EffectRejected("invalid damage payload")
+        if "unreplaceable" in payload and type(payload["unreplaceable"]) is not bool:
+            raise EffectRejected("invalid unreplaceable mark")
     else:
         _exact(payload, schemas[kind], "payload")
     if kind is EffectKind.ACCEPT_ACTION:
@@ -466,7 +477,8 @@ class EffectApplier:
                         swept[seat] = tuple(swept.get(seat, ())) + stale
             if (not simulated.pending_damage and not simulated.pending_protection
                     and not pool_deaths and not swept): return None  # pragma: no branch
-            try: deaths, resulting_alive, delayed = settle(simulated.pending_damage, simulated.pending_protection, set(state.players), alive, round_number, simulated.role_resources)
+            substitutions: list[dict[str, int]] = []
+            try: deaths, resulting_alive, delayed = settle(simulated.pending_damage, simulated.pending_protection, set(state.players), alive, round_number, simulated.role_resources, substitutions=substitutions)
             except (TypeError, ValueError) as error: raise EffectRejected("invalid pending damage or protection") from error
             # The pool speaks first: a seat killed by both the knife and the
             # dance dies once, announced with the dance's cause.
@@ -479,6 +491,15 @@ class EffectApplier:
             # otherwise the seat has a death report and is still standing.
             for death in pool_deaths:
                 resulting_alive[death["seat"]] = False
+            # A replacement spends the stand-in marker and records that it fired:
+            # ``stand_in_used`` is what turns "survive one hit" into a
+            # once-per-game effect, because the target marker starts at zero
+            # before the first charm. Written here so the whole redirect — the
+            # substitute's death and the spent marker — lands in one commit.
+            for item in substitutions:
+                spent = simulated.role_resources.setdefault(item["victim"], {})
+                spent[STAND_IN_RESOURCE] = 0
+                spent[STAND_IN_USED_RESOURCE] = 1
             simulated.pending_damage = (); simulated.pending_protection = (); simulated.revision += 1
             for seat in sorted(swept):
                 # Plain ``set``: the runtime declares plain sets and the next

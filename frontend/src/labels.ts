@@ -50,6 +50,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   hunt: '狩猎出局',
   dance: '舞池出局',
   awakened_hunt: '巡猎出局',
+  stand_in: '替身代出局',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -118,6 +119,7 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   dancer_reasoning: '舞者思考',
   mask_reasoning: '假面思考',
   awakened_hunter_reasoning: '觉醒猎人思考',
+  awakened_beauty_reasoning: '觉醒狼美人思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -143,6 +145,7 @@ export const NIGHT_ACTION_ROLE_NAMES: Record<NightActionType, string> = {
 export const NIGHT_EVENT_ROLE_NAMES: Partial<Record<PublicEventType, string>> = {
   dance_pool: '舞者',
   mask_granted: '假面',
+  wraith_illusion: '觉醒狼美人',
 };
 
 /** 思考事件 → 角色短名，和上表同为「正在行动的是谁」，共用同一套短名。 */
@@ -167,6 +170,7 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   dancer_reasoning: '舞者',
   mask_reasoning: '假面',
   awakened_hunter_reasoning: '觉醒猎人',
+  awakened_beauty_reasoning: '觉醒狼美人',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────
@@ -198,6 +202,7 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
   mask_granted: '假面',
   knight_duel: '决斗',
   wolf_beauty_charm: '魅惑',
+  wraith_illusion: '幻象',
   wolf_beauty_revenge: '殉情',
   sheriff_elected: '警长',
   sheriff_badge: '警徽',

@@ -52,6 +52,8 @@ class DeathCause(str, Enum):
     DANCE = "dance"
     #: 觉醒猎人的「巡猎」：出局后选正序/逆序，方向上最近的一名狼人出局。
     AWAKENED_HUNT = "awakened_hunt"
+    #: 觉醒狼美人的「挽歌幻象」：被魅惑者顶替她出局。
+    STAND_IN = "stand_in"
 
 
 class WinReason(str, Enum):

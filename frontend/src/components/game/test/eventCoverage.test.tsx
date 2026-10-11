@@ -208,6 +208,15 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
+    what: '觉醒狼美人挽歌幻象（上帝视角带替身）',
+    event: {
+      ...at,
+      event_type: 'wraith_illusion',
+      payload: { seat: 6, target_seat: 2, round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '狼美人殉情',
     event: {
       ...at,
@@ -354,7 +363,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(33);
+    expect(listed).toHaveLength(34);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];
