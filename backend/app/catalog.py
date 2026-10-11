@@ -177,6 +177,18 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "不能自爆，也不能成为狼队的刀口。",
         ],
     },
+    "wolf-killer-lonely-girl": {
+        "name_zh": "孤独少女", "icon": "villager",
+        "description": "平民，第一夜最先选择一名崇拜对象；胜负跟随崇拜对象的阵营",
+        "rules": [
+            "属于好人阵营、计入**平民**（不计入神职）：预言家查验为好人，放逐投票与普通村民完全一样。",
+            "**第一夜最开始时最先行动**：选择一名其他存活玩家作为崇拜对象，整局只选一次、不可更改。",
+            "崇拜对象不会知道自己被崇拜，你也不会再从技能里得到任何信息。",
+            "**胜负跟随崇拜对象所在阵营**：崇拜对象最终获胜则你一起获胜（哪怕你自己的阵营输了）；"
+            "崇拜对象落败则你也落败。",
+            "因此你没有独立获胜的方式：这张牌赌的是「最后赢的那一方」。",
+        ],
+    },
     "wolf-killer-old-drunkard": {
         "name_zh": "老酒鬼", "icon": "old_drunkard",
         "description": "平民，免疫魅惑；被毒或枪杀延到次日发言结束后死亡",
@@ -560,6 +572,24 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-guard": 1,
             "wolf-killer-awakened-hunter": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Lonely Girl" board.
+        "id": "twelve-player-lonely-girl",
+        "name": "十二人孤独少女",
+        "description": "4狼 3民 1孤独少女 1预言家 1女巫 1猎人 1守卫",
+        "role_counts": {
+            "wolf-killer-werewolf": 4,
+            "wolf-killer-villager": 3,
+            "wolf-killer-lonely-girl": 1,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-guard": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",

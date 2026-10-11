@@ -27,7 +27,9 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     # （警长 1.5 票对人 1 票看起来是平局）。白名单漏掉它时，域事件带了、
     # 观众流与回放都没有 —— `game_routes._AUDIENCE_ACTION_OPTIONAL` 也就成了死配置。
     "VOTE_RESULT": ("vote_result", frozenset({"round_number", "exiled_seat", "counts", "weighted_counts"})),
-    "GAME_OVER": ("winner", frozenset({"winning_camp", "reason"})),
+    # `winners`（按座位列出胜者）只在「胜负不等于阵营」的板子出现（孤独少女随
+    # 崇拜对象的阵营胜负），老对局的 `win_result` 没有这个键，所以它是可选字段。
+    "GAME_OVER": ("winner", frozenset({"winning_camp", "reason", "winners"})),
     "NIGHT_ACTION": ("night_action", frozenset({"action_type", "target_seat", "round_number", "vote_counts", "result"})),
     "TECHNICAL_ABSTAIN": ("technical_abstain", frozenset({"player_seat", "voter_seat", "round_number", "failure_code"})),
     "EXILE_CANCELLED": ("exile_cancelled", frozenset({"target_seat", "round_number"})),

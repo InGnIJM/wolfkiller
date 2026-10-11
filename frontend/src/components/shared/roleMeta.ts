@@ -38,7 +38,9 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-pure-white',
   'wolf-killer-demon-hunter',
   'wolf-killer-dancer',
+  // 孤独少女与老酒鬼都是「平民」牌：排在神职之后、普通村民之前。
   'wolf-killer-old-drunkard',
+  'wolf-killer-lonely-girl',
   'wolf-killer-villager',
 ];
 
@@ -63,6 +65,7 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-wolf-beauty', key: 'wolf_beauty', label: '狼美人' },
   { id: 'wolf-killer-awakened-wolf-beauty', key: 'wolf_beauty', label: '觉醒狼美人' },
   { id: 'wolf-killer-old-drunkard', key: 'old_drunkard', label: '老酒鬼' },
+  { id: 'wolf-killer-lonely-girl', key: 'villager', label: '孤独少女' },
   { id: 'wolf-killer-pure-white', key: 'seer', label: '纯白之女' },
   { id: 'wolf-killer-wolf-witch', key: 'werewolf', label: '狼巫' },
   { id: 'wolf-killer-crimson-envoy', key: 'werewolf', label: '赤月使徒' },

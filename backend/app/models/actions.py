@@ -102,9 +102,17 @@ class DeathReport:
 class WinResult:
     winning_camp: str  # good, werewolf, third_party
     reason: str  # all_wolves_dead, all_gods_dead, all_villagers_dead
+    #: The seats that share the win, when they are not simply "everyone of the
+    #: winning camp" — the Lonely Girl wins with her idol's camp. ``None`` (the
+    #: default, and every board without her) keeps ``to_dict()`` byte-identical
+    #: to the historical shape, so no old reader or archive sees a new key.
+    winners: tuple[int, ...] | None = None
 
     def to_dict(self) -> dict:
-        return {
+        result: dict[str, object] = {
             "winning_camp": self.winning_camp,
             "reason": self.reason,
         }
+        if self.winners is not None:
+            result["winners"] = list(self.winners)
+        return result

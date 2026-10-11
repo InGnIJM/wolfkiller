@@ -14,6 +14,7 @@ import Science from '@mui/icons-material/Science';
 import Security from '@mui/icons-material/Security';
 import LocalBar from '@mui/icons-material/LocalBar';
 import Favorite from '@mui/icons-material/Favorite';
+import FavoriteBorder from '@mui/icons-material/FavoriteBorder';
 import Visibility from '@mui/icons-material/Visibility';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { INK, ROLE_COLORS } from '../../theme/tokens';
@@ -40,6 +41,7 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-knight': { Icon: Gavel, label: '骑士', color: ROLE_COLORS.knight.color },
   'wolf-killer-wolf-beauty': { Icon: Favorite, label: '狼美人', color: ROLE_COLORS.wolf_beauty.color },
   'wolf-killer-old-drunkard': { Icon: LocalBar, label: '老酒鬼', color: ROLE_COLORS.old_drunkard.color },
+  'wolf-killer-lonely-girl': { Icon: FavoriteBorder, label: '孤独少女', color: ROLE_COLORS.villager.color },
 };
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标

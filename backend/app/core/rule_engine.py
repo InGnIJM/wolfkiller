@@ -1,5 +1,6 @@
 from app.models.game import GameState, Camp
 from app.models.actions import WinResult
+from app.core.win_attribution import winner_seats
 
 
 def _role_tags(role_id: str) -> frozenset[str]:
@@ -31,22 +32,27 @@ class RuleEngine:
 
         # 狼刀在先: check wolf win conditions first
         if alive_gods == 0:
-            return WinResult(winning_camp=Camp.WEREWOLF.value, reason="all_gods_dead")
+            return self._result(state, Camp.WEREWOLF.value, "all_gods_dead")
 
         if alive_villagers == 0:
-            return WinResult(winning_camp=Camp.WEREWOLF.value, reason="all_villagers_dead")
+            return self._result(state, Camp.WEREWOLF.value, "all_villagers_dead")
 
         alive_good = len(state.alive_players()) - alive_wolves
         if alive_wolves > alive_good:
-            return WinResult(
-                winning_camp=Camp.WEREWOLF.value,
-                reason="wolves_outnumber_good",
-            )
+            return self._result(state, Camp.WEREWOLF.value, "wolves_outnumber_good")
 
         if alive_wolves == 0:
-            return WinResult(winning_camp=Camp.GOOD.value, reason="all_wolves_dead")
+            return self._result(state, Camp.GOOD.value, "all_wolves_dead")
 
         return None
+
+    @staticmethod
+    def _result(state: GameState, camp: str, reason: str) -> WinResult:
+        """The camp verdict plus whoever shares it (``None`` on every usual board)."""
+        return WinResult(
+            winning_camp=camp, reason=reason,
+            winners=winner_seats(state, camp),
+        )
 
     def is_game_over(self, state: GameState) -> bool:
         return self.check_win(state) is not None

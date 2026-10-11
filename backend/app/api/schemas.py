@@ -288,6 +288,9 @@ class PublicWinnerResponse(_PublicResponse):
 
     winning_camp: PublicWinningCamp
     reason: Optional[PublicWinReason] = None
+    #: 按座位列出的胜者。只有「胜负不等于阵营」的板子（孤独少女随崇拜对象的阵营
+    #: 胜负）才会带上它；没有孤独少女的对局逐字节保持历史形状。
+    winners: Optional[list[PositivePublicInt]] = None
 
 
 PublicThoughtActionType = Literal[

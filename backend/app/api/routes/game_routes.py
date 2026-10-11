@@ -1027,6 +1027,15 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
     if operation == "game_over":
         winner = data.get("winner")
         reason = data.get("reason")
+        # 孤独少女的对局才写这个键；它必须逐个校验座位，坏数据只丢这一条记录。
+        seats = data.get("winners")
+        if seats is not None and (
+            not isinstance(seats, list)
+            or not seats
+            or any(not _is_positive_int(seat) for seat in seats)
+        ):
+            _drop_replay_row("game_over", "invalid_winners", seats)
+            return []
         if not isinstance(winner, str) or winner not in _PUBLIC_WINNING_CAMPS:
             _drop_replay_row("game_over", "undeclared_camp", winner)
             return []
@@ -1035,13 +1044,19 @@ def _public_operation_events(record: dict[str, Any]) -> list[dict]:
             # reason (that only lives in the log). "Unknown" is absence, not a value
             # the vocabulary would have to carry -- `PublicWinnerResponse.reason` is
             # optional for exactly this case.
-            return [{"event_type": "winner", "payload": {"winning_camp": winner}}]
+            return [{"event_type": "winner", "payload": {
+                "winning_camp": winner,
+                **({"winners": seats} if seats is not None else {}),
+            }}]
         if not isinstance(reason, str) or reason not in _PUBLIC_WIN_REASONS:
             _drop_replay_row("game_over", "undeclared_reason", reason)
             return []
         return [{
             "event_type": "winner",
-            "payload": {"winning_camp": winner, "reason": reason},
+            "payload": {
+                "winning_camp": winner, "reason": reason,
+                **({"winners": seats} if seats is not None else {}),
+            },
         }]
 
     return []

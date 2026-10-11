@@ -66,6 +66,13 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
           <Typography variant="body2" color="text.secondary">
             {WIN_REASON_LABELS[winResult.reason] || winResult.reason}
           </Typography>
+          {winResult.winners != null && winResult.winners.length > 0 && (
+            // 孤独少女这类「胜负跟随别人」的牌会让胜者不等于整个阵营，所以按座位
+            // 点名（阵营标题仍是结算阵营，两者可以不一致）。
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              {`获胜座位：${winResult.winners.join('、')} 号`}
+            </Typography>
+          )}
         </Box>
         <Box sx={{ borderRadius: 3, px: 2, py: 1.5, bgcolor: 'action.hover' }}>
           <Typography variant="body2" color="text.secondary" align="center">

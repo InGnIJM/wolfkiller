@@ -315,9 +315,15 @@ class GameLogger:
 
     def log_game_over(
         self, game_id: str, round_num: int, winner: str, reason: str,
+        winners: tuple[int, ...] | None = None,
     ) -> None:
-        self.log_operation(game_id, "game_over", round_num, "game_over",
-                           data={"winner": winner, "reason": reason})
+        """Record the result; ``winners`` is present only when a seat's win
+        differs from its camp (the Lonely Girl), so every older row keeps its
+        exact shape and the file replay can read the seats when they exist."""
+        data: dict[str, object] = {"winner": winner, "reason": reason}
+        if winners is not None:
+            data["winners"] = list(winners)
+        self.log_operation(game_id, "game_over", round_num, "game_over", data=data)
 
     # ── Conversation log ──────────────────────────────────────────
 

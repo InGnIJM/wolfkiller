@@ -18,6 +18,7 @@ from app.models.actions import (
 from app.models.contracts import ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
+from app.core.win_attribution import winner_seats
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.night_flow import WolfVote, build_briefing
 from app.core.conversation_log import ConversationLog
@@ -1064,18 +1065,24 @@ class GameEngine:
             pending = replace(pending, stage=3); self._pending_night_completion = pending
         if pending.stage == 3:
             if pending.win_result is not None:
-                self.state.win_result = WinResult(pending.win_result.winning_camp, pending.win_result.reason).to_dict(); self.state.phase = GamePhase.GAME_OVER
+                # The per-seat winners are recomputed from the state rather than
+                # carried in the pending snapshot: that snapshot is persisted
+                # with an exact field set, and it only ever holds camp+reason.
+                # The state cannot move between the check and this stage, so the
+                # recomputation is the same answer the rule engine gave.
+                self.state.win_result = self._pending_win_result(pending.win_result).to_dict(); self.state.phase = GamePhase.GAME_OVER
                 self.sm.set_state(GamePhase.GAME_OVER)
             pending = replace(pending, stage=4); self._pending_night_completion = pending
         if pending.stage == 4:
             if pending.win_result is not None:
+                logged = self._pending_win_result(pending.win_result)
                 self.game_logger.log_game_over(self.game_id, self.state.round_number,
-                    pending.win_result.winning_camp, pending.win_result.reason)
+                    logged.winning_camp, logged.reason, winners=logged.winners)
             pending = replace(pending, stage=5); self._pending_night_completion = pending
         if pending.stage == 5:
             if pending.win_result is not None:
                 await self.event_bus.publish(BusEvent.GAME_OVER, game_id=self.game_id,
-                    win_result=WinResult(pending.win_result.winning_camp, pending.win_result.reason))
+                    win_result=self._pending_win_result(pending.win_result))
             pending = replace(pending, stage=6); self._pending_night_completion = pending
         if pending.stage == 6:
             if pending.win_result is None and self.sm.get_state() is GamePhase.NIGHT:
@@ -2360,6 +2367,17 @@ class GameEngine:
             ))
         return await self._run_pipeline_point(point, slot=slot)
 
+    def _pending_win_result(self, pending: "_PendingWin") -> WinResult:
+        """Rebuild the published result from the pending camp/reason snapshot.
+
+        ``_PendingWin`` is persisted with an exact field set, so the per-seat
+        winners are derived here instead of being carried through the checkpoint.
+        """
+        return WinResult(
+            pending.winning_camp, pending.reason,
+            winners=winner_seats(self.state, pending.winning_camp),
+        )
+
     @staticmethod
     def _settlement_deaths(settlement: CommitResult) -> tuple[DeathReport, ...]:
         return tuple(
@@ -2723,6 +2741,7 @@ class GameEngine:
             self.game_logger.log_game_over(
                 self.game_id, self.state.round_number,
                 win_result.winning_camp, win_result.reason,
+                winners=win_result.winners,
             )
             await self.event_bus.publish(
                 BusEvent.GAME_OVER, game_id=self.game_id, win_result=win_result,

@@ -40,6 +40,28 @@ describe('WinOverlay', () => {
     expect(screen.getByText('身份不公开：玩家出局时不会向场上公开身份。')).toBeVisible();
   });
 
+  it('names the winning seats when the result carries them', () => {
+    render(
+      <WinOverlay
+        winResult={{ winning_camp: 'good', reason: 'all_wolves_dead', winners: [6, 7, 8] }}
+        revealOnDeath={false}
+      />,
+    );
+
+    expect(screen.getByText('获胜座位：6、7、8 号')).toBeVisible();
+  });
+
+  it('says nothing about seats on a board whose winners are the whole camp', () => {
+    render(
+      <WinOverlay
+        winResult={{ winning_camp: 'good', reason: 'all_wolves_dead', winners: null }}
+        revealOnDeath={false}
+      />,
+    );
+
+    expect(screen.queryByText(/获胜座位/)).toBeNull();
+  });
+
   it('uses a single labelled heading for the result dialog', () => {
     render(
       <WinOverlay winResult={{ winning_camp: 'good', reason: 'all_wolves_dead' }} revealOnDeath={false} />,

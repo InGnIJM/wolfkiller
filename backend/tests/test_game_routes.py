@@ -659,7 +659,11 @@ async def test_get_game_projects_only_public_state_without_reading_players(monke
         "seat_number": 1, "is_alive": True, "is_sheriff": False,
         "role": "wolf-killer-villager", "camp": "good",
     }
-    assert detail["win_result"] == {"winning_camp": "good", "reason": "all_wolves_dead"}
+    # `winners` 是公开 DTO 上的可选键（孤独少女的对局才带座位表），缺席时按
+    # 本仓库既有的 `Optional` 字段惯例以 `None` 出现在响应里。
+    assert detail["win_result"] == {
+        "winning_camp": "good", "reason": "all_wolves_dead", "winners": None,
+    }
     assert detail["model_snapshot"] == []
 
 
@@ -1015,6 +1019,46 @@ def test_absent_win_reason_is_carried_without_a_reason() -> None:
             {"event_type": "winner", "payload": {"winning_camp": "werewolf"}},
         ]
         assert not game_routes._DROPPED_REPLAY_ROWS
+
+
+def test_the_seat_list_rides_along_only_when_the_log_has_it(caplog) -> None:
+    """孤独少女的对局按座位记胜者；老档没有这个键，形状逐字节不变。
+
+    公开 DTO（`PublicWinnerResponse.winners`）必须接得住这个可选键，坏座位只丢自己
+    这一条记录 —— 与「胜因缺失」同一条纪律。
+    """
+    with_list = _replay_record(
+        "game_over",
+        {"winner": "good", "reason": "all_wolves_dead", "winners": [6, 7, 8]},
+        phase="game_over",
+    )
+    assert game_routes._public_operation_events(with_list) == [
+        {"event_type": "winner", "payload": {
+            "winning_camp": "good", "reason": "all_wolves_dead", "winners": [6, 7, 8],
+        }},
+    ]
+
+    # 旧档：没有 winners 键 → 事件里也不出现这个键。
+    legacy = _replay_record(
+        "game_over", {"winner": "good", "reason": "all_wolves_dead"}, phase="game_over",
+    )
+    assert game_routes._public_operation_events(legacy) == [
+        {"event_type": "winner", "payload": {
+            "winning_camp": "good", "reason": "all_wolves_dead",
+        }},
+    ]
+    assert not game_routes._DROPPED_REPLAY_ROWS
+
+    for malformed in ([0], [6, "7"], [], "678", 6):
+        before = game_routes._DROPPED_REPLAY_ROWS["game_over:invalid_winners"]
+        record = _replay_record(
+            "game_over",
+            {"winner": "good", "reason": "all_wolves_dead", "winners": malformed},
+            phase="game_over",
+        )
+        with caplog.at_level(logging.WARNING):
+            assert game_routes._public_operation_events(record) == []
+        assert game_routes._DROPPED_REPLAY_ROWS["game_over:invalid_winners"] == before + 1
 
 
 def test_undeclared_win_reason_is_reported(caplog) -> None:
@@ -2077,7 +2121,8 @@ async def test_get_game_logs_projects_only_closed_public_replay_events(monkeypat
         {"event_type": "phase", "timestamp": "2026-01-01T00:00:09Z",
          "payload": {"phase": "speech", "round_number": 2}},
         {"event_type": "winner", "timestamp": "2026-01-01T00:00:10Z",
-         "payload": {"winning_camp": "good", "reason": "all_wolves_dead"}},
+         "payload": {"winning_camp": "good", "reason": "all_wolves_dead",
+                     "winners": None}},
         {"event_type": "vote_result", "timestamp": "2026-01-01T00:00:11.500000Z",
          "payload": {"round_number": 2, "exiled_seat": None}},
     ]

@@ -321,6 +321,9 @@ export interface GameMemories {
 export interface WinResult {
   winning_camp: WinningCamp;
   reason: WinReason;
+  // 按座位列出的胜者。只有「胜负不等于阵营」的板子（孤独少女随崇拜对象的阵营胜负）
+  // 才带这个键；老对局缺省（公开 DTO 会给出 null）。
+  winners?: number[] | null;
 }
 
 export interface PublicGameState {
