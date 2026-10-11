@@ -8,7 +8,7 @@ from types import MappingProxyType
 from app.models.actions import SpeechRecord, VoteAction
 from app.models.game import DEFAULT_WITCH_SELF_SAVE, Camp, GameState, PlayerState
 from app.models.pipeline import (
-    ActionCommand, ActionContext, IssuedActionRequest, SchedulePoint,
+    ActionCommand, ActionContext, IssuedActionRequest, RoleSpec, SchedulePoint,
 )
 from app.roles.registry import RegistrySnapshot
 from app.core.role_runtime import (
@@ -76,6 +76,34 @@ _PUBLIC_RESOURCES = frozenset({
 })
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
+
+
+def _directional_wolves(state: GameState, actor: PlayerState) -> dict[str, object]:
+    """The closest living werewolf in each seat direction, wrapping around.
+
+    The Awakened Hunter's whole skill is picking a direction: which seat dies is
+    the rules' answer, not the model's. This fact is hook-only — the prompt
+    renderer hoists it out of the projected context — so the model decides a
+    direction without ever being told where the wolves sit. Hidden wolves count:
+    the shot goes by camp, the same camp the win check reads.
+    """
+    ordered = sorted(state.players)
+    index = ordered.index(actor.seat_number)
+
+    def nearest(step: int) -> int | None:
+        for distance in range(1, len(ordered)):
+            other = ordered[(index + step * distance) % len(ordered)]
+            player = state.players[other]
+            if player.is_alive and player.camp == Camp.WEREWOLF:
+                return other
+        return None
+
+    return {"forward": nearest(1), "backward": nearest(-1)}
+
+
+#: ``RoleSpec.projected_facts`` name -> builder. Kept one-to-one with
+#: ``models/pipeline.PROJECTED_FACT_NAMES`` (a gate asserts the sets are equal).
+_DERIVED_FACT_BUILDERS = {"directional_wolves": _directional_wolves}
 
 
 
@@ -246,6 +274,7 @@ class ContextProjector:
                     spec.initial_private_data,
                 )
             )
+            facts.update(self._derived_facts(state, actor, spec))
         if "CAMP" in visible:
             facts.update(_camp_facts(state, actor))
         # RELATION is intentionally a no-op until GameState has tagged relation facts.
@@ -327,6 +356,7 @@ class ContextProjector:
                 state, actor, spec.initial_private_data
             )
         )
+        facts.update(self._derived_facts(state, actor, spec))
         return ActionContext(
             game_id=state.game_id,
             revision=0,
@@ -538,6 +568,21 @@ class ContextProjector:
             # "no gun".
             resources[key] = ContextProjector._copy_json_value(default)
         return resources
+
+    @staticmethod
+    def _derived_facts(
+        state: GameState, actor: PlayerState, spec: RoleSpec,
+    ) -> dict[str, object]:
+        """Compute the facts this role declares in ``RoleSpec.projected_facts``.
+
+        The vocabulary is closed in ``models/pipeline.py`` and every name has a
+        builder below; a gate asserts the two sets are equal, so an unknown name
+        is rejected when the spec is built rather than when a seat acts.
+        """
+        facts: dict[str, object] = {}
+        for name in sorted(spec.projected_facts):
+            facts[name] = _DERIVED_FACT_BUILDERS[name](state, actor)
+        return facts
 
     @classmethod
     def _actor_private_facts(

@@ -23,6 +23,7 @@ from app.models.pipeline import (
     RuleViolation,
 )
 from app.roles.hunter import HUNTER_SPEC, Hunter
+from app.roles.awakened_hunter import AWAKENED_HUNTER_SPEC, AwakenedHunter
 from app.roles.guard import GUARD_SPEC, Guard
 from app.roles.idiot import IDIOT_SPEC, Idiot
 from app.roles.knight import KNIGHT_SPEC, Knight
@@ -474,6 +475,7 @@ builtin_registry.register_pipeline(WEREWOLF_SPEC)
 builtin_registry.register_pipeline(WITCH_SPEC)
 builtin_registry.register_pipeline(SEER_SPEC)
 builtin_registry.register_pipeline(HUNTER_SPEC)
+builtin_registry.register_pipeline(AWAKENED_HUNTER_SPEC)
 builtin_registry.register_pipeline(VILLAGER_SPEC)
 builtin_registry.register_pipeline(GUARD_SPEC)
 builtin_registry.register_pipeline(IDIOT_SPEC)
@@ -562,6 +564,11 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-guard", Camp.GOOD, Guard, ())
+)
+# Same shot, different rules: the awakened hunter's contract lives on its own
+# spec, so the legacy registration carries no contracts at all.
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-awakened-hunter", Camp.GOOD, AwakenedHunter, ())
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-idiot", Camp.GOOD, Idiot, ())

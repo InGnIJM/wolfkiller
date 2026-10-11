@@ -28,7 +28,8 @@ export type DeathCause =
   | 'dream_death'
   | 'verify_kill'
   | 'hunt'
-  | 'dance';
+  | 'dance'
+  | 'awakened_hunt';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'
@@ -183,7 +184,8 @@ export type NightActionType =
   | 'seer_check'
   | 'hunter_shot'
   | 'wolf_king_shot'
-  | 'guard_protect';
+  | 'guard_protect'
+  | 'awakened_hunt';
 
 export interface NightActionRecord {
   action_type: NightActionType;
@@ -280,7 +282,8 @@ export interface NightThoughtPayload {
     | 'crimson_envoy_reasoning'
     | 'nightmare_reasoning'
     | 'dancer_reasoning'
-    | 'mask_reasoning';
+    | 'mask_reasoning'
+    | 'awakened_hunter_reasoning';
   target_seat: number | null;
   reasoning: string;
   /**

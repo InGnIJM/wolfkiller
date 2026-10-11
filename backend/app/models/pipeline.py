@@ -377,6 +377,15 @@ class ActionContext(_FrozenValue):
             )
 
 
+#: Derived facts a role may ask the projector to compute for its own context.
+#: A closed vocabulary on purpose: the names live here so a spec cannot silently
+#: request a fact nobody implements, and ``core/context_projector.py`` keeps the
+#: one builder per name (a test asserts the two sets are equal). Every name in
+#: this set is hook-only or prompt-visible by construction — ``directional_wolves``
+#: names living werewolf seats and is therefore hoisted out of the prompt.
+PROJECTED_FACT_NAMES = frozenset({"directional_wolves"})
+
+
 #: The reasoning a command carries when the engine, not a model, produced it.
 #: Every fallback used to invent player-facing prose instead ("系统异常，本轮未
 #: 行动"), and because ``degraded`` did not exist, nothing downstream could tell
@@ -612,6 +621,12 @@ class RoleSpec(_FrozenValue):
     #: this role has no separate beat (it acts silently, or its window is
     #: announced by another role's line).
     opening_narration: tuple[str, str] = ()
+    #: Derived facts the projector computes for this role's own contexts, from
+    #: the closed vocabulary above. Declared on the spec rather than the
+    #: contract because ``ActionContract`` is a hashed identity: a new field
+    #: there would move every existing contract's digest and force every
+    #: resumable game through a `drift` confirmation.
+    projected_facts: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
@@ -623,8 +638,12 @@ class RoleSpec(_FrozenValue):
             "tags",
             "dependencies",
             "exclusions",
+            "projected_facts",
         ):
             _require_str_frozenset(name, getattr(self, name))
+        unknown_facts = self.projected_facts - PROJECTED_FACT_NAMES
+        if unknown_facts:
+            raise ValueError(f"unknown projected fact(s): {', '.join(sorted(unknown_facts))}")
         _require_int("min_count", self.min_count)
         _require_int("max_count", self.max_count, optional=True)
         opening = self.opening_narration
@@ -657,6 +676,7 @@ class RoleSpec(_FrozenValue):
         object.__setattr__(self, "tags", frozenset(self.tags))
         object.__setattr__(self, "dependencies", frozenset(self.dependencies))
         object.__setattr__(self, "exclusions", frozenset(self.exclusions))
+        object.__setattr__(self, "projected_facts", frozenset(self.projected_facts))
         try:
             effects = frozenset(EffectKind(kind) for kind in self.allowed_effects)
         except (TypeError, ValueError) as error:
@@ -684,6 +704,7 @@ class RoleSpec(_FrozenValue):
             "tags",
             "dependencies",
             "exclusions",
+            "projected_facts",
         ):
             if isinstance(converted.get(name), list):
                 converted[name] = frozenset(converted[name])

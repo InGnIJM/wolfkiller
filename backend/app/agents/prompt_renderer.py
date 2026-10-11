@@ -10,8 +10,13 @@ from app.models.pipeline import ActionContext, ActionContract, RoleSpec
 _MAX_HISTORY = 20_000
 
 # Projected facts that a dedicated block renders. The generic PROJECTED_CONTEXT
-# dump must skip them, or the same content ships to the model twice.
-_HOISTED_FACTS = frozenset({"public_role_rules", "speeches", "votes"})
+# dump must skip them, or the same content ships to the model twice. Hook-only
+# derived facts belong here too: the Awakened Hunter's ``directional_wolves``
+# names living werewolf seats, so it may reach the pure resolve hook but never
+# the model that picks the direction.
+_HOISTED_FACTS = frozenset(
+    {"public_role_rules", "speeches", "votes", "directional_wolves"}
+)
 
 
 def _history_text(value: object) -> str:

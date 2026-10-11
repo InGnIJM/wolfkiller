@@ -1089,6 +1089,7 @@ _REASONING_ACTIONS = {
     "PURE_WHITE_REASONING": "check", "WOLF_WITCH_REASONING": "check",
     "DEMON_HUNTER_REASONING": "hunt", "CRIMSON_ENVOY_REASONING": "explode",
     "NIGHTMARE_REASONING": "fear", "DANCER_REASONING": "pool", "MASK_REASONING": "mask",
+    "AWAKENED_HUNTER_REASONING": "hunt_forward",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 

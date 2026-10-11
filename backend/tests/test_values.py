@@ -50,7 +50,7 @@ def test_death_causes_are_frozen() -> None:
     assert DEATH_CAUSES == {
         "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
         "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-        "verify_kill", "hunt", "dance",
+        "verify_kill", "hunt", "dance", "awakened_hunt",
     }
 
 

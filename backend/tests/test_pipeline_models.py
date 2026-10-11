@@ -624,6 +624,22 @@ def test_role_rejects_malformed_opening_narration(bad_value: object) -> None:
         RoleSpec(role_id="role", opening_narration=bad_value)
 
 
+def test_role_projected_facts_are_a_closed_vocabulary() -> None:
+    """派生事实只能点名项目实现过的那几个：拼错一个名字要在建 spec 时就炸。"""
+    assert RoleSpec(role_id="role").projected_facts == frozenset()
+    role = RoleSpec(
+        role_id="role", projected_facts=frozenset({"directional_wolves"}),
+    )
+    assert role.projected_facts == frozenset({"directional_wolves"})
+    restored = RoleSpec.from_json(role.to_json())
+    assert restored.projected_facts == role.projected_facts
+    assert type(restored.projected_facts) is frozenset
+    with pytest.raises(ValueError, match="unknown projected fact"):
+        RoleSpec(role_id="role", projected_facts=frozenset({"no_such_fact"}))
+    with pytest.raises(TypeError, match="projected_facts"):
+        RoleSpec(role_id="role", projected_facts=["directional_wolves"])
+
+
 def test_role_with_hook_contract_serializes_descriptor_but_cannot_restore_it() -> None:
     role = RoleSpec(role_id="role", contracts=(_contract(resolve=module_level_hook),))
     encoded = json.loads(role.to_json())

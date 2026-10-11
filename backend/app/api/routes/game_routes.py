@@ -56,7 +56,7 @@ _CONFIRMATION_CODES = frozenset({
 _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
-    "verify_kill", "hunt", "dance",
+    "verify_kill", "hunt", "dance", "awakened_hunt",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
@@ -70,6 +70,8 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WITCH_POISON": frozenset({"target_seat"}),
     "SEER_CHECK": frozenset({"target_seat", "result"}),
     "HUNTER_SHOT": frozenset({"target_seat"}),
+    # 觉醒猎人的「巡猎」：命令只带方向，落地的仍是 target_seat，公开形状与猎枪一致。
+    "AWAKENED_HUNT": frozenset({"target_seat"}),
     "WOLF_KING_SHOT": frozenset({"target_seat"}),
     "GUARD_PROTECT": frozenset({"target_seat"}),
     "WOLF_CHAT_MESSAGE": frozenset({"seat", "text"}),
@@ -151,6 +153,10 @@ _REASONING_EVENT_TYPES = {
     "NIGHTMARE_REASONING": ("nightmare_reasoning", frozenset({"fear", "pass"})),
     "DANCER_REASONING": ("dancer_reasoning", frozenset({"pool", "pass"})),
     "MASK_REASONING": ("mask_reasoning", frozenset({"mask", "pass"})),
+    "AWAKENED_HUNTER_REASONING": (
+        "awakened_hunter_reasoning",
+        frozenset({"hunt_forward", "hunt_backward", "pass"}),
+    ),
 }
 
 #: `degraded`（引擎代行的动作）是本仓库后加的键：旧记录里不存在，必须仍算合法载荷。

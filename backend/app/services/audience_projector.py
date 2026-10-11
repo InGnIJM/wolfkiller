@@ -60,6 +60,7 @@ _PUBLIC_ROLE_ACTIONS = {
     "WITCH_POISON": "witch_poison",
     "SEER_CHECK": "seer_check",
     "HUNTER_SHOT": "hunter_shot",
+    "AWAKENED_HUNT": "awakened_hunt",
     "WOLF_KING_SHOT": "wolf_king_shot",
     "GUARD_PROTECT": "guard_protect",
 }
@@ -81,6 +82,7 @@ _PUBLIC_REASONING_EVENTS = {
     "NIGHTMARE_REASONING": "nightmare_reasoning",
     "DANCER_REASONING": "dancer_reasoning",
     "MASK_REASONING": "mask_reasoning",
+    "AWAKENED_HUNTER_REASONING": "awakened_hunter_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

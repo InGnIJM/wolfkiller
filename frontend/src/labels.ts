@@ -49,6 +49,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   verify_kill: '验杀',
   hunt: '狩猎出局',
   dance: '舞池出局',
+  awakened_hunt: '巡猎出局',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ export const NIGHT_ACTION_LABELS: Record<NightActionType, string> = {
   hunter_shot: '猎人开枪',
   wolf_king_shot: '狼王开枪',
   guard_protect: '守卫守护',
+  awakened_hunt: '觉醒猎人巡猎',
 };
 
 /** 思考事件长文案（活动卡 / 编年史共用）。 */
@@ -115,6 +117,7 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   nightmare_reasoning: '噩梦之影思考',
   dancer_reasoning: '舞者思考',
   mask_reasoning: '假面思考',
+  awakened_hunter_reasoning: '觉醒猎人思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -128,6 +131,7 @@ export const NIGHT_ACTION_ROLE_NAMES: Record<NightActionType, string> = {
   guard_protect: '守卫',
   hunter_shot: '猎人',
   wolf_king_shot: '狼王',
+  awakened_hunt: '觉醒猎人',
 };
 
 /** 夜间独立事件 → 角色短名。
@@ -162,6 +166,7 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   nightmare_reasoning: '噩梦之影',
   dancer_reasoning: '舞者',
   mask_reasoning: '假面',
+  awakened_hunter_reasoning: '觉醒猎人',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────

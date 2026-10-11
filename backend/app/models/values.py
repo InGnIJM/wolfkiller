@@ -50,6 +50,8 @@ class DeathCause(str, Enum):
     HUNT = "hunt"
     #: 假面舞会的舞池裁决：三人中人数少的一方当夜出局。
     DANCE = "dance"
+    #: 觉醒猎人的「巡猎」：出局后选正序/逆序，方向上最近的一名狼人出局。
+    AWAKENED_HUNT = "awakened_hunt"
 
 
 class WinReason(str, Enum):
