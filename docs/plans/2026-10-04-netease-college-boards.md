@@ -827,6 +827,32 @@ LUCKY_GUARD_CONTRACT  = ActionContract(contract_id="lucky_guard",  schedule_poin
 
 **预设**：`twelve-player-miracle-merchant`（3狼 1狼王 4民 预 守 女 奇迹商人）。
 
+> **下一步实施要点（尚未开工，2026-10-11 复核）** —— 本阶段是全计划里唯一要动「请求
+> 发放」的地方，动手前先把下面四条定死：
+>
+> 1. **幸运儿是状态不是身份牌**：不能给他一座位一 `RoleSpec`。三个技能做成奇迹商人
+>    `RoleSpec` 上预声明的三个契约（`lucky_seer` / `lucky_poison` / `lucky_guard`），
+>    发放条件是**座位资源** `lucky_seer` / `lucky_poison` / `lucky_guard`（由商人
+>    在 `NIGHT_ACTION` 用 `SET_RESOURCE` 授予，一局一次）。
+> 2. **`Scheduler` 目前只按「角色声明的契约」发放请求**（`scheduler.py` 的
+>    `_collect`/`run_point` 一段）→ 必须扩成「座位持有该资源时，即使角色没声明也发放」，
+>    并从注册表里按 `contract_id` 找到**契约拥有者**。建议落在 `RoleSpec.grants`
+>    （声明「我授予哪些契约、解锁资源叫什么」）+ 注册表索引 `contract_id -> 拥有者 spec`，
+>    **不要**把字段加进 `ActionContract`（契约 digest 一变动，库里在跑的对局全部判 `drift`）。
+> 3. **`IssuedActionRequest` 需要 `owner_role_id`**（契约拥有者 ≠ 行动座位）：
+>    投影器 `_validate_request`、`EffectPermission`（`contract_effects` 取契约、`role_effects`
+>    取座位自己的声明）、提示词渲染与 `checkpoint_codec` 的请求往返都要认这个新字段；
+>    旧档缺键要能解码（缺省 = 行动座位自己拥有该契约），否则恢复路径直接炸。
+> 4. **幸运儿是狼人 → 不发技能且次日商人出局**（官方原文，初稿漏了）：这是
+>    `miracle_backlash` 延迟死因（次日发言结束后、投票前落地，与老酒鬼同一条
+>    `_resolve_delayed_deaths()` 路径），死因要按「取值目录五处 + 前端三面」同步；
+>    发技能那一刻就要判定（`camp == werewolf`，含不进狼窝的隐狼），并把结果写进商人的
+>    私有数据以便次日触发。
+>
+> 验收建议（与前面几个阶段同口径）：新角色 + 新板子进 `test_catalog_routes.py` 的计数，
+> 观众事件/死因同步五处，端到端用真实 `Scheduler` 跑一次「平民幸运儿收到查验请求」+
+> 「幸运儿是狼人时商人次日出局」，覆盖率仍要 100%。
+
 ### 9.2 孤独少女 → 解锁「孤独少女」
 
 **好消息：不需要第三方阵营**。官方口径：孤独少女的胜负**继承崇拜对象**，她**始终算民**，预言家验她**始终显示好人**。
