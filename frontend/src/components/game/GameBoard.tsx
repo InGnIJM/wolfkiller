@@ -395,7 +395,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
         >
           # {gameId.slice(0, 8)}
         </Typography>
-        <Box sx={{ ml: { xs: 0, md: 'auto' }, width: { xs: '100%', md: 'auto' }, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        <Box sx={{ ml: 'auto', display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           {executionStatus && (
             <Chip
               label={`执行：${EXECUTION_LABELS[executionStatus]}`}

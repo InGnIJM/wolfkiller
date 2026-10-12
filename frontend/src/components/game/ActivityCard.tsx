@@ -33,10 +33,27 @@ interface CardProps {
   children: React.ReactNode;
 }
 
-// 底部活动卡框架：顶部色条 + 标题行 + 正文
+export const ACTIVITY_CARD_MAX_HEIGHT = 'min(32dvh, 260px)';
+
+const activityBodySx = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  color: 'text.primary',
+  lineHeight: 2,
+  fontSize: '0.875rem',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  pr: 0.5,
+} as const;
+
+// 底部活动卡框架：顶部色条 + 标题行 + 正文。整卡限高，长发言在卡内滚动，
+// 避免把座位舞台压到切双列 / 裁切座位。
 function ActivityFrame({ tone, children }: CardProps) {
   return (
     <Box
+      data-testid="activity-frame"
+      data-max-height={ACTIVITY_CARD_MAX_HEIGHT}
       sx={{
         mx: 2.5,
         mb: 2,
@@ -48,6 +65,10 @@ function ActivityFrame({ tone, children }: CardProps) {
         bgcolor: 'rgba(23,18,33,0.82)',
         px: 2.5,
         py: 1.6,
+        maxHeight: ACTIVITY_CARD_MAX_HEIGHT,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
       }}
     >
       {children}
@@ -136,7 +157,7 @@ function SpeechView({
       : 'LIVE · 第' + String(payload.round_number) + '轮';
   return (
     <ActivityFrame tone="#E5484D">
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={payload.player_seat} />
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
@@ -150,16 +171,8 @@ function SpeechView({
       </Box>
       <Typography
         variant="body2"
-        sx={{
-          color: 'text.primary',
-          lineHeight: 2,
-          fontSize: '0.875rem',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          maxHeight: 150,
-          overflowY: 'auto',
-          pr: 0.5,
-        }}
+        data-testid="activity-body"
+        sx={activityBodySx}
       >
         {payload.text}
       </Typography>
@@ -198,6 +211,7 @@ function MetaRow({
         fontSize: '0.6rem',
         color: 'text.disabled',
         letterSpacing: 1,
+        flexShrink: 0,
       }}
     >
       <span>第{roundNumber}轮 · {kind}</span>
@@ -225,7 +239,7 @@ function ThoughtView({
 }) {
   return (
     <ActivityFrame tone="#B08BE0">
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         {seat !== null ? <SeatAvatar seat={seat} /> : <Box sx={{ width: 40 }} />}
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
@@ -240,16 +254,8 @@ function ThoughtView({
       </Box>
       <Typography
         variant="body2"
-        sx={{
-          color: 'text.secondary',
-          lineHeight: 2,
-          fontSize: '0.875rem',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          maxHeight: 150,
-          overflowY: 'auto',
-          pr: 0.5,
-        }}
+        data-testid="activity-body"
+        sx={{ ...activityBodySx, color: 'text.secondary' }}
       >
         {text}
       </Typography>
@@ -287,7 +293,7 @@ function ChatView({
 }) {
   return (
     <ActivityFrame tone="#F4B3B6">
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={seat} />
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
@@ -301,13 +307,8 @@ function ChatView({
       </Box>
       <Typography
         variant="body2"
-        sx={{
-          color: 'text.secondary',
-          lineHeight: 2,
-          fontSize: '0.875rem',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-        }}
+        data-testid="activity-body"
+        sx={{ ...activityBodySx, color: 'text.secondary' }}
       >
         {text}
       </Typography>
@@ -507,7 +508,7 @@ export default function ActivityCard() {
       if (isStreaming) {
         return (
           <ActivityFrame tone="#E5484D">
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, width: '100%' }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, width: '100%', flex: 1, minHeight: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                   <SeatAvatar seat={entry.payload.seat} />
@@ -523,8 +524,10 @@ export default function ActivityCard() {
                 <LiveTag label="STREAMING" />
               </Box>
               <Box
+                data-testid="activity-body"
                 sx={{
-                  maxHeight: 180,
+                  flex: 1,
+                  minHeight: 0,
                   overflowY: 'auto',
                   bgcolor: 'rgba(0, 0, 0, 0.25)',
                   p: 1.5,

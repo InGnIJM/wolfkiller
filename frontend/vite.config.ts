@@ -18,6 +18,7 @@ export default defineConfig({
         'src/components/game/TimelineController.tsx',
         'src/components/game/HistoryPanel.tsx',
         'src/components/game/WinOverlay.tsx',
+        'src/components/game/seatLayout.ts',
         'src/components/lobby/GameList.tsx',
         'src/components/lobby/GameCard.tsx',
       ],

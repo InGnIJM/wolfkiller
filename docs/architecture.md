@@ -187,7 +187,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 ## 前端架构
 
 - **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。倍速只作用于已落盘事件；直播下一格仍要等当前座位的模型调用结束。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
-- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 带 `is_sheriff`；仅 `enable_sheriff` 开局才会出现警长徽标。时间轴展示竞选当选与交徽/撕徽事件。
+- **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 带 `is_sheriff`；仅 `enable_sheriff` 开局才会出现警长徽标。时间轴展示竞选当选与交徽/撕徽事件。**舞台几何的唯一真相是 `frontend/src/components/game/seatLayout.ts` 的纯函数 `computeStageLayout`**（几何因此可以脱开 DOM 单测）：椭圆 / 双列**只由宽度决定**（`width >= 720` 且 12 点两侧通道 `sideClearW >= 240`），高度不足时缩座位卡与中央面板、超出部分滚动，**不切换布局** —— 从前中央面板的固有高度估计参与 mode 判定，面板一封顶就把整张舞台推去双列、再反过来裁掉座位。同一处还修掉底部活动卡的顶压：`ActivityCard` 的整卡限高（`ACTIVITY_CARD_MAX_HEIGHT`）让长发言在卡内滚动，不再压扁座位舞台。回归门禁分别落在 `test/seatLayout.test.ts`、`test/SeatMap.test.tsx`（`data-layout`）与 `test/ActivityCard.test.tsx`（限高）。
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
 - **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`
 - **旧档回放的两条路径**：`GET /api/games/{id}/events`（观众流，`audience_events` 表）是首选；无投影的对局回退到 `GET /api/games/{id}/logs`，它把 `game.log` 的记录投影成同一套公开事件。两条路径必须覆盖同一批公开类型 —— `tests/test_game_routes.py::test_every_public_audience_action_type_has_a_replay_branch` 遍历投影器声明的每个类型，用规范 payload 要求回放路径产出对应事件；承载不了的行改为**逐条跳过 + 计数 + 服务端告警**（`api/replay_diagnostics.py`），计数经内部只读接口 `GET /api/diagnostics/replay-drops` 查看，丢弃内容不进公开 DTO。

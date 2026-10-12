@@ -7,6 +7,7 @@ import { ROLE_COLORS, BLOOD_MOON, CANVAS, HAIRLINE } from '../../theme/tokens';
 import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
 import SeatHoverCard from './SeatHoverCard';
+import { clampValue, computeStageLayout } from './seatLayout';
 
 // 模板字符串里的属性必须是 CSS 写法。写成 boxShadow 时浏览器会丢掉这条声明，
 // 呼吸光就不会出现，座位上只剩罗马数字变色。
@@ -41,19 +42,6 @@ interface Props {
   children?: React.ReactNode;
 }
 
-// —— 自适应几何常量 ——
-// 座位卡垂直半高（预留投票行后的较大值）与顶部警长徽标的上探空间
-const SEAT_HALF_H = 44;
-const BADGE_RESERVE = 14;
-// 顶点座位与中央面板之间的最小间距
-const SEAT_PANEL_GAP = 8;
-// 椭圆布局要求的最小舞台宽度（再窄改用双列布局）
-const ELLIPSE_MIN_W = 720;
-
-function clampValue(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 // 椭圆排布：任意人数沿椭圆周长均匀分布（从顶部 12 点方向起），
 // 兼容后续人数扩充；返回相对舞台中心的偏移。半径由调用方计算，
 // 纵向已为中央面板预留通道，保证顶点座位不会压住中央内容。
@@ -68,6 +56,7 @@ function PublicSeat({
   isCurrentSpeaker,
   voteTarget,
   cardSize,
+  cardHeight,
   compact = false,
   model,
   badgeSide,
@@ -77,6 +66,7 @@ function PublicSeat({
   isCurrentSpeaker: boolean;
   voteTarget: number | null | undefined;
   cardSize: number;
+  cardHeight: number;
   compact?: boolean;
   model?: SeatModelInfo;
   badgeSide?: BadgeSide;
@@ -153,7 +143,7 @@ function PublicSeat({
         position: 'relative',
         display: 'flex',
         width: cardSize + 10,
-        height: compact ? 72 : SEAT_HALF_H * 2,
+        height: cardHeight,
         flexShrink: 0,
         overflow: 'visible',
         border: '2px solid',
@@ -349,6 +339,8 @@ function SeatColumn({
   currentSpeaker,
   voteTargets,
   cardSize,
+  cardHeight,
+  compactFits,
   models,
   badgeSides,
 }: {
@@ -356,6 +348,8 @@ function SeatColumn({
   currentSpeaker?: number | null;
   voteTargets?: Record<number, number | null>;
   cardSize: number;
+  cardHeight: number;
+  compactFits: boolean;
   models: Record<number, SeatModelInfo>;
   badgeSides?: Map<number, BadgeSide>;
 }) {
@@ -364,9 +358,11 @@ function SeatColumn({
       sx={{
         flex: 1,
         minWidth: 0,
+        minHeight: 0,
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
+        justifyContent: compactFits ? 'center' : 'flex-start',
         alignItems: 'center',
         gap: 0.5,
         py: 0.5,
@@ -381,6 +377,7 @@ function SeatColumn({
           isCurrentSpeaker={currentSpeaker === seat}
           voteTarget={voteTargets?.[seat]}
           cardSize={cardSize}
+          cardHeight={cardHeight}
           compact
           model={models[seat]}
           badgeSide={badgeSides?.get(seat)}
@@ -430,39 +427,21 @@ export default function SeatMap({
     .map(([seat, player]) => ({ seat: Number(seat), player }))
     .sort((left, right) => left.seat - right.seat);
   const total = seats.length;
-  const sideCount = Math.max(1, total);
-
-  const cardSize = size.w > 0 ? clampValue(Math.min(size.w, size.h) * 0.1, 40, 78) : 52;
-  const cardW = cardSize + 10;
-  const padX = Math.max(48, size.w * 0.07);
-  const padY = Math.max(32, size.h * 0.06);
-  const rectW = Math.max(120, size.w - padX * 2);
-  const rectH = Math.max(120, size.h - padY * 2);
-  // 纵向半径：只保证顶点座位（12 点 / 6 点方向）完整落在容器内；
-  // 中央面板的纵向避让由布局可行性判定与面板 maxHeight 双重保证
-  const ry = Math.max(24, rectH / 2 - SEAT_HALF_H - BADGE_RESERVE);
-  const rx = Math.max(24, rectW / 2 - cardW / 2 - 4);
-  // 非顶点座位相对 12 点方向的最小水平偏移系数 = sin(2π/n)，
-  // 中央面板收窄到该通道以内，避免 3/9 点方向附近座位压住面板文字
-  const sideFactor = sideCount >= 3 ? Math.sin((2 * Math.PI) / sideCount) : 0;
-  const sideClearW = 2 * Math.max(0, rx * sideFactor - cardW / 2 - 10);
-  const panelW = Math.min(rectW * 0.72, 620, Math.max(sideClearW, 240));
-  // 中央面板固有高度的保守估计（明显偏大；实测不足时面板 maxHeight 会兜底滚动）
-  const centerEstimate = clampValue(size.h * 0.24 + 55, 140, 235);
-
-  const ellipseFeasible = size.w >= ELLIPSE_MIN_W
-    && ry >= centerEstimate / 2 + SEAT_HALF_H + SEAT_PANEL_GAP + 10
-    && sideClearW >= 240;
-  const layoutMode = ellipseFeasible ? 'ellipse' : 'compact';
-
-  const compactCardSize = clampValue(Math.min(size.w, size.h) * 0.13, 30, 52);
-  const perSide = Math.ceil(total / 2);
+  const showVoteLine = Boolean(voteTargets && Object.keys(voteTargets).length > 0);
+  const layout = computeStageLayout({
+    width: size.w,
+    height: size.h,
+    seatCount: total,
+    showVoteLine,
+  });
+  const perSide = Math.ceil(Math.max(1, total) / 2);
   const leftSeats = seats.slice(0, perSide);
   const rightSeats = seats.slice(perSide);
 
   return (
     <Box
       ref={containerRef}
+      data-layout={layout.mode}
       sx={{
         position: 'relative',
         width: '100%',
@@ -473,7 +452,7 @@ export default function SeatMap({
         containerName: 'stage',
       }}
     >
-      {layoutMode === 'ellipse' && size.w > 0 && (
+      {layout.mode === 'ellipse' && size.w > 0 && (
         <>
           <Box
             aria-hidden="true"
@@ -482,8 +461,8 @@ export default function SeatMap({
               left: '50%',
               top: '50%',
               transform: 'translate(-50%,-50%)',
-              width: rx * 2,
-              height: ry * 2,
+              width: layout.rx * 2,
+              height: layout.ry * 2,
               border: '1px dashed',
               borderColor: 'divider',
               borderRadius: '50%',
@@ -492,7 +471,7 @@ export default function SeatMap({
             }}
           />
           {seats.map(({ seat, player }, index) => {
-            const position = getEllipsePosition(index, total, rx, ry);
+            const position = getEllipsePosition(index, total, layout.rx, layout.ry);
             return (
               <Box
                 key={seat}
@@ -509,7 +488,8 @@ export default function SeatMap({
                   player={player}
                   isCurrentSpeaker={currentSpeaker === seat}
                   voteTarget={voteTargets?.[seat]}
-                  cardSize={cardSize}
+                  cardSize={layout.cardSize}
+                  cardHeight={layout.cardH}
                   model={models[seat]}
                   badgeSide={badgeSides?.get(seat)}
                 />
@@ -519,7 +499,7 @@ export default function SeatMap({
         </>
       )}
 
-      {layoutMode === 'compact' && size.w > 0 && (
+      {layout.mode === 'compact' && size.w > 0 && (
         <Box
           sx={{
             display: 'flex',
@@ -530,13 +510,16 @@ export default function SeatMap({
             px: 1,
             py: 0.5,
             minWidth: 0,
+            minHeight: 0,
           }}
         >
           <SeatColumn
             seats={leftSeats}
             currentSpeaker={currentSpeaker}
             voteTargets={voteTargets}
-            cardSize={compactCardSize}
+            cardSize={layout.compactCardSize}
+            cardHeight={layout.compactCardH}
+            compactFits={layout.compactFits}
             models={models}
             badgeSides={badgeSides}
           />
@@ -544,12 +527,13 @@ export default function SeatMap({
             sx={{
               flex: 1.4,
               minWidth: 0,
+              minHeight: 0,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               overflowY: 'auto',
               py: 1,
-              containerType: 'inline-size',
+              containerType: 'size',
               containerName: 'panel',
             }}
           >
@@ -559,23 +543,25 @@ export default function SeatMap({
             seats={rightSeats}
             currentSpeaker={currentSpeaker}
             voteTargets={voteTargets}
-            cardSize={compactCardSize}
+            cardSize={layout.compactCardSize}
+            cardHeight={layout.compactCardH}
+            compactFits={layout.compactFits}
             models={models}
             badgeSides={badgeSides}
           />
         </Box>
       )}
 
-      {layoutMode === 'ellipse' && (
+      {layout.mode === 'ellipse' && (
         <Box
           sx={{
             position: 'absolute',
             left: '50%',
             top: '50%',
             transform: 'translate(-50%, -50%)',
-            width: panelW,
+            width: layout.panelW,
             // 面板最高不超过顶点座位让出的纵向通道，超出部分滚动而不压座
-            maxHeight: Math.max(120, (ry - SEAT_HALF_H - SEAT_PANEL_GAP) * 2),
+            maxHeight: layout.panelMaxH,
             overflowY: 'auto',
             containerType: 'inline-size',
             containerName: 'panel',

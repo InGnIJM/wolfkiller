@@ -307,3 +307,44 @@ describe('SeatMap hover card', () => {
   });
 });
 
+function nVillagers(count: number): Record<number, PublicPlayerState> {
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, index) => {
+      const seat = index + 1;
+      return [seat, {
+        seat_number: seat,
+        is_alive: true,
+        is_sheriff: false,
+        role: 'wolf-killer-villager',
+        camp: 'good',
+      } satisfies PublicPlayerState];
+    }),
+  );
+}
+
+describe('SeatMap stage layout', () => {
+  it('uses compact columns on a narrow 12-seat stage and still shows every seat', () => {
+    render(<SeatMap players={nVillagers(12)} />);
+    fireResize(500, 400);
+
+    expect(document.querySelector('[data-layout="compact"]')).toBeInTheDocument();
+    for (let seat = 1; seat <= 12; seat += 1) {
+      expect(screen.getByLabelText(`${seat}号 村民 存活`)).toBeInTheDocument();
+    }
+  });
+
+  it('keeps the ellipse on a wide short 12-seat stage', () => {
+    render(<SeatMap players={nVillagers(12)} />);
+    fireResize(1100, 360);
+
+    expect(document.querySelector('[data-layout="ellipse"]')).toBeInTheDocument();
+  });
+
+  it('keeps a 9-seat 800x600 board on the ellipse', () => {
+    render(<SeatMap players={nVillagers(9)} />);
+    fireResize(800, 600);
+
+    expect(document.querySelector('[data-layout="ellipse"]')).toBeInTheDocument();
+  });
+});
+

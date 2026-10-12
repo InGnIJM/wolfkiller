@@ -34,7 +34,8 @@ function deathCauseLabel(
   return DEATH_CAUSE_LABELS.self_explode;
 }
 
-// 中央面板内容全部使用容器查询单位（cqh 相对舞台高度 / cqi 相对面板宽度），
+// 中央面板内容全部使用容器查询单位：cqi 相对面板宽度；
+// cqh 相对最近的 size 容器（椭圆下是舞台，双列下是中央列），
 // 舞台变小时间距与字号同步收缩，避免固有高度挤占座位通道
 const panelSx = {
   textAlign: 'center',

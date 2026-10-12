@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { useGameStore } from '../../../store/gameStore';
 import type { PublicReplayEvent } from '../../../store/types';
-import ActivityCard from '../ActivityCard';
+import ActivityCard, { ACTIVITY_CARD_MAX_HEIGHT } from '../ActivityCard';
 
 const replayEventMeta = { timestamp: '2026-08-13T00:00:00Z' } as const;
 
@@ -56,6 +56,27 @@ describe('ActivityCard', () => {
     expect(screen.getByText('5号')).toBeInTheDocument();
     expect(screen.getByText('正在发言')).toBeInTheDocument();
     expect(screen.getByText('我怀疑 2 号是狼')).toBeInTheDocument();
+  });
+
+  it('caps the activity frame so a long speech cannot collapse the seat stage', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'speech',
+        payload: {
+          player_seat: 1,
+          text: '警长竞选发言。'.repeat(40),
+          round_number: 1,
+          phase: 'sheriff_election',
+        },
+      },
+    ]);
+    render(<ActivityCard />);
+
+    const frame = screen.getByTestId('activity-frame');
+    expect(frame).toHaveAttribute('data-max-height', ACTIVITY_CARD_MAX_HEIGHT);
+    expect(ACTIVITY_CARD_MAX_HEIGHT).toBe('min(32dvh, 260px)');
+    expect(screen.getByTestId('activity-body')).toBeInTheDocument();
   });
 
   it('labels last-word events as 遗言', () => {

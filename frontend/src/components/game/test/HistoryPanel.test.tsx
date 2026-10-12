@@ -635,6 +635,21 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.getByText(/6号发动魅惑 · 第3轮 · 目标未记录/)).toBeVisible();
   });
 
+  it('marks an archived illusion entry as missing its target', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'wraith_illusion',
+          payload: { seat: 6, round_number: 3 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/6号发动挽歌幻象 · 第3轮 · 目标未记录/)).toBeVisible();
+  });
+
   it('files the revenge under the phase that triggered the exit', () => {
     useGameStore.setState({
       timeline: [
