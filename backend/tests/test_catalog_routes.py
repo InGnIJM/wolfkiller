@@ -77,7 +77,7 @@ def test_catalog_item_empty_display_falls_back_to_role_id():
 def test_role_catalog_covers_all_registered_roles():
     items = role_catalog(builtin_registry.freeze())
 
-    assert len(items) == 28
+    assert len(items) == 29
     ids = {item["role_id"] for item in items}
     assert {
         "wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king",
@@ -181,7 +181,7 @@ def test_pure_white_preset_matches_the_netease_tournament_board() -> None:
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 18
+    assert len(STANDARD_PRESETS) == 19
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -275,7 +275,7 @@ def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
         "twelve-player-gargoyle-gravekeeper", "twelve-player-pure-white",
         "twelve-player-crimson-hunter", "twelve-player-nightmare",
         "twelve-player-night-stars", "twelve-player-lonely-girl",
-        "twelve-player-fragrance",
+        "twelve-player-fragrance", "twelve-player-miracle-merchant",
     }
     for preset in STANDARD_PRESETS:
         expected = "never" if preset["id"] in netease else "first_night_only"
@@ -357,7 +357,7 @@ async def test_list_roles_endpoint_returns_every_registered_role():
 
     response = await catalog_routes.list_roles()
 
-    assert len(response.roles) == 28
+    assert len(response.roles) == 29
     assert response.roles[0].role_id
 
 
@@ -367,7 +367,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 18
+    assert len(response.presets) == 19
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
     assert response.presets[-1].recommended_timeout_seconds == 7200

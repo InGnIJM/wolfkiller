@@ -189,6 +189,20 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "因此你没有独立获胜的方式：这张牌赌的是「最后赢的那一方」。",
         ],
     },
+    "wolf-killer-miracle-merchant": {
+        "name_zh": "奇迹商人", "icon": "guard",
+        "description": "好人神职，每晚最先行动：让一名玩家成为幸运儿并赠予一个一次性技能；赠给狼人则次日自己出局",
+        "rules": [
+            "属于好人阵营、计入**神职**，每晚**最先行动**。",
+            "每晚可选一名其他存活玩家成为**幸运儿**，并从三个一次性技能里赠予一个："
+            "预言家的查验、女巫的毒药、守卫的守护。**每个技能整局只能赠出一次**，所以最多赠三次。",
+            "幸运儿保留自己的身份、阵营与胜利条件，只是多了一次可用的技能：当晚或之后任意一晚使用皆可，"
+            "用掉就没有了。幸运儿得到的技能，其余玩家（含奇迹商人本人）都不会得知它被如何使用。",
+            "**若幸运儿是狼人阵营**：TA 不会获得技能，**次日全体发言结束后奇迹商人出局**（死因为奇迹反噬，"
+            "与猎魔人的「延迟出局」同一时机）；这个技能同样算作已经赠出。",
+            "可以选择不赠予，把技能留到更有把握的一晚。",
+        ],
+    },
     "wolf-killer-old-drunkard": {
         "name_zh": "老酒鬼", "icon": "old_drunkard",
         "description": "平民，免疫魅惑；被毒或枪杀延到次日发言结束后死亡",
@@ -630,6 +644,24 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-hunter": 1,
             "wolf-killer-guard": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 12-player "Miracle Merchant" board.
+        "id": "twelve-player-miracle-merchant",
+        "name": "十二人奇迹商人",
+        "description": "3狼 1狼王 4民 1预言家 1女巫 1守卫 1奇迹商人",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-wolf-king": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-guard": 1,
+            "wolf-killer-miracle-merchant": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",

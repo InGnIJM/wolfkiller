@@ -44,6 +44,7 @@ from app.roles.nightmare import NIGHTMARE_SPEC, Nightmare
 from app.roles.dancer import DANCER_SPEC, Dancer
 from app.roles.mask import MASK_SPEC, Mask
 from app.roles.lonely_girl import LONELY_GIRL_SPEC, LonelyGirl
+from app.roles.miracle_merchant import MIRACLE_MERCHANT_SPEC, MiracleMerchant
 from app.roles.awakened_seer import AWAKENED_SEER_SPEC, AwakenedSeer
 from app.roles.fragrance_phantom import FRAGRANCE_PHANTOM_SPEC, FragrancePhantom
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
@@ -582,6 +583,7 @@ builtin_registry.register_pipeline(NIGHTMARE_SPEC)
 builtin_registry.register_pipeline(DANCER_SPEC)
 builtin_registry.register_pipeline(MASK_SPEC)
 builtin_registry.register_pipeline(LONELY_GIRL_SPEC)
+builtin_registry.register_pipeline(MIRACLE_MERCHANT_SPEC)
 builtin_registry.register_pipeline(AWAKENED_SEER_SPEC)
 builtin_registry.register_pipeline(FRAGRANCE_PHANTOM_SPEC)
 builtin_registry.register(
@@ -761,6 +763,9 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-lonely-girl", Camp.GOOD, LonelyGirl, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-miracle-merchant", Camp.GOOD, MiracleMerchant, ())
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-awakened-seer", Camp.GOOD, AwakenedSeer, ())
