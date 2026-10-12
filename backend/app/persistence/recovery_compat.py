@@ -150,7 +150,7 @@ def assess(
             return RecoveryAssessment(
                 INCOMPATIBLE, REGISTRY_INCOMPATIBLE, (f"role_missing:{role_id}",),
             )
-        matches = [item for item in registry.require(role_id).contracts if item.contract_id == contract_id]
+        matches = [item for item in registry.contracts_for(role_id) if item.contract_id == contract_id]
         if len(matches) != 1:
             return RecoveryAssessment(
                 INCOMPATIBLE, REGISTRY_INCOMPATIBLE, (f"contract_missing:{role_id}:{contract_id}",),

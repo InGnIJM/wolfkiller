@@ -6,7 +6,7 @@ import random
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
 from types import MappingProxyType
 from typing import get_type_hints
@@ -82,6 +82,57 @@ class RegistrySnapshot:
             return self.specs[role_id]
         except KeyError as error:
             raise ValueError(f"unknown role: {role_id}") from error
+
+    def granted_pairs(self) -> tuple[tuple[PipelineRoleSpec, PipelineActionContract], ...]:
+        """Every ``(owner, contract)`` some role hands out to other seats."""
+        return tuple(
+            (spec, contract)
+            for spec in self.specs.values()
+            for contract in spec.granted_contracts
+        )
+
+    def contracts_for(self, role_id: str) -> tuple[PipelineActionContract, ...]:
+        """Contracts a seat of ``role_id`` can legitimately be asked for.
+
+        Its own, plus every granted one: whether a seat actually *holds* a grant
+        is a runtime fact the scheduler gates on when issuing, not something the
+        static registry can know. Callers that only need to recognise a stored or
+        projected request use this instead of ``spec.contracts``.
+        """
+        return self.require(role_id).contracts + tuple(
+            contract for _, contract in self.granted_pairs()
+        )
+
+    def acting_spec(
+        self, role_id: str, contract: PipelineActionContract,
+    ) -> PipelineRoleSpec:
+        """The spec a seat acts under for ``contract``.
+
+        For a contract the role owns that is the role's own spec. For a granted
+        one it is the same role widened by exactly what the borrowed skill needs
+        — the contract itself, its effects and namespaces, and the one note that
+        explains it — so the resolver and the write entry check a lucky villager
+        against the grant's declarations while the seat keeps its own identity,
+        camp and instructions.
+        """
+        spec = self.require(role_id)
+        if any(item is contract for item in spec.contracts):
+            return spec
+        for owner, granted in self.granted_pairs():
+            if granted is contract:
+                note = owner.granted_notes[granted.contract_id]
+                return replace(
+                    spec,
+                    contracts=spec.contracts + (granted,),
+                    allowed_effects=spec.allowed_effects | granted.allowed_effects,
+                    visibility_namespaces=(
+                        spec.visibility_namespaces | granted.visibility_namespaces
+                    ),
+                    instructions=f"{spec.instructions}\n\n{note}",
+                )
+        # Not granted either: hand the seat's own spec back and let the resolver's
+        # identity check reject the stray contract, exactly as before grants existed.
+        return spec
 
     def validate_role_counts(
         self, role_counts: Mapping[str, int], player_count: int
@@ -197,7 +248,13 @@ class RoleRegistry:
             # is what turns a *declared* slot into a fact. A bond slot nobody
             # declared would open windows for a hook that cannot see its pair.
             raise ValueError("bond slot must be declared in initial_private_data")
-        for contract in spec.contracts:
+        granted_ids = {contract.contract_id for contract in spec.granted_contracts}
+        if set(spec.granted_notes) != granted_ids:
+            # The holder's prompt is the only place a borrowed skill is
+            # explained, so a grant without a note would be an unexplained
+            # request and a note without a grant is a typo.
+            raise ValueError("granted notes must match the granted contracts")
+        for contract in spec.contracts + spec.granted_contracts:
             # Several roles may share one contract (e.g. a whole camp voting
             # through the same aggregate) only when the declarations are
             # byte-identical; any divergence is still a duplicate id.
@@ -207,6 +264,23 @@ class RoleRegistry:
                 raise ValueError(f"duplicate contract id: {contract.contract_id}")
             contract_ids[contract.contract_id] = serialized
             RoleRegistry._validate_pipeline_contract(spec, contract)
+        for contract in spec.granted_contracts:
+            RoleRegistry._validate_granted_contract(spec, contract)
+
+    @staticmethod
+    def _validate_granted_contract(
+        spec: PipelineRoleSpec, contract: PipelineActionContract
+    ) -> None:
+        """A granted contract is issued by resource, one seat at a time."""
+        if any(item is contract for item in spec.contracts):
+            raise ValueError("a contract cannot be both owned and granted")
+        if not contract.required_resources:
+            # The marker the owner writes is the only thing that makes a seat a
+            # holder; without it the contract would be issued to nobody (or,
+            # were the gate ever skipped, to everybody).
+            raise ValueError("a granted contract must require a holder resource")
+        if contract.aggregate is not None or contract.react is not None:
+            raise ValueError("a granted contract must be a plain per-seat command")
 
     @staticmethod
     def _validate_pipeline_contract(

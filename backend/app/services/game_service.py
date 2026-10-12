@@ -2897,7 +2897,7 @@ class GameService:
                     reasoning=DEGRADED_REASONING,
                     degraded=True,
                 )
-            role_spec = snapshot.require(request.role_id)
+            role_spec = snapshot.acting_spec(request.role_id, request.contract)
             engine = self._engines.get(context.game_id)
             history = ""
             if engine is not None:

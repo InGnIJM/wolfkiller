@@ -1700,7 +1700,7 @@ def test_selected_target_projects_only_whitelisted_statuses_and_resources(
         "poisoned", "wounded", "no_vote", "exile_immune", "in_pool",
     }
     state._pipeline_runtime.role_resources[1] = {
-        "charm_immune": 1, "gun": 1, "poison": 1,
+        "charm_immune": 1, "gun": 1, "poison": 1, "imitate": 1, "lucky_guard": 1,
     }
     selected_registry, request, context = _label_fixture(
         state, registry, frozenset({"status_labels", "resource_labels"}),
@@ -1714,9 +1714,10 @@ def test_selected_target_projects_only_whitelisted_statuses_and_resources(
     assert selected["seat"] == 1
     # Private statuses and private resources never leave the projector;
     # ``in_pool`` is observable because the Masquerade board's Mask has to read
-    # whether its target is dancing tonight.
+    # whether its target is dancing tonight. ``gun`` / ``poison`` are observable
+    # because a devoured hunter / witch hands the Eclipse Maid what it still holds.
     assert selected["status_labels"] == ("in_pool", "poisoned", "wounded")
-    assert selected["resource_labels"] == ("charm_immune",)
+    assert selected["resource_labels"] == ("charm_immune", "gun", "poison")
     assert "camp_label" not in selected
 
 

@@ -16,6 +16,7 @@ from app.core.role_runtime import (
     has_role_marker, role_action_counters, role_private_data_view,
     role_private_facts_view, role_resource_view,
 )
+from app.core.disguise import disguised_identity
 from app.core.sheriff_flow import public_alive_seats, public_dead_seats
 from app.core.wolf_pack import (
     NO_WOLF_PACK_RESOURCE, actor_sees_pack, pack_seats,
@@ -59,7 +60,11 @@ _MAX_SUMMARIES = 64
 _SELECTED_TARGET_NAMESPACES = frozenset(
     {"camp_label", "status_labels", "resource_labels", "role_label"}
 )
-_PUBLIC_STATUSES = frozenset({"poisoned", "wounded", "in_pool"})
+#: ``time_locked`` is read by the seer / witch / guard hooks to redirect a skill cast
+#: at the Time Wolf's locked seat back to the caster.
+_PUBLIC_STATUSES = frozenset({
+    "poisoned", "wounded", "in_pool", "radiance_shielded", "time_locked",
+})
 #: Resources a contract may observe on its chosen target. These reach the pure
 #: ``validate`` / ``resolve`` hooks only — ``selected_target`` is never part of
 #: the context handed to the model, so a producer learns what the rules make
@@ -71,9 +76,13 @@ _PUBLIC_STATUSES = frozenset({"poisoned", "wounded", "in_pool"})
 #:   the target bounces their skill back at them.
 #: * ``reflect_used`` — the bounce is spent, so a second skill that same night
 #:   lands normally instead of firing a second revenge.
+#: * ``antidote`` / ``poison`` / ``gun`` — what a devoured seat still holds, so the
+#:   Eclipse Maid inherits its state rather than a fresh set.
 _PUBLIC_RESOURCES = frozenset({
     "charm_immune", "night_immune",
     "reflect_check", "reflect_poison", "reflect_used",
+    # The Eclipse Maid inherits a devoured seat's *current* potions / gun.
+    "antidote", "poison", "gun",
 })
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
@@ -123,11 +132,31 @@ def _wolf_hint_seat(state: GameState, actor: PlayerState) -> int | None:
     return others[int.from_bytes(digest, "big") % len(others)]
 
 
+def _time_lock_spent(state: GameState, actor: PlayerState) -> bool:
+    """True once the Time Wolf's lock has taken effect — it then never acts again.
+
+    The card: 「蚀时狼妃在技能生效的下一夜永久失去技能」. The lock "takes effect" when a
+    seer check / poison / guard was redirected, and that is only visible on the
+    *locked* seat (the redirecting producer cannot know which seat is the wolf), so
+    the Wolf's contract reads it from here: the seat she last locked (her own private
+    record) carrying the ``time_lock_hit`` marker. Pure and replay-stable.
+    """
+    runtime = getattr(state, "_pipeline_runtime", None)
+    if runtime is None:
+        return False
+    record = runtime.private_data.get(actor.seat_number, {}).get("time_lock")
+    if not hasattr(record, "get"):
+        return False
+    locked = record.get("seat")
+    return runtime.role_resources.get(locked, {}).get("time_lock_hit", 0) > 0
+
+
 #: ``RoleSpec.projected_facts`` name -> builder. Kept one-to-one with
 #: ``models/pipeline.PROJECTED_FACT_NAMES`` (a gate asserts the sets are equal).
 _DERIVED_FACT_BUILDERS = {
     "directional_wolves": _directional_wolves,
     "wolf_hint_seat": _wolf_hint_seat,
+    "time_lock_spent": _time_lock_spent,
 }
 
 
@@ -178,7 +207,9 @@ class ContextProjector:
         if type(command) is not ActionCommand:
             raise TypeError("command must be an ActionCommand")
         spec = registry.require(request.role_id)
-        self._validate_request(state, request, spec.camp_id, spec.contracts)
+        self._validate_request(
+            state, request, spec.camp_id, registry.contracts_for(request.role_id),
+        )
         expected = (
             (context.game_id, state.game_id),
             (context.revision, request.context_revision),
@@ -234,9 +265,14 @@ class ContextProjector:
         if target is None or not target.is_alive:
             return None
         selected: dict[str, object] = {"seat": seat}
+        # An inspection reads the identity a seat *shows*: a disguised seat answers
+        # with the imitated role and camp, everything else with its own.
+        disguise = disguised_identity(state, seat)
+        shown_camp = target.camp if disguise is None else disguise[1]
+        shown_role = target.role if disguise is None else disguise[0]
         if "camp_label" in namespaces:
             selected["camp_label"] = self._token(
-                target.camp, "selected target camp", 128
+                shown_camp, "selected target camp", 128
             )
         if "status_labels" in namespaces:
             selected["status_labels"] = tuple(
@@ -251,7 +287,7 @@ class ContextProjector:
             # seat's exact identity. Like every selected-target fact it reaches
             # the pure hooks only, never the model's prompt.
             selected["role_label"] = self._token(
-                target.role, "selected target role", 128
+                shown_role, "selected target role", 128
             )
         if "resource_labels" in namespaces:
             selected["resource_labels"] = tuple(
@@ -290,7 +326,9 @@ class ContextProjector:
     ) -> ActionContext:
         self._validate_boundaries(state, request, registry)
         spec = registry.require(request.role_id)
-        actor = self._validate_request(state, request, spec.camp_id, spec.contracts)
+        actor = self._validate_request(
+            state, request, spec.camp_id, registry.contracts_for(request.role_id),
+        )
         self._validate_response_inputs(
             request,
             source_event_id,
@@ -313,7 +351,14 @@ class ContextProjector:
                 "role_id": request.role_id,
                 "camp_id": spec.camp_id,
             }
-            resources = self._actor_resources(state, actor, spec.initial_resources)
+            declarations = dict(spec.initial_resources)
+            if any(item is request.contract for _, item in registry.granted_pairs()):
+                # A lent skill is gated on the holder marker the owner wrote onto
+                # this seat. The seat's own spec never declared it, so without
+                # this the hook would read an absent key as "not a holder".
+                for name in request.contract.required_resources:
+                    declarations.setdefault(name, 0)
+            resources = self._actor_resources(state, actor, declarations)
             facts.update(
                 self._actor_private_facts(
                     state,
@@ -321,6 +366,7 @@ class ContextProjector:
                     spec.initial_private_data,
                 )
             )
+            facts.update(self._held_check_facts(state, actor, facts))
             facts.update(self._derived_facts(state, actor, spec))
         if "CAMP" in visible:
             facts.update(_camp_facts(state, actor))
@@ -403,6 +449,7 @@ class ContextProjector:
                 state, actor, spec.initial_private_data
             )
         )
+        facts.update(self._held_check_facts(state, actor, facts))
         facts.update(self._derived_facts(state, actor, spec))
         return ActionContext(
             game_id=state.game_id,
@@ -630,6 +677,30 @@ class ContextProjector:
         for name in sorted(spec.projected_facts):
             facts[name] = _DERIVED_FACT_BUILDERS[name](state, actor)
         return facts
+
+    @classmethod
+    def _held_check_facts(
+        cls, state: GameState, actor: PlayerState, facts: Mapping[str, object],
+    ) -> dict[str, object]:
+        """The camp answers a seat was *lent* the Seer's check to get.
+
+        A lucky villager's own spec declares no ``private_checks`` slot, so the
+        declared-slot loop never reads the record back — the check would be
+        written and then invisible, the same dead end the Gargoyle once had. This
+        reads the namespace for any seat that holds records but declared none,
+        which no ordinary seat does (only the check writes it), so every prompt
+        that already shows ``private_checks`` is untouched.
+        """
+        if "private_checks" in facts:
+            return {}
+        canonical = role_private_facts_view(state, actor.seat_number, "private_checks")
+        if not canonical:
+            return {}
+        return {"private_checks": tuple(
+            projected
+            for result in canonical[-20:]
+            if (projected := cls._project_check_result(result)) is not None
+        )}
 
     @classmethod
     def _actor_private_facts(

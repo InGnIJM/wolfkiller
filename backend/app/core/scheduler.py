@@ -23,7 +23,7 @@ from app.core.effect_applier import (
 )
 from app.core.night_settlement import is_silenced, settlement_key
 from app.core.registry_identity import frozen_registry_digest
-from app.core.role_runtime import role_private_data_view
+from app.core.role_runtime import role_private_data_view, role_resource_view
 from app.core.state_transaction import state_transaction_lock
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.models.game import GameState
@@ -371,7 +371,38 @@ class Scheduler:
                     applies = contract.is_applicable is None or self._rule_call("applicability", lambda: contract.is_applicable(context))
                     if type(applies) is not bool: raise PipelinePaused("applicability rule failed")
                     if applies: requests.append(request)
+        requests.extend(self._issue_granted(state, point, registry, identity, revision, phase, slot_parts))
         return tuple(sorted(requests, key=lambda r: (r.contract.order, r.role_id, r.contract.contract_id, r.actor_seat)))
+
+    def _issue_granted(self, state: GameState, point: SchedulePoint, registry: RegistrySnapshot,
+                       identity: str, revision: int, phase: str,
+                       slot_parts: tuple[str, ...]) -> list[IssuedActionRequest]:
+        """Requests for skills one role handed to other seats.
+
+        A granted contract belongs to its owner's spec but is asked of whichever
+        living seat currently *holds* it — the seat carrying the contract's
+        ``required_resources`` marker, written there by the owner's own effects.
+        The gate is the resource, read from the one canonical view, so a seat that
+        was never granted (or already spent its grant) is never even projected.
+        The request is the seat's own: ``role_id`` stays the seat's real role, so
+        every identity check downstream still holds, and only the contract and the
+        spec the resolver acts under (``RegistrySnapshot.acting_spec``) differ.
+        """
+        issued: list[IssuedActionRequest] = []
+        for _, contract in registry.granted_pairs():
+            if contract.schedule_point is not point: continue
+            for seat, player in sorted(state.players.items()):
+                if not player.is_alive: continue
+                held = role_resource_view(state, seat)
+                if any(held.get(name, 0) < need for name, need in contract.required_resources.items()): continue
+                token = _digest(state.game_id, state.round_number, point.value, seat, contract.contract_id, contract.schema_version, identity, *slot_parts)
+                request = IssuedActionRequest(seat, player.role, contract, revision, state.round_number, phase, token, token)
+                context = self.projector.project(state, request, registry)
+                if self._limit_reached(context, contract): continue
+                applies = contract.is_applicable is None or self._rule_call("applicability", lambda: contract.is_applicable(context))
+                if type(applies) is not bool: raise PipelinePaused("applicability rule failed")
+                if applies: issued.append(request)
+        return issued
 
     @staticmethod
     def _limit_reached(context: ActionContext, contract: ActionContract) -> bool:
@@ -740,7 +771,7 @@ class Scheduler:
         for request in issued: groups.setdefault(request.contract.contract_id, []).append(request)
         work = [("settlement", ())] if point is SchedulePoint.NIGHT_COMMIT else []
         for members in groups.values():
-            contract = members[0].contract; role = self.registry.require(members[0].role_id)
+            contract = members[0].contract; role = self.registry.acting_spec(members[0].role_id, members[0].contract)
             if contract.aggregate is None:
                 work.extend(("normal", (member,)) for member in members)
             else: work.append(("aggregate", tuple(members)))
@@ -759,7 +790,7 @@ class Scheduler:
                 if settlement is not None and settlement.revision > revision:
                     commits.append(settlement); events.extend(settlement.events)
             elif kind == "normal":
-                member = members[0]; contract = member.contract; role = self.registry.require(member.role_id)
+                member = members[0]; contract = member.contract; role = self.registry.acting_spec(member.role_id, member.contract)
                 if self._silenced(state, member.actor_seat):
                     # A seat silenced for this night never gets its model call
                     # or its effects. The check is deliberately made here, in
@@ -785,7 +816,7 @@ class Scheduler:
                         retry=self._fallback_effects(state, request, role, contract),
                     )
             else:
-                contract = members[0].contract; role = self.registry.require(members[0].role_id)
+                contract = members[0].contract; role = self.registry.acting_spec(members[0].role_id, members[0].contract)
                 bound = tuple(self._bind(member, state) for member in members)
                 contexts = tuple(self.projector.project(state, request, self.registry) for request in bound)
                 commands = tuple(

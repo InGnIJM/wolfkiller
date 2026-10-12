@@ -386,7 +386,7 @@ class ActionContext(_FrozenValue):
 #: one builder per name (a test asserts the two sets are equal). Every name in
 #: this set is hook-only or prompt-visible by construction — ``directional_wolves``
 #: names living werewolf seats and is therefore hoisted out of the prompt.
-PROJECTED_FACT_NAMES = frozenset({"directional_wolves", "wolf_hint_seat"})
+PROJECTED_FACT_NAMES = frozenset({"directional_wolves", "wolf_hint_seat", "time_lock_spent"})
 
 
 #: The reasoning a command carries when the engine, not a model, produced it.
@@ -624,6 +624,13 @@ class RoleSpec(_FrozenValue):
     #: this role has no separate beat (it acts silently, or its window is
     #: announced by another role's line).
     opening_narration: tuple[str, str] = ()
+    #: Schedule points (`SchedulePoint.value`) at which the opening line may
+    #: play from the engine's registry-based beats. Empty keeps the original
+    #: reading: wherever the role holds a contract. A role whose contract at a
+    #: shared point is *conditionally* applicable (the Awakened Hidden Wolf's
+    #: copied skills) names only the point where its line is always true, so a
+    #: dormant clone never wakes it up in front of the table.
+    opening_points: frozenset[str] = frozenset()
     #: Derived facts the projector computes for this role's own contexts, from
     #: the closed vocabulary above. Declared on the spec rather than the
     #: contract because ``ActionContract`` is a hashed identity: a new field
@@ -639,18 +646,43 @@ class RoleSpec(_FrozenValue):
     #: ``initial_private_data`` (the registry asserts it), because the projector
     #: is what turns a private slot into a fact.
     bond_slot: str = ""
+    #: Contracts this role hands to **other** seats (the Miracle Merchant's
+    #: lucky skills). They are never issued to the owner: a seat is asked for one
+    #: only while it holds the contract's ``required_resources`` — the marker the
+    #: owner's own effects write onto it. Declared on the owner rather than on a
+    #: shared pool so the registry can still say who defined each contract, and on
+    #: the spec rather than the contract because ``ActionContract`` is a hashed
+    #: identity whose digest every resumable game has stamped.
+    granted_contracts: tuple[ActionContract, ...] = ()
+    #: ``contract_id -> text`` shown to the *holder* of that granted contract in
+    #: its own prompt. The holder keeps its own identity and instructions (a lucky
+    #: villager is still a villager); this is only the one extra paragraph that
+    #: explains the borrowed skill, so it never reveals the owner's role.
+    granted_notes: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         self._validate_schema_version()
         for name in ("role_id", "display_name", "camp_id", "instructions"):
             _require_str(name, getattr(self, name))
         _require_tuple_of("contracts", self.contracts, ActionContract)
+        _require_tuple_of("granted_contracts", self.granted_contracts, ActionContract)
+        if not isinstance(self.granted_notes, Mapping):
+            raise TypeError("granted_notes must be a mapping")
+        for note_id, note in self.granted_notes.items():
+            _require_str("granted_notes key", note_id)
+            _require_str("granted_notes value", note)
+        object.__setattr__(
+            self, "granted_notes", _freeze_json(self.granted_notes, path="granted_notes")
+        )
         for name in (
             "visibility_namespaces",
             "tags",
             "dependencies",
             "exclusions",
             "projected_facts",
+            "opening_points",
         ):
             _require_str_frozenset(name, getattr(self, name))
         unknown_facts = self.projected_facts - PROJECTED_FACT_NAMES
@@ -693,6 +725,7 @@ class RoleSpec(_FrozenValue):
         object.__setattr__(self, "dependencies", frozenset(self.dependencies))
         object.__setattr__(self, "exclusions", frozenset(self.exclusions))
         object.__setattr__(self, "projected_facts", frozenset(self.projected_facts))
+        object.__setattr__(self, "opening_points", frozenset(self.opening_points))
         try:
             effects = frozenset(EffectKind(kind) for kind in self.allowed_effects)
         except (TypeError, ValueError) as error:
@@ -711,6 +744,15 @@ class RoleSpec(_FrozenValue):
             else contract
             for contract in contracts
         )
+        granted = converted.get("granted_contracts", [])
+        if not isinstance(granted, list):
+            raise TypeError("granted_contracts must be a JSON array")
+        converted["granted_contracts"] = tuple(
+            ActionContract._from_serialized_mapping(contract)
+            if isinstance(contract, Mapping)
+            else contract
+            for contract in granted
+        )
         opening = converted.get("opening_narration")
         if isinstance(opening, list):
             converted["opening_narration"] = tuple(opening)
@@ -721,6 +763,7 @@ class RoleSpec(_FrozenValue):
             "dependencies",
             "exclusions",
             "projected_facts",
+            "opening_points",
         ):
             if isinstance(converted.get(name), list):
                 converted[name] = frozenset(converted[name])

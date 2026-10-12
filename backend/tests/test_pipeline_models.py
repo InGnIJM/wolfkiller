@@ -1043,3 +1043,35 @@ def test_schedule_point_has_staged_night_members() -> None:
     assert SchedulePoint.NIGHT_WITCH_ACTION.value == "night_witch_action"
     assert SchedulePoint.NIGHT_SEER_ACTION.value == "night_seer_action"
     assert SchedulePoint.NIGHT_ACTION.value == "night_action"  # guard sample still uses it
+
+
+def test_role_granted_contracts_are_a_tuple_with_a_note_each() -> None:
+    contract = _contract()
+    role = RoleSpec(
+        role_id="role", granted_contracts=(contract,),
+        granted_notes={contract.contract_id: "note"},
+    )
+    assert role.granted_contracts == (contract,)
+    assert role.granted_notes[contract.contract_id] == "note"
+    with pytest.raises(TypeError, match="granted_contracts"):
+        RoleSpec(role_id="role", granted_contracts=[contract])
+    with pytest.raises(TypeError, match="granted_notes"):
+        RoleSpec(role_id="role", granted_notes=["note"])
+    with pytest.raises(TypeError):
+        RoleSpec(role_id="role", granted_notes={"id": 3})
+
+
+def test_role_from_json_requires_a_granted_contract_array() -> None:
+    raw = json.loads(RoleSpec(role_id="role").to_json())
+    raw["granted_contracts"] = "not-an-array"
+    with pytest.raises(TypeError, match="granted_contracts"):
+        RoleSpec.from_json(json.dumps(raw))
+
+def test_role_opening_points_round_trip_and_reject_a_bare_string() -> None:
+    role = RoleSpec(role_id="role", opening_points=frozenset({"night_action"}))
+    assert role.opening_points == frozenset({"night_action"})
+    # A spec that names no point keeps the original "wherever it has a contract" reading.
+    assert RoleSpec(role_id="plain").opening_points == frozenset()
+    assert RoleSpec.from_json(role.to_json()).opening_points == frozenset({"night_action"})
+    with pytest.raises(TypeError):
+        RoleSpec(role_id="role", opening_points="night_action")

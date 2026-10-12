@@ -466,11 +466,11 @@ class CheckpointCodec:
         _string(row["contract_digest"], "contract_digest")
         role_id = _string(row["role_id"], "role_id")
         try:
-            spec = self._registry.require(role_id)
+            self._registry.require(role_id)
         except ValueError as error:
             raise CheckpointError("unknown request role or contract") from error
         contract_id = _string(row["contract_id"], "contract_id")
-        matches = [item for item in spec.contracts if item.contract_id == contract_id]
+        matches = [item for item in self._registry.contracts_for(role_id) if item.contract_id == contract_id]
         if len(matches) != 1:
             raise CheckpointError("unknown request contract")
         contract = matches[0]

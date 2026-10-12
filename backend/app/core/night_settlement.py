@@ -27,7 +27,7 @@ _DOUBLE_SAVE_SOURCES = frozenset({"guard", "witch_antidote"})
 #: Shields that cancel *any* lethal night damage, the poison included. A dream
 #: weave is the first of these. Such a shield also stops the knife, so the wolf
 #: total is measured against both tiers together.
-_ANY_DAMAGE_SOURCES = frozenset({"dream"})
+_ANY_DAMAGE_SOURCES = frozenset({"dream", "radiance"})
 #: Public alias: the effect write boundary validates against this list, so
 #: a shield tier added here can never be rejected as an unknown source.
 _PROTECTION_SOURCES = _WOLF_ONLY_SOURCES | _ANY_DAMAGE_SOURCES
@@ -61,7 +61,17 @@ SILENCED_STATUS = "silenced"
 #: silence into a later night. Daytime settlements (an exile reaction, a day
 #: interruption) must never sweep: the Crimson Envoy's silence is applied
 #: during the day and has to survive into the night it applies to.
-NIGHT_SCOPED_STATUSES = frozenset({SILENCED_STATUS})
+#: `radiance_shielded` marks the seat the Radiance Earl sheltered tonight, so the
+#: Eclipse Maid can see (and be punished for) devouring a sheltered seat; like the
+#: silence it must not outlive the night.
+RADIANCE_SHIELDED_STATUS = "radiance_shielded"
+#: `time_locked` marks the seat the Time Wolf sealed in the seam of time tonight:
+#: every seer check / poison / guard cast at it is redirected to the caster
+#: (``core/time_lock.py``). One night only, like the silence.
+TIME_LOCKED_STATUS = "time_locked"
+NIGHT_SCOPED_STATUSES = frozenset({
+    SILENCED_STATUS, RADIANCE_SHIELDED_STATUS, TIME_LOCKED_STATUS,
+})
 
 
 def is_silenced(statuses: Mapping[int, object], seat: int) -> bool:
@@ -102,17 +112,28 @@ _DELAY_CAUSES = _POISON_CAUSES | _WOUND_CAUSES
 #: declaring ``delayable``). So this cause delays on its own.
 HUNTED_STATUS = "hunted"
 HUNT_CAUSE = "hunt"
+#: The Miracle Merchant's backlash: lending a skill to a wolf costs the Merchant
+#: its life on the *next* day, like a hunt, and for the same reason it cannot
+#: lean on a ``delayable`` mark of its own.
+MIRACLE_MARKED_STATUS = "miracle_marked"
+MIRACLE_BACKLASH_CAUSE = "miracle_backlash"
+#: The Eclipse Maid's backlash: devouring the Radiance Earl, or a seat it sheltered
+#: tonight, costs the Maid its life on the next day — delayed like a hunt.
+RADIANCE_MARKED_STATUS = "radiance_marked"
+RADIANCE_BACKLASH_CAUSE = "radiance_backlash"
 #: The Crimson Envoy's exile reprieve: the exile stands, but the death lands
 #: after the next day's speeches instead of on the spot.
 LINGERING_EXILE_STATUS = "lingering_exile"
 #: Causes that delay *any* seat, even one declaring no ``delayable`` mark. The
 #: poison and the gunshot are deliberately absent: those still need the seat's
 #: own mark, so the Old Drunkard keeps dying on the spot to everything else.
-_ALWAYS_DELAYED_CAUSES = frozenset({HUNT_CAUSE})
+_ALWAYS_DELAYED_CAUSES = frozenset({HUNT_CAUSE, MIRACLE_BACKLASH_CAUSE, RADIANCE_BACKLASH_CAUSE})
 _DELAYED_DEATH_CAUSES = {
     POISONED_STATUS: "poison",
     WOUNDED_STATUS: "hunter_shot",
     HUNTED_STATUS: HUNT_CAUSE,
+    MIRACLE_MARKED_STATUS: MIRACLE_BACKLASH_CAUSE,
+    RADIANCE_MARKED_STATUS: RADIANCE_BACKLASH_CAUSE,
     LINGERING_EXILE_STATUS: "exile",
 }
 
@@ -125,6 +146,10 @@ def delayed_death_statuses(cause: object) -> tuple[str, ...]:
         return (WOUNDED_STATUS, DELAYED_DEATH_STATUS)
     if cause == HUNT_CAUSE:
         return (HUNTED_STATUS, DELAYED_DEATH_STATUS)
+    if cause == MIRACLE_BACKLASH_CAUSE:
+        return (MIRACLE_MARKED_STATUS, DELAYED_DEATH_STATUS)
+    if cause == RADIANCE_BACKLASH_CAUSE:
+        return (RADIANCE_MARKED_STATUS, DELAYED_DEATH_STATUS)
     return ()
 
 
