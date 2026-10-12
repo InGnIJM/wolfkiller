@@ -52,6 +52,8 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   awakened_hunt: '巡猎出局',
   stand_in: '替身代出局',
   bond_death: '缠绕连带出局',
+  miracle_backlash: '奇迹反噬出局',
+  radiance_backlash: '流光反噬出局',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -123,6 +125,14 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   awakened_beauty_reasoning: '觉醒狼美人思考',
   awakened_seer_reasoning: '觉醒预言家思考',
   fragrance_phantom_reasoning: '寻香魅影思考',
+  miracle_merchant_reasoning: '奇迹商人思考',
+  lucky_reasoning: '幸运儿思考',
+  mirror_girl_reasoning: '魔镜少女思考',
+  awakened_hidden_wolf_reasoning: '觉醒隐狼思考',
+  radiance_earl_reasoning: '流光伯爵思考',
+  eclipse_maid_reasoning: '蚀日侍女思考',
+  time_wolf_reasoning: '蚀时狼妃思考',
+  order_prince_reasoning: '定序王子思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -177,6 +187,14 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   awakened_beauty_reasoning: '觉醒狼美人',
   awakened_seer_reasoning: '觉醒预言家',
   fragrance_phantom_reasoning: '寻香魅影',
+  miracle_merchant_reasoning: '奇迹商人',
+  lucky_reasoning: '幸运儿',
+  mirror_girl_reasoning: '魔镜少女',
+  awakened_hidden_wolf_reasoning: '觉醒隐狼',
+  radiance_earl_reasoning: '流光伯爵',
+  eclipse_maid_reasoning: '蚀日侍女',
+  time_wolf_reasoning: '蚀时狼妃',
+  order_prince_reasoning: '定序王子',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────
@@ -307,6 +325,7 @@ export const PLAYER_STATUS_LABELS: Record<string, string> = {
   delayed_death: '延迟结算',
   hunted: '被狩猎',
   silenced: '技能封印',
+  time_locked: '时间封锁',
 };
 
 /** 记忆里 `action_history[].action.action_type`（存档 JSON，键开放）。 */

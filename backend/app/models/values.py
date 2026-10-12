@@ -56,6 +56,10 @@ class DeathCause(str, Enum):
     STAND_IN = "stand_in"
     #: 寻香魅影的「氤氲缠绕」：被绑定者随另一方出局。
     BOND_DEATH = "bond_death"
+    #: 奇迹商人的「反噬」：幸运儿是狼人时，商人次日发言结束后出局。
+    MIRACLE_BACKLASH = "miracle_backlash"
+    #: 蚀日侍女的「流光反噬」：吞噬到流光伯爵或被其庇护的玩家，侍女次日发言结束后出局。
+    RADIANCE_BACKLASH = "radiance_backlash"
 
 
 class WinReason(str, Enum):

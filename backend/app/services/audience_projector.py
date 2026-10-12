@@ -92,6 +92,14 @@ _PUBLIC_REASONING_EVENTS = {
     "AWAKENED_BEAUTY_REASONING": "awakened_beauty_reasoning",
     "AWAKENED_SEER_REASONING": "awakened_seer_reasoning",
     "FRAGRANCE_PHANTOM_REASONING": "fragrance_phantom_reasoning",
+    "MIRACLE_MERCHANT_REASONING": "miracle_merchant_reasoning",
+    "LUCKY_REASONING": "lucky_reasoning",
+    "MIRROR_GIRL_REASONING": "mirror_girl_reasoning",
+    "AWAKENED_HIDDEN_WOLF_REASONING": "awakened_hidden_wolf_reasoning",
+    "RADIANCE_EARL_REASONING": "radiance_earl_reasoning",
+    "ECLIPSE_MAID_REASONING": "eclipse_maid_reasoning",
+    "TIME_WOLF_REASONING": "time_wolf_reasoning",
+    "ORDER_PRINCE_REASONING": "order_prince_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",

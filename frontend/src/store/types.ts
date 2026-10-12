@@ -31,7 +31,9 @@ export type DeathCause =
   | 'dance'
   | 'awakened_hunt'
   | 'stand_in'
-  | 'bond_death';
+  | 'bond_death'
+  | 'miracle_backlash'
+  | 'radiance_backlash';
 export type WinningCamp = 'good' | 'werewolf';
 export type WinReason =
   | 'all_gods_dead'
@@ -300,7 +302,15 @@ export interface NightThoughtPayload {
     | 'awakened_hunter_reasoning'
     | 'awakened_beauty_reasoning'
     | 'awakened_seer_reasoning'
-    | 'fragrance_phantom_reasoning';
+    | 'fragrance_phantom_reasoning'
+    | 'miracle_merchant_reasoning'
+    | 'lucky_reasoning'
+    | 'mirror_girl_reasoning'
+    | 'awakened_hidden_wolf_reasoning'
+    | 'radiance_earl_reasoning'
+    | 'eclipse_maid_reasoning'
+    | 'time_wolf_reasoning'
+    | 'order_prince_reasoning';
   target_seat: number | null;
   reasoning: string;
   /**

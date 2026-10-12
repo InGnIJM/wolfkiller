@@ -1078,7 +1078,7 @@ def test_undeclared_win_reason_is_reported(caplog) -> None:
 #: 引擎会写进 game.log、但投影器**不**声明为公开的 audience_action 类型。
 #: 它们只是引擎内部的编排标记（白天中断、放逐前的待定宣告），旧档回放必须**静默跳过**：
 #: 按「未知类型」计数会让 `EXILE_PENDING`（每次放逐都写）把计数刷成噪音。
-_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING"})
+_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING", "VOTE_REWOUND"})
 
 #: 投影器声明为公开、但旧档回放**不由** audience_action 记录产出的类型：它们分别来自
 #: 会话记录（speech）、`night_deaths`（death）与 `narration` / `phase_change` /
@@ -1138,6 +1138,13 @@ _REASONING_ACTIONS = {
     "AWAKENED_BEAUTY_REASONING": "charm",
     "AWAKENED_SEER_REASONING": "check",
     "FRAGRANCE_PHANTOM_REASONING": "bond",
+    "MIRACLE_MERCHANT_REASONING": "grant_seer",
+    "LUCKY_REASONING": "check",
+    "MIRROR_GIRL_REASONING": "inspect",
+    "AWAKENED_HIDDEN_WOLF_REASONING": "imitate",
+    "RADIANCE_EARL_REASONING": "shield",
+    "ECLIPSE_MAID_REASONING": "devour",
+    "TIME_WOLF_REASONING": "lock", "ORDER_PRINCE_REASONING": "rewind",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 

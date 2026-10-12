@@ -57,6 +57,8 @@ _PUBLIC_DEATH_CAUSES = frozenset({
     "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
     "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
     "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in", "bond_death",
+    "miracle_backlash",
+    "radiance_backlash",
 })
 _PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
 _PUBLIC_WIN_REASONS = frozenset({
@@ -104,7 +106,9 @@ _AUDIENCE_ACTION_SCHEMAS = {
 #: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
 #: 编排标记（白天中断、放逐前的待定宣告）。旧档回放要静默跳过它们 —— 按「未知类型」计数
 #: 会让每次放逐都写的 `EXILE_PENDING` 把丢弃计数刷成噪音。
-_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING"})
+_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({
+    "DAY_INTERRUPTED", "EXILE_PENDING", "VOTE_REWOUND",
+})
 
 #: 允许缺省的可选字段：`day_plan` 是后加的，历史日志里的狼聊没有它 —— 若把它写进必填集，
 #: 所有旧记录都会从「少一个字段」变成「整条丢弃」。
@@ -167,6 +171,31 @@ _REASONING_EVENT_TYPES = {
     ),
     "FRAGRANCE_PHANTOM_REASONING": (
         "fragrance_phantom_reasoning", frozenset({"bond", "pass"}),
+    ),
+    "MIRACLE_MERCHANT_REASONING": (
+        "miracle_merchant_reasoning",
+        frozenset({"grant_seer", "grant_poison", "grant_guard", "pass"}),
+    ),
+    "LUCKY_REASONING": (
+        "lucky_reasoning", frozenset({"check", "poison", "guard", "pass"}),
+    ),
+    "MIRROR_GIRL_REASONING": (
+        "mirror_girl_reasoning", frozenset({"inspect", "pass"}),
+    ),
+    "AWAKENED_HIDDEN_WOLF_REASONING": (
+        "awakened_hidden_wolf_reasoning", frozenset({"imitate", "pass"}),
+    ),
+    "RADIANCE_EARL_REASONING": (
+        "radiance_earl_reasoning", frozenset({"shield", "pass"}),
+    ),
+    "ECLIPSE_MAID_REASONING": (
+        "eclipse_maid_reasoning", frozenset({"devour", "pass"}),
+    ),
+    "TIME_WOLF_REASONING": (
+        "time_wolf_reasoning", frozenset({"lock", "pass"}),
+    ),
+    "ORDER_PRINCE_REASONING": (
+        "order_prince_reasoning", frozenset({"rewind", "pass"}),
     ),
 }
 
