@@ -49,7 +49,9 @@ def test_spec_and_hooks_are_closed_and_role_agnostic() -> None:
     assert contract.action_types == ("check", "pass")
     # ``resource_labels`` lets the pure hook see a bouncing target; the fact is
     # never part of the context handed to the model.
-    assert contract.selected_target_fact_namespaces == {"camp_label", "resource_labels"}
+    assert contract.selected_target_fact_namespaces == {
+        "camp_label", "resource_labels", "status_labels",
+    }
     assert contract.per_window_limit == contract.per_round_limit == 1
     assert seer_applicable(context()) is True
     assert seer_applicable(replace(context(), actor_alive=False)) is False

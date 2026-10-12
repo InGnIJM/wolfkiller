@@ -41,6 +41,8 @@ from app.roles.wolf_witch import WOLF_WITCH_SPEC, WolfWitch
 from app.roles.demon_hunter import DEMON_HUNTER_SPEC, DemonHunter
 from app.roles.crimson_envoy import CRIMSON_ENVOY_SPEC, CrimsonEnvoy
 from app.roles.nightmare import NIGHTMARE_SPEC, Nightmare
+from app.roles.time_wolf import TIME_WOLF_SPEC, TimeWolf
+from app.roles.order_prince import ORDER_PRINCE_SPEC, OrderPrince
 from app.roles.dancer import DANCER_SPEC, Dancer
 from app.roles.mask import MASK_SPEC, Mask
 from app.roles.lonely_girl import LONELY_GIRL_SPEC, LonelyGirl
@@ -580,6 +582,8 @@ builtin_registry.register_pipeline(WOLF_WITCH_SPEC)
 builtin_registry.register_pipeline(DEMON_HUNTER_SPEC)
 builtin_registry.register_pipeline(CRIMSON_ENVOY_SPEC)
 builtin_registry.register_pipeline(NIGHTMARE_SPEC)
+builtin_registry.register_pipeline(TIME_WOLF_SPEC)
+builtin_registry.register_pipeline(ORDER_PRINCE_SPEC)
 builtin_registry.register_pipeline(DANCER_SPEC)
 builtin_registry.register_pipeline(MASK_SPEC)
 builtin_registry.register_pipeline(LONELY_GIRL_SPEC)
@@ -754,6 +758,12 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-nightmare", Camp.WEREWOLF, Nightmare, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-time-wolf", Camp.WEREWOLF, TimeWolf, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-order-prince", Camp.GOOD, OrderPrince, ())
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-dancer", Camp.GOOD, Dancer, ())

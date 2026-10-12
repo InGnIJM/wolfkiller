@@ -526,11 +526,19 @@ class PromptBuilder:
         if state.is_tiebreak:
             candidates = "、".join(f"{seat}号" for seat in sorted(state.tiebreak_candidates)) or "无"
             speakers = "、".join(f"{seat}号" for seat in sorted(state.supplemental_speakers)) or "无"
-            status = (
-                f"本次为平票复投（第{state.vote_round}轮）。上一轮平票相关座位：{candidates}；"
-                f"补充发言座位：{speakers}。复投只能在上轮平票的座位中投票，也可弃权；"
-                f"投给其他座位会被判为无效票。"
-            )
+            if set(state.tiebreak_candidates) >= set(state.alive_players()):
+                # Every living seat is a candidate: the table is re-voting from
+                # scratch (the earlier ballot was voided), not choosing between ties.
+                status = (
+                    f"本次为重新投票（第{state.vote_round}轮，上一轮投票已作废）。"
+                    f"补充发言座位：{speakers}。所有存活座位都可以作为投票目标，也可弃权。"
+                )
+            else:
+                status = (
+                    f"本次为平票复投（第{state.vote_round}轮）。上一轮平票相关座位：{candidates}；"
+                    f"补充发言座位：{speakers}。复投只能在上轮平票的座位中投票，也可弃权；"
+                    f"投给其他座位会被判为无效票。"
+                )
         else:
             status = f"这是第{state.vote_round}轮放逐投票。可投任意存活座位，也可弃权。"
         immune = sorted(set(state.alive_players()) - eligible_exile_targets(state))

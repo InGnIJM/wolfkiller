@@ -7,6 +7,7 @@ from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
 from app.core.reflect import REFLECT_CHECK_RESOURCE, reflect_effects
+from app.core.time_lock import SELF_CHECK_CAMP, is_locked, lock_hit_effect
 from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
@@ -69,6 +70,11 @@ def resolve_seer_action(
     camp = selected.get("camp_label")
     if type(camp) is not str:
         raise TypeError("selected target camp label must be a string")
+    checked = command.target_seat
+    locked = is_locked(selected)
+    if locked:
+        # The Time Wolf's lock: the check is cast at the seer herself.
+        checked, camp = context.actor_seat, SELF_CHECK_CAMP
     return (
         GameEffect(
             derive_effect_id(context.action_key, 1),
@@ -77,7 +83,7 @@ def resolve_seer_action(
             payload={
                 "target": context.actor_seat,
                 "namespace": "private_checks",
-                "fact": {"target": command.target_seat, "camp": camp},
+                "fact": {"target": checked, "camp": camp},
             },
             visibility=("ACTOR",),
             expected_revision=context.revision,
@@ -96,14 +102,17 @@ def resolve_seer_action(
             context.action_key,
             payload={
                 "event_type": "SEER_CHECK",
-                "payload": {"target_seat": command.target_seat, "result": camp},
+                "payload": {"target_seat": checked, "result": camp},
             },
             visibility=("PUBLIC",),
             expected_revision=context.revision,
             source_event_id=context.source_event_id,
             sort_key=(3,),
         ),
-    ) + reflect_effects(context, selected, REFLECT_CHECK_RESOURCE, 4)
+    ) + (
+        (lock_hit_effect(context, selected, 4),) if locked
+        else reflect_effects(context, selected, REFLECT_CHECK_RESOURCE, 4)
+    )
 
 
 SEER_SPEC = RoleSpec(
@@ -128,7 +137,9 @@ SEER_SPEC = RoleSpec(
             EffectKind.SET_RESOURCE, EffectKind.SUBMIT_DAMAGE,
         }),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-        selected_target_fact_namespaces=frozenset({"camp_label", "resource_labels"}),
+        selected_target_fact_namespaces=frozenset({
+            "camp_label", "resource_labels", "status_labels",
+        }),
         per_window_limit=1,
         per_round_limit=1,
         is_applicable=seer_applicable,

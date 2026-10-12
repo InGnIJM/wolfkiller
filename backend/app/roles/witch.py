@@ -8,6 +8,7 @@ from app.core.conversation_log import ConversationLog
 from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
 from app.core.reflect import REFLECT_POISON_RESOURCE, reflect_effects
+from app.core.time_lock import is_locked, lock_hit_effect
 from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
@@ -86,6 +87,12 @@ def resolve_witch_action(
     resource = "antidote" if command.action_type == "save" else "poison"
     outcome = EffectKind.SUBMIT_PROTECTION if command.action_type == "save" else EffectKind.SUBMIT_DAMAGE
     target = command.target_seat
+    selected = context.facts.get("selected_target")
+    # The Time Wolf's lock redirects a *poison* to the witch herself; the antidote
+    # is not in the card's list, so a save is never redirected.
+    locked = command.action_type == "poison" and is_locked(selected)
+    if locked:
+        target = context.actor_seat
     outcome_payload = {"target": target, "amount": 1}
     if command.action_type == "save":
         outcome_payload["source"] = "witch_antidote"
@@ -124,12 +131,12 @@ def resolve_witch_action(
             payload={"event_type": emit_type, "payload": {"target_seat": target}},
             visibility=("PUBLIC",), sort_key=(idx,), **common),
     )
-    if command.action_type == "poison":
-        selected = context.facts.get("selected_target")
-        if isinstance(selected, Mapping):
-            effects.extend(reflect_effects(
-                context, selected, REFLECT_POISON_RESOURCE, len(effects) + 1,
-            ))
+    if locked:
+        effects.append(lock_hit_effect(context, selected, len(effects) + 1))
+    elif command.action_type == "poison" and isinstance(selected, Mapping):
+        effects.extend(reflect_effects(
+            context, selected, REFLECT_POISON_RESOURCE, len(effects) + 1,
+        ))
     return tuple(effects)
 
 
@@ -147,7 +154,7 @@ WITCH_SPEC = RoleSpec(
             EffectKind.SET_RESOURCE,
         }),
         visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
-        selected_target_fact_namespaces=frozenset({"resource_labels"}),
+        selected_target_fact_namespaces=frozenset({"resource_labels", "status_labels"}),
         per_window_limit=1, per_round_limit=1,
         is_applicable=witch_applicable, validate=validate_witch_action, resolve=resolve_witch_action,
     ),),

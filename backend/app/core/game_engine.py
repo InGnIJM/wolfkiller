@@ -101,6 +101,10 @@ _NIGHT_POINT_STAGES = (1, 5, 7, 9, 10)
 # spoken and before the exile vote starts.
 _POST_SPEECH_SLOT = "post_speech"
 
+# Slot of the VOTE_ACTION window that opens once per day, right after the first
+# exile vote has been counted and before anybody is exiled.
+_VOTE_VERDICT_SLOT = "vote_verdict"
+
 
 def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
     """Extract the current night's wolf kill target from pending damage.
@@ -1758,14 +1762,17 @@ class GameEngine:
         """True when this game seats a role with a POST_SPEECH_ACTION contract."""
         return self._contract_point_enabled(SchedulePoint.POST_SPEECH_ACTION)
 
-    def _contract_point_enabled(self, point: SchedulePoint) -> bool:
+    def _contract_point_enabled(
+        self, point: SchedulePoint, *, alive_only: bool = False,
+    ) -> bool:
         scheduler = self._pipeline_scheduler
         if scheduler is None:
             return False
         specs = getattr(scheduler.registry, "specs", None)
         if not isinstance(specs, Mapping):
             return False
-        for player in self.state.players.values():
+        seated = self.state.alive_players() if alive_only else self.state.players
+        for player in seated.values():
             spec = specs.get(player.role)
             for contract in () if spec is None else spec.contracts:
                 if contract.schedule_point is point:
@@ -2239,6 +2246,68 @@ class GameEngine:
             self.sm.transition(SM_Event.VOTE_RESOLVED)
         await self._broadcast_phase_change()
 
+    def _journaled_vote_rewinds(self) -> tuple[int, ...]:
+        """Seats whose VOTE_ACTION window already voided this day's vote.
+
+        Read from the journal rather than the window's return value, so the first
+        run and a resume that replays a finished window take the same decision.
+        """
+        suffix = f"#{_VOTE_VERDICT_SLOT}"
+        return tuple(
+            event["payload"]["seat"]
+            for key, checkpoint in point_journal(self.state).entries()
+            if key.round_number == self.state.round_number
+            and key.point is SchedulePoint.VOTE_ACTION
+            and key.phase.endswith(suffix)
+            for event in checkpoint.events
+            if event.get("event_type") == "VOTE_REWOUND"
+        )
+
+    async def _run_vote_verdict_window(self, tally: dict[int, int]) -> bool:
+        """Open the VOTE_ACTION window over a counted-but-unexecuted first vote.
+
+        Returns True when a role voided the vote (``VOTE_REWOUND``); the day then
+        carries on as a re-vote. Role-agnostic: the engine reads only the event.
+        """
+        if not self._contract_point_enabled(SchedulePoint.VOTE_ACTION, alive_only=True):
+            return False
+        leader = max(tally, key=tally.__getitem__)
+        self.conversation_log.add_system_message(
+            f"放逐投票已计票：{leader}号玩家得票最多（{tally[leader]}票），尚未执行放逐。",
+            self.state.round_number, "public",
+        )
+        await self._run_pipeline_point(
+            SchedulePoint.VOTE_ACTION, slot=_VOTE_VERDICT_SLOT,
+        )
+        return bool(self._journaled_vote_rewinds())
+
+    async def _rewind_vote(self) -> None:
+        """Void the counted vote and start a re-vote among every living seat.
+
+        It is the tie-break machinery with a different cast: the flipped seat is
+        the only one that still owes a (supplemental) speech, and the ballot is
+        open to every living seat instead of the tied ones.
+        """
+        flipped = self._journaled_vote_rewinds()
+        for seat in flipped:
+            player = self.state.players[seat]
+            player.revealed_role = player.role
+        alive = set(self.state.alive_players())
+        self._log_vote_result(None)
+        self.conversation_log.add_system_message(
+            "放逐投票作废：翻牌者逆转时空，本日放逐投票回到投票前，翻牌者额外发言一次后全员重新投票。",
+            self.state.round_number, "public",
+        )
+        self.state.vote_round = 2
+        self.state.is_tiebreak = True
+        self.state.tiebreak_candidates = alive
+        self.state.supplemental_speakers = alive - set(flipped)
+        self.state.voted_seats.clear()
+        await self._durable_checkpoint(
+            f"vote_result:{self.state.round_number}:1:none"
+        )
+        await self._execute_tiebreak(sorted(alive))
+
     async def _execute_vote_resolution(self) -> None:
         if self.state.is_tiebreak:
             await self._execute_tiebreak(list(self.state.tiebreak_candidates))
@@ -2264,6 +2333,10 @@ class GameEngine:
             if not await self._check_game_over():
                 self.sm.transition(SM_Event.VOTE_RESOLVED)
             await self._broadcast_phase_change()
+            return
+
+        if await self._run_vote_verdict_window(tally):
+            await self._rewind_vote()
             return
 
         exiled_seat = self.resolve_votes(log=False)

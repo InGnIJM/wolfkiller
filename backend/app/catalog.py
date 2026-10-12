@@ -203,6 +203,28 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "可以选择不赠予，把技能留到更有把握的一晚。",
         ],
     },
+    "wolf-killer-time-wolf": {
+        "name_zh": "蚀时狼妃", "icon": "werewolf",
+        "description": "狼人阵营，每晚率先睁眼封锁一名玩家，好人对其释放的验人、毒药、守护都落到自己身上",
+        "rules": [
+            "属于狼人阵营：夜间与狼队共享讨论、频道与狼刀投票，与普通狼人一致。",
+            "每晚**最先睁眼**，可以选择场上**任意一名玩家**（包括自己和狼队友）封锁到时间的夹缝中；可以不封锁，也可以连续两晚封锁同一个人。",
+            "当晚好人阵营玩家对被封锁玩家释放的**验人、毒药和守护**，都视为对**自身**释放：预言家验到自己、女巫毒到自己、守卫守到自己。解药不受影响。",
+            "被封锁的人不会被告知；好人只会发现自己的技能「打偏了」。",
+            "**技能生效的下一夜，永久失去封锁技能。**封锁了却没有人对该玩家放技能，不算生效，次夜仍可使用。",
+        ],
+    },
+    "wolf-killer-order-prince": {
+        "name_zh": "定序王子", "icon": "knight",
+        "description": "好人神职，每个白天第一次放逐投票结束后可翻牌作废该次投票并重新投票，限一次",
+        "rules": [
+            "属于好人阵营的**神职**，没有夜间技能。",
+            "每个白天**第一次放逐投票结束后**、真正放逐之前，可以翻牌发动技能：**逆转时空，回到本次投票前重新投票**，本次投票的结果作废。",
+            "翻牌后**公开身份**，并可在重新投票前**额外发言一次**；随后全体存活玩家重新投票，可投任意存活玩家。",
+            "每局游戏限一次；平票后的补充投票不能再发动。可以先观望，等到更需要的那一天再用。",
+            "重新投票若再次平票，本日无人被放逐。",
+        ],
+    },
     "wolf-killer-old-drunkard": {
         "name_zh": "老酒鬼", "icon": "old_drunkard",
         "description": "平民，免疫魅惑；被毒或枪杀延到次日发言结束后死亡",
@@ -662,6 +684,25 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-guard": 1,
             "wolf-killer-miracle-merchant": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's college-league "Eternal Cycle" board: the Time Wolf redirects
+        # good skills onto their casters, the Order Prince rewinds a vote.
+        "id": "twelve-player-eternal-cycle",
+        "name": "十二人永序之轮",
+        "description": "3狼 1蚀时狼妃 4民 1预言家 1守卫 1女巫 1定序王子",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-time-wolf": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-guard": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-order-prince": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",
