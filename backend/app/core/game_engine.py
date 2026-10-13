@@ -885,6 +885,11 @@ class GameEngine:
             spec = specs.get(self.state.players[seat].role)
             if spec is None:
                 continue
+            # A role that names the points its line is always true at (a dormant
+            # copied skill must not wake it) is only an opener there.
+            points = getattr(spec, "opening_points", None)
+            if points and point.value not in points:
+                continue
             if any(contract.schedule_point is point for contract in spec.contracts):
                 openers.append(seat)
         return tuple(openers)

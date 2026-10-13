@@ -3739,3 +3739,23 @@ async def test_first_night_roster_excludes_a_hidden_wolf_without_resources_yet()
     assert 3 not in director.discussion_calls
     assert set(director.discussion_calls) == {1, 2}
     assert director.vote_calls == [1, 2]
+
+@pytest.mark.asyncio
+async def test_a_dormant_copied_skill_never_wakes_its_owner_at_a_shared_point() -> None:
+    """觉醒隐狼的复制技能挂在预言家点与女巫点上，但它们只有模仿之后才可用。
+
+    注册表式的开眼旁白只看「这个座位在该点有没有契约」，所以一个休眠的克隆契约会让
+    隐狼每晚被叫醒，而且在没有预言家的板子上还会凭空播出「预言家请睁眼」。声明
+    `opening_points` 的角色只在它的台词永远为真的那个点出声。
+    """
+    engine = _night_with({
+        1: "wolf-killer-awakened-hidden-wolf",
+        2: "wolf-killer-mirror-girl",
+        3: "wolf-killer-villager",
+    })
+    engine.state.players[1].camp = "werewolf"
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    assert "觉醒隐狼请睁眼" not in beats
+    assert "seer_open" not in beats and "witch_open" not in beats
+    assert "魔镜少女请睁眼" in beats

@@ -16,6 +16,9 @@ from app.roles.registry import builtin_registry
 #: role id -> the line it must declare, for every role acting in NIGHT_ACTION.
 SCRIPT = {
     "wolf-killer-time-wolf": ("蚀时狼妃请睁眼", "请选择要封锁到时间夹缝中的玩家。"),
+    "wolf-killer-awakened-hidden-wolf": (
+        "觉醒隐狼请睁眼", "请选择一名玩家进行模仿，或使用已获得的技能。",
+    ),
     "wolf-killer-miracle-merchant": ("奇迹商人请睁眼", "请选择一名玩家成为幸运儿，并决定赠予他的技能。"),
     "wolf-killer-lonely-girl": ("孤独少女请睁眼", "请选择一名玩家作为你的崇拜对象。"),
     "wolf-killer-fragrance-phantom": ("寻香魅影请睁眼", "请选择两名玩家进行绑定。"),

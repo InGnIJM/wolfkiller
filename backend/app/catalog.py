@@ -203,6 +203,30 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "可以选择不赠予，把技能留到更有把握的一晚。",
         ],
     },
+    "wolf-killer-mirror-girl": {
+        "name_zh": "魔镜少女", "icon": "seer",
+        "description": "好人神职，每晚可查验一名玩家的具体身份",
+        "rules": [
+            "属于好人阵营的**神职**。每晚可以查验一名存活玩家（不能是自己），得知其**具体身份**，而不只是阵营。",
+            "查验结果只有你自己知道。你无法向全场证明它，何时公开、如何公开由你判断。",
+            "被觉醒隐狼模仿过的玩家，在魔镜里显示为**被模仿的身份**：如果你的查验结果与已知信息矛盾，这本身就是线索。",
+            "被查验的石像鬼显示为石像鬼；每晚的查验不会让对方得知。",
+        ],
+    },
+    "wolf-killer-awakened-hidden-wolf": {
+        "name_zh": "觉醒隐狼", "icon": "gargoyle",
+        "description": "狼人阵营但不属于狼窝，整局一次模仿一名玩家：立刻获得其身份，下一夜起获得其技能",
+        "rules": [
+            "属于狼人阵营，但**不属于狼窝**：不参与狼队夜间讨论与狼刀投票，不知道其他狼是谁，其他狼也不知道你是谁（只知道场上还剩几只狼）。不能自爆。",
+            "其他狼全部出局后，你获得带刀权，每晚可以独自刀人。",
+            "**整局一次**，夜间可以模仿一名其他存活玩家（官方资料没有写明次数或冷却，按一局一次实现）。",
+            "**身份立刻生效**：模仿成功后，所有查验（预言家、魔镜少女、纯白之女等）都把你显示成被模仿者的身份与阵营；"
+            "你自己的阵营、投票与胜负归属不变。",
+            "**技能从下一夜起生效**：预言家的查验、女巫的解药与毒药（各一瓶）、守卫的守护、猎人的枪、魔镜少女的具体身份查验。"
+            "模仿没有夜间技能的角色（如村民）只改变显示，不给技能。",
+            "猎人枪的触发条件与猎人一致：只有夜间被狼刀或白天被放逐才能开枪。",
+        ],
+    },
     "wolf-killer-time-wolf": {
         "name_zh": "蚀时狼妃", "icon": "werewolf",
         "description": "狼人阵营，每晚率先睁眼封锁一名玩家，好人对其释放的验人、毒药、守护都落到自己身上",
@@ -684,6 +708,25 @@ STANDARD_PRESETS: list[dict] = [
             "wolf-killer-witch": 1,
             "wolf-killer-guard": 1,
             "wolf-killer-miracle-merchant": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's college-league "Mirror" board: the Awakened Hidden Wolf copies
+        # a player, and the Mirror Girl reads the exact identity it shows.
+        "id": "twelve-player-mirror",
+        "name": "十二人镜隐迷踪",
+        "description": "3狼 1觉醒隐狼 4民 1守卫 1女巫 1猎人 1魔镜少女",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-awakened-hidden-wolf": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-guard": 1,
+            "wolf-killer-witch": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-mirror-girl": 1,
         },
         "enable_sheriff": True,
         "witch_self_save": "never",
