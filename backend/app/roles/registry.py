@@ -49,6 +49,8 @@ from app.roles.lonely_girl import LONELY_GIRL_SPEC, LonelyGirl
 from app.roles.miracle_merchant import MIRACLE_MERCHANT_SPEC, MiracleMerchant
 from app.roles.mirror_girl import MIRROR_GIRL_SPEC, MirrorGirl
 from app.roles.awakened_hidden_wolf import AWAKENED_HIDDEN_WOLF_SPEC, AwakenedHiddenWolf
+from app.roles.radiance_earl import RADIANCE_EARL_SPEC, RadianceEarl
+from app.roles.eclipse_maid import ECLIPSE_MAID_SPEC, EclipseMaid
 from app.roles.awakened_seer import AWAKENED_SEER_SPEC, AwakenedSeer
 from app.roles.fragrance_phantom import FRAGRANCE_PHANTOM_SPEC, FragrancePhantom
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
@@ -592,6 +594,8 @@ builtin_registry.register_pipeline(LONELY_GIRL_SPEC)
 builtin_registry.register_pipeline(MIRACLE_MERCHANT_SPEC)
 builtin_registry.register_pipeline(MIRROR_GIRL_SPEC)
 builtin_registry.register_pipeline(AWAKENED_HIDDEN_WOLF_SPEC)
+builtin_registry.register_pipeline(RADIANCE_EARL_SPEC)
+builtin_registry.register_pipeline(ECLIPSE_MAID_SPEC)
 builtin_registry.register_pipeline(AWAKENED_SEER_SPEC)
 builtin_registry.register_pipeline(FRAGRANCE_PHANTOM_SPEC)
 builtin_registry.register(
@@ -783,6 +787,12 @@ builtin_registry.register(
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-mirror-girl", Camp.GOOD, MirrorGirl, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-radiance-earl", Camp.GOOD, RadianceEarl, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-eclipse-maid", Camp.WEREWOLF, EclipseMaid, ())
 )
 builtin_registry.register(
     LegacyRoleSpec(

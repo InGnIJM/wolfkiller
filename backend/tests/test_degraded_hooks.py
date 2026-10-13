@@ -74,7 +74,7 @@ def _context() -> ActionContext:
 
 def test_every_role_hook_is_discovered() -> None:
     """A guard on the guard: the scan must actually find the whole family."""
-    assert len(HOOK_IDS) == 28, HOOK_IDS
+    assert len(HOOK_IDS) == 30, HOOK_IDS
 
 
 @pytest.mark.parametrize("dotted", HOOK_IDS)
