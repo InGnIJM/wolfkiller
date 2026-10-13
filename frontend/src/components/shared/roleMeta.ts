@@ -27,6 +27,9 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-nightmare',
   'wolf-killer-mask',
   'wolf-killer-fragrance-phantom',
+  'wolf-killer-awakened-hidden-wolf',
+  'wolf-killer-eclipse-maid',
+  'wolf-killer-time-wolf',
   'wolf-killer-seer',
   'wolf-killer-witch',
   'wolf-killer-hunter',
@@ -40,6 +43,10 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-demon-hunter',
   'wolf-killer-awakened-seer',
   'wolf-killer-dancer',
+  'wolf-killer-miracle-merchant',
+  'wolf-killer-mirror-girl',
+  'wolf-killer-radiance-earl',
+  'wolf-killer-order-prince',
   // 孤独少女与老酒鬼都是「平民」牌：排在神职之后、普通村民之前。
   'wolf-killer-old-drunkard',
   'wolf-killer-lonely-girl',
@@ -77,6 +84,13 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-mask', key: 'werewolf', label: '假面' },
   { id: 'wolf-killer-demon-hunter', key: 'hunter', label: '猎魔人' },
   { id: 'wolf-killer-dancer', key: 'guard', label: '舞者' },
+  { id: 'wolf-killer-miracle-merchant', key: 'hunter', label: '奇迹商人' },
+  { id: 'wolf-killer-mirror-girl', key: 'seer', label: '魔镜少女' },
+  { id: 'wolf-killer-awakened-hidden-wolf', key: 'werewolf', label: '觉醒隐狼' },
+  { id: 'wolf-killer-radiance-earl', key: 'guard', label: '流光伯爵' },
+  { id: 'wolf-killer-eclipse-maid', key: 'werewolf', label: '蚀日侍女' },
+  { id: 'wolf-killer-time-wolf', key: 'werewolf', label: '蚀时狼妃' },
+  { id: 'wolf-killer-order-prince', key: 'knight', label: '定序王子' },
 ];
 
 export const ROLE_META: Record<string, RoleMetaEntry> = Object.fromEntries(
