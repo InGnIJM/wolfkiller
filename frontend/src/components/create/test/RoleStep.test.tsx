@@ -194,6 +194,15 @@ describe('RoleStep 左栏', () => {
     await waitFor(() => expect(presetButton('九人标准场')).toBeInTheDocument());
   });
 
+  it('caps the board list so a long catalog scrolls instead of stretching the wizard', async () => {
+    renderStep();
+    await waitFor(() => expect(presetButton('九人标准场')).toBeInTheDocument());
+    const scroller = screen.getByTestId('preset-list-scroll');
+    expect(scroller).toHaveAttribute('data-max-height', '520');
+    fireEvent.click(presetButton('十二人狼美人骑士'));
+    await waitFor(() => expect(screen.getByRole('heading', { name: '十二人狼美人骑士' })).toBeInTheDocument());
+  });
+
   it('collapses a player-count group', async () => {
     renderStep();
     await waitFor(() => expect(presetButton('九人标准场')).toBeInTheDocument());

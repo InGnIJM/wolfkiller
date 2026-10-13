@@ -112,7 +112,17 @@ export default function PresetList({
         />
       </Box>
 
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', pb: 1 }}>
+      <Box
+        data-testid="preset-list-scroll"
+        data-max-height="520"
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          maxHeight: { xs: 280, md: 520 },
+          pb: 1,
+        }}
+      >
         {groups.length === 0 && (
           <Box sx={{ px: 2, py: 3 }}>
             <Typography variant="body2" sx={{ color: INK.dim }}>

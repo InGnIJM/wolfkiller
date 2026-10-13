@@ -1,7 +1,8 @@
 import { Box, Tooltip, Typography, keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { GamePhase, ModelSnapshotEntry, PublicPlayerState } from '../../store/types';
+import { fetchRoleCatalog } from '../../api/client';
+import type { GamePhase, ModelSnapshotEntry, PublicPlayerState, RoleCatalogItem } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
 import { ROLE_COLORS, BLOOD_MOON, CANVAS, HAIRLINE } from '../../theme/tokens';
 import RolePortrait from '../shared/RolePortrait';
@@ -60,6 +61,7 @@ function PublicSeat({
   compact = false,
   model,
   badgeSide,
+  catalog,
 }: {
   seat: number;
   player: PublicPlayerState;
@@ -70,6 +72,7 @@ function PublicSeat({
   compact?: boolean;
   model?: SeatModelInfo;
   badgeSide?: BadgeSide;
+  catalog: ReadonlyMap<string, RoleCatalogItem>;
 }) {
   const badge = roleMetaFor(player.role);
   const status = !player.is_alive ? '出局' : player.can_vote === false ? '存活·无投票权' : '存活';
@@ -97,6 +100,7 @@ function PublicSeat({
     badgeSide ? BADGE_SIDE_LABEL[badgeSide] : '',
     player.is_sheriff ? '警长' : '',
   ].filter(Boolean).join(' ');
+  const catalogEntry = player.role ? catalog.get(player.role) : undefined;
 
   return (
     <Tooltip
@@ -119,13 +123,15 @@ function PublicSeat({
           )}
           model={model}
           roleId={player.role}
+          description={catalogEntry?.description}
+          rules={catalogEntry?.rules}
         />
       )}
       placement="top"
       enterDelay={250}
       enterNextDelay={120}
       enterTouchDelay={400}
-      leaveDelay={80}
+      leaveDelay={240}
       slotProps={{
         tooltip: {
           sx: {
@@ -343,6 +349,7 @@ function SeatColumn({
   compactFits,
   models,
   badgeSides,
+  catalog,
 }: {
   seats: Array<{ seat: number; player: PublicPlayerState }>;
   currentSpeaker?: number | null;
@@ -352,6 +359,7 @@ function SeatColumn({
   compactFits: boolean;
   models: Record<number, SeatModelInfo>;
   badgeSides?: Map<number, BadgeSide>;
+  catalog: ReadonlyMap<string, RoleCatalogItem>;
 }) {
   return (
     <Box
@@ -381,6 +389,7 @@ function SeatColumn({
           compact
           model={models[seat]}
           badgeSide={badgeSides?.get(seat)}
+          catalog={catalog}
         />
       ))}
     </Box>
@@ -393,6 +402,9 @@ export default function SeatMap({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [catalog, setCatalog] = useState<ReadonlyMap<string, RoleCatalogItem>>(
+    () => new Map(),
+  );
   const models = useMemo(() => seatModelLookup(modelSnapshot), [modelSnapshot]);
   // 只在竞选期挂标，且出局座位不挂（警上自爆、警下被夜刀后都不该继续显示归属）
   const badgeSides = useMemo(() => {
@@ -406,6 +418,19 @@ export default function SeatMap({
     }
     return sides;
   }, [badgeCandidates, offBadgeSeats, phase, players]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchRoleCatalog()
+      .then((roles) => {
+        if (cancelled) return;
+        setCatalog(new Map(roles.map((role) => [role.role_id, role])));
+      })
+      .catch(() => {
+        // 技能区可缺：身份、存活、模型仍照常展示。
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -492,6 +517,7 @@ export default function SeatMap({
                   cardHeight={layout.cardH}
                   model={models[seat]}
                   badgeSide={badgeSides?.get(seat)}
+                  catalog={catalog}
                 />
               </Box>
             );
@@ -522,6 +548,7 @@ export default function SeatMap({
             compactFits={layout.compactFits}
             models={models}
             badgeSides={badgeSides}
+            catalog={catalog}
           />
           <Box
             sx={{
@@ -548,6 +575,7 @@ export default function SeatMap({
             compactFits={layout.compactFits}
             models={models}
             badgeSides={badgeSides}
+            catalog={catalog}
           />
         </Box>
       )}

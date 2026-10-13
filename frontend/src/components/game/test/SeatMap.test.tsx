@@ -1,13 +1,32 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ModelSnapshotEntry, PublicPlayerState } from '../../../store/types';
+import { fetchRoleCatalog } from '../../../api/client';
+import type { ModelSnapshotEntry, PublicPlayerState, RoleCatalogItem } from '../../../store/types';
 import { CARD_BACK, roleArt } from '../../../theme/tokens';
 import SeatMap from '../SeatMap';
+
+vi.mock('../../../api/client', () => ({
+  fetchRoleCatalog: vi.fn(),
+}));
+
+const WEREWOLF_CATALOG: RoleCatalogItem = {
+  role_id: 'wolf-killer-werewolf',
+  display_name: '狼人',
+  name_zh: '狼人',
+  camp: 'werewolf',
+  icon: 'wolf',
+  description: '夜晚睁眼，与狼队友商议刀人',
+  rules: ['夜晚与狼队友共用同一次狼刀。'],
+  min_count: 0,
+  max_count: null,
+  dependencies: [],
+  exclusions: [],
+};
 
 class MockResizeObserver {
   static instances: MockResizeObserver[] = [];
@@ -34,6 +53,7 @@ function fireResize(width: number, height: number) {
 beforeEach(() => {
   MockResizeObserver.instances = [];
   vi.stubGlobal('ResizeObserver', MockResizeObserver);
+  vi.mocked(fetchRoleCatalog).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -304,6 +324,52 @@ describe('SeatMap hover card', () => {
     const card = await screen.findByRole('tooltip');
     expect(card).toHaveTextContent('未知');
     expect(card).not.toHaveTextContent('wolf-killer-unknown');
+  });
+
+  it('shows catalog skill copy after the directory loads', async () => {
+    vi.mocked(fetchRoleCatalog).mockResolvedValue([WEREWOLF_CATALOG]);
+    const user = userEvent.setup();
+    render(
+      <SeatMap
+        players={{
+          1: {
+            seat_number: 1, is_alive: true, is_sheriff: true,
+            role: 'wolf-killer-werewolf', camp: 'werewolf',
+          },
+        }}
+        currentSpeaker={1}
+        modelSnapshot={snapshot}
+      />,
+    );
+    fireResize(800, 600);
+
+    await user.hover(screen.getByLabelText('1号 狼人 存活 警长'));
+    const card = await screen.findByRole('tooltip');
+    await waitFor(() => {
+      expect(card).toHaveTextContent('夜晚睁眼，与狼队友商议刀人');
+    });
+    expect(card).toHaveTextContent('夜晚与狼队友共用同一次狼刀。');
+  });
+
+  it('keeps the hover card usable when the catalog request fails', async () => {
+    vi.mocked(fetchRoleCatalog).mockRejectedValue(new Error('catalog down'));
+    const user = userEvent.setup();
+    render(
+      <SeatMap
+        players={{
+          1: {
+            seat_number: 1, is_alive: true, is_sheriff: false,
+            role: 'wolf-killer-werewolf', camp: 'werewolf',
+          },
+        }}
+      />,
+    );
+    fireResize(800, 600);
+
+    await user.hover(screen.getByLabelText('1号 狼人 存活'));
+    const card = await screen.findByRole('tooltip');
+    expect(card).toHaveTextContent('存活');
+    expect(card).not.toHaveTextContent('夜晚睁眼');
   });
 });
 

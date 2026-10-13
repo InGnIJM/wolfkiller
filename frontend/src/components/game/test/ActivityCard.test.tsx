@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { useGameStore } from '../../../store/gameStore';
 import type { PublicReplayEvent } from '../../../store/types';
-import ActivityCard, { ACTIVITY_CARD_MAX_HEIGHT } from '../ActivityCard';
+import ActivityCard, { ACTIVITY_BODY_MAX_HEIGHT, ACTIVITY_CARD_MAX_HEIGHT } from '../ActivityCard';
 
 const replayEventMeta = { timestamp: '2026-08-13T00:00:00Z' } as const;
 
@@ -75,8 +75,47 @@ describe('ActivityCard', () => {
 
     const frame = screen.getByTestId('activity-frame');
     expect(frame).toHaveAttribute('data-max-height', ACTIVITY_CARD_MAX_HEIGHT);
-    expect(ACTIVITY_CARD_MAX_HEIGHT).toBe('min(32dvh, 260px)');
-    expect(screen.getByTestId('activity-body')).toBeInTheDocument();
+    expect(ACTIVITY_CARD_MAX_HEIGHT).toBe('min(28dvh, 220px)');
+    const body = screen.getByTestId('activity-body');
+    expect(body).toHaveAttribute('data-max-height', ACTIVITY_BODY_MAX_HEIGHT);
+    expect(ACTIVITY_BODY_MAX_HEIGHT).toBe('min(22dvh, 160px)');
+  });
+
+  it('caps a long wolf chat body the same way as a speech', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'wolf_chat_message',
+        payload: {
+          round_number: 1,
+          seat: 2,
+          text: '同意刀预言家。'.repeat(40),
+          day_plan: '白天先打预言家。',
+        },
+      },
+    ]);
+    render(<ActivityCard />);
+
+    const body = screen.getByTestId('activity-body');
+    expect(body).toHaveAttribute('data-max-height', ACTIVITY_BODY_MAX_HEIGHT);
+    expect(body).toHaveTextContent('同意刀预言家。');
+    expect(body).toHaveTextContent('次日计划：白天先打预言家。');
+  });
+
+  it('caps streaming speech in the same scroll port', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'speaking',
+        payload: { seat: 3, round_number: 1 },
+      },
+    ]);
+    useGameStore.getState().setStreamingSpeech(3, '流式发言。'.repeat(30));
+    render(<ActivityCard />);
+
+    const body = screen.getByTestId('activity-body');
+    expect(body).toHaveAttribute('data-max-height', ACTIVITY_BODY_MAX_HEIGHT);
+    expect(body).toHaveTextContent('流式发言。');
   });
 
   it('labels last-word events as 遗言', () => {

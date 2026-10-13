@@ -45,6 +45,8 @@ export default function SeatHoverCard({
   accent,
   model,
   roleId,
+  description,
+  rules,
 }: {
   seat: number;
   roman: string;
@@ -60,20 +62,27 @@ export default function SeatHoverCard({
   model?: SeatModelInfo;
   /** 已揭晓的身份；缺省（旧档 / 未揭晓）由 `RolePortrait` 回退到卡背。 */
   roleId?: string;
+  /** 目录里的一句技能简介；未揭晓或缺目录时不传。 */
+  description?: string;
+  /** 目录里的规则条目；未揭晓或缺目录时不传。 */
+  rules?: readonly string[];
 }) {
   const identity = [roleLabel, campLabel(camp)].filter(Boolean).join(' · ');
+  const skillRules = roleId ? (rules ?? []).filter((rule) => rule.trim().length > 0) : [];
+  const skillDescription = roleId ? description?.trim() : '';
+  const showSkills = Boolean(skillDescription || skillRules.length > 0);
   return (
     <Box
       sx={{
         minWidth: 188,
-        maxWidth: 260,
+        maxWidth: 300,
         px: 1.5,
         py: 1.25,
         borderRadius: 1.5,
         bgcolor: CANVAS.surfaceRaised,
         border: `1px solid ${HAIRLINE.strong}`,
         boxShadow: `0 12px 28px rgba(0,0,0,0.55), 0 0 0 1px ${accent}33`,
-        pointerEvents: 'none',
+        pointerEvents: 'auto',
       }}
     >
       <Box sx={{ position: 'relative', mx: -1.5, mt: -1.25, mb: 1, overflow: 'hidden' }}>
@@ -103,6 +112,40 @@ export default function SeatHoverCard({
         >
           {identity}
         </Typography>
+      ) : null}
+      {showSkills ? (
+        <>
+          {skillDescription ? <HoverRow label="技能" value={skillDescription} /> : null}
+          {skillRules.length > 0 ? (
+            <Box
+              component="ul"
+              data-testid="seat-hover-rules"
+              sx={{
+                m: 0,
+                mt: 0.5,
+                pl: 2,
+                maxHeight: 140,
+                overflowY: 'auto',
+              }}
+            >
+              {skillRules.map((rule) => (
+                <Typography
+                  key={rule}
+                  component="li"
+                  sx={{
+                    fontSize: '0.62rem',
+                    color: INK.dim,
+                    lineHeight: 1.5,
+                    mb: 0.4,
+                    pr: 0.5,
+                  }}
+                >
+                  {rule}
+                </Typography>
+              ))}
+            </Box>
+          ) : null}
+        </>
       ) : null}
       <Box sx={{ my: 1, height: 1, bgcolor: HAIRLINE.soft }} />
       <HoverRow label="状态" value={statusLine({
@@ -150,6 +193,7 @@ function HoverRow({
           fontSize: emphasize ? '0.78rem' : '0.7rem',
           fontWeight: emphasize ? 700 : 500,
           color: INK.primary,
+          lineHeight: 1.45,
         }}
       >
         {value}

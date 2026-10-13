@@ -2,6 +2,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import { useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent } from '../../store/types';
 import { DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, SHERIFF_SIDE_LABELS, THOUGHT_LABELS } from '../../labels';
@@ -33,11 +34,13 @@ interface CardProps {
   children: React.ReactNode;
 }
 
-export const ACTIVITY_CARD_MAX_HEIGHT = 'min(32dvh, 260px)';
+export const ACTIVITY_CARD_MAX_HEIGHT = 'min(28dvh, 220px)';
+export const ACTIVITY_BODY_MAX_HEIGHT = 'min(22dvh, 160px)';
 
 const activityBodySx = {
   flex: 1,
   minHeight: 0,
+  maxHeight: ACTIVITY_BODY_MAX_HEIGHT,
   overflowY: 'auto',
   color: 'text.primary',
   lineHeight: 2,
@@ -72,6 +75,60 @@ function ActivityFrame({ tone, children }: CardProps) {
       }}
     >
       {children}
+    </Box>
+  );
+}
+
+function StreamingSpeechBody({ text }: { text: string }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = bodyRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [text]);
+  return (
+    <Box
+      ref={bodyRef}
+      data-testid="activity-body"
+      data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        maxHeight: ACTIVITY_BODY_MAX_HEIGHT,
+        overflowY: 'auto',
+        bgcolor: 'rgba(0, 0, 0, 0.25)',
+        p: 1.5,
+        borderRadius: 1,
+        border: '1px solid rgba(229, 72, 77, 0.25)',
+      }}
+    >
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.primary',
+          lineHeight: 1.8,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {text}
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-block',
+            width: '2px',
+            height: '1em',
+            bgcolor: 'secondary.main',
+            ml: 0.5,
+            verticalAlign: 'text-bottom',
+            animation: 'cursor-blink 1s step-start infinite',
+            '@keyframes cursor-blink': {
+              '0%, 100%': { opacity: 1 },
+              '50%': { opacity: 0 },
+            },
+          }}
+        />
+      </Typography>
     </Box>
   );
 }
@@ -172,6 +229,7 @@ function SpeechView({
       <Typography
         variant="body2"
         data-testid="activity-body"
+        data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
         sx={activityBodySx}
       >
         {payload.text}
@@ -255,6 +313,7 @@ function ThoughtView({
       <Typography
         variant="body2"
         data-testid="activity-body"
+        data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
         sx={{ ...activityBodySx, color: 'text.secondary' }}
       >
         {text}
@@ -307,25 +366,28 @@ function ChatView({
       </Box>
       <Typography
         variant="body2"
+        component="div"
         data-testid="activity-body"
+        data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
         sx={{ ...activityBodySx, color: 'text.secondary' }}
       >
         {text}
+        {dayPlan ? (
+          <Typography
+            variant="caption"
+            component="div"
+            sx={{
+              display: 'block',
+              mt: 1,
+              color: '#F4B3B6',
+              fontWeight: 600,
+              letterSpacing: 0.5,
+            }}
+          >
+            次日计划：{dayPlan}
+          </Typography>
+        ) : null}
       </Typography>
-      {dayPlan ? (
-        <Typography
-          variant="caption"
-          sx={{
-            display: 'block',
-            mt: 1,
-            color: '#F4B3B6',
-            fontWeight: 600,
-            letterSpacing: 0.5,
-          }}
-        >
-          次日计划：{dayPlan}
-        </Typography>
-      ) : null}
       <MetaRow
         roundNumber={roundNumber}
         kind={metaKind}
@@ -523,46 +585,7 @@ export default function ActivityCard() {
                 </Box>
                 <LiveTag label="STREAMING" />
               </Box>
-              <Box
-                data-testid="activity-body"
-                sx={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflowY: 'auto',
-                  bgcolor: 'rgba(0, 0, 0, 0.25)',
-                  p: 1.5,
-                  borderRadius: 1,
-                  border: '1px solid rgba(229, 72, 77, 0.25)',
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: 'text.primary',
-                    lineHeight: 1.8,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  {streamingSpeech.text}
-                  <Box
-                    component="span"
-                    sx={{
-                      display: 'inline-block',
-                      width: '2px',
-                      height: '1em',
-                      bgcolor: 'secondary.main',
-                      ml: 0.5,
-                      verticalAlign: 'text-bottom',
-                      animation: 'cursor-blink 1s step-start infinite',
-                      '@keyframes cursor-blink': {
-                        '0%, 100%': { opacity: 1 },
-                        '50%': { opacity: 0 },
-                      },
-                    }}
-                  />
-                </Typography>
-              </Box>
+              <StreamingSpeechBody text={streamingSpeech.text} />
             </Box>
           </ActivityFrame>
         );

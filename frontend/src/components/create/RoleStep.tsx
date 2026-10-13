@@ -162,7 +162,12 @@ export default function RoleStep({
   const underLimit = constraints !== null && total < constraints.min_players;
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, minHeight: 520 }}>
+    <Box sx={{
+      display: 'flex',
+      flexDirection: { xs: 'column', md: 'row' },
+      alignItems: 'stretch',
+      minHeight: { xs: 0, md: 520 },
+    }}>
       {/* 窄屏把板子列表折到上面并默认收起：290px 固定左栏在 375px 屏上会把
           右栏挤到只剩几十像素，横向溢出 65px（2026-10-05 实测）。桌面端这个
           按钮不显示，列表由断点强制展开，所以状态不会影响大屏。 */}
@@ -179,6 +184,7 @@ export default function RoleStep({
           display: pickerOpen ? 'flex' : { xs: 'none', md: 'flex' },
           flexDirection: 'column',
           minWidth: 0,
+          minHeight: 0,
         }}
       >
         <PresetList

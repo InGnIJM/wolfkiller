@@ -117,4 +117,47 @@ describe('SeatHoverCard', () => {
     );
     expect(container.querySelector('img')).toHaveAttribute('src', CARD_BACK);
   });
+
+  it('shows the skill summary and rule bullets for a revealed role', () => {
+    render(
+      <SeatHoverCard
+        seat={9}
+        roman="Ⅸ"
+        roleLabel="奇迹商人"
+        camp="good"
+        isAlive
+        isSheriff={false}
+        isCurrentSpeaker={false}
+        accent={ROLE_COLORS.hunter.color}
+        roleId="wolf-killer-miracle-merchant"
+        description="每晚把一次查验、毒药或守护赠给幸运儿"
+        rules={[
+          '每晚最先行动，指定一名幸运儿并赠出一项技能。',
+          '幸运儿是狼人时，商人次日发言结束后出局。',
+        ]}
+      />,
+    );
+    expect(screen.getByText('每晚把一次查验、毒药或守护赠给幸运儿')).toBeInTheDocument();
+    expect(screen.getByTestId('seat-hover-rules')).toBeInTheDocument();
+    expect(screen.getByText('每晚最先行动，指定一名幸运儿并赠出一项技能。')).toBeInTheDocument();
+    expect(screen.getByText('幸运儿是狼人时，商人次日发言结束后出局。')).toBeInTheDocument();
+  });
+
+  it('omits the skill block when the identity is still hidden', () => {
+    render(
+      <SeatHoverCard
+        seat={4}
+        roman="Ⅳ"
+        isAlive
+        isSheriff={false}
+        isCurrentSpeaker={false}
+        accent={ROLE_COLORS.villager.color}
+        description="不应出现的简介"
+        rules={['不应出现的规则']}
+      />,
+    );
+    expect(screen.queryByText('不应出现的简介')).not.toBeInTheDocument();
+    expect(screen.queryByText('不应出现的规则')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('seat-hover-rules')).not.toBeInTheDocument();
+  });
 });
