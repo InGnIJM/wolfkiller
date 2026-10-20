@@ -3731,7 +3731,7 @@ async def test_v2_night_records_wolf_kill_target_and_witch_save_rescues(tmp_path
                 if json.loads(line)["operation"] == "audience_action"]
     by_type = {record["data"]["event_type"]: record["data"]["payload"] for record in audience}
     assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
-    assert by_type["WITCH_SAVE"] == {"target_seat": 4}
+    assert by_type["WITCH_SAVE"] == {"target_seat": 4, "seat": 7}
     assert by_type["WITCH_REASONING"]["action_type"] == "save"
     assert by_type["WITCH_REASONING"]["target_seat"] == 4
     assert by_type["SEER_REASONING"]["action_type"] == "check"
