@@ -2039,6 +2039,34 @@ class TestGameEngine:
         assert stream_events == [{"game_id": "speak-stream", "seat": 1, "text": "我是1号正在发言"}]
 
     @pytest.mark.asyncio
+    async def test_speak_routes_thinking_chunks_to_their_own_event(self):
+        role = MagicMock()
+
+        async def stream_speech(_state, _log, _context, on_chunk=None):
+            await on_chunk("先想想", kind="thinking")
+            await on_chunk("我是1号")
+            return "我是1号，完整内容。"
+
+        role.speak = stream_speech
+        bus = EventBus()
+        seen: list[tuple[str, str]] = []
+
+        async def on_stream(**kwargs):
+            seen.append(("speech", kwargs["text"]))
+
+        async def on_thinking(**kwargs):
+            seen.append(("thinking", kwargs["text"]))
+
+        bus.subscribe(BusEvent.SPEECH_STREAM, on_stream)
+        bus.subscribe(BusEvent.SPEECH_THINKING, on_thinking)
+        engine = GameEngine(game_id="speak-think", roles={1: role}, event_bus=bus)
+        engine._checkpoint_hook = AsyncMock()
+
+        assert await engine.speak(1, "day_speech") == "我是1号，完整内容。"
+        assert seen == [("thinking", "先想想"), ("speech", "我是1号")]
+        assert all("先想想" not in str(record) for record in engine.conversation_log.records)
+
+    @pytest.mark.asyncio
     async def test_speak_handles_mock_role_without_on_chunk(self):
         role = MagicMock()
 
