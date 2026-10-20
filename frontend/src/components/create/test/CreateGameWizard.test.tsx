@@ -181,6 +181,7 @@ describe('CreateGameWizard step 2 and submission', () => {
         reveal_on_death: false,
         enable_sheriff: false,
         witch_self_save: 'first_night_only',
+        victory: 'edge',
         model_assignments: [{ config_id: null, count: 9 }],
       }),
     );

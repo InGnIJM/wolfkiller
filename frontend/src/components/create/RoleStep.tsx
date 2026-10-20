@@ -6,7 +6,7 @@ import AddIcon from '@mui/icons-material/Add';
 
 import { fetchConstraints, fetchPresets, fetchRoleCatalog } from '../../api/client';
 import type {
-  FieldConstraints, GamePreset, RoleCatalogItem, WitchSelfSavePolicy,
+  FieldConstraints, GamePreset, RoleCatalogItem, VictoryPolicy, WitchSelfSavePolicy,
 } from '../../store/types';
 import { BLOOD_MOON, HAIRLINE, INK } from '../../theme/tokens';
 import { rankOf } from '../shared/roleMeta';
@@ -27,13 +27,15 @@ interface Props {
   onEnableSheriffChange: (value: boolean) => void;
   witchSelfSave: WitchSelfSavePolicy;
   onWitchSelfSaveChange: (value: WitchSelfSavePolicy) => void;
+  victory: VictoryPolicy;
+  onVictoryChange: (value: VictoryPolicy) => void;
 }
 
 export default function RoleStep({
   roleCounts, onRoleCountsChange, onConstraintsChange, onRolesChange,
   revealOnDeath, onRevealOnDeathChange,
   enableSheriff, onEnableSheriffChange,
-  witchSelfSave, onWitchSelfSaveChange,
+  witchSelfSave, onWitchSelfSaveChange, victory, onVictoryChange,
 }: Props) {
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
@@ -51,7 +53,8 @@ export default function RoleStep({
     onRoleCountsChange({ ...preset.role_counts });
     onEnableSheriffChange(Boolean(preset.enable_sheriff));
     onWitchSelfSaveChange(preset.witch_self_save ?? 'first_night_only');
-  }, [onEnableSheriffChange, onRoleCountsChange, onWitchSelfSaveChange]);
+    onVictoryChange(preset.victory ?? 'edge');
+  }, [onEnableSheriffChange, onRoleCountsChange, onVictoryChange, onWitchSelfSaveChange]);
 
   useEffect(() => {
     let active = true;
@@ -87,6 +90,7 @@ export default function RoleStep({
   // 狼队人数按阵营汇总：白狼王等狼阵营变体与普通狼人一并计入
   const wolfCount = campCount('werewolf');
   const goodCount = campCount('good');
+  const thirdCount = campCount('third_party');
 
   const basePreset = useMemo(
     () => presets.find((preset) => preset.id === basePresetId) ?? null,
@@ -257,8 +261,10 @@ export default function RoleStep({
             />
             <Stat label="狼" value={wolfCount} tone="wolf" />
             <Stat label="好人" value={goodCount} />
+            {thirdCount > 0 && <Stat label="第三方" value={thirdCount} />}
             <Stat label="警长" text={enableSheriff ? '开' : '关'} />
             <Stat label="女巫自救" text={witchSelfSave === 'never' ? '禁止' : '仅首夜'} />
+            <Stat label="胜利" text={victory === 'city' ? '屠城' : '屠边'} />
             {overLimit && (
               <Typography variant="caption" sx={{ color: BLOOD_MOON.crimson, alignSelf: 'center' }}>
                 超出 {total - (constraints?.max_players ?? total)} 人
@@ -325,6 +331,11 @@ export default function RoleStep({
             />
             <Typography variant="caption" sx={{ display: 'block', color: INK.faint, ml: 4 }}>
               九人、十人预设默认关闭；十二人预设建议开启。
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block', color: INK.faint, mt: 1 }}>
+              胜利方式：{victory === 'city'
+                ? '屠城。好人全灭则狼人胜，狼人全灭则好人胜；场上还有第三方时另外两方都不能赢。'
+                : '屠边。神职全灭、平民全灭，或狼人数大于好人数，则狼人胜。'}
             </Typography>
             <Typography variant="caption" sx={{ display: 'block', color: INK.faint, mt: 1 }}>
               女巫自救：{witchSelfSave === 'never'

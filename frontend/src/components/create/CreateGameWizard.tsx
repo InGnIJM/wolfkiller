@@ -9,7 +9,7 @@ import ModelStep from './ModelStep';
 import { createGame } from '../../api/client';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type {
-  FieldConstraints, ModelAssignment, RoleCatalogItem, WitchSelfSavePolicy,
+  FieldConstraints, ModelAssignment, RoleCatalogItem, VictoryPolicy, WitchSelfSavePolicy,
 } from '../../store/types';
 import { BACKDROP } from '../../theme/tokens';
 
@@ -24,6 +24,7 @@ export default function CreateGameWizard() {
   const [revealOnDeath, setRevealOnDeath] = useState(false);
   const [enableSheriff, setEnableSheriff] = useState(false);
   const [witchSelfSave, setWitchSelfSave] = useState<WitchSelfSavePolicy>('first_night_only');
+  const [victory, setVictory] = useState<VictoryPolicy>('edge');
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const modelConfigs = useModelConfigStore((state) => state.configs);
@@ -76,6 +77,7 @@ export default function CreateGameWizard() {
         reveal_on_death: revealOnDeath,
         enable_sheriff: enableSheriff,
         witch_self_save: witchSelfSave,
+        victory,
         model_assignments: modelAssignments.filter((assignment) => assignment.count > 0),
       });
       navigate(`/game/${res.game_id}`);
@@ -111,6 +113,8 @@ export default function CreateGameWizard() {
           onEnableSheriffChange={setEnableSheriff}
           witchSelfSave={witchSelfSave}
           onWitchSelfSaveChange={setWitchSelfSave}
+          victory={victory}
+          onVictoryChange={setVictory}
         />
       )}
       {step === 1 && (

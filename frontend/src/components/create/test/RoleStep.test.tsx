@@ -86,6 +86,8 @@ function renderStep(initialCounts: Record<string, number> = {}) {
         onEnableSheriffChange={(value) => { onEnableSheriffChange(value); setEnableSheriff(value); }}
         witchSelfSave={witchSelfSave}
         onWitchSelfSaveChange={(value) => { onWitchSelfSaveChange(value); setWitchSelfSave(value); }}
+        victory="edge"
+        onVictoryChange={vi.fn()}
       />
     );
   }
