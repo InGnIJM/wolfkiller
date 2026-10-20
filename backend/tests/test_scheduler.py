@@ -975,6 +975,33 @@ def test_response_without_react_uses_provider_and_resolver() -> None:
     assert [event["event_type"] for event in result.events] == ["DONE", "REACTED"]
 
 
+def test_a_model_response_without_an_applicability_hook_is_still_asked() -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "is_applicable", None)
+    object.__setattr__(response, "resolve", response_event)
+    registry = snapshot(spec("r", contract("primary"), response))
+    result = scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert [event["event_type"] for event in result.events] == ["DONE", "REACTED"]
+
+
+def test_a_model_response_that_does_not_apply_is_skipped() -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "is_applicable", lambda context: False)
+    object.__setattr__(response, "resolve", response_event)
+    registry = snapshot(spec("r", contract("primary"), response))
+    result = scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+    assert [event["event_type"] for event in result.events] == ["DONE"]
+
+
+def test_a_model_response_with_a_non_boolean_applicability_pauses() -> None:
+    response = contract("response", point=SchedulePoint.DAY_ACTION, responses=frozenset({"DONE"}))
+    object.__setattr__(response, "is_applicable", lambda context: 1)
+    object.__setattr__(response, "resolve", response_event)
+    registry = snapshot(spec("r", contract("primary"), response))
+    with pytest.raises(PipelinePaused, match="applicability rule failed"):
+        scheduler(registry).run_point(state("r"), SchedulePoint.NIGHT_ACTION)
+
+
 def test_aggregate_fallback_success_and_failures_pause() -> None:
     c = contract("group", aggregate=True); object.__setattr__(c, "aggregate", fallback_aggregate)
     registry = snapshot(spec("r", c))

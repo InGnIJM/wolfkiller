@@ -897,6 +897,19 @@ class Scheduler:
                         saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
                             tuple(pending), WorkCursor("response", event_index, subindex), work_count=work_count)
                         journal.put(key, saved); continue
+                    # Model-driven response windows consult is_applicable before
+                    # the provider is asked. Pure react hooks keep the old rule:
+                    # the window still opens and the hook re-checks itself.
+                    if contract.react is None:
+                        applies = contract.is_applicable is None or self._rule_call(
+                            "applicability", lambda: contract.is_applicable(context),
+                        )
+                        if type(applies) is not bool: raise PipelinePaused("applicability rule failed")
+                        if not applies:
+                            subindex += 1
+                            saved = PointCheckpoint(issued, tuple(actual), tuple(commits), tuple(events), tuple(faults),
+                                tuple(pending), WorkCursor("response", event_index, subindex), work_count=work_count)
+                            journal.put(key, saved); continue
                     if contract.react is not None:
                         try: effects = self._rule_call("react", lambda: self.resolver.react_effects(context, role, contract))
                         except RuleExecutionError: raise PipelinePaused("rule execution failed") from None
