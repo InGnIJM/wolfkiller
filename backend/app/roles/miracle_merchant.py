@@ -198,6 +198,19 @@ def _lucky_reasoning_effect(
     )
 
 
+def _lucky_outcome(
+    context: ActionContext, event_type: str, payload: dict[str, object],
+    ordinal: int, **common: object,
+) -> GameEffect:
+    """The same public outcome the original skill emits, tagged with this seat."""
+    return GameEffect(
+        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
+        context.action_key,
+        payload={"event_type": event_type, "payload": payload},
+        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    )
+
+
 def _spend(context: ActionContext, marker: str, ordinal: int, **common: object) -> GameEffect:
     """Spend the holder marker; the precondition keeps it atomic."""
     actor = context.actor_seat
@@ -252,7 +265,15 @@ def resolve_lucky_check(
         _lucky_reasoning_effect(
             context, command, 3, outcome=_CAMP_ZH.get(camp, camp), **common,
         ),
-    ) + reflect_effects(context, selected, REFLECT_CHECK_RESOURCE, 4)
+        _lucky_outcome(
+            context, "SEER_CHECK",
+            {
+                "target_seat": command.target_seat, "result": camp,
+                "seat": context.actor_seat,
+            },
+            4, **common,
+        ),
+    ) + reflect_effects(context, selected, REFLECT_CHECK_RESOURCE, 5)
 
 
 def resolve_lucky_poison(
@@ -274,11 +295,16 @@ def resolve_lucky_poison(
             sort_key=(2,), **common,
         ),
         _lucky_reasoning_effect(context, command, 3, **common),
+        _lucky_outcome(
+            context, "WITCH_POISON",
+            {"target_seat": target, "seat": context.actor_seat},
+            4, **common,
+        ),
     )
     selected = context.facts.get("selected_target")
     if not isinstance(selected, Mapping):
         return effects
-    return effects + reflect_effects(context, selected, REFLECT_POISON_RESOURCE, 4)
+    return effects + reflect_effects(context, selected, REFLECT_POISON_RESOURCE, 5)
 
 
 def resolve_lucky_guard(
@@ -300,6 +326,11 @@ def resolve_lucky_guard(
             sort_key=(2,), **common,
         ),
         _lucky_reasoning_effect(context, command, 3, **common),
+        _lucky_outcome(
+            context, "GUARD_PROTECT",
+            {"target_seat": target, "seat": context.actor_seat},
+            4, **common,
+        ),
     )
 
 

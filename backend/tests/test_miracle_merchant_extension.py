@@ -206,13 +206,18 @@ def test_lucky_check_records_the_camp_and_spends_the_marker() -> None:
     )
     effects = resolve_lucky_check(ctx, cmd("check", WOLF))
     assert [e.kind for e in effects] == [
-        EffectKind.CONSUME_RESOURCE, EffectKind.RECORD_PRIVATE_FACT, EffectKind.EMIT_EVENT,
+        EffectKind.CONSUME_RESOURCE, EffectKind.RECORD_PRIVATE_FACT,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert effects[0].payload == {"target": VILL, "resource": "lucky_seer", "amount": 1}
     assert effects[0].preconditions == {"resource_equals": {"resource": "lucky_seer", "value": 1}}
     assert effects[1].payload["namespace"] == "private_checks"
     assert effects[1].payload["fact"] == {"target": WOLF, "camp": "werewolf"}
     assert "狼人" in effects[2].payload["payload"]["thought"]
+    assert effects[3].payload == {
+        "event_type": "SEER_CHECK",
+        "payload": {"target_seat": WOLF, "result": "werewolf", "seat": VILL},
+    }
 
 
 def test_lucky_check_bounces_off_a_reflecting_target() -> None:
@@ -230,6 +235,7 @@ def test_lucky_check_passing_and_bad_facts() -> None:
     passed = resolve_lucky_check(ctx, cmd("pass"))
     assert [e.kind for e in passed] == [EffectKind.EMIT_EVENT]
     assert "不使用技能" in passed[0].payload["payload"]["thought"]
+    assert passed[0].payload["event_type"] == "LUCKY_REASONING"
     degraded = resolve_lucky_check(
         context(LUCKY_CHECK_CONTRACT, actor=VILL, degraded=True), cmd("pass", degraded=True),
     )
@@ -251,10 +257,15 @@ def test_lucky_poison_and_guard_spend_their_marker_and_apply_the_effect() -> Non
         cmd("poison", WOLF),
     )
     assert [e.kind for e in poison] == [
-        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert poison[0].payload["resource"] == "lucky_poison"
     assert poison[1].payload == {"target": WOLF, "amount": 1, "cause": "poison"}
+    assert poison[3].payload == {
+        "event_type": "WITCH_POISON",
+        "payload": {"target_seat": WOLF, "seat": VILL},
+    }
 
     bounced = resolve_lucky_poison(
         context(LUCKY_POISON_CONTRACT, actor=VILL,
@@ -265,16 +276,21 @@ def test_lucky_poison_and_guard_spend_their_marker_and_apply_the_effect() -> Non
     # With no selected-target projection at all the poison still lands.
     assert len(resolve_lucky_poison(
         context(LUCKY_POISON_CONTRACT, actor=VILL), cmd("poison", WOLF),
-    )) == 3
+    )) == 4
     assert [e.kind for e in resolve_lucky_poison(
         context(LUCKY_POISON_CONTRACT, actor=VILL), cmd("pass"),
     )] == [EffectKind.EMIT_EVENT]
 
     guard = resolve_lucky_guard(context(LUCKY_GUARD_CONTRACT, actor=VILL), cmd("guard", SEER))
     assert [e.kind for e in guard] == [
-        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION, EffectKind.EMIT_EVENT,
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_PROTECTION,
+        EffectKind.EMIT_EVENT, EffectKind.EMIT_EVENT,
     ]
     assert guard[1].payload == {"target": SEER, "amount": 1, "source": "guard"}
+    assert guard[3].payload == {
+        "event_type": "GUARD_PROTECT",
+        "payload": {"target_seat": SEER, "seat": VILL},
+    }
     assert [e.kind for e in resolve_lucky_guard(
         context(LUCKY_GUARD_CONTRACT, actor=VILL), cmd("pass"),
     )] == [EffectKind.EMIT_EVENT]

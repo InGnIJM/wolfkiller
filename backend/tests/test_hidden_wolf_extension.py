@@ -287,7 +287,7 @@ def test_lone_kill_emits_one_damage_and_one_public_event() -> None:
     assert effects[0].payload == {"target": 4, "amount": 1, "cause": "wolf_kill"}
     assert effects[1].payload == {
         "event_type": "WEREWOLF_KILL",
-        "payload": {"target_seat": 4, "vote_counts": {"4": 1}},
+        "payload": {"target_seat": 4, "vote_counts": {"4": 1}, "seat": 2},
     }
     passed = resolve_hidden_wolf_kill(
         context(pack_count=0), ActionCommand(action_type="pass", target_seat=None, reasoning="ok"),
@@ -305,6 +305,7 @@ def test_two_hidden_wolves_still_cast_one_kill_between_them() -> None:
     effects = hidden_wolf_kill_effects(context_, ballots)
     assert effects[0].payload["target"] == 4
     assert effects[1].payload["payload"]["vote_counts"] == {"4": 2}
+    assert effects[1].payload["payload"]["seat"] == 2
     assert hidden_wolf_kill_effects(context_, (
         ActionCommand(action_type="pass", target_seat=None, reasoning="a"),
     )) == ()

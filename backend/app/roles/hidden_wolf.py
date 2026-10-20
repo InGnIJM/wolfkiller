@@ -70,6 +70,7 @@ def resolve_hidden_wolf_kill(
                 "payload": {
                     "target_seat": target,
                     "vote_counts": {str(target): 1},
+                    "seat": context.actor_seat,
                 },
             },
             visibility=("PUBLIC",), sort_key=(2,), **common,
@@ -107,6 +108,7 @@ def hidden_wolf_kill_effects(
                 "payload": {
                     "target_seat": target,
                     "vote_counts": {str(seat): count for seat, count in counts.items()},
+                    "seat": context.actor_seat,
                 },
             },
             visibility=("PUBLIC",), sort_key=(2,), **common,
