@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import * as labels from '../labels';
 import {
-  DEATH_CAUSE_LABELS, EVENT_TAGS, EXECUTION_LABELS, NIGHT_EVENT_ROLE_NAMES,
-  PHASE_LABELS, WIN_REASON_LABELS,
+  DEATH_CAUSE_LABELS, EVENT_TAGS, EXECUTION_LABELS, NIGHT_ACTION_LABELS,
+  NIGHT_EVENT_ROLE_NAMES, PHASE_LABELS, VOTE_REWOUND_RESULT, WIN_REASON_LABELS,
+  nightActionCaption, thoughtActorName, voteRoundWasRewound,
 } from '../labels';
 
 // Vite 原生 glob，不需要 node 类型（前端 tsconfig 未引入 @types/node）。
@@ -18,7 +19,7 @@ describe('文案表本身', () => {
       (entry): entry is [string, Record<string, string>] => typeof entry[1] === 'object',
     );
 
-    expect(tables).toHaveLength(20);
+    expect(tables).toHaveLength(21);
     expect(tables.filter(([, table]) => Object.keys(table).length === 0)).toEqual([]);
   });
 });
@@ -50,5 +51,22 @@ describe('文案统一由 src/labels.ts 管理', () => {
     expect(WIN_REASON_LABELS.wolves_outnumber_good).toBeTruthy();
     expect(Object.keys(EVENT_TAGS)).toContain('technical_abstain');
     expect(Object.keys(DEATH_CAUSE_LABELS)).toContain('charm');
+    expect(EVENT_TAGS.vote_rewound).toBe('回溯');
+  });
+
+  it('labels a night action by the acting seat when the god view knows it', () => {
+    expect(nightActionCaption('witch_poison')).toBe(NIGHT_ACTION_LABELS.witch_poison);
+    expect(nightActionCaption('witch_poison', {
+      seat: 5, targetSeat: 3, roleName: '蚀日侍女',
+    })).toBe('5号蚀日侍女 · 毒人 · 目标3号');
+    expect(nightActionCaption('guard_protect', {
+      seat: 6, targetSeat: 6, intendedSeat: 3, roleName: '守卫',
+    })).toContain('原目标3号，被时间封锁改向');
+    expect(thoughtActorName('lucky_reasoning')).toBe('幸运儿');
+    expect(thoughtActorName('witch_reasoning', { roleName: '蚀日侍女' })).toBe('蚀日侍女');
+    expect(voteRoundWasRewound(2, [
+      { event_type: 'vote_rewound', payload: { round_number: 2 } },
+    ])).toBe(true);
+    expect(VOTE_REWOUND_RESULT).toBe('放逐投票作废，重新投票');
   });
 });

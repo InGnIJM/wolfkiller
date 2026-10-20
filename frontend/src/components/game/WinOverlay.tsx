@@ -13,6 +13,7 @@ interface Props {
 const CAMP_ACCENT: Record<WinningCamp, string> = {
   werewolf: 'error.light',
   good: 'secondary.light',
+  third_party: 'info.light',
 };
 
 export default function WinOverlay({ winResult, revealOnDeath }: Props) {

@@ -33,13 +33,17 @@ export type DeathCause =
   | 'stand_in'
   | 'bond_death'
   | 'miracle_backlash'
-  | 'radiance_backlash';
-export type WinningCamp = 'good' | 'werewolf';
+  | 'radiance_backlash'
+  | 'love_death';
+export type WinningCamp = 'good' | 'werewolf' | 'third_party';
 export type WinReason =
   | 'all_gods_dead'
   | 'all_villagers_dead'
   | 'all_wolves_dead'
-  | 'wolves_outnumber_good';
+  | 'wolves_outnumber_good'
+  | 'all_good_dead'
+  | 'all_others_dead';
+export type VictoryPolicy = 'edge' | 'city';
 export type UtcTimestamp = `${string}Z`;
 
 export interface PublicPlayerState {
@@ -84,6 +88,12 @@ export interface DeathRecord {
 export interface VoteResult {
   round_number: number;
   exiled_seat: number | null;
+}
+
+/** The Order Prince voided this round's first exile tally. */
+export interface VoteRewoundPayload {
+  seat: number;
+  round_number: number;
 }
 
 export interface TechnicalAbstainPayload {
@@ -189,7 +199,8 @@ export type NightActionType =
   | 'hunter_shot'
   | 'wolf_king_shot'
   | 'guard_protect'
-  | 'awakened_hunt';
+  | 'awakened_hunt'
+  | 'fool_seer_check';
 
 export interface NightActionRecord {
   action_type: NightActionType;
@@ -197,6 +208,10 @@ export interface NightActionRecord {
   round_number: number;
   vote_counts?: Record<string, number>;
   result?: WinningCamp;
+  /** Who cast the skill. Pack wolf kills omit it; old archives may omit it. */
+  seat?: number;
+  /** The model's original target when a Time Wolf lock redirected the cast. */
+  intended_seat?: number;
 }
 
 export interface NarrationPayload {
@@ -310,7 +325,13 @@ export interface NightThoughtPayload {
     | 'radiance_earl_reasoning'
     | 'eclipse_maid_reasoning'
     | 'time_wolf_reasoning'
-    | 'order_prince_reasoning';
+    | 'order_prince_reasoning'
+    | 'fool_seer_reasoning'
+    | 'fool_seer_reveal_reasoning'
+    | 'iron_villager_reasoning'
+    | 'crow_reasoning'
+    | 'cupid_reasoning'
+    | 'admirer_reasoning';
   target_seat: number | null;
   reasoning: string;
   /**
@@ -378,6 +399,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'death', DeathRecord>
   | PublicReplayEnvelope<'vote', VoteRecord>
   | PublicReplayEnvelope<'vote_result', VoteResult>
+  | PublicReplayEnvelope<'vote_rewound', VoteRewoundPayload>
   | PublicReplayEnvelope<'technical_abstain', TechnicalAbstainPayload>
   | PublicReplayEnvelope<'exile_cancelled', ExileCancelledPayload>
   | PublicReplayEnvelope<'self_explode', SelfExplodePayload>
@@ -620,6 +642,8 @@ export interface GamePreset {
   enable_sheriff?: boolean;
   /** 女巫自救规则：假面板子首夜可自救，网易官方赛制板子全程禁止。 */
   witch_self_save?: WitchSelfSavePolicy;
+  /** 屠边或屠城。缺省按屠边。 */
+  victory?: VictoryPolicy;
   /** 该板子建议的单局超时（秒）：9/10 人板 3600，12 人板 7200；旧响应可能没有这个字段。 */
   recommended_timeout_seconds?: number;
 }

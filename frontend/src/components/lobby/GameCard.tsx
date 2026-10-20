@@ -34,15 +34,17 @@ interface Props {
 }
 
 // 胜负徽标只在文案之外多一个色调，色调留在组件里（与 CAMP_ACCENT 同类）。
-const WINNER_COLOR: Record<WinningCamp, 'success' | 'error'> = {
+const WINNER_COLOR: Record<WinningCamp, 'success' | 'error' | 'info'> = {
   good: 'success',
   werewolf: 'error',
+  third_party: 'info',
 };
 
 // 未知阵营（旧档脏数据）不渲染徽标，与旧行为一致。
-function winnerMeta(winner: string): { label: string; color: 'success' | 'error' } | null {
-  if (winner !== 'good' && winner !== 'werewolf') return null;
-  return { label: WINNER_LABELS[winner], color: WINNER_COLOR[winner] };
+function winnerMeta(winner: string): { label: string; color: 'success' | 'error' | 'info' } | null {
+  if (!(winner in WINNER_LABELS)) return null;
+  const camp = winner as WinningCamp;
+  return { label: WINNER_LABELS[camp], color: WINNER_COLOR[camp] };
 }
 
 export default function GameCard({

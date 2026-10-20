@@ -54,6 +54,7 @@ export const DEATH_CAUSE_LABELS: Record<DeathCause, string> = {
   bond_death: '缠绕连带出局',
   miracle_backlash: '奇迹反噬出局',
   radiance_backlash: '流光反噬出局',
+  love_death: '挚友跟随出局',
 };
 
 // ── 阶段 ──────────────────────────────────────────────────────
@@ -100,7 +101,68 @@ export const NIGHT_ACTION_LABELS: Record<NightActionType, string> = {
   wolf_king_shot: '狼王开枪',
   guard_protect: '守卫守护',
   awakened_hunt: '觉醒猎人巡猎',
+  fool_seer_check: '愚言家查验',
 };
+
+/** 夜间技能动词：有施法座位时按真实身份拼接，不再写死「女巫/猎人」。 */
+export const NIGHT_ACTION_VERBS: Record<NightActionType, string> = {
+  werewolf_kill: '袭击',
+  witch_save: '救人',
+  witch_poison: '毒人',
+  seer_check: '查验',
+  hunter_shot: '开枪',
+  wolf_king_shot: '开枪',
+  guard_protect: '守护',
+  awakened_hunt: '巡猎',
+  fool_seer_check: '查验',
+};
+
+/** 定序王子作废当轮放逐票后，同轮 ``exiled_seat === null`` 的票型文案。 */
+export const VOTE_REWOUND_RESULT = '放逐投票作废，重新投票';
+
+export function nightActionCaption(
+  actionType: NightActionType,
+  options: {
+    seat?: number | null;
+    targetSeat?: number | null;
+    intendedSeat?: number | null;
+    roleName?: string | null;
+  } = {},
+): string {
+  const verb = NIGHT_ACTION_VERBS[actionType];
+  const fallback = NIGHT_ACTION_LABELS[actionType] ?? '夜晚行动';
+  const who = options.seat != null
+    ? (options.roleName ? `${options.seat}号${options.roleName}` : `${options.seat}号`)
+    : null;
+  const skill = who && verb ? `${who} · ${verb}` : fallback;
+  const target = options.targetSeat != null ? ` · 目标${options.targetSeat}号` : '';
+  const redirect = (
+    options.intendedSeat != null
+    && options.targetSeat != null
+    && options.intendedSeat !== options.targetSeat
+  ) ? `（原目标${options.intendedSeat}号，被时间封锁改向）` : '';
+  return `${skill}${target}${redirect}`;
+}
+
+export function thoughtActorName(
+  actionType: ThoughtActionType,
+  options: { roleName?: string | null } = {},
+): string {
+  if (actionType === 'lucky_reasoning') return '幸运儿';
+  return options.roleName || THOUGHT_ROLE_NAMES[actionType] || '角色';
+}
+
+export function voteRoundWasRewound(
+  round: number,
+  events: ReadonlyArray<{ event_type: string; payload?: object }>,
+): boolean {
+  return events.some(
+    (event) => (
+      event.event_type === 'vote_rewound'
+      && (event.payload as { round_number?: unknown } | undefined)?.round_number === round
+    ),
+  );
+}
 
 /** 思考事件长文案（活动卡 / 编年史共用）。 */
 export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
@@ -133,6 +195,12 @@ export const THOUGHT_LABELS: Record<ThoughtActionType, string> = {
   eclipse_maid_reasoning: '蚀日侍女思考',
   time_wolf_reasoning: '蚀时狼妃思考',
   order_prince_reasoning: '定序王子思考',
+  fool_seer_reasoning: '愚言家思考',
+  fool_seer_reveal_reasoning: '愚言家自曝',
+  iron_villager_reasoning: '铁好人自曝',
+  crow_reasoning: '乌鸦思考',
+  cupid_reasoning: '丘比特思考',
+  admirer_reasoning: '暗恋者思考',
   witch_thought: '女巫思考',
   seer_thought: '预言家思考',
 };
@@ -147,6 +215,7 @@ export const NIGHT_ACTION_ROLE_NAMES: Record<NightActionType, string> = {
   hunter_shot: '猎人',
   wolf_king_shot: '狼王',
   awakened_hunt: '觉醒猎人',
+  fool_seer_check: '愚言家',
 };
 
 /** 夜间独立事件 → 角色短名。
@@ -195,6 +264,12 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
   eclipse_maid_reasoning: '蚀日侍女',
   time_wolf_reasoning: '蚀时狼妃',
   order_prince_reasoning: '定序王子',
+  fool_seer_reasoning: '愚言家',
+  fool_seer_reveal_reasoning: '愚言家',
+  iron_villager_reasoning: '铁好人',
+  crow_reasoning: '乌鸦',
+  cupid_reasoning: '丘比特',
+  admirer_reasoning: '暗恋者',
 };
 
 // ── 编年史 ────────────────────────────────────────────────────
@@ -218,6 +293,7 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
   speech: '发言',
   vote: '投票',
   vote_result: '放逐',
+  vote_rewound: '回溯',
   technical_abstain: '系统代投',
   exile_cancelled: '翻牌',
   self_explode: '自爆',
@@ -291,18 +367,22 @@ export const WIN_REASON_LABELS: Record<WinReason, string> = {
   all_gods_dead: '所有神职出局',
   all_villagers_dead: '所有平民出局',
   wolves_outnumber_good: '狼人人数过半',
+  all_good_dead: '所有好人出局',
+  all_others_dead: '其余玩家出局',
 };
 
 /** 阵营的胜负说法（大厅徽标 / 评测表）。 */
 export const WINNER_LABELS: Record<WinningCamp, string> = {
   good: '好人胜',
   werewolf: '狼人胜',
+  third_party: '第三方胜',
 };
 
 /** 阵营名（结算弹窗标题）。 */
 export const WINNING_CAMP_LABELS: Record<WinningCamp, string> = {
   good: '好人阵营',
   werewolf: '狼人阵营',
+  third_party: '第三方阵营',
 };
 
 // ── 其余同源表 ────────────────────────────────────────────────
