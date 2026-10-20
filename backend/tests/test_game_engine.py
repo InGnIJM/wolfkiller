@@ -1114,7 +1114,7 @@ async def test_v2_night_runs_real_scheduler_end_to_end(tmp_path) -> None:
                 if json.loads(line)["operation"] == "audience_action"]
     by_type = {record["data"]["event_type"]: record["data"]["payload"] for record in audience}
     assert by_type["WEREWOLF_KILL"] == {"target_seat": 4, "vote_counts": {"4": 3}}
-    assert by_type["SEER_CHECK"] == {"target_seat": 1, "result": "werewolf"}
+    assert by_type["SEER_CHECK"] == {"target_seat": 1, "result": "werewolf", "seat": 6}
     assert by_type["WITCH_REASONING"]["action_type"] == "pass"
     assert by_type["WITCH_REASONING"]["target_seat"] is None
     assert by_type["SEER_REASONING"]["action_type"] == "check"
