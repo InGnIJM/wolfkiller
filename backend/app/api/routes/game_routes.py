@@ -59,11 +59,12 @@ _PUBLIC_DEATH_CAUSES = frozenset({
     "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in", "bond_death",
     "miracle_backlash",
     "radiance_backlash",
+    "love_death",
 })
-_PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf"})
+_PUBLIC_WINNING_CAMPS = frozenset({"good", "werewolf", "third_party"})
 _PUBLIC_WIN_REASONS = frozenset({
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
-    "wolves_outnumber_good",
+    "wolves_outnumber_good", "all_good_dead", "all_others_dead",
 })
 
 _AUDIENCE_ACTION_SCHEMAS = {
@@ -71,12 +72,14 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "WITCH_SAVE": frozenset({"target_seat"}),
     "WITCH_POISON": frozenset({"target_seat"}),
     "SEER_CHECK": frozenset({"target_seat", "result"}),
+    "FOOL_SEER_CHECK": frozenset({"target_seat", "result"}),
     "HUNTER_SHOT": frozenset({"target_seat"}),
     # 觉醒猎人的「巡猎」：命令只带方向，落地的仍是 target_seat，公开形状与猎枪一致。
     "AWAKENED_HUNT": frozenset({"target_seat"}),
     "WRAITH_ILLUSION": frozenset({"seat", "target_seat", "round_number"}),
     "WOLF_KING_SHOT": frozenset({"target_seat"}),
     "GUARD_PROTECT": frozenset({"target_seat"}),
+    "VOTE_REWOUND": frozenset({"seat", "round_number"}),
     "WOLF_CHAT_MESSAGE": frozenset({"seat", "text"}),
     "WOLF_VOTE": frozenset({"seat", "target_seat", "reasoning"}),
     "WITCH_THOUGHT": frozenset({"seat", "text"}),
@@ -105,9 +108,10 @@ _AUDIENCE_ACTION_SCHEMAS = {
 
 #: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
 #: 编排标记（白天中断、放逐前的待定宣告）。旧档回放要静默跳过它们 —— 按「未知类型」计数
-#: 会让每次放逐都写的 `EXILE_PENDING` 把丢弃计数刷成噪音。
+#: 会让每次放逐都写的 `EXILE_PENDING` 把丢弃计数刷成噪音。`VOTE_REWOUND` 已经公开，
+#: 不再列在这里。
 _INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({
-    "DAY_INTERRUPTED", "EXILE_PENDING", "VOTE_REWOUND",
+    "DAY_INTERRUPTED", "EXILE_PENDING",
 })
 
 #: 允许缺省的可选字段：`day_plan` 是后加的，历史日志里的狼聊没有它 —— 若把它写进必填集，
@@ -118,6 +122,17 @@ _AUDIENCE_ACTION_OPTIONAL = {
     "SHERIFF_BADGE": frozenset({"reasoning"}),
     # `weighted_counts`（半票加权计票）同理：早于它的票型记录只有人头数 `counts`。
     "VOTE_RESULT": frozenset({"weighted_counts"}),
+    # `seat`：个体技能标明施法座位；狼窝集体刀没有。旧档没有这个键。
+    "WEREWOLF_KILL": frozenset({"seat"}),
+    "WITCH_SAVE": frozenset({"seat"}),
+    "HUNTER_SHOT": frozenset({"seat"}),
+    "AWAKENED_HUNT": frozenset({"seat"}),
+    "WOLF_KING_SHOT": frozenset({"seat"}),
+    # `intended_seat`：时间封锁改向时记下模型原目标。解药不改向，所以救人没有。
+    "WITCH_POISON": frozenset({"seat", "intended_seat"}),
+    "SEER_CHECK": frozenset({"seat", "intended_seat"}),
+    "FOOL_SEER_CHECK": frozenset({"seat", "intended_seat"}),
+    "GUARD_PROTECT": frozenset({"seat", "intended_seat"}),
 }
 
 
@@ -197,6 +212,16 @@ _REASONING_EVENT_TYPES = {
     "ORDER_PRINCE_REASONING": (
         "order_prince_reasoning", frozenset({"rewind", "pass"}),
     ),
+    "FOOL_SEER_REASONING": ("fool_seer_reasoning", frozenset({"check", "pass"})),
+    "FOOL_SEER_REVEAL_REASONING": (
+        "fool_seer_reveal_reasoning", frozenset({"reveal", "pass"}),
+    ),
+    "IRON_VILLAGER_REASONING": (
+        "iron_villager_reasoning", frozenset({"reveal", "pass"}),
+    ),
+    "CROW_REASONING": ("crow_reasoning", frozenset({"curse", "pass"})),
+    "CUPID_REASONING": ("cupid_reasoning", frozenset({"link", "pass"})),
+    "ADMIRER_REASONING": ("admirer_reasoning", frozenset({"crush", "pass"})),
 }
 
 #: `degraded`（引擎代行的动作）是本仓库后加的键：旧记录里不存在，必须仍算合法载荷。
@@ -260,6 +285,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 role_counts=req.role_counts, reveal_on_death=req.reveal_on_death,
                 enable_sheriff=req.enable_sheriff,
                 witch_self_save=req.witch_self_save,
+                victory=req.victory,
                 model_assignments=assignments,
             )
         else:
@@ -272,6 +298,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 reveal_on_death=req.reveal_on_death,
                 enable_sheriff=req.enable_sheriff,
                 witch_self_save=req.witch_self_save,
+                victory=req.victory,
                 model_assignments=assignments,
             )
     except ValueError as error:
@@ -678,6 +705,12 @@ def _public_day_verdict_event(
             return []
         return [{"event_type": "self_explode", "payload": {
             "round_number": round_number, "seat": seat, "target_seat": target}}]
+    if event_type == "VOTE_REWOUND":
+        seat = payload.get("seat")
+        if not _is_positive_int(seat):
+            return []
+        return [{"event_type": "vote_rewound", "payload": {
+            "round_number": round_number, "seat": seat}}]
     if event_type == "DANCE_POOL":
         seat = payload.get("seat")
         pool = payload.get("pool_seats")
@@ -914,7 +947,8 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
     if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "CRIMSON_EXPLODE",
                       "DANCE_POOL", "MASK_GRANTED", "PLAYER_REVEALED",
                       "SHERIFF_ELECTED", "SHERIFF_BADGE",
-                      "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE"):
+                      "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE",
+                      "VOTE_REWOUND"):
         if not _payload_matches(event_type, payload):
             _drop_replay_row("audience_action", "malformed_payload", event_type)
             return []
@@ -938,6 +972,14 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         "target_seat": target,
         "round_number": round_number,
     }
+    for key in ("seat", "intended_seat"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        if not _is_positive_int(value):
+            _drop_replay_row("audience_action", f"invalid_{key}", event_type)
+            return []
+        public_payload[key] = value
     if event_type == "WEREWOLF_KILL":
         votes = payload.get("vote_counts")
         if not isinstance(votes, dict):

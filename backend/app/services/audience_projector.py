@@ -30,7 +30,13 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     # `winners`（按座位列出胜者）只在「胜负不等于阵营」的板子出现（孤独少女随
     # 崇拜对象的阵营胜负），老对局的 `win_result` 没有这个键，所以它是可选字段。
     "GAME_OVER": ("winner", frozenset({"winning_camp", "reason", "winners"})),
-    "NIGHT_ACTION": ("night_action", frozenset({"action_type", "target_seat", "round_number", "vote_counts", "result"})),
+    "NIGHT_ACTION": ("night_action", frozenset({
+        "action_type", "target_seat", "round_number", "vote_counts", "result",
+        "seat", "intended_seat",
+    })),
+    # 定序王子把当天第一次放逐投票作废：公开这条，前端才不会把随后的
+    # ``exiled_seat is None`` 票型读成平票。
+    "VOTE_REWOUND": ("vote_rewound", frozenset({"seat", "round_number"})),
     "TECHNICAL_ABSTAIN": ("technical_abstain", frozenset({"player_seat", "voter_seat", "round_number", "failure_code"})),
     "EXILE_CANCELLED": ("exile_cancelled", frozenset({"target_seat", "round_number"})),
     "SELF_EXPLODE": ("self_explode", frozenset({"seat", "target_seat", "round_number"})),
@@ -65,6 +71,7 @@ _PUBLIC_ROLE_ACTIONS = {
     "WITCH_SAVE": "witch_save",
     "WITCH_POISON": "witch_poison",
     "SEER_CHECK": "seer_check",
+    "FOOL_SEER_CHECK": "fool_seer_check",
     "HUNTER_SHOT": "hunter_shot",
     "AWAKENED_HUNT": "awakened_hunt",
     "WOLF_KING_SHOT": "wolf_king_shot",
@@ -100,6 +107,12 @@ _PUBLIC_REASONING_EVENTS = {
     "ECLIPSE_MAID_REASONING": "eclipse_maid_reasoning",
     "TIME_WOLF_REASONING": "time_wolf_reasoning",
     "ORDER_PRINCE_REASONING": "order_prince_reasoning",
+    "FOOL_SEER_REASONING": "fool_seer_reasoning",
+    "FOOL_SEER_REVEAL_REASONING": "fool_seer_reveal_reasoning",
+    "IRON_VILLAGER_REASONING": "iron_villager_reasoning",
+    "CROW_REASONING": "crow_reasoning",
+    "CUPID_REASONING": "cupid_reasoning",
+    "ADMIRER_REASONING": "admirer_reasoning",
 }
 _PUBLIC_PLAYER_FIELDS = frozenset({
     "seat_number", "is_alive", "is_sheriff", "role", "camp", "revealed_role",
@@ -108,12 +121,15 @@ _PUBLIC_PLAYER_FIELDS = frozenset({
 #: Witch's own prompt tells it to obey that setting: an audience that cannot see
 #: it watches the Witch decline a self-save with no way to tell why.
 _PUBLIC_CONFIG_FIELDS = frozenset({
-    "role_counts", "reveal_on_death", "enable_sheriff", "witch_self_save",
+    "role_counts", "reveal_on_death", "enable_sheriff", "witch_self_save", "victory",
 })
 for _domain_type in _PUBLIC_ROLE_ACTIONS:
     _EVENTS[_domain_type] = (
         "night_action",
-        frozenset({"target_seat", "round_number", "vote_counts", "result"}),
+        frozenset({
+            "target_seat", "round_number", "vote_counts", "result",
+            "seat", "intended_seat",
+        }),
     )
 _EVENTS["WOLF_CHAT_MESSAGE"] = (
     "wolf_chat_message", frozenset({"seat", "text", "day_plan", "round_number"}),

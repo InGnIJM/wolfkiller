@@ -168,7 +168,7 @@ async def test_create_game_passes_dynamic_role_counts_and_returns_canonical_conf
 
     service.create_game.assert_awaited_once_with(
         role_counts=counts, reveal_on_death=False, enable_sheriff=False,
-        witch_self_save="first_night_only", model_assignments=None,
+        witch_self_save="first_night_only", victory="edge", model_assignments=None,
     )
     assert response.config == {
         "role_counts": counts,
@@ -213,6 +213,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
         reveal_on_death=False,
         enable_sheriff=False,
         witch_self_save="first_night_only",
+        victory="edge",
         model_assignments=None,
     )
     assert response.config["role_counts"] == counts
@@ -788,7 +789,7 @@ def test_public_projection_rejects_non_strict_or_negative_initial_round(invalid_
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1, "phase": "night", "data": {"deaths": []}},
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "night_deaths", "round": 1, "phase": "dawn", "data": {"deaths": "bad"}},
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "phase_change", "round": 1, "phase": "speech", "data": {}},
-        {"timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1, "phase": "game_over", "data": {"winner": "third_party"}},
+        {"timestamp": "2026-01-01T00:00:00Z", "operation": "game_over", "round": 1, "phase": "game_over", "data": {"winner": "ghost"}},
         {"timestamp": "2026-01-01T00:00:00Z", "operation": "unknown", "round": 1, "phase": "x", "data": {}},
     ],
 )
@@ -994,7 +995,7 @@ def test_undeclared_death_cause_drops_only_that_row(caplog) -> None:
     """
     record = _replay_record("night_deaths", {"deaths": [
         {"player_seat": 3, "cause": "wolf_kill", "round_number": 1},
-        {"player_seat": 4, "cause": "love_death", "round_number": 1},
+        {"player_seat": 4, "cause": "not_a_cause", "round_number": 1},
         {"player_seat": 5, "cause": "charm", "round_number": 1},
     ]})
 
@@ -1003,7 +1004,7 @@ def test_undeclared_death_cause_drops_only_that_row(caplog) -> None:
 
     assert [event["payload"]["player_seat"] for event in events] == [3, 5]
     assert game_routes._DROPPED_REPLAY_ROWS["night_deaths:undeclared_cause"] == 1
-    assert "love_death" in caplog.text
+    assert "not_a_cause" in caplog.text
 
 
 def test_absent_win_reason_is_carried_without_a_reason() -> None:
@@ -1078,7 +1079,7 @@ def test_undeclared_win_reason_is_reported(caplog) -> None:
 #: 引擎会写进 game.log、但投影器**不**声明为公开的 audience_action 类型。
 #: 它们只是引擎内部的编排标记（白天中断、放逐前的待定宣告），旧档回放必须**静默跳过**：
 #: 按「未知类型」计数会让 `EXILE_PENDING`（每次放逐都写）把计数刷成噪音。
-_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING", "VOTE_REWOUND"})
+_INTERNAL_AUDIENCE_ACTION_TYPES = frozenset({"DAY_INTERRUPTED", "EXILE_PENDING"})
 
 #: 投影器声明为公开、但旧档回放**不由** audience_action 记录产出的类型：它们分别来自
 #: 会话记录（speech）、`night_deaths`（death）与 `narration` / `phase_change` /
@@ -1145,6 +1146,12 @@ _REASONING_ACTIONS = {
     "RADIANCE_EARL_REASONING": "shield",
     "ECLIPSE_MAID_REASONING": "devour",
     "TIME_WOLF_REASONING": "lock", "ORDER_PRINCE_REASONING": "rewind",
+    "FOOL_SEER_REASONING": "check",
+    "FOOL_SEER_REVEAL_REASONING": "reveal",
+    "IRON_VILLAGER_REASONING": "reveal",
+    "CROW_REASONING": "curse",
+    "CUPID_REASONING": "link",
+    "ADMIRER_REASONING": "crush",
 }
 _VOTE_COUNT_FIELDS = frozenset({"vote_counts", "counts"})
 
@@ -1266,6 +1273,8 @@ _OPTIONAL_KEY_SAMPLES: dict[str, object] = {
     "day_plan": "明天我跳预言家",
     "reasoning": "推理内容",
     "weighted_counts": {"2": 2},
+    "seat": 3,
+    "intended_seat": 4,
 }
 
 #: `_public_operation_events` 只产出 `{event_type, payload}`，时间戳由
@@ -1386,7 +1395,7 @@ def test_sheriff_badge_carries_the_reason_and_accepts_records_without_it() -> No
 
 @pytest.mark.parametrize(("event_type", "payload", "code"), [
     ("KNIGHT_DUEL", {"seat": 0, "target_seat": 2, "camp": "good", "round_number": 1}, "invalid_duel"),
-    ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "camp": "third_party", "round_number": 1}, "invalid_duel"),
+    ("KNIGHT_DUEL", {"seat": 1, "target_seat": 2, "camp": "ghost", "round_number": 1}, "invalid_duel"),
     ("WOLF_BEAUTY_CHARM", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_charm"),
     ("WOLF_BEAUTY_CHARM", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_charm_target"),
     ("FRAGRANCE_BOND", {"seat": 0, "target_seats": [2, 3], "round_number": 1}, "invalid_bond"),
@@ -1395,7 +1404,7 @@ def test_sheriff_badge_carries_the_reason_and_accepts_records_without_it() -> No
     ("WRAITH_ILLUSION", {"seat": 0, "target_seat": 2, "round_number": 1}, "invalid_illusion"),
     ("WRAITH_ILLUSION", {"seat": 1, "target_seat": "2", "round_number": 1}, "invalid_illusion_target"),
     ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 0, "cause": "exile", "round_number": 1}, "invalid_revenge"),
-    ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 2, "cause": "love_death", "round_number": 1}, "invalid_revenge"),
+    ("WOLF_BEAUTY_REVENGE", {"seat": 1, "target_seat": 2, "cause": "not_a_cause", "round_number": 1}, "invalid_revenge"),
     ("STATUS_ADDED", {"seat": 0, "status": "poisoned", "round_number": 1}, "invalid_status"),
     ("STATUS_ADDED", {"seat": 1, "status": "", "round_number": 1}, "invalid_status"),
     ("STATUS_ADDED", {"seat": 1, "status": 3, "round_number": 1}, "invalid_status"),
@@ -1422,6 +1431,7 @@ def test_internal_audience_action_types_are_skipped_silently() -> None:
 
     `EXILE_PENDING` 每次放逐都会写一条，若按未知类型计数，计数会被它刷满。
     """
+    assert game_routes._INTERNAL_AUDIENCE_ACTION_TYPES == _INTERNAL_AUDIENCE_ACTION_TYPES
     record = _replay_record("audience_action", {
         "event_type": "EXILE_PENDING",
         "payload": {"target_seat": 2, "cause": "exile", "round_number": 1},
@@ -1609,6 +1619,30 @@ def test_public_audience_action_projects_each_supported_event_shape():
         "payload": {"action_type": "guard_protect", "target_seat": 6, "round_number": 2},
     }]
 
+    redirected = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "night",
+        "data": {"event_type": "GUARD_PROTECT",
+                 "payload": {"target_seat": 5, "seat": 5, "intended_seat": 6}},
+    }
+    assert game_routes._public_operation_events(redirected) == [{
+        "event_type": "night_action",
+        "payload": {
+            "action_type": "guard_protect", "target_seat": 5, "round_number": 2,
+            "seat": 5, "intended_seat": 6,
+        },
+    }]
+
+    rewind = {
+        "timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action", "round": 2,
+        "phase": "vote_resolution",
+        "data": {"event_type": "VOTE_REWOUND", "payload": {"seat": 3, "round_number": 2}},
+    }
+    assert game_routes._public_operation_events(rewind) == [{
+        "event_type": "vote_rewound",
+        "payload": {"round_number": 2, "seat": 3},
+    }]
+
 
 @pytest.mark.parametrize(
     ("record",),
@@ -1642,7 +1676,7 @@ def test_public_audience_action_projects_each_supported_event_shape():
           "payload": {"target_seat": 1}}},),
         ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
           "round": 2, "phase": "night", "data": {"event_type": "SEER_CHECK",
-          "payload": {"target_seat": 1, "result": "third_party"}}},),
+          "payload": {"target_seat": 1, "result": "ghost"}}},),
         ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
           "round": 2, "phase": "night", "data": {"event_type": "SEER_CHECK",
           "payload": {"target_seat": 1, "result": 7}}},),
@@ -1654,6 +1688,12 @@ def test_public_audience_action_projects_each_supported_event_shape():
         ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
           "round": 2, "phase": "night",
           "data": {"event_type": 9, "payload": {"target_seat": 1}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "WITCH_SAVE",
+          "payload": {"target_seat": 1, "seat": 0}}},),
+        ({"timestamp": "2026-01-01T00:00:00Z", "operation": "audience_action",
+          "round": 2, "phase": "night", "data": {"event_type": "GUARD_PROTECT",
+          "payload": {"target_seat": 1, "seat": 1, "intended_seat": 0}}},),
     ],
 )
 def test_public_audience_action_rejects_malformed_records(record):
@@ -1764,8 +1804,9 @@ def test_public_day_verdict_events_project_flip_explode_and_reveal():
         ("SHERIFF_SIDE", {"seat": 0, "side": "sheriff_left", "round_number": 2}),
         ("PLAYER_REVEALED", {"seat_number": 3, "role": "", "camp": "good"}),
         ("PLAYER_REVEALED", {"seat_number": 3, "role": 7, "camp": "good"}),
-        ("PLAYER_REVEALED", {"seat_number": 3, "role": "x", "camp": "third_party"}),
+        ("PLAYER_REVEALED", {"seat_number": 3, "role": "x", "camp": "ghost"}),
         ("PLAYER_REVEALED", {"seat_number": "3", "role": "x", "camp": "good"}),
+        ("VOTE_REWOUND", {"seat": 0, "round_number": 2}),
     ],
 )
 def test_public_day_verdict_events_reject_malformed_payloads(event_type, payload):
@@ -1794,11 +1835,13 @@ def test_game_logs_response_accepts_day_verdict_events():
          "payload": {"round_number": 1, "seat": 2, "side": "death_right"}},
         {"event_type": "death", "timestamp": "2026-01-01T00:00:00Z",
          "payload": {"player_seat": 1, "cause": "self_explode", "round_number": 2}},
+        {"event_type": "vote_rewound", "timestamp": "2026-01-01T00:00:00Z",
+         "payload": {"round_number": 2, "seat": 3}},
     ])
     assert [event.event_type for event in response.events] == [
         "exile_cancelled", "self_explode", "player_revealed",
         "sheriff_elected", "sheriff_run", "sheriff_withdraw", "sheriff_vote", "sheriff_side",
-        "death"]
+        "death", "vote_rewound"]
 
 
 def test_narration_and_staged_night_events_project_to_public_events():

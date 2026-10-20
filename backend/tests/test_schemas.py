@@ -36,6 +36,9 @@ PUBLIC_REPLAY_EVENTS = [
     {"event_type": "vote_result", "payload": {
         "round_number": 2, "exiled_seat": 2,
     }},
+    {"event_type": "vote_rewound", "payload": {
+        "round_number": 2, "seat": 3,
+    }},
     {"event_type": "night_action", "payload": {
         "action_type": "witch_save", "target_seat": 3, "round_number": 2,
     }},
@@ -241,7 +244,7 @@ class TestSchemas:
             (PublicSpeechResponse, {"player_seat": "1", "text": "public", "round_number": 1}),
             (PublicDeathResponse, {"player_seat": 1, "cause": "secret: seer", "round_number": 1}),
             (PublicPhaseResponse, {"phase": "secret: seer checked", "round_number": 1}),
-            (PublicWinnerResponse, {"winning_camp": "third_party", "reason": "all_wolves_dead"}),
+            (PublicWinnerResponse, {"winning_camp": "ghost", "reason": "all_wolves_dead"}),
             (PublicWinnerResponse, {"winning_camp": "good", "reason": "secret: antidote used"}),
             (PublicVoteResultResponse, {"round_number": 1, "exiled_seat": False}),
         ],
@@ -460,6 +463,7 @@ class TestSchemas:
             "payload": {
                 "action_type": "werewolf_kill", "target_seat": 4,
                 "round_number": 2, "vote_counts": {"4": 2}, "result": None,
+                "seat": None, "intended_seat": None,
             },
         }]
 
@@ -470,7 +474,7 @@ class TestSchemas:
             {"action_type": "seer_check", "target_seat": 0, "round_number": 2},
             {"action_type": "seer_check", "target_seat": True, "round_number": 2},
             {"action_type": "seer_check", "target_seat": 1, "round_number": -1},
-            {"action_type": "seer_check", "target_seat": 1, "round_number": 2, "result": "third_party"},
+            {"action_type": "seer_check", "target_seat": 1, "round_number": 2, "result": "ghost"},
             {"action_type": "seer_check", "target_seat": 1, "round_number": 2, "result": 3},
             {"action_type": "werewolf_kill", "target_seat": 1, "round_number": 2, "vote_counts": {1: 1}},
             {"action_type": "werewolf_kill", "target_seat": 1, "round_number": 2, "vote_counts": {"1": 0}},
@@ -554,6 +558,19 @@ class TestSchemas:
             action_type="guard_protect", target_seat=6, round_number=1,
         )
         assert action.action_type == "guard_protect"
+        named = PublicNightActionResponse(
+            action_type="witch_poison", target_seat=3, round_number=2,
+            seat=5, intended_seat=6,
+        )
+        assert named.seat == 5 and named.intended_seat == 6
+        rewind = GameLogsResponse(
+            game_id="abc",
+            events=[{
+                "event_type": "vote_rewound", "timestamp": PUBLIC_TIMESTAMP,
+                "payload": {"seat": 3, "round_number": 2},
+            }],
+        )
+        assert rewind.events[0].event_type == "vote_rewound"
         thought = PublicNightThoughtResponse(
             round_number=1, seat=5, action_type="guard_reasoning",
             target_seat=6, reasoning="守一下",

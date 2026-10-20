@@ -29,9 +29,8 @@ from enum import Enum
 class DeathCause(str, Enum):
     """Every cause a role or the engine can put on a death report.
 
-    ``love_death`` stays reserved for a cause that is described in
-    ``docs/gameplay.md`` but not implemented; it is deliberately absent so a
-    producer cannot use it by accident.
+    ``love_death`` is the lover who follows the other lover out. It grants no
+    last words.
     """
 
     WOLF_KILL = "wolf_kill"
@@ -60,6 +59,8 @@ class DeathCause(str, Enum):
     MIRACLE_BACKLASH = "miracle_backlash"
     #: 蚀日侍女的「流光反噬」：吞噬到流光伯爵或被其庇护的玩家，侍女次日发言结束后出局。
     RADIANCE_BACKLASH = "radiance_backlash"
+    #: 丘比特的挚友：其中一人出局，另一人跟随出局。
+    LOVE_DEATH = "love_death"
 
 
 class WinReason(str, Enum):
@@ -73,14 +74,15 @@ class WinReason(str, Enum):
     ALL_VILLAGERS_DEAD = "all_villagers_dead"
     ALL_WOLVES_DEAD = "all_wolves_dead"
     WOLVES_OUTNUMBER_GOOD = "wolves_outnumber_good"
+    #: 屠城：好人一侧已经没有存活座位。
+    ALL_GOOD_DEAD = "all_good_dead"
+    #: 第三方是场上仅存的归属。
+    ALL_OTHERS_DEAD = "all_others_dead"
 
 
 class WinningCamp(str, Enum):
-    """The camps a finished game can be announced for.
-
-    ``third_party`` is described in the domain comments but has no producer, so
-    like ``love_death`` it stays out until something can emit it.
-    """
+    """The camps a finished game can be announced for."""
 
     GOOD = "good"
     WEREWOLF = "werewolf"
+    THIRD_PARTY = "third_party"

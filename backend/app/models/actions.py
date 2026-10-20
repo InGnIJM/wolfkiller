@@ -85,8 +85,7 @@ class SpeechRecord:
 @dataclass
 class DeathReport:
     player_seat: int
-    # wolf_kill, poison, exile, hunter_shot, self_explode, knight_duel, charm;
-    # love_death stays reserved for an unimplemented cause (see docs/gameplay.md).
+    # See ``app.models.values.DeathCause``. ``love_death`` grants no last words.
     cause: str
     round_number: int
 

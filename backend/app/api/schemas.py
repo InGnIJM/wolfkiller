@@ -16,6 +16,7 @@ class CreateGameRequest(BaseModel):
     reveal_on_death: bool = False
     enable_sheriff: bool = False
     witch_self_save: Literal["first_night_only", "never"] = "first_night_only"
+    victory: Literal["edge", "city"] = "edge"
     model_assignments: Optional[list[ModelAssignment]] = None
 
     @model_validator(mode="after")
@@ -157,11 +158,12 @@ PublicDeathCause = Literal[
     "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in", "bond_death",
     "miracle_backlash",
     "radiance_backlash",
+    "love_death",
 ]
-PublicWinningCamp = Literal["good", "werewolf"]
+PublicWinningCamp = Literal["good", "werewolf", "third_party"]
 PublicWinReason = Literal[
     "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
-    "wolves_outnumber_good",
+    "wolves_outnumber_good", "all_good_dead", "all_others_dead",
 ]
 
 
@@ -275,7 +277,7 @@ class PublicTechnicalAbstainResponse(_PublicResponse):
 
 PublicNightActionType = Literal[
     "werewolf_kill", "witch_save", "witch_poison", "seer_check", "hunter_shot",
-    "wolf_king_shot", "guard_protect", "awakened_hunt",
+    "wolf_king_shot", "guard_protect", "awakened_hunt", "fool_seer_check",
 ]
 
 
@@ -285,6 +287,20 @@ class PublicNightActionResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     vote_counts: Optional[dict[str, PositivePublicInt]] = None
     result: Optional[PublicWinningCamp] = None
+    #: Who cast the skill. Pack wolf kills omit it (the camp acted together);
+    #: a lone hidden-wolf kill and every individual skill include it. Archives
+    #: written before this field existed leave it unset.
+    seat: Optional[PositivePublicInt] = None
+    #: The model's original target when a Time Wolf lock redirected the cast.
+    #: Absent when the skill landed where it was aimed.
+    intended_seat: Optional[PositivePublicInt] = None
+
+
+class PublicVoteRewoundResponse(_PublicResponse):
+    """The Order Prince voided this round's first exile tally."""
+
+    seat: PositivePublicInt
+    round_number: NonNegativePublicInt
 
 
 class PublicPhaseResponse(_PublicResponse):
@@ -339,6 +355,12 @@ PublicThoughtActionType = Literal[
     "eclipse_maid_reasoning",
     "time_wolf_reasoning",
     "order_prince_reasoning",
+    "fool_seer_reasoning",
+    "fool_seer_reveal_reasoning",
+    "iron_villager_reasoning",
+    "crow_reasoning",
+    "cupid_reasoning",
+    "admirer_reasoning",
 ]
 
 
@@ -538,6 +560,11 @@ class PublicVoteResultReplayEvent(_PublicReplayEvent):
     payload: PublicVoteResultResponse
 
 
+class PublicVoteRewoundReplayEvent(_PublicReplayEvent):
+    event_type: Literal["vote_rewound"]
+    payload: PublicVoteRewoundResponse
+
+
 class PublicTechnicalAbstainReplayEvent(_PublicReplayEvent):
     event_type: Literal["technical_abstain"]
     payload: PublicTechnicalAbstainResponse
@@ -708,6 +735,7 @@ PublicReplayEvent = Annotated[
         PublicDeathReplayEvent,
         PublicVoteReplayEvent,
         PublicVoteResultReplayEvent,
+        PublicVoteRewoundReplayEvent,
         PublicTechnicalAbstainReplayEvent,
         PublicNightActionReplayEvent,
         PublicNightThoughtReplayEvent,

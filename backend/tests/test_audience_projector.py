@@ -26,6 +26,7 @@ def test_public_event_catalogue_is_frozen() -> None:
         "speech", "speaking", "death", "vote", "vote_result", "winner",
         "night_action", "night_thought", "technical_abstain",
         "exile_cancelled", "self_explode", "crimson_explode",
+        "vote_rewound",
         "dance_pool", "mask_granted", "fragrance_bond",
         "knight_duel", "wolf_beauty_charm", "wraith_illusion",
         "wolf_beauty_revenge",
@@ -291,3 +292,33 @@ def test_the_snapshot_keeps_an_immediately_announced_death() -> None:
     assert snapshot["death_history"] == [
         {"player_seat": 1, "cause": "self_explode", "round_number": 1},
     ]
+
+
+def test_a_night_action_keeps_the_caster_seat_and_a_time_lock_redirect() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("WITCH_POISON", {
+            "target_seat": 3, "seat": 5, "intended_seat": 6, "secret": "x",
+        }),
+        _event("WITCH_POISON", {"target_seat": 3}),
+    ])
+
+    assert projected[0]["event_type"] == "night_action"
+    assert projected[0]["payload"] == {
+        "action_type": "witch_poison", "target_seat": 3, "seat": 5, "intended_seat": 6,
+    }
+    assert projected[1]["payload"] == {
+        "action_type": "witch_poison", "target_seat": 3,
+    }
+
+
+def test_a_vote_rewind_is_a_public_audience_event() -> None:
+    projected = AudienceProjector().project_events("game", [
+        _event("VOTE_REWOUND", {"seat": 3, "round_number": 2, "internal": "x"}),
+    ])
+
+    assert projected == [{
+        "event_id": "evt:audience",
+        "event_type": "vote_rewound",
+        "schema_version": 1,
+        "payload": {"seat": 3, "round_number": 2},
+    }]
