@@ -504,7 +504,10 @@ export interface BatchMoveResult {
 
 export interface StreamingSpeech {
   seat: number;
+  /** 已抽出的发言正文（流式增量的累计值） */
   text: string;
+  /** 模型思考的末尾片段；只走直播通知，不进回放 */
+  thinking: string;
   updatedAt: number;
 }
 
@@ -521,7 +524,8 @@ export type WSMessage =
   | { type: 'player_died'; death: DeathRecord }
   | { type: 'game_over'; win_result: WinResult; state: PublicGameState }
   | { type: 'paused_state'; paused: boolean }
-  | { type: 'speech_stream'; seat: number; text: string };
+  | { type: 'speech_stream'; seat: number; text: string }
+  | { type: 'speech_thinking'; seat: number; text: string };
 
 // ── Model config & game creation catalog ──────────────────────
 

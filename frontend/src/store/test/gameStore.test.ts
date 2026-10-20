@@ -1143,6 +1143,28 @@ describe('per-seat model snapshot', () => {
       expect(state.streamingSpeech?.updatedAt).toBeGreaterThan(0);
     });
 
+    it('keeps speech and thinking for the same seat and resets them on a new seat', () => {
+      useGameStore.getState().reset();
+      useGameStore.getState().setStreamingThinking(3, '思考');
+      expect(useGameStore.getState().streamingSpeech).toMatchObject({ seat: 3, text: '', thinking: '思考' });
+
+      useGameStore.getState().setStreamingSpeech(3, '正文');
+      expect(useGameStore.getState().streamingSpeech).toMatchObject({ seat: 3, text: '正文', thinking: '思考' });
+
+      useGameStore.getState().setStreamingThinking(3, '思考更多');
+      expect(useGameStore.getState().streamingSpeech).toMatchObject({ text: '正文', thinking: '思考更多' });
+
+      useGameStore.getState().setStreamingThinking(4, '四号思考');
+      expect(useGameStore.getState().streamingSpeech).toMatchObject({ seat: 4, text: '', thinking: '四号思考' });
+
+      useGameStore.getState().setStreamingSpeech(5, '五号');
+      expect(useGameStore.getState().streamingSpeech).toMatchObject({ seat: 5, text: '五号', thinking: '' });
+
+      useGameStore.setState({ isFollowingLive: false });
+      useGameStore.getState().setStreamingThinking(5, '回放中不写');
+      expect(useGameStore.getState().streamingSpeech?.thinking).toBe('');
+    });
+
     it('does not update streaming speech when not following live', () => {
       useGameStore.getState().reset();
       // Simulate seeking back in timeline

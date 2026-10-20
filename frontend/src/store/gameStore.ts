@@ -70,6 +70,7 @@ interface GameStore extends DerivedState {
   setPaused: (paused: boolean) => void;
   setCurrentSpeaker: (seat: number | null) => void;
   setStreamingSpeech: (seat: number, text: string) => void;
+  setStreamingThinking: (seat: number, thinking: string) => void;
   clearStreamingSpeech: () => void;
 
   initPlayersFromDetail: (
@@ -578,14 +579,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     streamingSpeech: state.streamingSpeech?.seat === seat ? state.streamingSpeech : null,
   })),
   setStreamingSpeech: (seat, text) => {
-    if (!get().isFollowingLive) return;
-    set({
-      streamingSpeech: {
-        seat,
-        text,
-        updatedAt: Date.now(),
-      },
-    });
+    const { isFollowingLive, streamingSpeech } = get();
+    if (!isFollowingLive) return;
+    // 同一座位只换正文、保留思考；换了座位就整条重来
+    const thinking = streamingSpeech?.seat === seat ? streamingSpeech.thinking : '';
+    set({ streamingSpeech: { seat, text, thinking, updatedAt: Date.now() } });
+  },
+  setStreamingThinking: (seat, thinking) => {
+    const { isFollowingLive, streamingSpeech } = get();
+    if (!isFollowingLive) return;
+    const text = streamingSpeech?.seat === seat ? streamingSpeech.text : '';
+    set({ streamingSpeech: { seat, text, thinking, updatedAt: Date.now() } });
   },
   clearStreamingSpeech: () => set({ streamingSpeech: null }),
 
