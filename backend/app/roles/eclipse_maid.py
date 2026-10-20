@@ -225,16 +225,21 @@ DEVOUR_CONTRACT = ActionContract(
 # ── the borrowed skills: gated clones of the originals ─────────────────────
 
 
-def _devoured_now(context: ActionContext, role_id: str) -> bool:
-    """She holds ``role_id``'s skill only on the night she devoured it."""
+def _devoured_this_round(context: ActionContext, role_id: str) -> bool:
+    """The devour record names ``role_id`` on this round, whether or not she lives.
+
+    The hunter shot is a death reaction: she is already marked dead when that
+    window runs, so the alive bit would close a gun she still holds tonight.
+    """
     record = context.facts.get(DEVOURED_KEY)
     if not hasattr(record, "get"):
         return False
-    return (
-        context.actor_alive
-        and record.get("role") == role_id
-        and record.get("round") == context.round_number
-    )
+    return record.get("role") == role_id and record.get("round") == context.round_number
+
+
+def _devoured_now(context: ActionContext, role_id: str) -> bool:
+    """She holds ``role_id``'s skill only on the night she devoured it."""
+    return context.actor_alive and _devoured_this_round(context, role_id)
 
 
 def devour_check_applicable(context: ActionContext) -> bool:
@@ -252,7 +257,9 @@ def devour_guard_applicable(context: ActionContext) -> bool:
 
 
 def devour_hunter_applicable(context: ActionContext) -> bool:
-    return _devoured_now(context, _HUNTER) and hunter_applicable(context)
+    # Not ``_devoured_now``: that requires her to still be alive, and the shot
+    # only opens after she has been marked dead.
+    return _devoured_this_round(context, _HUNTER) and hunter_applicable(context)
 
 
 def devour_mirror_applicable(context: ActionContext) -> bool:

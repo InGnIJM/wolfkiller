@@ -311,6 +311,11 @@ def test_the_hunter_clone_keeps_the_hunters_own_trigger_gate() -> None:
         trigger_event={"target_seat": MAID}, trigger_reason="wolf_kill",
     )
     assert devour_hunter_applicable(base) is True
+    # The window runs after she is marked dead. Alive must not close the gun.
+    assert devour_hunter_applicable(replace(base, actor_alive=False)) is True
+    assert devour_hunter_applicable(replace(
+        base, actor_alive=False, trigger_reason="exile",
+    )) is True
     assert devour_hunter_applicable(replace(base, trigger_reason="poison")) is False
     assert devour_hunter_applicable(replace(base, resources={"gun": 0})) is False
     assert devour_hunter_applicable(replace(base, round_number=3)) is False
@@ -485,11 +490,72 @@ def test_a_devoured_witch_poisons_with_the_one_vial_she_had_left() -> None:
     assert {"target": VILL, "amount": 1, "cause": "poison"} in table.runtime.pending_damage
 
 
+def test_a_borrowed_poison_names_the_maid_as_the_caster() -> None:
+    """克隆仍走女巫的 resolve，outcome 必须带上侍女自己的座位。"""
+    from app.roles.witch import resolve_witch_action
+
+    effects = resolve_witch_action(
+        context(DEVOUR_WITCH_CONTRACT, resources={"poison": 1}),
+        cmd("poison", VILL),
+    )
+    poison = next(item for item in effects if item.payload.get("event_type") == "WITCH_POISON")
+    assert poison.payload["payload"] == {"target_seat": VILL, "seat": MAID}
+
+
 def test_a_devoured_hunter_hands_over_the_loaded_gun() -> None:
     state = _state("devour-hunter")
     table = Table(state, {"eclipse_devour": cmd("devour", HUNTER)})
     table.night(2, SchedulePoint.NIGHT_ACTION)
     assert table.runtime.role_resources[MAID]["gun"] == 1
+
+
+def _resume_death(table: Table, seat: int, cause: str):
+    """Open the dawn reaction on a death that has already been marked."""
+    from app.core.effect_applier import CommitResult
+    from app.core.point_journal import (
+        PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal,
+    )
+    from app.core.registry_identity import frozen_registry_digest
+
+    state = table.state
+    state.players[seat].is_alive = False
+    registry = table.scheduler.registry
+    identity = frozen_registry_digest(state, registry)
+    events = ({"event_type": "PLAYER_DIED", "payload": {"seat": seat, "cause": cause}},)
+    commit = CommitResult("death:seed", (), 0, events, "d")
+    key = PointKey(
+        state.game_id, state.round_number, Scheduler.point_phase(state, ""),
+        SchedulePoint.DAWN_REACTION, identity,
+    )
+    point_journal(state).put(key, PointCheckpoint(
+        (), (), (commit,), events, (), (PendingEvent(0, 0, 0),),
+        WorkCursor("response", 0, 0), work_count=0,
+    ))
+    table.asked.clear()
+    return table.scheduler.run_point(state, SchedulePoint.DAWN_REACTION)
+
+
+@pytest.mark.parametrize("cause", ["exile", "wolf_kill"])
+def test_a_maid_without_a_hunters_gun_is_not_asked_to_shoot(cause: str) -> None:
+    state = _state(f"no-gun-{cause}")
+    table = Table(state, {"devour_hunter_shoot": cmd("shoot", VILL)})
+    table.night(2, SchedulePoint.NIGHT_ACTION)
+    result = _resume_death(table, MAID, cause)
+    assert (MAID, "devour_hunter_shoot") not in table.asked
+    assert "HUNTER_REASONING" not in [event["event_type"] for event in result.events]
+
+
+def test_a_dead_maid_who_devoured_a_hunter_tonight_is_asked_to_shoot() -> None:
+    state = _state("dead-gun")
+    table = Table(state, {
+        "eclipse_devour": cmd("devour", HUNTER),
+        "devour_hunter_shoot": cmd("pass"),
+    })
+    table.night(2, SchedulePoint.NIGHT_ACTION)
+    assert table.runtime.role_resources[MAID]["gun"] == 1
+    result = _resume_death(table, MAID, "exile")
+    assert (MAID, "devour_hunter_shoot") in table.asked
+    assert "HUNTER_REASONING" in [event["event_type"] for event in result.events]
 
 
 def test_devouring_a_wolf_changes_nothing_but_the_memory() -> None:
