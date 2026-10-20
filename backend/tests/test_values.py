@@ -51,14 +51,14 @@ def test_death_causes_are_frozen() -> None:
         "wolf_kill", "poison", "hunter_shot", "exile", "self_explode",
         "knight_duel", "charm", "wolf_king_shot", "reflect", "dream_death",
         "verify_kill", "hunt", "dance", "awakened_hunt", "stand_in",
-        "bond_death", "miracle_backlash", "radiance_backlash",
+        "bond_death", "miracle_backlash", "radiance_backlash", "love_death",
     }
 
 
 def test_win_reasons_are_frozen() -> None:
     assert WIN_REASONS == {
         "all_gods_dead", "all_villagers_dead", "all_wolves_dead",
-        "wolves_outnumber_good",
+        "wolves_outnumber_good", "all_good_dead", "all_others_dead",
     }
 
 

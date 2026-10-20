@@ -30,6 +30,9 @@ SCRIPT = {
     "wolf-killer-demon-hunter": ("猎魔人请睁眼", "请选择今晚要狩猎的玩家。"),
     "wolf-killer-guard": ("守卫请睁眼", "请选择今晚要守护的玩家。"),
     "wolf-killer-dream-weaver": ("摄梦人请睁眼", "请选择今晚要摄梦的玩家。"),
+    "wolf-killer-crow": ("乌鸦请睁眼", "请诅咒一名玩家。"),
+    "wolf-killer-cupid": ("丘比特请睁眼", "请选择两名玩家连为挚友。"),
+    "wolf-killer-admirer": ("暗恋者请睁眼", "请选择一名玩家作为你的暗恋对象。"),
 }
 
 
@@ -60,8 +63,8 @@ def test_roles_outside_that_point_stay_silent() -> None:
     for role_id in ("wolf-killer-witch", "wolf-killer-werewolf"):
         assert snapshot.require(role_id).opening_narration == ()
     for role_id in (
-        "wolf-killer-seer", "wolf-killer-pure-white", "wolf-killer-wolf-witch",
-        "wolf-killer-gargoyle", "wolf-killer-wolf-beauty",
+        "wolf-killer-seer", "wolf-killer-fool-seer", "wolf-killer-pure-white",
+        "wolf-killer-wolf-witch", "wolf-killer-gargoyle", "wolf-killer-wolf-beauty",
     ):
         title, text = snapshot.require(role_id).opening_narration
         assert title and text
