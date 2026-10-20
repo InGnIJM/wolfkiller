@@ -52,6 +52,23 @@ _DEFAULT_CHAT_OPENAI = ChatOpenAI
 logger = logging.getLogger(__name__)
 
 
+def _type_defines(model: object, name: str) -> bool:
+    """Whether ``model``'s type implements ``name``, ignoring instance mocks.
+
+    Looking at the instance would treat every ``unittest.mock.Mock`` as a
+    streaming model, because attribute access fabricates a child mock. Real
+    ``ChatOpenAI`` / ``ChatAnthropic`` types declare ``stream`` / ``astream``
+    on a base class; test doubles that only implement ``invoke`` / ``ainvoke``
+    keep using that fallback.
+    """
+    for cls in type(model).__mro__:
+        if name not in vars(cls):
+            continue
+        attr = getattr(cls, name, None)
+        return callable(attr)
+    return False
+
+
 def derive_strict_base_url(
     base_url: str, explicit_strict_base_url: str | None = None,
 ) -> str:
@@ -207,6 +224,60 @@ def _content_text(content: Any) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+#: Minimum gap between two thinking notifications; reasoning streams in many
+#: tiny deltas and every notification carries the whole tail.
+_THINKING_EMIT_INTERVAL_SECONDS = 0.2
+#: Thinking notifications carry only this many trailing characters.
+_THINKING_TAIL_CHARS = 1500
+
+
+def _block_thinking(block: Mapping) -> str:
+    if block.get("type") == "thinking":
+        text = block.get("thinking")
+        return text if isinstance(text, str) else ""
+    parts = []
+    for item in block.get("summary") or ():
+        if isinstance(item, Mapping) and isinstance(item.get("text"), str):
+            parts.append(item["text"])
+    if parts:
+        return "".join(parts)
+    text = block.get("reasoning", block.get("text"))
+    return text if isinstance(text, str) else ""
+
+
+def split_stream_content(content: Any) -> tuple[str, str]:
+    """Split streamed message content into ``(answer text, thinking text)``.
+
+    Strings are answer text. Content-block lists (Anthropic, Responses) keep
+    ``text`` blocks as the answer and ``thinking`` / ``reasoning`` blocks as
+    thinking, so the speech extractor never reads a block list's repr.
+    """
+    if isinstance(content, str):
+        return content, ""
+    if not isinstance(content, list):
+        return "", ""
+    text_parts: list[str] = []
+    thinking_parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            text_parts.append(block)
+        elif isinstance(block, Mapping):
+            block_type = block.get("type")
+            if block_type == "text" and isinstance(block.get("text"), str):
+                text_parts.append(block["text"])
+            elif block_type in ("thinking", "reasoning"):
+                thinking_parts.append(_block_thinking(block))
+    return "".join(text_parts), "".join(thinking_parts)
+
+
+def _stream_thinking(message: Any) -> str:
+    """Accumulated thinking of a streamed message, from every place it can live."""
+    kwargs = getattr(message, "additional_kwargs", None) or {}
+    reasoning = kwargs.get("reasoning_content")
+    _, block_thinking = split_stream_content(getattr(message, "content", ""))
+    return (reasoning if isinstance(reasoning, str) else "") + block_thinking
 
 
 def extract_partial_speech(raw: str) -> str:
@@ -419,8 +490,36 @@ class LLMClient:
 
     def probe(self) -> dict[str, bool]:
         """Invoke a minimal text request and return this profile's capabilities."""
-        self.get_model().invoke([HumanMessage(content="ping")])
+        self._complete(self.get_model(), [HumanMessage(content="ping")])
         return asdict(self.provider_profile.capabilities)
+
+    @staticmethod
+    def _complete(model, messages):
+        """Run one model call over HTTP streaming when the type supports it.
+
+        ``ChatOpenAI.stream`` posts ``stream: true``, which Antigravity maps
+        to ``streamGenerateContent``; ``.invoke`` uses the tighter
+        ``generateContent`` bucket and 429s the account pool. Types that only
+        implement ``invoke`` (test doubles) keep that path.
+        """
+        if _type_defines(model, "stream"):
+            acc = None
+            for chunk in model.stream(messages):
+                acc = chunk if acc is None else acc + chunk
+            return acc if acc is not None else AIMessage(content="")
+        return model.invoke(messages)
+
+    @staticmethod
+    async def _acomplete(
+        model, messages,
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ):
+        """Async counterpart of :meth:`_complete`; always astream when present."""
+        if _type_defines(model, "astream"):
+            return await LLMClient._stream_and_accumulate(
+                model, messages, on_chunk=on_chunk,
+            )
+        return await model.ainvoke(messages)
 
     @staticmethod
     def map_strict_capability_error(error: Exception) -> Exception:
@@ -608,7 +707,9 @@ class LLMClient:
         if self.supports_action_tools and not self._prefers_json_actions:
             try:
                 attempts += 1
-                response = self.get_model_with_action_tool(contract).invoke(messages)
+                response = self._complete(
+                    self.get_model_with_action_tool(contract), messages,
+                )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
@@ -623,14 +724,14 @@ class LLMClient:
                 )
                 self.note_action_tools_unsupported()
                 attempts += 1
-                response = self.get_action_model().invoke(messages)
+                response = self._complete(self.get_action_model(), messages)
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
                 )
         else:
             attempts += 1
-            response = self.get_action_model().invoke(messages)
+            response = self._complete(self.get_action_model(), messages)
             usage = merge_usage(usage, extract_usage(response))
             result = self._structured_response(
                 response, contract.resolved_tool_name,
@@ -655,7 +756,9 @@ class LLMClient:
         if self.supports_action_tools:
             try:
                 attempts += 1
-                response = self.get_model_with_json_tool(tool_name, schema).invoke(messages)
+                response = self._complete(
+                    self.get_model_with_json_tool(tool_name, schema), messages,
+                )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
                 result = self._coerce_payload_types(result, schema)
@@ -674,11 +777,11 @@ class LLMClient:
                     type(error).__name__,
                 )
                 attempts += 1
-                response = self.get_action_model().invoke(messages)
+                response = self._complete(self.get_action_model(), messages)
                 usage = merge_usage(usage, extract_usage(response))
         else:
             attempts += 1
-            response = self.get_action_model().invoke(messages)
+            response = self._complete(self.get_action_model(), messages)
             usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)
         result = self._require_schema_fields(result, schema)
@@ -690,31 +793,51 @@ class LLMClient:
             llm_attempts=attempts,
         )
 
+    @staticmethod
     async def _stream_and_accumulate(
-        self, model, messages, on_chunk: Callable[[str], Awaitable[None]] | None = None,
+        model, messages, on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ):
-        """Consume model.astream chunks, notify on_chunk with partial speech, and return accumulated response."""
+        """Consume model.astream chunks and return the accumulated response.
+
+        ``on_chunk(text)`` receives the partial speech; ``on_chunk(text,
+        kind="thinking")`` receives the tail of the model's reasoning, throttled.
+        The thinking call is only made when the model actually reasons, so
+        one-argument callbacks keep working for plain models.
+        """
         acc = None
         args_acc = ""
         last_emitted = ""
+        thinking_sent = ""
+        thinking_sent_at: float | None = None
         async for chunk in model.astream(messages):
             acc = chunk if acc is None else acc + chunk
-            if on_chunk is not None:
-                tool_chunks = getattr(chunk, "tool_call_chunks", None) or []
-                if tool_chunks:
-                    for tc in tool_chunks:
-                        args_val = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", "")
-                        if args_val:
-                            args_acc += args_val
-                    partial = extract_partial_speech(args_acc)
-                    if partial and partial != last_emitted:
-                        last_emitted = partial
-                        await on_chunk(partial)
-                elif hasattr(acc, "content") and acc.content:
-                    partial = extract_partial_speech(str(acc.content))
-                    if partial and partial != last_emitted:
-                        last_emitted = partial
-                        await on_chunk(partial)
+            if on_chunk is None:
+                continue
+            thinking = _stream_thinking(acc)
+            if thinking != thinking_sent and (
+                thinking_sent_at is None
+                or time.monotonic() - thinking_sent_at >= _THINKING_EMIT_INTERVAL_SECONDS
+            ):
+                thinking_sent = thinking
+                thinking_sent_at = time.monotonic()
+                await on_chunk(thinking[-_THINKING_TAIL_CHARS:], kind="thinking")
+            tool_chunks = getattr(chunk, "tool_call_chunks", None) or []
+            if tool_chunks:
+                for tc in tool_chunks:
+                    args_val = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", "")
+                    if args_val:
+                        args_acc += args_val
+                partial = extract_partial_speech(args_acc)
+            else:
+                text, _ = split_stream_content(getattr(acc, "content", ""))
+                partial = extract_partial_speech(text)
+            if partial and partial != last_emitted:
+                last_emitted = partial
+                await on_chunk(partial)
+        if on_chunk is not None and acc is not None:
+            thinking = _stream_thinking(acc)
+            if thinking != thinking_sent:
+                await on_chunk(thinking[-_THINKING_TAIL_CHARS:], kind="thinking")
         return acc if acc is not None else AIMessage(content="")
 
     async def ainvoke_json(
@@ -729,10 +852,9 @@ class LLMClient:
             attempts += 1
             try:
                 model = self.get_model_with_json_tool(tool_name, schema)
-                if on_chunk and hasattr(model, "astream") and callable(getattr(model, "astream", None)):
-                    response = await self._stream_and_accumulate(model, messages, on_chunk=on_chunk)
-                else:
-                    response = await model.ainvoke(messages)
+                response = await self._acomplete(
+                    model, messages, on_chunk=on_chunk,
+                )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
                 result = self._coerce_payload_types(result, schema)
@@ -752,10 +874,9 @@ class LLMClient:
                 )
         attempts += 1
         action_model = self.get_action_model()
-        if on_chunk and hasattr(action_model, "astream") and callable(getattr(action_model, "astream", None)):
-            response = await self._stream_and_accumulate(action_model, messages, on_chunk=on_chunk)
-        else:
-            response = await action_model.ainvoke(messages)
+        response = await self._acomplete(
+            action_model, messages, on_chunk=on_chunk,
+        )
         usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)
         result = self._require_schema_fields(result, schema)

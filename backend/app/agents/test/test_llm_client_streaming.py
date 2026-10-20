@@ -1,8 +1,10 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from app.agents.llm_client import LLMClient, LLMClientConfig, extract_partial_speech
+from app.models.contracts import ActionContract
+from app.models.game import GamePhase
 
 
 def _test_config():
@@ -250,4 +252,182 @@ async def test_stream_and_accumulate_with_empty_or_whitespace_chunks():
         EmptyChunkModel(), [], on_chunk=on_chunk,
     )
     assert emitted == ["后来者"]
+
+
+def _action_contract() -> ActionContract:
+    return ActionContract(
+        contract_id="night_check",
+        phase=GamePhase.NIGHT,
+        action_types=("check", "pass"),
+        actions_requiring_target=frozenset({"check"}),
+        resolution_priority=1,
+        fallback_action_type="pass",
+    )
+
+
+def test_complete_falls_back_to_invoke_when_type_has_no_stream():
+    class InvokeOnly:
+        def invoke(self, messages):
+            return AIMessage(content="via invoke")
+
+    assert LLMClient._complete(InvokeOnly(), []).content == "via invoke"
+
+
+def test_complete_ignores_instance_stream_that_the_type_does_not_declare():
+    class InvokeOnly:
+        def invoke(self, messages):
+            return AIMessage(content="via invoke")
+
+    model = InvokeOnly()
+    model.stream = object()
+    assert LLMClient._complete(model, []).content == "via invoke"
+
+
+def test_complete_uses_stream_inherited_from_a_base_class():
+    class StreamBase:
+        def stream(self, messages):
+            yield AIMessageChunk(content="from ")
+            yield AIMessageChunk(content="base")
+
+    class Derived(StreamBase):
+        pass
+
+    assert LLMClient._complete(Derived(), []).content == "from base"
+
+
+def test_complete_ignores_non_callable_stream_attr():
+    class Model:
+        stream = "not a method"
+
+        def invoke(self, messages):
+            return AIMessage(content="via invoke")
+
+    assert LLMClient._complete(Model(), []).content == "via invoke"
+
+
+def test_complete_empty_stream_returns_empty_message():
+    class Model:
+        def stream(self, messages):
+            return iter(())
+
+    assert LLMClient._complete(Model(), []).content == ""
+
+
+def test_invoke_action_prefers_stream_over_invoke():
+    streamed = []
+
+    class Model:
+        def stream(self, messages):
+            streamed.append(True)
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[{
+                    "name": "night_check",
+                    "args": '{"action_type":"check","target_seat":2,"reasoning":"x"}',
+                    "id": "call_1",
+                    "index": 0,
+                }],
+            )
+
+    client = LLMClient(config=_test_config())
+    with patch.object(client, "get_model_with_action_tool", return_value=Model()):
+        result = client.invoke_action([], _action_contract())
+
+    assert streamed == [True]
+    assert result.payload["target_seat"] == 2
+    assert result.has_tool_calls is True
+
+
+def test_invoke_json_prefers_stream_over_invoke():
+    streamed = []
+    schema = {
+        "type": "object",
+        "properties": {"speak": {"type": "boolean"}},
+        "required": ["speak"],
+    }
+
+    class Model:
+        def stream(self, messages):
+            streamed.append(True)
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[{
+                    "name": "submit_night_json",
+                    "args": '{"speak":false}',
+                    "id": "call_1",
+                    "index": 0,
+                }],
+            )
+
+    client = LLMClient(config=_test_config())
+    with patch.object(client, "get_model_with_json_tool", return_value=Model()):
+        result = client.invoke_json(
+            [], tool_name="submit_night_json", schema=schema,
+        )
+
+    assert streamed == [True]
+    assert result.payload == {"speak": False}
+
+
+def test_probe_prefers_stream_over_invoke():
+    streamed = []
+
+    class Model:
+        def stream(self, messages):
+            streamed.append(messages)
+            yield AIMessageChunk(content="pong")
+
+    client = LLMClient(config=_test_config())
+    with patch.object(client, "get_model", return_value=Model()):
+        caps = client.probe()
+
+    assert streamed
+    assert caps["tools"] is True
+
+
+@pytest.mark.asyncio
+async def test_ainvoke_json_streams_without_on_chunk():
+    class ToolModel:
+        async def astream(self, messages):
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[{
+                    "name": "speak",
+                    "args": '{"text": "无回调也流式"}',
+                    "id": "call_1",
+                    "index": 0,
+                }],
+            )
+
+    client = LLMClient(config=_test_config())
+    with patch.object(client, "get_model_with_json_tool", return_value=ToolModel()):
+        result = await client.ainvoke_json(
+            [],
+            tool_name="speak",
+            schema={"type": "object", "properties": {"text": {"type": "string"}}},
+        )
+
+    assert result.payload == {"text": "无回调也流式"}
+
+
+@pytest.mark.asyncio
+async def test_acomplete_falls_back_to_ainvoke():
+    class InvokeOnly:
+        async def ainvoke(self, messages):
+            return AIMessage(content="via ainvoke")
+
+    result = await LLMClient._acomplete(InvokeOnly(), [])
+    assert result.content == "via ainvoke"
+
+
+@pytest.mark.asyncio
+async def test_acomplete_ignores_non_callable_astream_attr():
+    class Model:
+        astream = "not a method"
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="via ainvoke")
+
+    result = await LLMClient._acomplete(Model(), [])
+    assert result.content == "via ainvoke"
 
