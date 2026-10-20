@@ -25,6 +25,11 @@ describe('RoleIcon', () => {
     ['wolf-killer-guard', '守卫'],
     ['wolf-killer-idiot', '白痴'],
     ['wolf-killer-werewolf-king', '白狼王'],
+    ['wolf-killer-fool-seer', '愚言家'],
+    ['wolf-killer-iron-villager', '铁好人'],
+    ['wolf-killer-crow', '乌鸦'],
+    ['wolf-killer-cupid', '丘比特'],
+    ['wolf-killer-admirer', '暗恋者'],
   ])('renders a labelled Material icon for %s', (role, label) => {
     render(<RoleIcon role={role} />);
     expect(screen.getByLabelText(label)).toBeInTheDocument();

@@ -25,6 +25,11 @@ import DarkMode from '@mui/icons-material/DarkMode';
 import HourglassBottom from '@mui/icons-material/HourglassBottom';
 import Replay from '@mui/icons-material/Replay';
 import Visibility from '@mui/icons-material/Visibility';
+import RecordVoiceOver from '@mui/icons-material/RecordVoiceOver';
+import Shield from '@mui/icons-material/Shield';
+import Flight from '@mui/icons-material/Flight';
+import Link from '@mui/icons-material/Link';
+import Loyalty from '@mui/icons-material/Loyalty';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { INK, ROLE_COLORS } from '../../theme/tokens';
 
@@ -60,6 +65,11 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color:
   'wolf-killer-eclipse-maid': { Icon: DarkMode, label: '蚀日侍女', color: ROLE_COLORS.werewolf.color },
   'wolf-killer-time-wolf': { Icon: HourglassBottom, label: '蚀时狼妃', color: ROLE_COLORS.werewolf.color },
   'wolf-killer-order-prince': { Icon: Replay, label: '定序王子', color: ROLE_COLORS.knight.color },
+  'wolf-killer-fool-seer': { Icon: RecordVoiceOver, label: '愚言家', color: ROLE_COLORS.seer.color },
+  'wolf-killer-iron-villager': { Icon: Shield, label: '铁好人', color: ROLE_COLORS.villager.color },
+  'wolf-killer-crow': { Icon: Flight, label: '乌鸦', color: ROLE_COLORS.villager.color },
+  'wolf-killer-cupid': { Icon: Link, label: '丘比特', color: ROLE_COLORS.guard.color },
+  'wolf-killer-admirer': { Icon: Loyalty, label: '暗恋者', color: ROLE_COLORS.villager.color },
 };
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标
