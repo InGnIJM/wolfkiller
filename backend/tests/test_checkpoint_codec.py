@@ -216,6 +216,25 @@ def test_checkpoint_round_trips_the_witch_self_save_policy() -> None:
     assert restored.config.witch_self_save == "never"
 
 
+def test_checkpoint_round_trips_the_victory_policy() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    state = _rich_state()
+    state.config.victory = "city"
+    restored, _ = codec.decode(codec.encode(state, orchestration={}))
+    assert restored.config.victory == "city"
+
+
+def test_checkpoint_accepts_legacy_config_without_a_victory_policy() -> None:
+    """Archives written before 屠城 existed resume as 屠边."""
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(_rich_state(), orchestration={})
+    document["state"]["config"].pop("victory")
+    restored, _ = codec.decode(document)
+    assert restored.config.victory == "edge"
+
+
 def test_checkpoint_accepts_legacy_config_without_a_witch_self_save_policy() -> None:
     """Archives written before the policy existed resume under the old ruling."""
     registry = builtin_registry.freeze()
@@ -367,6 +386,7 @@ def _mutate_nested(document: dict, *path_and_value) -> None:
         (lambda doc: _mutate_nested(doc, "state", "config", "reveal_on_death", 1), "reveal_on_death"),
         (lambda doc: _mutate_nested(doc, "state", "config", "enable_sheriff", 1), "enable_sheriff"),
         (lambda doc: _mutate_nested(doc, "state", "config", "witch_self_save", "sometimes"), "witch_self_save"),
+        (lambda doc: _mutate_nested(doc, "state", "config", "victory", "massacre"), "victory"),
         (lambda doc: _mutate_nested(doc, "state", "sheriff_office", "speech_side", 1), "speech_side"),
         (lambda doc: _mutate_nested(doc, "state", "sheriff_office", "step", 1), "sheriff step"),
         (lambda doc: _mutate_nested(doc, "state", "players", {"bad": {}}), "players seat"),

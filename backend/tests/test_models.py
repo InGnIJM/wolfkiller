@@ -21,11 +21,17 @@ class TestGameConfig:
         assert config.reveal_on_death is False
         assert config.enable_sheriff is False
         assert config.witch_self_save == "first_night_only"
+        assert config.victory == "edge"
 
     def test_witch_self_save_policy_is_validated(self):
         assert GameConfig(witch_self_save="never").witch_self_save == "never"
         with pytest.raises(ValueError, match="unknown witch self-save policy"):
             GameConfig(witch_self_save="sometimes")
+
+    def test_victory_policy_is_validated(self):
+        assert GameConfig(victory="city").victory == "city"
+        with pytest.raises(ValueError, match="unknown victory policy"):
+            GameConfig(victory="massacre")
 
     def test_role_distribution(self):
         config = GameConfig()

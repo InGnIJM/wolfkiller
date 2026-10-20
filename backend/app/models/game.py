@@ -62,6 +62,12 @@ class SheriffOfficeState:
 DEFAULT_WITCH_SELF_SAVE = "first_night_only"
 WITCH_SELF_SAVE_POLICIES = ("first_night_only", "never")
 
+#: How a board decides the game. ``edge`` is the historical 屠边 rule. ``city``
+#: is 屠城: one side wins only when the other side is entirely gone. A living
+#: third-party allegiance blocks both, on either setting.
+DEFAULT_VICTORY = "edge"
+VICTORY_POLICIES = ("edge", "city")
+
 
 @dataclass(init=False)
 class GameConfig:
@@ -69,6 +75,7 @@ class GameConfig:
     reveal_on_death: bool = False
     enable_sheriff: bool = False
     witch_self_save: str = DEFAULT_WITCH_SELF_SAVE
+    victory: str = DEFAULT_VICTORY
 
     def __init__(
         self,
@@ -82,9 +89,12 @@ class GameConfig:
         reveal_on_death: bool = False,
         enable_sheriff: bool = False,
         witch_self_save: str = DEFAULT_WITCH_SELF_SAVE,
+        victory: str = DEFAULT_VICTORY,
     ) -> None:
         if witch_self_save not in WITCH_SELF_SAVE_POLICIES:
             raise ValueError(f"unknown witch self-save policy: {witch_self_save!r}")
+        if victory not in VICTORY_POLICIES:
+            raise ValueError(f"unknown victory policy: {victory!r}")
         legacy_counts = (
             ("wolf-killer-werewolf", num_werewolves, 3),
             ("wolf-killer-villager", num_villagers, 3),
@@ -108,6 +118,7 @@ class GameConfig:
         self.reveal_on_death = bool(reveal_on_death)
         self.enable_sheriff = bool(enable_sheriff)
         self.witch_self_save = witch_self_save
+        self.victory = victory
 
     @property
     def total_players(self) -> int:
