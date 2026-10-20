@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -118,6 +118,28 @@ describe('ActivityCard', () => {
     expect(body).toHaveTextContent('流式发言。');
   });
 
+  it('streams thinking first, then folds it into a summary once speech arrives', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'speaking',
+        payload: { seat: 3, round_number: 1 },
+      },
+    ]);
+    useGameStore.getState().setStreamingThinking(3, '先想想谁是狼');
+    render(<ActivityCard />);
+
+    expect(screen.getByText('STREAMING')).toBeInTheDocument();
+    expect(screen.getByText('思考中')).toBeInTheDocument();
+    expect(screen.getByTestId('streaming-thinking')).toHaveTextContent('先想想谁是狼');
+    expect(screen.queryByTestId('streaming-thinking-summary')).not.toBeInTheDocument();
+
+    act(() => useGameStore.getState().setStreamingSpeech(3, '我是3号'));
+    expect(screen.getByTestId('streaming-text')).toHaveTextContent('我是3号');
+    expect(screen.getByTestId('streaming-thinking-summary')).toHaveTextContent('思考：…先想想谁是狼');
+    expect(screen.queryByText('思考中')).not.toBeInTheDocument();
+  });
+
   it('labels last-word events as 遗言', () => {
     setTimeline([
       {
@@ -166,7 +188,7 @@ describe('ActivityCard', () => {
     ]);
     render(<ActivityCard />);
 
-    expect(screen.getByText('女巫思考 · 5号')).toBeInTheDocument();
+    expect(screen.getByText('5号女巫思考')).toBeInTheDocument();
     expect(screen.getByText('昨晚2号被刀，我决定救人')).toBeInTheDocument();
     expect(screen.getByText(/第1轮 · 女巫思考/)).toBeInTheDocument();
     expect(screen.getByText('tokens --')).toBeInTheDocument();
@@ -182,7 +204,7 @@ describe('ActivityCard', () => {
     ]);
     render(<ActivityCard />);
 
-    expect(screen.getByText('猎人思考 · 4号')).toBeInTheDocument();
+    expect(screen.getByText('4号猎人思考')).toBeInTheDocument();
     expect(screen.getByText(/目标 6号：我开枪带走6号/)).toBeInTheDocument();
     expect(screen.getByText(/第1轮 · 猎人思考/)).toBeInTheDocument();
   });
@@ -206,7 +228,7 @@ describe('ActivityCard', () => {
     useGameStore.getState().seekTo(1);
     render(<ActivityCard />);
 
-    expect(screen.getByText('女巫思考 · 5号')).toBeInTheDocument();
+    expect(screen.getByText('5号女巫思考')).toBeInTheDocument();
     expect(screen.getByText(/耗时 00:45/)).toBeInTheDocument();
   });
 
@@ -539,5 +561,28 @@ describe('ActivityCard', () => {
     render(<ActivityCard />);
     expect(screen.getByText('6号出局，2号殉情')).toBeInTheDocument();
     expect(screen.getByText('被放逐 · 第3轮')).toBeInTheDocument();
+  });
+
+  it('renders the order-prince rewind and does not call the voided tally a tie', () => {
+    setTimeline([
+      {
+        ...replayEventMeta,
+        event_type: 'vote_rewound',
+        payload: { seat: 3, round_number: 2 },
+      },
+      {
+        timestamp: '2026-08-13T00:00:01Z',
+        event_type: 'vote_result',
+        payload: { exiled_seat: null, round_number: 2 },
+      },
+    ]);
+    render(<ActivityCard />);
+    expect(screen.getByText('3号发动逆转时空')).toBeInTheDocument();
+
+    cleanup();
+    useGameStore.getState().seekTo(1);
+    render(<ActivityCard />);
+    expect(screen.getByText('放逐投票作废，重新投票')).toBeInTheDocument();
+    expect(screen.queryByText(/平票/)).not.toBeInTheDocument();
   });
 });

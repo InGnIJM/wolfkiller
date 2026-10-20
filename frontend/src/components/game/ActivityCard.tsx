@@ -5,7 +5,11 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent } from '../../store/types';
-import { DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, SHERIFF_SIDE_LABELS, THOUGHT_LABELS } from '../../labels';
+import {
+  DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
+  VOTE_REWOUND_RESULT, thoughtActorName, voteRoundWasRewound,
+} from '../../labels';
+import { roleLabelForSeat } from '../shared/roleMeta';
 import { AVATAR_PALETTE, INK } from '../../theme/tokens';
 
 const livePulse = keyframes`
@@ -14,7 +18,7 @@ const livePulse = keyframes`
 `;
 
 function campLabel(camp: string): string {
-  return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp;
+  return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp === 'third_party' ? '第三方' : camp;
 }
 
 function formatDuration(sec: number): string {
@@ -79,57 +83,85 @@ function ActivityFrame({ tone, children }: CardProps) {
   );
 }
 
-function StreamingSpeechBody({ text }: { text: string }) {
+// 正文出现后思考区折成一行，只留末尾这么多字
+const THINKING_SUMMARY_CHARS = 60;
+
+function StreamingSpeechBody({ text, thinking }: { text: string; thinking: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = bodyRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [text]);
+  }, [text, thinking]);
+  const thinkingOnly = !text && Boolean(thinking);
   return (
-    <Box
-      ref={bodyRef}
-      data-testid="activity-body"
-      data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
-      sx={{
-        flex: 1,
-        minHeight: 0,
-        maxHeight: ACTIVITY_BODY_MAX_HEIGHT,
-        overflowY: 'auto',
-        bgcolor: 'rgba(0, 0, 0, 0.25)',
-        p: 1.5,
-        borderRadius: 1,
-        border: '1px solid rgba(229, 72, 77, 0.25)',
-      }}
-    >
-      <Typography
-        variant="body2"
+    <>
+      {text && thinking ? (
+        <Typography
+          data-testid="streaming-thinking-summary"
+          variant="caption"
+          color="text.secondary"
+          noWrap
+          sx={{ display: 'block', opacity: 0.8 }}
+        >
+          思考：…{thinking.slice(-THINKING_SUMMARY_CHARS)}
+        </Typography>
+      ) : null}
+      <Box
+        ref={bodyRef}
+        data-testid="activity-body"
+        data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
         sx={{
-          color: 'text.primary',
-          lineHeight: 1.8,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
+          flex: 1,
+          minHeight: 0,
+          maxHeight: ACTIVITY_BODY_MAX_HEIGHT,
+          overflowY: 'auto',
+          bgcolor: 'rgba(0, 0, 0, 0.25)',
+          p: 1.5,
+          borderRadius: 1,
+          border: '1px solid rgba(229, 72, 77, 0.25)',
         }}
       >
-        {text}
-        <Box
-          component="span"
+        {thinkingOnly ? (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: 'block', letterSpacing: 2, mb: 0.5 }}
+          >
+            思考中
+          </Typography>
+        ) : null}
+        <Typography
+          data-testid={thinkingOnly ? 'streaming-thinking' : 'streaming-text'}
+          variant={thinkingOnly ? 'caption' : 'body2'}
           sx={{
-            display: 'inline-block',
-            width: '2px',
-            height: '1em',
-            bgcolor: 'secondary.main',
-            ml: 0.5,
-            verticalAlign: 'text-bottom',
-            animation: 'cursor-blink 1s step-start infinite',
-            '@keyframes cursor-blink': {
-              '0%, 100%': { opacity: 1 },
-              '50%': { opacity: 0 },
-            },
+            display: 'block',
+            color: thinkingOnly ? 'text.secondary' : 'text.primary',
+            lineHeight: 1.8,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
           }}
-        />
-      </Typography>
-    </Box>
+        >
+          {thinkingOnly ? thinking : text}
+          <Box
+            component="span"
+            sx={{
+              display: 'inline-block',
+              width: '2px',
+              height: '1em',
+              bgcolor: 'secondary.main',
+              ml: 0.5,
+              verticalAlign: 'text-bottom',
+              animation: 'cursor-blink 1s step-start infinite',
+              '@keyframes cursor-blink': {
+                '0%, 100%': { opacity: 1 },
+                '50%': { opacity: 0 },
+              },
+            }}
+          />
+        </Typography>
+      </Box>
+    </>
   );
 }
 
@@ -301,8 +333,7 @@ function ThoughtView({
         {seat !== null ? <SeatAvatar seat={seat} /> : <Box sx={{ width: 40 }} />}
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-            {label}
-            {seat !== null ? ` · ${seat}号` : ''}
+            {seat !== null ? `${seat}号` : ''}{label}
           </Typography>
           <Typography variant="caption" sx={{ color: '#B08BE0', letterSpacing: 2, fontWeight: 600 }}>
             内心思考
@@ -442,7 +473,11 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
 }
 
 function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['payload'], { exiled_seat: number | null }> }) {
-  const exiled = payload.exiled_seat === null ? '平票，无人被放逐' : `${payload.exiled_seat}号被放逐`;
+  const timeline = useGameStore((s) => s.timeline);
+  const rewound = voteRoundWasRewound(payload.round_number, timeline);
+  const exiled = payload.exiled_seat === null
+    ? (rewound ? VOTE_REWOUND_RESULT : '平票，无人被放逐')
+    : `${payload.exiled_seat}号被放逐`;
   return (
     <ActivityFrame tone="#D4A853">
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -543,7 +578,7 @@ function DayVerdictView({
 }
 
 export default function ActivityCard() {
-  const { timeline, timelineIndex, streamingSpeech, isFollowingLive } = useGameStore();
+  const { timeline, timelineIndex, streamingSpeech, isFollowingLive, players } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;
@@ -565,7 +600,7 @@ export default function ActivityCard() {
       const isStreaming = isFollowingLive
         && streamingSpeech !== null
         && streamingSpeech.seat === entry.payload.seat
-        && Boolean(streamingSpeech.text);
+        && Boolean(streamingSpeech.text || streamingSpeech.thinking);
 
       if (isStreaming) {
         return (
@@ -585,7 +620,7 @@ export default function ActivityCard() {
                 </Box>
                 <LiveTag label="STREAMING" />
               </Box>
-              <StreamingSpeechBody text={streamingSpeech.text} />
+              <StreamingSpeechBody text={streamingSpeech.text} thinking={streamingSpeech.thinking} />
             </Box>
           </ActivityFrame>
         );
@@ -629,7 +664,9 @@ export default function ActivityCard() {
         <ThoughtView
           label={entry.payload.degraded
             ? DEGRADED_ACTION_LABEL
-            : THOUGHT_LABELS[entry.payload.action_type] ?? '夜间思考'}
+            : `${thoughtActorName(entry.payload.action_type, {
+              roleName: roleLabelForSeat(entry.payload.seat, players),
+            })}思考`}
           seat={entry.payload.seat}
           text={
             entry.payload.degraded
@@ -676,6 +713,16 @@ export default function ActivityCard() {
       return <DeathView payload={entry.payload} />;
     case 'vote_result':
       return <VoteResultView payload={entry.payload} />;
+    case 'vote_rewound':
+      return (
+        <DayVerdictView
+          seat={entry.payload.seat}
+          title={`${entry.payload.seat}号发动逆转时空`}
+          subtitle={`放逐投票作废，重新投票 · 第${entry.payload.round_number}轮`}
+          tone="#E8C887"
+          tag="REWIND"
+        />
+      );
     case 'exile_cancelled':
       return (
         <DayVerdictView
