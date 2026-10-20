@@ -65,6 +65,7 @@ async def test_executor_creates_and_waits_through_formal_game_service_api() -> N
     assert call["benchmark_run_id"] == "run"
     assert call["benchmark_item_index"] == 3
     assert call["enable_sheriff"] is False  # scenario has no enable_sheriff → defaults to False
+    assert call["victory"] == "edge"
     game_service.wait_game.assert_awaited_once_with("created")
 
 
@@ -72,7 +73,9 @@ async def test_executor_creates_and_waits_through_formal_game_service_api() -> N
 async def test_executor_passes_enable_sheriff_from_scenario() -> None:
     repository = MagicMock()
     repository.get_benchmark_run.return_value = {
-        "config": {"scenario": {"role_counts": {"villager": 2}, "enable_sheriff": True}},
+        "config": {"scenario": {
+            "role_counts": {"villager": 2}, "enable_sheriff": True, "victory": "city",
+        }},
     }
     game_service = MagicMock()
     game_service.create_game = AsyncMock(return_value="g")
@@ -89,6 +92,7 @@ async def test_executor_passes_enable_sheriff_from_scenario() -> None:
     })
     call = game_service.create_game.await_args.kwargs
     assert call["enable_sheriff"] is True
+    assert call["victory"] == "city"
 
 
 @pytest.mark.asyncio

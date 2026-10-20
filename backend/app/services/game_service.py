@@ -19,7 +19,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.config import config as app_config
 from app.models.game import (
-    DEFAULT_WITCH_SELF_SAVE, GameState, GameConfig, GamePhase, PlayerState,
+    DEFAULT_VICTORY, DEFAULT_WITCH_SELF_SAVE, GameState, GameConfig, GamePhase, PlayerState,
 )
 from app.core.game_engine import GameEngine
 from app.core.event_bus import EventBus, GameEvent as BusEvent
@@ -1420,6 +1420,7 @@ class GameService:
         reveal_on_death: bool = False,
         enable_sheriff: bool = False,
         witch_self_save: str = DEFAULT_WITCH_SELF_SAVE,
+        victory: str = DEFAULT_VICTORY,
         model_assignments: Optional[list[dict]] = None,
         *,
         game_id_override: str | None = None,
@@ -1448,6 +1449,7 @@ class GameService:
             reveal_on_death=reveal_on_death,
             enable_sheriff=enable_sheriff,
             witch_self_save=witch_self_save,
+            victory=victory,
         )
         if runtime_seed is not None and (type(runtime_seed) is not int or runtime_seed < 0):
             raise ValueError("runtime seed must be a non-negative integer")
@@ -1700,6 +1702,7 @@ class GameService:
                     "reveal_on_death": config.reveal_on_death,
                     "enable_sheriff": config.enable_sheriff,
                     "witch_self_save": config.witch_self_save,
+                    "victory": config.victory,
                 },
                 model_snapshot=model_snapshot,
                 model_snapshot_version=2,
@@ -1725,6 +1728,7 @@ class GameService:
                         "reveal_on_death": config.reveal_on_death,
                         "enable_sheriff": config.enable_sheriff,
                         "witch_self_save": config.witch_self_save,
+                        "victory": config.victory,
                         "model_runtime_version": 1,
                         "model_runtime": frozen_model_runtime,
                         "prompt_digest": _prompt_digest(),
@@ -1930,6 +1934,7 @@ class GameService:
                         "reveal_on_death": engine.state.config.reveal_on_death,
                         "enable_sheriff": engine.state.config.enable_sheriff,
                         "witch_self_save": engine.state.config.witch_self_save,
+                        "victory": engine.state.config.victory,
                     },
                 },
                 "visibility": ["PUBLIC"],

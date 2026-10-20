@@ -269,7 +269,7 @@ class TestGameService:
         assert args == (
             game_id,
             {"role_counts": counts, "reveal_on_death": False, "enable_sheriff": False,
-             "witch_self_save": "first_night_only"},
+             "witch_self_save": "first_night_only", "victory": "edge"},
         )
         assert kwargs["model_snapshot_version"] == 2
         assert kwargs["name"] is not None
@@ -1443,9 +1443,24 @@ class TestGameService:
         service._games = {"game-a": MagicMock()}
 
         await service._on_speech_stream(game_id=game_id, seat=seat, text=text)
+        await service._on_speech_thinking(game_id=game_id, seat=seat, text=text)
 
         ws_manager.queue_v2_notice.assert_not_called()
         ws_manager.broadcast.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_speech_thinking_is_a_live_notice_only(self):
+        ws_manager = WSManager()
+        ws_manager.broadcast = AsyncMock()
+        ws_manager.queue_v2_notice = MagicMock()
+        bus = EventBus()
+        service = GameService(ws_manager, bus)
+        service._games = {"game-a": MagicMock()}
+
+        await bus.publish(BusEvent.SPEECH_THINKING, game_id="game-a", seat=3, text="思考中")
+
+        ws_manager.queue_v2_notice.assert_called_once_with("game-a", "speech_thinking", seat=3, text="思考中")
+        ws_manager.broadcast.assert_awaited_once_with("game-a", "speech_thinking", seat=3, text="思考中")
 
     @pytest.mark.asyncio
     async def test_night_substep_broadcasts_exact_public_payload_only(self):

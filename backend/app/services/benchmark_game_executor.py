@@ -6,7 +6,9 @@ import asyncio
 import uuid
 from collections.abc import Mapping
 
-from app.models.game import DEFAULT_WITCH_SELF_SAVE, WITCH_SELF_SAVE_POLICIES
+from app.models.game import (
+    DEFAULT_VICTORY, DEFAULT_WITCH_SELF_SAVE, VICTORY_POLICIES, WITCH_SELF_SAVE_POLICIES,
+)
 from app.persistence.repository import GameRepository
 from app.services.game_service import GameService
 
@@ -136,6 +138,8 @@ class BenchmarkGameExecutor:
                 self_save_raw if self_save_raw in WITCH_SELF_SAVE_POLICIES
                 else DEFAULT_WITCH_SELF_SAVE
             )
+            victory_raw = scenario.get("victory")
+            victory = victory_raw if victory_raw in VICTORY_POLICIES else DEFAULT_VICTORY
             game_id = str(uuid.uuid5(
                 uuid.NAMESPACE_URL, f"wolfkiller:benchmark:{run_id}:{item_index}",
             ))
@@ -150,6 +154,7 @@ class BenchmarkGameExecutor:
                 benchmark_item_index=item_index,
                 enable_sheriff=enable_sheriff,
                 witch_self_save=witch_self_save,
+                victory=victory,
             )
 
         arm = getattr(self._game_service, "arm_benchmark_timeout", None)
