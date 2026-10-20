@@ -156,6 +156,59 @@ def test_mixed_truncation_marks_every_row_unbalanced_and_keeps_block_clusters() 
     assert all(type(item["assignment"]["runtime_seed"]) is int for item in schedule)
 
 
+def test_identical_models_do_not_duplicate_role_pins() -> None:
+    schedule = BenchmarkService._mixed_schedule({
+        "seed": 42, "games": 10,
+        "scenario": {
+            "scenario_id": "twelve",
+            "role_counts": {"werewolf": 1, "villager": 11},
+        },
+        "models": [{"model_config_id": "same"}] * 12,
+    })
+
+    assert len(schedule) == 10
+    assert {item["block_index"] for item in schedule} == {0}
+    layouts = {
+        tuple(item["assignment"]["role_by_seat"][str(seat)] for seat in range(1, 13))
+        for item in schedule
+    }
+    assert len(layouts) == 10
+    for item in schedule:
+        assignment = item["assignment"]
+        assert assignment["balanced"] is False
+        assert {
+            model["model_config_id"]
+            for model in assignment["seat_models"].values()
+        } == {"same"}
+
+
+def test_identical_models_start_a_new_role_shuffle_after_one_rotation() -> None:
+    schedule = BenchmarkService._mixed_schedule({
+        "seed": 7, "games": 4,
+        "scenario": {"scenario_id": "tiny", "role_counts": {"wolf": 1, "villager": 1}},
+        "models": [{"model_config_id": "a"}, {"model_config_id": "a"}],
+    })
+
+    assert len(schedule) == 4
+    assert all(item["assignment"]["balanced"] is True for item in schedule)
+    by_block: dict[int, list[tuple[str, str]]] = {}
+    for item in schedule:
+        assignment = item["assignment"]
+        assert {
+            model["model_config_id"]
+            for model in assignment["seat_models"].values()
+        } == {"a"}
+        layout = (
+            assignment["role_by_seat"]["1"],
+            assignment["role_by_seat"]["2"],
+        )
+        by_block.setdefault(item["block_index"], []).append(layout)
+    assert set(by_block) == {0, 1}
+    for layouts in by_block.values():
+        assert len(layouts) == 2
+        assert len(set(layouts)) == 2
+
+
 def test_executor_claims_persisted_items_and_resume_continues_remaining(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     calls: list[int] = []

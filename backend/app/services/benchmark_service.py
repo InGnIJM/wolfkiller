@@ -176,7 +176,12 @@ class BenchmarkService:
             raise ValueError("mixed arena model count must equal player count")
         seed = int(spec["seed"])
         roles = _expanded_roles(scenario)
-        block_size = total * total
+        # Identical seat configs make a model rotation a copy of the same
+        # seating. Drop that axis so a block is one role rotation per seat,
+        # not player_count copies of each pin.
+        same_model = len({_canonical(dict(model)) for model in models}) == 1
+        model_span = 1 if same_model else total
+        block_size = total * model_span
         balanced = games % block_size == 0
         rows: list[dict[str, object]] = []
         block_count = (games + block_size - 1) // block_size
@@ -191,7 +196,7 @@ class BenchmarkService:
             ).shuffle(model_order)
             block: list[dict[str, object]] = []
             for role_rotation in range(total):
-                for model_rotation in range(total):
+                for model_rotation in range(model_span):
                     block.append({
                         "scenario_id": scenario_id,
                         "pair_id": None,

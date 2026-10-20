@@ -59,6 +59,7 @@ python scripts/run_benchmark.py export <run-id> --format markdown -o report.md
 - 旧 `--concurrency` 会传给服务端（上限 4），`--poll-interval` 和 `--timeout-seconds` 控制 CLI 等待；后者也作为默认单局超时写进冻结配置。`--no-report` 可继续传入，但报告本就只在查询/导出时生成。自定义 `--data-dir` 会明确拒绝，因为存储目录属于服务进程。
 - 服务端按持久化的 `active_elapsed_ms` 执行单局超时，暂停时间不会消耗时限。冻结配置中的 `max_attempts_per_game` 按真实 provider attempt 计数，并在开始调用前以数据库事务原子占用；恢复重试也受同一上限约束。
 - 旧 `--model-config-id/--games/--label` 清晰映射到只有一个 `models` 条目的 `mixed_arena`；省略模型 id 表示服务的环境默认配置。成对比较使用 `--mode paired` 与两个模型 id，不把单模型 run 伪装成 A/B。
+- 座位模型配置全部相同时，mixed arena 不再做模型旋转：每一块只保留人数次身份旋转，避免同一种身份钉法被复制人数次后再抽样。模型不完全相同时仍是人数 × 人数的平衡表。已经创建的 run 继续使用创建时冻结的 schedule，不会按新规则重排。
 - 状态与结果保存在服务数据库中；文件输出必须通过 export 接口显式生成，不再由 CLI 直接遍历 `data/games` 拼报告。
 - 胜率类指标建议每配置至少 30–100 局；10–20 局只能看趋势。
 
