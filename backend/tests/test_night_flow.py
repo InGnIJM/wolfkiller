@@ -632,9 +632,32 @@ def test_discussion_prompt_empty_history(state: GameState, director: NightDirect
 
 def test_discussion_prompt_later_night_omits_first_night_notice(state: GameState, director: NightDirector):
     state.round_number = 2
-    messages = director.discussion_prompt(state, 1, [])
-    assert "白天尚未开始" not in messages[1]["content"]
-    assert "第2晚" in messages[1]["content"]
+    for messages in (
+        director.discussion_prompt(state, 1, []),
+        director.vote_prompt(state, 1, [], []),
+    ):
+        assert "白天尚未开始" not in messages[1]["content"]
+    assert "第2晚" in director.discussion_prompt(state, 1, [])[1]["content"]
+
+
+def test_first_night_prompts_forbid_reading_seat_numbers_as_position(
+    state: GameState, director: NightDirector,
+):
+    assert state.round_number == 1
+    for messages in (
+        director.discussion_prompt(state, 1, []),
+        director.vote_prompt(state, 1, [], []),
+    ):
+        system = messages[0]["content"]
+        human = messages[1]["content"]
+        assert "座位号只表示玩家身份" in system
+        assert "发言顺序" in system
+        assert "白天尚未开始" in human
+        assert "发言顺序" in human
+        assert "RANDOM_HINT" in human
+        assert "自刀" in human
+        assert "座位位置" not in human
+        assert "外置位" not in human
 
 
 def test_discussion_prompt_tracks_turn_progress_and_consensus_rules(state: GameState, director: NightDirector):
@@ -935,6 +958,17 @@ def test_the_wolf_open_line_follows_whether_the_pack_will_discuss():
     )
     assert NightDirector.wolf_open_narration(discusses=False) == (
         "狼人请睁眼", "请选择今晚的行动。",
+    )
+
+
+def test_lone_wolf_open_is_an_engine_beat_without_a_role_name():
+    """狼窝空了之后的独刀不能再叫「狼人请睁眼」。
+
+    石像鬼 / 觉醒隐狼 / 蚀日侍女共用这条独刀契约，台词不能点任何一张牌。
+    """
+    assert NightDirector.narration("lone_wolf_open") == (
+        "请发动袭击",
+        "狼窝已全部出局，由剩余狼人阵营玩家选择今晚的行动。",
     )
 
 
