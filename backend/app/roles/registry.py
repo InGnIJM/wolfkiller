@@ -59,6 +59,11 @@ from app.roles.awakened_wolf_beauty import (
     AWAKENED_WOLF_BEAUTY_SPEC, AwakenedWolfBeauty,
 )
 from app.roles.witch import WITCH_SPEC, Witch
+from app.roles.fool_seer import FOOL_SEER_SPEC, FoolSeer
+from app.roles.iron_villager import IRON_VILLAGER_SPEC, IronVillager
+from app.roles.crow import CROW_SPEC, Crow
+from app.roles.cupid import CUPID_SPEC, Cupid
+from app.roles.admirer import ADMIRER_SPEC, Admirer
 
 
 _VISIBLE_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
@@ -598,6 +603,11 @@ builtin_registry.register_pipeline(RADIANCE_EARL_SPEC)
 builtin_registry.register_pipeline(ECLIPSE_MAID_SPEC)
 builtin_registry.register_pipeline(AWAKENED_SEER_SPEC)
 builtin_registry.register_pipeline(FRAGRANCE_PHANTOM_SPEC)
+builtin_registry.register_pipeline(FOOL_SEER_SPEC)
+builtin_registry.register_pipeline(IRON_VILLAGER_SPEC)
+builtin_registry.register_pipeline(CROW_SPEC)
+builtin_registry.register_pipeline(CUPID_SPEC)
+builtin_registry.register_pipeline(ADMIRER_SPEC)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -817,6 +827,21 @@ builtin_registry.register(
             ),
         ),
     )
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-fool-seer", Camp.GOOD, FoolSeer, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-iron-villager", Camp.GOOD, IronVillager, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-crow", Camp.GOOD, Crow, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-cupid", Camp.THIRD_PARTY, Cupid, ())
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-admirer", Camp.GOOD, Admirer, ())
 )
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-gargoyle", Camp.WEREWOLF, Gargoyle, ())
