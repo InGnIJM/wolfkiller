@@ -273,6 +273,101 @@ def test_a_guard_on_the_locked_seat_guards_the_guard() -> None:
     assert table.runtime.role_resources[VILL][TIME_LOCK_HIT_RESOURCE] == 1
 
 
+def _locked_target(seat: int, **extra: object) -> dict[str, object]:
+    return {"seat": seat, "status_labels": (TIME_LOCKED_STATUS,), **extra}
+
+
+def test_a_redirected_guard_names_the_original_target_and_still_remembers_itself() -> None:
+    from app.roles.guard import GUARD_SPEC, resolve_guard_action
+
+    contract = GUARD_SPEC.contracts[0]
+    ctx = ActionContext(
+        game_id="g", revision=3,
+        facts={"alive_seats": (3, 4, 5, 6), "selected_target": _locked_target(VILL)},
+        config_version="a" * 64, contract_id=contract.contract_id,
+        contract_version=contract.schema_version,
+        contract_digest=contract.stable_digest(), round_number=1, phase="night",
+        window_id="w", schedule_point=contract.schedule_point, actor_seat=GUARD,
+        actor_role_id="wolf-killer-guard", actor_alive=True, action_key="k:g",
+    )
+    effects = resolve_guard_action(ctx, cmd("guard", VILL))
+    protect = next(item for item in effects if item.payload.get("event_type") == "GUARD_PROTECT")
+    assert protect.payload["payload"] == {
+        "target_seat": GUARD, "seat": GUARD, "intended_seat": VILL,
+    }
+    memory = next(item for item in effects if item.kind is EffectKind.SET_PRIVATE_DATA)
+    assert memory.payload["value"] == {"seat": GUARD, "round": 1}
+
+
+def test_an_unredirected_guard_does_not_name_an_intended_seat() -> None:
+    from app.roles.guard import GUARD_SPEC, resolve_guard_action
+
+    contract = GUARD_SPEC.contracts[0]
+    ctx = ActionContext(
+        game_id="g", revision=3,
+        facts={
+            "alive_seats": (3, 4, 5, 6),
+            "selected_target": {"seat": VILL, "status_labels": ()},
+        },
+        config_version="a" * 64, contract_id=contract.contract_id,
+        contract_version=contract.schema_version,
+        contract_digest=contract.stable_digest(), round_number=1, phase="night",
+        window_id="w", schedule_point=contract.schedule_point, actor_seat=GUARD,
+        actor_role_id="wolf-killer-guard", actor_alive=True, action_key="k:g",
+    )
+    effects = resolve_guard_action(ctx, cmd("guard", VILL))
+    protect = next(item for item in effects if item.payload.get("event_type") == "GUARD_PROTECT")
+    assert protect.payload["payload"] == {"target_seat": VILL, "seat": GUARD}
+
+
+def test_a_redirected_seer_check_names_the_original_target() -> None:
+    from app.roles.seer import SEER_SPEC, resolve_seer_action
+
+    contract = SEER_SPEC.contracts[0]
+    ctx = ActionContext(
+        game_id="g", revision=3,
+        facts={
+            "alive_seats": (3, 4, 6),
+            "selected_target": _locked_target(VILL, camp_label="werewolf"),
+        },
+        config_version="a" * 64, contract_id=contract.contract_id,
+        contract_version=contract.schema_version,
+        contract_digest=contract.stable_digest(), round_number=1, phase="night",
+        window_id="w", schedule_point=contract.schedule_point, actor_seat=SEER,
+        actor_role_id="wolf-killer-seer", actor_alive=True, action_key="k:s",
+    )
+    effects = resolve_seer_action(ctx, cmd("check", VILL))
+    check = next(item for item in effects if item.payload.get("event_type") == "SEER_CHECK")
+    assert check.payload["payload"] == {
+        "target_seat": SEER, "result": SELF_CHECK_CAMP, "seat": SEER,
+        "intended_seat": VILL,
+    }
+
+
+def test_a_redirected_poison_names_the_original_target() -> None:
+    from app.roles.witch import resolve_witch_action
+
+    witch_contract = builtin_registry.freeze().require("wolf-killer-witch").contracts[0]
+    ctx = ActionContext(
+        game_id="g", revision=3,
+        facts={
+            "alive_seats": (3, 4, 6),
+            "selected_target": _locked_target(VILL, resource_labels=()),
+        },
+        config_version="a" * 64, contract_id=witch_contract.contract_id,
+        contract_version=witch_contract.schema_version,
+        contract_digest=witch_contract.stable_digest(), round_number=1, phase="night",
+        window_id="w", schedule_point=witch_contract.schedule_point, actor_seat=WITCH,
+        actor_role_id="wolf-killer-witch", actor_alive=True,
+        resources={"antidote": 1, "poison": 1}, action_key="k:p",
+    )
+    effects = resolve_witch_action(ctx, cmd("poison", VILL))
+    poison = next(item for item in effects if item.payload.get("event_type") == "WITCH_POISON")
+    assert poison.payload["payload"] == {
+        "target_seat": WITCH, "seat": WITCH, "intended_seat": VILL,
+    }
+
+
 def test_the_antidote_is_never_redirected() -> None:
     from app.roles.witch import resolve_witch_action
 
@@ -295,3 +390,5 @@ def test_the_antidote_is_never_redirected() -> None:
     effects = resolve_witch_action(ctx, cmd("save", VILL))
     assert all(e.payload.get("resource") != TIME_LOCK_HIT_RESOURCE for e in effects)
     assert any(e.payload.get("target") == VILL for e in effects)
+    save = next(item for item in effects if item.payload.get("event_type") == "WITCH_SAVE")
+    assert save.payload["payload"] == {"target_seat": VILL, "seat": WITCH}

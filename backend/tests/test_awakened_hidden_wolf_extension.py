@@ -398,6 +398,35 @@ def test_an_imitated_hunter_is_handed_a_gun() -> None:
     assert table.runtime.role_resources[AHW]["gun"] == 1
 
 
+def test_a_hidden_wolf_with_no_gun_is_not_asked_to_shoot_when_exiled() -> None:
+    from app.core.effect_applier import CommitResult
+    from app.core.point_journal import (
+        PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal,
+    )
+    from app.core.registry_identity import frozen_registry_digest
+
+    state = _state("no-gun-exile")
+    table = Table(state, {"mimic_hunter_shoot": cmd("shoot", VILL)})
+    table.night(2, SchedulePoint.NIGHT_ACTION)
+    assert table.runtime.role_resources[AHW]["gun"] == 0
+    state.players[AHW].is_alive = False
+    identity = frozen_registry_digest(state, table.scheduler.registry)
+    events = ({"event_type": "PLAYER_DIED", "payload": {"seat": AHW, "cause": "exile"}},)
+    commit = CommitResult("death:seed", (), 0, events, "d")
+    key = PointKey(
+        state.game_id, state.round_number, Scheduler.point_phase(state, ""),
+        SchedulePoint.DAWN_REACTION, identity,
+    )
+    point_journal(state).put(key, PointCheckpoint(
+        (), (), (commit,), events, (), (PendingEvent(0, 0, 0),),
+        WorkCursor("response", 0, 0), work_count=0,
+    ))
+    table.asked.clear()
+    result = table.scheduler.run_point(state, SchedulePoint.DAWN_REACTION)
+    assert (AHW, "mimic_hunter_shoot") not in table.asked
+    assert "HUNTER_REASONING" not in [event["event_type"] for event in result.events]
+
+
 def test_imitating_a_villager_grants_no_skill() -> None:
     state = _state("copy-villager")
     table = Table(state, {"hidden_wolf_imitate": cmd("imitate", VILL)})
