@@ -147,7 +147,8 @@ def test_validate_and_resolve_shoot_or_pass() -> None:
         "resource_equals": {"resource": "wolf_claw", "value": 1}}
     assert effects[1].payload == {"target": 2, "amount": 1, "cause": "wolf_king_shot"}
     assert effects[2].payload == {
-        "event_type": "WOLF_KING_SHOT", "payload": {"target_seat": 2}}
+        "event_type": "WOLF_KING_SHOT",
+        "payload": {"target_seat": 2, "seat": 1}}
     assert effects[2].visibility == ("PUBLIC",)
     assert effects[3].payload == {
         "event_type": "WOLF_KING_REASONING",

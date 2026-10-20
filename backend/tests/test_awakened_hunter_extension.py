@@ -158,7 +158,7 @@ def test_forward_hunts_the_next_wolf_and_spends_the_gun() -> None:
     }
     assert effects[1].target_seat == 4
     assert effects[2].payload == {
-        "event_type": "AWAKENED_HUNT", "payload": {"target_seat": 4},
+        "event_type": "AWAKENED_HUNT", "payload": {"target_seat": 4, "seat": 1},
     }
     assert effects[3].payload["event_type"] == "AWAKENED_HUNTER_REASONING"
     assert effects[3].payload["payload"] == {
@@ -375,26 +375,29 @@ def test_the_reaction_window_fires_the_hunt_through_the_pipeline() -> None:
 
 
 def test_a_hunter_who_has_already_shot_cannot_shoot_again() -> None:
-    """The window still opens, but a spent gun turns the shot into the fallback.
+    """A spent gun closes the window before the model is asked.
 
-    Response windows are opened for the dead seat's own contracts without
-    consulting ``is_applicable`` (the pure-react contract is the only exception),
-    so the gun has to be enforced by the validator — exactly like the ordinary
-    hunter's.
+    Model-driven response windows consult ``is_applicable``. With the gun
+    already gone that hook is false, so the death stays the only event and
+    nobody is asked to choose a direction.
     """
     registry = hunter_registry()
     state = _state()
     _seed_death(state, registry, 1, "wolf_kill")
     state._pipeline_runtime.role_resources[1]["gun"] = 0
+    asked: list[int] = []
+
+    def provider(request, projected, attempt):
+        asked.append(request.actor_seat)
+        return command("hunt_forward")
 
     scheduler = Scheduler(
         registry, ContextProjector(), ActionValidator(), ActionResolver(),
-        EffectApplier(), lambda request, projected, attempt: command("hunt_forward"),
+        EffectApplier(), provider,
     )
     result = scheduler.run_point(state, SchedulePoint.DAWN_REACTION)
-    assert [event["event_type"] for event in result.events] == [
-        "PLAYER_DIED", "AWAKENED_HUNTER_REASONING",
-    ]
+    assert asked == []
+    assert [event["event_type"] for event in result.events] == ["PLAYER_DIED"]
     assert state._pipeline_runtime.pending_damage == ()
     assert state._pipeline_runtime.role_resources[1]["gun"] == 0
 

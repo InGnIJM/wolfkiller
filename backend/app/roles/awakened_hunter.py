@@ -149,7 +149,9 @@ def resolve_awakened_hunter_action(
         GameEffect(
             derive_effect_id(context.action_key, 3), EffectKind.EMIT_EVENT,
             context.action_key,
-            payload={"event_type": "AWAKENED_HUNT", "payload": {"target_seat": target}},
+            payload={"event_type": "AWAKENED_HUNT", "payload": {
+                "target_seat": target, "seat": context.actor_seat,
+            }},
             visibility=("PUBLIC",), sort_key=(3,), **common,
         ),
         _awakened_hunter_reasoning_effect(context, command, 4, **common),
