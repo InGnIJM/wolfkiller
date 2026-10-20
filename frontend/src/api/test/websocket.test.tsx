@@ -229,6 +229,27 @@ describe('useWebSocket', () => {
     expect(useGameStore.getState().streamingSpeech?.seat).toBe(6);
   });
 
+  it('streams a live seat thinking tail only while following live', () => {
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1'));
+    const socket = MockWebSocket.instances[0];
+
+    act(() => {
+      useGameStore.setState({ isFollowingLive: true });
+      socket.emit({ type: 'speech_thinking', seat: 6, text: '6号在想' });
+      socket.emit({ type: 'speech_thinking', seat: 6, text: 7 });
+      socket.emit({ type: 'speech_thinking', seat: 6, text: '多余字段', extra: 1 });
+    });
+    expect(useGameStore.getState().streamingSpeech).toMatchObject({ seat: 6, thinking: '6号在想' });
+
+    act(() => {
+      useGameStore.setState({ isFollowingLive: false });
+      socket.emit({ type: 'speech_thinking', seat: 6, text: '回放时不写' });
+    });
+    expect(useGameStore.getState().streamingSpeech?.thinking).toBe('6号在想');
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
   it('ignores replay, state, malformed, unknown, and private websocket events', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useWebSocket());
