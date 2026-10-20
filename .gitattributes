@@ -1,3 +1,7 @@
 # 仓库内统一按 LF 存储：Windows 编辑器写回的 CRLF 不再产生整文件假 diff。
 # text=auto 会自动识别二进制文件（如 *.png）并跳过，不做任何转换。
 * text=auto eol=lf
+
+# cmd.exe 按系统 ANSI 解析 .bat：UTF-8 BOM 会让 @echo off 失效，中文多字节
+# 会被当成括号/重定向。工作区必须是无 BOM 的 CRLF ASCII（或本机 ANSI）。
+*.bat text eol=crlf
