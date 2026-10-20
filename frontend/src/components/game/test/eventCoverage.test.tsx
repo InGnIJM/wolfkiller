@@ -144,6 +144,11 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
+    what: '定序王子回溯放逐投票',
+    event: { ...at, event_type: 'vote_rewound', payload: { seat: 3, round_number: 2 } },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '技术性弃权',
     event: {
       ...at,
@@ -372,7 +377,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(35);
+    expect(listed).toHaveLength(36);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];
