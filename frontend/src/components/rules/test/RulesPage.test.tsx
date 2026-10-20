@@ -87,7 +87,7 @@ describe('规则介绍页', () => {
     // 左索引列出全部角色（含未登记 id 与未知阵营），阵营分组标题照常显示。
     expect(screen.getByRole('button', { name: '白痴' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '神秘人' })).toBeInTheDocument();
-    expect(screen.getByText('third_party')).toBeInTheDocument();
+    expect(screen.getByText('第三方阵营')).toBeInTheDocument();
     expect(screen.getByText('狼人阵营')).toBeInTheDocument();
     expect(screen.getByText('好人阵营')).toBeInTheDocument();
 
@@ -96,7 +96,7 @@ describe('规则介绍页', () => {
       expect(screen.getByRole('heading', { level: 2, name: title })).toBeInTheDocument();
     }
     expect(screen.getByText(/守卫先睁眼/)).toBeInTheDocument();
-    expect(screen.getByText(/先判狼人/)).toBeInTheDocument();
+    expect(screen.getByText(/默认按「屠边」判定，并且先判狼人/)).toBeInTheDocument();
   });
 
   it('切换左侧索引后右侧详情跟着换', async () => {

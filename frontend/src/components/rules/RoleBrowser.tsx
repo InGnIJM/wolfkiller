@@ -21,7 +21,7 @@ interface Props {
 }
 
 function campLabel(camp: string): string {
-  return camp === 'good' || camp === 'werewolf'
+  return camp in WINNING_CAMP_LABELS
     ? WINNING_CAMP_LABELS[camp as WinningCamp]
     : camp;
 }
