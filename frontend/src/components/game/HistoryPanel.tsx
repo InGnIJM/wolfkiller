@@ -6,9 +6,11 @@ import { fetchGameMemories } from '../../api/client';
 import type { PlayerMemory, PublicReplayEvent } from '../../store/types';
 import {
   DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, EVENT_TAGS, KNOWLEDGE_LABELS,
-  MEMORY_ACTION_LABELS, MEMORY_EVENT_LABELS, NIGHT_ACTION_LABELS,
-  PLAYER_STATUS_LABELS, ROLE_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
+  MEMORY_ACTION_LABELS, MEMORY_EVENT_LABELS,
+  PLAYER_STATUS_LABELS, ROLE_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
+  VOTE_REWOUND_RESULT, nightActionCaption, thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
+import { roleLabelForSeat } from '../shared/roleMeta';
 
 interface Props {
   onClose: () => void;
@@ -80,7 +82,7 @@ function formatKnowledgeValue(key: string, value: unknown): string {
           const record = item as Record<string, unknown>;
           const target = record.target_seat ?? record.target;
           const camp = record.camp ?? record.result;
-          const campLabel = camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : String(camp);
+          const campLabel = camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp === 'third_party' ? '第三方' : String(camp);
           return `${target}号→${campLabel}`;
         }).join('、')
       : '无';
@@ -194,6 +196,8 @@ function EventCard({
   event: PublicReplayEvent;
   onClick: () => void;
 }) {
+  const players = useGameStore((s) => s.players);
+  const timeline = useGameStore((s) => s.timeline);
   let content: React.ReactNode;
 
   switch (event.event_type) {
@@ -230,7 +234,18 @@ function EventCard({
     case 'vote_result':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          投票结果 · 第{event.payload.round_number}轮 · {event.payload.exiled_seat === null ? '平票' : `${event.payload.exiled_seat}号被放逐`}
+          投票结果 · 第{event.payload.round_number}轮 · {event.payload.exiled_seat === null
+            ? (voteRoundWasRewound(event.payload.round_number, timeline)
+              ? VOTE_REWOUND_RESULT
+              : '平票')
+            : `${event.payload.exiled_seat}号被放逐`}
+        </Typography>
+      );
+      break;
+    case 'vote_rewound':
+      content = (
+        <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
+          {event.payload.seat}号发动逆转时空，放逐投票作废 · 第{event.payload.round_number}轮
         </Typography>
       );
       break;
@@ -371,7 +386,12 @@ function EventCard({
     case 'night_action':
       content = (
         <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-          {NIGHT_ACTION_LABELS[event.payload.action_type] ?? '夜晚行动'} · 目标{event.payload.target_seat}号 · 第{event.payload.round_number}轮
+          {nightActionCaption(event.payload.action_type, {
+            seat: event.payload.seat,
+            targetSeat: event.payload.target_seat,
+            intendedSeat: event.payload.intended_seat,
+            roleName: roleLabelForSeat(event.payload.seat, players),
+          })} · 第{event.payload.round_number}轮
         </Typography>
       );
       break;
@@ -419,7 +439,7 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {THOUGHT_LABELS[event.event_type]} · {event.payload.seat}号
+            {event.payload.seat}号{THOUGHT_ROLE_NAMES[event.event_type]}思考
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.text}
@@ -429,10 +449,13 @@ function EventCard({
       break;
     case 'night_thought': {
       const { action_type, seat, target_seat, reasoning, degraded } = event.payload;
+      const who = thoughtActorName(action_type, {
+        roleName: roleLabelForSeat(seat, players),
+      });
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {degraded ? DEGRADED_ACTION_LABEL : THOUGHT_LABELS[action_type] ?? '夜间思考'} · {seat}号
+            {degraded ? `${DEGRADED_ACTION_LABEL} · ${seat}号` : `${seat}号${who}思考`}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {/* 代行动作没有「目标/不行动」可言，正文只留中性说明。 */}
@@ -561,6 +584,7 @@ export default function HistoryPanel({ onClose }: Props) {
   const votes = indexedEvents.filter(({ event }) => (
     event.event_type === 'vote'
     || event.event_type === 'vote_result'
+    || event.event_type === 'vote_rewound'
     || event.event_type === 'exile_cancelled'
     || event.event_type === 'sheriff_elected'
     || event.event_type === 'sheriff_badge'

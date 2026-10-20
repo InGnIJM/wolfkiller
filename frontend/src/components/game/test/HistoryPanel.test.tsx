@@ -91,7 +91,7 @@ describe('HistoryPanel staged night event cards', () => {
     useGameStore.setState({ timeline });
     render(<HistoryPanel onClose={vi.fn()} />);
 
-    expect(screen.getByText(/女巫思考 · 5号/)).toBeVisible();
+    expect(screen.getByText(/5号女巫思考/)).toBeVisible();
     expect(screen.getByText('昨晚2号被刀，我决定救人')).toBeVisible();
   });
 
@@ -106,11 +106,11 @@ describe('HistoryPanel staged night event cards', () => {
     useGameStore.setState({ timeline });
     render(<HistoryPanel onClose={vi.fn()} />);
 
-    expect(screen.getByText(/猎人思考 · 4号/)).toBeVisible();
+    expect(screen.getByText(/4号猎人思考/)).toBeVisible();
     expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
 
     fireEvent.click(screen.getByRole('tab', { name: /思考/ }));
-    expect(screen.getByText(/猎人思考 · 4号/)).toBeVisible();
+    expect(screen.getByText(/4号猎人思考/)).toBeVisible();
     expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
   });
 
@@ -344,7 +344,7 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText('系统代投')).toBeVisible();
     expect(screen.getByText(/夜晚行动/)).toBeVisible();
     expect(screen.getByText(/2号 → 弃权/)).toBeVisible();
-    expect(screen.getByText(/夜间思考 · 4号/)).toBeVisible();
+    expect(screen.getByText(/4号角色思考/)).toBeVisible();
     expect(screen.getByText(/不行动：暂不行动/)).toBeVisible();
     expect(screen.getByText('游戏结束')).toBeVisible();
     expect(screen.getAllByText('第1天').length).toBeGreaterThan(0);
@@ -420,6 +420,7 @@ describe('HistoryPanel memory detail', () => {
               { target_seat: 2, camp: 'werewolf' },
               { target: 3, result: 'good' },
               { target_seat: 4, camp: 'neutral' },
+              { target_seat: 5, camp: 'third_party' },
             ],
             last_wolf_kill_target: 6,
             has_badge: true,
@@ -459,7 +460,7 @@ describe('HistoryPanel memory detail', () => {
     fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
 
     expect(await screen.findByText(/狼队友：2号、3号/)).toBeVisible();
-    expect(screen.getByText(/查验记录：2号→狼人、3号→好人、4号→neutral/)).toBeVisible();
+    expect(screen.getByText(/查验记录：2号→狼人、3号→好人、4号→neutral、5号→第三方/)).toBeVisible();
     expect(screen.getByText(/昨夜狼刀目标：6号/)).toBeVisible();
     expect(screen.getByText(/note：保留信息/)).toBeVisible();
     expect(screen.getByText(/行动 1轮：毒人 → 6号/)).toBeVisible();
@@ -676,5 +677,26 @@ describe('HistoryPanel role-skill event cards', () => {
     });
     render(<HistoryPanel onClose={vi.fn()} />);
     expect(screen.getAllByText('第4天').length).toBeGreaterThan(0);
+  });
+
+  it('does not call a voided exile tally a tie', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'vote_rewound',
+          payload: { seat: 3, round_number: 2 },
+        },
+        {
+          timestamp: '2026-08-13T00:00:01Z',
+          event_type: 'vote_result',
+          payload: { exiled_seat: null, round_number: 2 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+    expect(screen.getByText(/3号发动逆转时空，放逐投票作废/)).toBeVisible();
+    expect(screen.getByText(/放逐投票作废，重新投票/)).toBeVisible();
+    expect(screen.queryByText(/平票/)).not.toBeInTheDocument();
   });
 });
