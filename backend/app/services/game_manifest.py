@@ -32,6 +32,7 @@ _MODEL_SNAPSHOT_FIELDS = (
     "config_id", "name", "model_id", "base_url", "provider_profile",
     "count", "seats",
 )
+# Windows has no system IANA database; the tzdata package supplies it.
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
