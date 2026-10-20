@@ -167,6 +167,12 @@ _NARRATIONS: dict[str, tuple[str, str]] = {
     # The pack is silenced for the night (a feared wolf). Worded without any
     # role name so the engine never has to know which skill caused it.
     "pack_sealed": ("狼人阵营被封印", "今晚整个狼人阵营无法发动袭击。"),
+    # The pack is gone and a hidden werewolf still holds the night's kill.
+    # Worded without a role name: several cards share that contract.
+    "lone_wolf_open": (
+        "请发动袭击",
+        "狼窝已全部出局，由剩余狼人阵营玩家选择今晚的行动。",
+    ),
 }
 
 

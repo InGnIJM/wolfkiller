@@ -654,10 +654,13 @@ class GameEngine:
             # "开始讨论今晚的行动" is a promise: the pack talks only when more
             # than one of its members is alive and none of them is silenced.
             # Stage 3 re-decides the same question for real, right after.
-            title, text = director.wolf_open_narration(
-                discusses=len(wolves) > 1 and not self._pack_sealed(wolves),
-            )
-            await self._narrate(title, text)
+            # Hidden wolves are not in ``wolves``: calling them with the pack's
+            # line made the audience hear "狼人请睁眼" after the den was empty.
+            if wolves:
+                title, text = director.wolf_open_narration(
+                    discusses=len(wolves) > 1 and not self._pack_sealed(wolves),
+                )
+                await self._narrate(title, text)
             pending = replace(pending, stage=3); self._pending_night_batch = pending
 
         if pending.stage == 3:
@@ -758,6 +761,14 @@ class GameEngine:
             pending = replace(pending, stage=5); self._pending_night_batch = pending
 
         if pending.stage == 5:
+            if (
+                not wolves
+                and self._contract_point_enabled(
+                    SchedulePoint.NIGHT_WOLF_VOTE, alive_only=True,
+                )
+            ):
+                title, text = director.narration("lone_wolf_open")
+                await self._narrate(title, text)
             raw = await self._execute_v2_point(_NIGHT_POINTS[1])
             await self._log_stage_audience(raw)
             runtime = getattr(state, "_pipeline_runtime", None)

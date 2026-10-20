@@ -355,8 +355,9 @@ async def test_the_night_opens_before_any_role_is_woken() -> None:
         beats = _beats(engine)
 
         assert beats[0] == "night_open", (seats, beats)
-        if "守卫请睁眼" in beats:
-            # 角色台词仍排在狼人节拍之前（既有顺序不变）。
+        if "守卫请睁眼" in beats and "wolf_open" in beats:
+            # 角色台词仍排在狼人节拍之前（既有顺序不变）。没有狼窝时
+            # stage 2 不再播 wolf_open。
             assert beats.index("守卫请睁眼") < beats.index("wolf_open")
 
 
@@ -391,6 +392,37 @@ async def test_the_wolf_beat_matches_whether_the_pack_will_discuss() -> None:
     sealed._pack_sealed = MagicMock(return_value=True)
     await sealed._execute_staged_night()
     assert "wolf_solo" in _beats(sealed)
+
+
+@pytest.mark.asyncio
+async def test_a_living_pack_does_not_play_the_lone_wolf_beat() -> None:
+    """狼窝还在时仍是「狼人请睁眼」，不能播独刀旁白。"""
+    engine = _night_with({
+        1: "wolf-killer-werewolf",
+        3: "wolf-killer-villager",
+    })
+    engine.state.players[1].camp = "werewolf"
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    assert "wolf_open" in beats
+    assert "lone_wolf_open" not in beats
+
+
+@pytest.mark.asyncio
+async def test_an_empty_pack_opens_with_the_lone_wolf_beat() -> None:
+    """狼窝空了、隐狼还带着刀时，改播独刀旁白，不再叫狼人睁眼。"""
+    engine = _night_with({
+        1: "wolf-killer-gargoyle",
+        3: "wolf-killer-villager",
+    })
+    engine.state.players[1].camp = "werewolf"
+    snapshot = builtin_registry.freeze()
+    initialize_role_resources(engine.state, snapshot.specs, snapshot.digest)
+    await engine._execute_staged_night()
+    beats = _beats(engine)
+    assert "wolf_open" not in beats
+    assert "lone_wolf_open" in beats
+    assert beats.index("night_open") < beats.index("lone_wolf_open")
 
 
 @pytest.mark.asyncio
