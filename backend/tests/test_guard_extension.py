@@ -143,7 +143,9 @@ def test_guard_action_emits_reasoning_and_protect_audience_events() -> None:
     assert "守护 3 号" in reasoning.payload["payload"]["thought"]
     assert reasoning.visibility == ("PUBLIC",)
     assert protect.kind is EffectKind.EMIT_EVENT
-    assert protect.payload == {"event_type": "GUARD_PROTECT", "payload": {"target_seat": 3}}
+    assert protect.payload == {
+        "event_type": "GUARD_PROTECT", "payload": {"target_seat": 3, "seat": 1},
+    }
     assert protect.visibility == ("PUBLIC",)
 
 

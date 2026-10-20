@@ -98,7 +98,7 @@ def test_resolver_records_only_selected_camp_as_actor_private_fact() -> None:
     assert result.sort_key == (3,)
     assert result.payload == {
         "event_type": "SEER_CHECK",
-        "payload": {"target_seat": 2, "result": "werewolf"},
+        "payload": {"target_seat": 2, "result": "werewolf", "seat": 1},
     }
 
 

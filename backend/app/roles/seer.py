@@ -102,7 +102,12 @@ def resolve_seer_action(
             context.action_key,
             payload={
                 "event_type": "SEER_CHECK",
-                "payload": {"target_seat": checked, "result": camp},
+                "payload": {
+                    "target_seat": checked,
+                    "result": camp,
+                    "seat": context.actor_seat,
+                    **({"intended_seat": command.target_seat} if locked else {}),
+                },
             },
             visibility=("PUBLIC",),
             expected_revision=context.revision,

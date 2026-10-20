@@ -89,7 +89,11 @@ def resolve_guard_action(
         GameEffect(
             derive_effect_id(context.action_key, 4), EffectKind.EMIT_EVENT,
             context.action_key,
-            payload={"event_type": "GUARD_PROTECT", "payload": {"target_seat": target}},
+            payload={"event_type": "GUARD_PROTECT", "payload": {
+                "target_seat": target,
+                "seat": context.actor_seat,
+                **({"intended_seat": command.target_seat} if locked else {}),
+            }},
             visibility=("PUBLIC",), sort_key=(4,), **common,
         ),
     )
