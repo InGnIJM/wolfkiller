@@ -437,7 +437,9 @@ async def test_the_seer_beat_precedes_the_seers_own_night() -> None:
         1: "wolf-killer-seer",
         2: "wolf-killer-witch",
         3: "wolf-killer-villager",
+        4: "wolf-killer-werewolf",
     })
+    engine.state.players[4].camp = "werewolf"
     await engine._execute_staged_night()
     beats = _beats(engine)
     # 身份查验点的台词由角色声明（预言家声明的那句与引擎节拍逐字相同），女巫仍是
