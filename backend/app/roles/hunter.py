@@ -101,7 +101,9 @@ def resolve_hunter_action(
         GameEffect(
             derive_effect_id(context.action_key, 3), EffectKind.EMIT_EVENT,
             context.action_key,
-            payload={"event_type": "HUNTER_SHOT", "payload": {"target_seat": command.target_seat}},
+            payload={"event_type": "HUNTER_SHOT", "payload": {
+                "target_seat": command.target_seat, "seat": context.actor_seat,
+            }},
             visibility=("PUBLIC",), sort_key=(3,), **common,
         ),
         _hunter_reasoning_effect(context, command, 4, **common),

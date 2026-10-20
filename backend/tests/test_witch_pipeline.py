@@ -102,8 +102,12 @@ def test_resolve_save_poison_and_pass_effects_are_canonical() -> None:
     }
     assert poisoned[2].payload["event_type"] == "WITCH_REASONING"
     assert poisoned[2].payload["payload"]["thought"] == "决定使用毒药毒杀 3 号玩家：ok"
-    assert saved[4].payload == {"event_type": "WITCH_SAVE", "payload": {"target_seat": 2}}
-    assert poisoned[3].payload == {"event_type": "WITCH_POISON", "payload": {"target_seat": 3}}
+    assert saved[4].payload == {
+        "event_type": "WITCH_SAVE", "payload": {"target_seat": 2, "seat": 1},
+    }
+    assert poisoned[3].payload == {
+        "event_type": "WITCH_POISON", "payload": {"target_seat": 3, "seat": 1},
+    }
     assert saved[4].visibility == poisoned[3].visibility == ("PUBLIC",)
 
 

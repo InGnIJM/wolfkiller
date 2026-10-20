@@ -125,10 +125,17 @@ def resolve_witch_action(
     idx = len(effects) + 1
     effects.append(_witch_reasoning_effect(context, command, idx, **common))
     idx += 1
+    outcome_event: dict[str, object] = {
+        "target_seat": target, "seat": context.actor_seat,
+    }
+    if locked:
+        # The thought keeps the model's original target; this names the redirect
+        # so the god view can tell intent from settlement.
+        outcome_event["intended_seat"] = command.target_seat
     effects.append(
         GameEffect(derive_effect_id(context.action_key, idx), EffectKind.EMIT_EVENT,
             context.action_key,
-            payload={"event_type": emit_type, "payload": {"target_seat": target}},
+            payload={"event_type": emit_type, "payload": outcome_event},
             visibility=("PUBLIC",), sort_key=(idx,), **common),
     )
     if locked:

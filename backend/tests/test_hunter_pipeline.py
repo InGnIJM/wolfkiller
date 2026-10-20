@@ -109,7 +109,9 @@ def test_validate_and_resolve_shoot_or_pass() -> None:
     assert effects[0].payload == {"target": 1, "resource": "gun", "amount": 1}
     assert effects[0].preconditions == {"resource_equals": {"resource": "gun", "value": 1}}
     assert effects[1].payload == {"target": 2, "amount": 1, "cause": "hunter_shot"}
-    assert effects[2].payload == {"event_type": "HUNTER_SHOT", "payload": {"target_seat": 2}}
+    assert effects[2].payload == {
+        "event_type": "HUNTER_SHOT", "payload": {"target_seat": 2, "seat": 1},
+    }
     assert effects[2].visibility == ("PUBLIC",)
     assert effects[3].payload == {
         "event_type": "HUNTER_REASONING",
