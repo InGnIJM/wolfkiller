@@ -22,6 +22,9 @@ from app.models.vote import CastVoteArgs, VoteError, VoteReceipt, VoteStatus, Vo
 # them through ADD_STATUS effects; the vote domain only reads them.
 NO_VOTE_STATUS = "no_vote"
 EXILE_IMMUNE_STATUS = "exile_immune"
+#: Extra ballot added once, on the exile tally only, for a seat carrying this
+#: mark. Sheriff ballots never call ``tally``, so they do not pick it up.
+CURSE_STATUS = "cursed"
 
 
 def seats_with_status(state: GameState, status: str) -> frozenset[int]:
@@ -233,7 +236,57 @@ class VoteService:
                 target = receipt.target_seat
                 assert target is not None
                 tally[target] = tally.get(target, 0) + ballot_weight(self._state, receipt.voter_seat)
+        # One extra ballot for the mark, once per tally, including a seat nobody
+        # voted for. Only seats that can still be exiled receive it.
+        cursed = seats_with_status(self._state, CURSE_STATUS) & eligible_exile_targets(self._state)
+        for seat in cursed:
+            tally[seat] = tally.get(seat, 0) + 1
         return tally
+
+    def clear_tally_marks(self) -> None:
+        """Drop exile-tally marks once a vote result has been recorded.
+
+        A day that never reaches a tally (an explosion before the vote) leaves
+        the mark for the next real tally. The removal goes through the write
+        entry; a seat that does not hold the mark is not touched.
+        """
+        cursed = tuple(sorted(seats_with_status(self._state, CURSE_STATUS)))
+        if not cursed:
+            return
+        with state_transaction_lock(self._state):
+            # Marks live on the pipeline runtime, so the revision the write
+            # entry compares is that runtime's, not the checkpoint counter.
+            revision = self._state._pipeline_runtime.revision
+            action_key = f"exile-tally:{revision}"
+            effects = (
+                GameEffect(
+                    effect_id=derive_effect_id(action_key, 0),
+                    kind=EffectKind.ACCEPT_ACTION,
+                    source_action_key=action_key,
+                    expected_revision=revision,
+                    sort_key=(0,),
+                ),
+                *(
+                    GameEffect(
+                        effect_id=derive_effect_id(action_key, index + 1),
+                        kind=EffectKind.REMOVE_STATUS,
+                        source_action_key=action_key,
+                        target_seat=seat,
+                        payload={"target": seat, "status": CURSE_STATUS},
+                        expected_revision=revision,
+                        sort_key=(index + 1,),
+                    )
+                    for index, seat in enumerate(cursed)
+                ),
+            )
+            EffectApplier().apply(
+                self._state, effects,
+                EffectPermission(
+                    cursed[0], frozenset({EffectKind.REMOVE_STATUS}),
+                    frozenset({EffectKind.REMOVE_STATUS}),
+                    frozenset(cursed), frozenset(),
+                ),
+            )
 
     def _commit(
         self, window_id: str, voter_seat: int, *, status: VoteStatus,

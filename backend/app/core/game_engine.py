@@ -1773,7 +1773,7 @@ class GameEngine:
         scheduler = self._pipeline_scheduler
         if scheduler is None:
             return False
-        specs = getattr(scheduler.registry, "specs", None)
+        specs = getattr(getattr(scheduler, "registry", None), "specs", None)
         if not isinstance(specs, Mapping):
             return False
         seated = self.state.alive_players() if alive_only else self.state.players
@@ -1952,9 +1952,43 @@ class GameEngine:
         # published because a ``day_point:`` commit only happens right after
         # this assignment.
         self._pending_point_events = self._pipeline_audience_events(result)
+        self._note_card_flips(self._pending_point_events)
         if self._pending_point_events:
             await self._durable_checkpoint(f"day_point:{point.value}:{slot}")
         return result
+
+    def _note_card_flips(
+        self, events: tuple[tuple[str, object], ...],
+    ) -> None:
+        """Record a public identity flip that does not cancel the exile.
+
+        The exile-cancel and vote-rewind paths announce the flip themselves.
+        A flip that only publishes ``PLAYER_REVEALED`` still has to land on the
+        seat, or the next prompt and the next snapshot would not know the card
+        was shown.
+        """
+        kinds = {event_type for event_type, _ in events}
+        announced = bool(kinds & {"EXILE_CANCELLED", "VOTE_REWOUND"})
+        for event_type, payload in events:
+            if event_type != "PLAYER_REVEALED" or not isinstance(payload, Mapping):
+                continue
+            seat = payload.get("seat_number")
+            if type(seat) is not int:
+                continue
+            player = self.state.players.get(seat)
+            if player is None or player.revealed_role is not None:
+                continue
+            player.revealed_role = player.role
+            if announced:
+                continue
+            try:
+                display_name = builtin_registry.freeze().specs[player.role].display_name
+            except KeyError:
+                display_name = player.role
+            self.conversation_log.add_system_message(
+                f"{seat}号玩家翻牌亮出身份：{display_name}。",
+                self.state.round_number, "public",
+            )
 
     def _rotate_speech_order(
         self, alive: list[tuple[int, PlayerState]],
@@ -2242,6 +2276,7 @@ class GameEngine:
             self.state.votes, None if cancelled else exiled_seat, self.state.round_number,
             cancelled_seat=exiled_seat if cancelled else None,
         )
+        self._vote_service.clear_tally_marks()
         await self._durable_checkpoint(
             f"vote_result:{self.state.round_number}:{self.state.vote_round}:"
             f"{'none' if cancelled or exiled_seat is None else exiled_seat}"
@@ -2331,6 +2366,7 @@ class GameEngine:
             self.conversation_log.add_vote_result(
                 self.state.votes, None, self.state.round_number,
             )
+            self._vote_service.clear_tally_marks()
             await self._durable_checkpoint(
                 f"vote_result:{self.state.round_number}:1:none"
             )
@@ -2369,6 +2405,7 @@ class GameEngine:
                 self.state.votes, None, self.state.round_number,
             )
 
+        self._vote_service.clear_tally_marks()
         await self._durable_checkpoint(
             f"vote_result:{self.state.round_number}:1:"
             f"{'none' if cancelled or exiled_seat is None else exiled_seat}"

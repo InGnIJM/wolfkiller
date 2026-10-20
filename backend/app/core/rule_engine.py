@@ -1,6 +1,6 @@
-from app.models.game import GameState, Camp
+from app.models.game import DEFAULT_VICTORY, GameState
 from app.models.actions import WinResult
-from app.core.win_attribution import winner_seats
+from app.core.win_attribution import GOOD, THIRD, WOLF, seat_allegiances, winner_seats
 
 
 def _role_tags(role_id: str) -> frozenset[str]:
@@ -22,27 +22,51 @@ class RuleEngine:
     role declares in its spec, never from its id: an id is free-form, so
     matching on it silently drops any role whose name does not happen to contain
     a magic substring, and a dropped god can trigger an early wolf win.
+
+    Headcount uses allegiance, which equals the stored camp until a link or a
+    crush moves it. A living third-party allegiance blocks every other ending.
     """
 
     def check_win(self, state: GameState) -> WinResult | None:
-        alive_wolves = len(state.alive_by_camp(Camp.WEREWOLF))
-        alive = state.alive_players().values()
-        alive_gods = len([p for p in alive if "god" in _role_tags(p.role)])
-        alive_villagers = len([p for p in alive if "villager" in _role_tags(p.role)])
+        allegiances = seat_allegiances(state)
+        alive = [seat for seat, player in state.players.items() if player.is_alive]
+        alive_sides = [allegiances[seat] for seat in alive]
+
+        # A living third party has to be the last side standing, or nobody has
+        # won yet. This is checked before 屠边 and 屠城 alike.
+        if THIRD in alive_sides:
+            if alive and all(side == THIRD for side in alive_sides):
+                return self._result(state, THIRD, "all_others_dead")
+            return None
+
+        if getattr(state.config, "victory", DEFAULT_VICTORY) == "city":
+            # 狼刀在先: an empty town is a wolf win, same bias as 屠边's empty board.
+            if GOOD not in alive_sides:
+                return self._result(state, WOLF, "all_good_dead")
+            if WOLF not in alive_sides:
+                return self._result(state, GOOD, "all_wolves_dead")
+            return None
+
+        alive_players = state.alive_players().values()
+        alive_gods = len([player for player in alive_players if "god" in _role_tags(player.role)])
+        alive_villagers = len([
+            player for player in alive_players if "villager" in _role_tags(player.role)
+        ])
+        alive_wolves = sum(1 for seat in alive if allegiances[seat] == WOLF)
 
         # 狼刀在先: check wolf win conditions first
         if alive_gods == 0:
-            return self._result(state, Camp.WEREWOLF.value, "all_gods_dead")
+            return self._result(state, WOLF, "all_gods_dead")
 
         if alive_villagers == 0:
-            return self._result(state, Camp.WEREWOLF.value, "all_villagers_dead")
+            return self._result(state, WOLF, "all_villagers_dead")
 
-        alive_good = len(state.alive_players()) - alive_wolves
+        alive_good = len(alive) - alive_wolves
         if alive_wolves > alive_good:
-            return self._result(state, Camp.WEREWOLF.value, "wolves_outnumber_good")
+            return self._result(state, WOLF, "wolves_outnumber_good")
 
         if alive_wolves == 0:
-            return self._result(state, Camp.GOOD.value, "all_wolves_dead")
+            return self._result(state, GOOD, "all_wolves_dead")
 
         return None
 

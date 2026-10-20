@@ -268,7 +268,14 @@ class ContextProjector:
         # An inspection reads the identity a seat *shows*: a disguised seat answers
         # with the imitated role and camp, everything else with its own.
         disguise = disguised_identity(state, seat)
-        shown_camp = target.camp if disguise is None else disguise[1]
+        # An inspection reads the side a seat is on *now*. A link or a crush can
+        # move that without rewriting the stored camp; a disguise still wins,
+        # because the imitated identity is what the check is supposed to see.
+        if disguise is None:
+            from app.core.win_attribution import seat_allegiances
+            shown_camp = seat_allegiances(state).get(seat, target.camp)
+        else:
+            shown_camp = disguise[1]
         shown_role = target.role if disguise is None else disguise[0]
         if "camp_label" in namespaces:
             selected["camp_label"] = self._token(
@@ -367,6 +374,7 @@ class ContextProjector:
                 )
             )
             facts.update(self._held_check_facts(state, actor, facts))
+            facts.update(self._held_lover_facts(state, actor, facts))
             facts.update(self._derived_facts(state, actor, spec))
         if "CAMP" in visible:
             facts.update(_camp_facts(state, actor))
@@ -450,6 +458,7 @@ class ContextProjector:
             )
         )
         facts.update(self._held_check_facts(state, actor, facts))
+        facts.update(self._held_lover_facts(state, actor, facts))
         facts.update(self._derived_facts(state, actor, spec))
         return ActionContext(
             game_id=state.game_id,
@@ -701,6 +710,28 @@ class ContextProjector:
             for result in canonical[-20:]
             if (projected := cls._project_check_result(result)) is not None
         )}
+
+    @staticmethod
+    def _held_lover_facts(
+        state: GameState, actor: PlayerState, facts: Mapping[str, object],
+    ) -> dict[str, object]:
+        """The peer seat a link wrote onto a role that never declared the slot.
+
+        The two players learn each other's seat and nothing else. The sentence
+        is the fact, so the next prompt says it even though their own spec has
+        no such field.
+        """
+        from app.core.win_attribution import LOVER_PEER_KEY
+
+        if LOVER_PEER_KEY in facts:
+            return {}
+        value = role_private_data_view(state, actor.seat_number).get(LOVER_PEER_KEY)
+        if not isinstance(value, Mapping):
+            return {}
+        peer = value.get("seat")
+        if type(peer) is not int or peer not in state.players or peer == actor.seat_number:
+            return {}
+        return {LOVER_PEER_KEY: f"你与 {peer} 号是挚友，不知道对方身份。"}
 
     @classmethod
     def _actor_private_facts(
