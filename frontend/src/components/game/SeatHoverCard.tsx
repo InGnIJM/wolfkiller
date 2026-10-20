@@ -8,6 +8,7 @@ import { BACKDROP, BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens'
 function campLabel(camp?: string): string | undefined {
   if (camp === 'werewolf') return '狼人阵营';
   if (camp === 'good') return '好人阵营';
+  if (camp === 'third_party') return '第三方阵营';
   return undefined;
 }
 

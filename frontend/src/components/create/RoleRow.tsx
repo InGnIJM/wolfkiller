@@ -23,7 +23,7 @@ export default function RoleRow({
 }: Props) {
   const wolf = role.camp === 'werewolf';
   const campColor = wolf ? BLOOD_MOON.crimson : INK.dim;
-  const campText = role.camp === 'good' || role.camp === 'werewolf'
+  const campText = role.camp in WINNING_CAMP_LABELS
     ? WINNING_CAMP_LABELS[role.camp as WinningCamp]
     : role.camp;
 

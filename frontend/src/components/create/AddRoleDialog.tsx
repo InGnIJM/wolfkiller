@@ -15,7 +15,7 @@ import { rankOf } from '../shared/roleMeta';
 const SEARCH_DEBOUNCE_MS = 200;
 
 function campLabel(camp: string): string {
-  return camp === 'good' || camp === 'werewolf'
+  return camp in WINNING_CAMP_LABELS
     ? WINNING_CAMP_LABELS[camp as WinningCamp]
     : camp;
 }
