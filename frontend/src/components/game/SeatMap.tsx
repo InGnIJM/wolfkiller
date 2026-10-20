@@ -79,7 +79,8 @@ function PublicSeat({
   const accent = badge?.color ?? (
     player.camp === 'werewolf' ? '#E5484D'
       : player.camp === 'good' ? '#93B58C'
-        : 'divider'
+        : player.camp === 'third_party' ? BLOOD_MOON.gold
+          : 'divider'
   );
   // 字号随卡片尺寸缩放；竖栏很窄，长身份靠字号而不是换行
   const numeralSize = clampValue(cardSize * 0.21, 11, 13);

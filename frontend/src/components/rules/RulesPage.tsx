@@ -14,7 +14,7 @@ import { RULES_SUBTITLE, RULE_SECTIONS } from './ruleSections';
 import type { RuleSection } from './ruleSections';
 
 /** 阵营阅读顺序：狼人在前，未知阵营垫底（后端新增阵营也不会漏渲染）。 */
-const CAMP_ORDER: readonly string[] = ['werewolf', 'good'];
+const CAMP_ORDER: readonly string[] = ['werewolf', 'good', 'third_party'];
 
 function groupByCamp(roles: RoleCatalogItem[]): { camp: string; roles: RoleCatalogItem[] }[] {
   const camps = [...new Set(roles.map((role) => role.camp))]
