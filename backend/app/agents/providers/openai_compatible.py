@@ -1,5 +1,6 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessageChunk
+from langchain_openai import ChatOpenAI as _LangChainChatOpenAI
 from langchain_openai.chat_models._client_utils import (
     _cached_async_httpx_client, _cached_sync_httpx_client,
 )
@@ -8,6 +9,37 @@ from .base import (
     CallPurpose, ProviderProfile, call_budget, merge_request_headers,
     new_session_id, provider_max_retries, strip_responses_suffix,
 )
+
+#: Non-standard delta keys that carry a thinking model's reasoning stream.
+REASONING_DELTA_KEYS = ("reasoning_content", "reasoning")
+
+
+class ChatOpenAI(_LangChainChatOpenAI):
+    """``ChatOpenAI`` that keeps the reasoning stream of OpenAI-compatible gateways.
+
+    LangChain drops ``delta.reasoning_content``: a thinking model then streams
+    for tens of seconds while every chunk looks empty, so the audience sees
+    nothing until the tool arguments arrive at the very end.
+    """
+
+    def _convert_chunk_to_generation_chunk(
+        self, chunk, default_chunk_class, base_generation_info,
+    ):
+        generation = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info,
+        )
+        if generation is None or not isinstance(generation.message, AIMessageChunk):
+            return generation
+        choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices") or []
+        delta = choices[0].get("delta") if choices else None
+        if not isinstance(delta, dict):
+            return generation
+        for key in REASONING_DELTA_KEYS:
+            value = delta.get(key)
+            if isinstance(value, str) and value:
+                generation.message.additional_kwargs["reasoning_content"] = value
+                break
+        return generation
 
 
 class OpenAICompatibleTransport:

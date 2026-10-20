@@ -1043,7 +1043,7 @@ class BaseRole:
     async def _invoke_strict_action(self, messages, request):
         try:
             model = self.llm_client.get_model_with_action_tool(request.contract)
-            response = await model.ainvoke(messages)
+            response = await LLMClient._acomplete(model, messages)
         except Exception as error:
             mapped = LLMClient.map_strict_capability_error(error)
             if mapped is not error:
@@ -1091,7 +1091,7 @@ class BaseRole:
             self.llm_client.get_action_model()
             if callable(action_model) else self.llm_client.get_model()
         )
-        response = await model.ainvoke(messages)
+        response = await LLMClient._acomplete(model, messages)
         self._record_usage(extract_usage(response))
         content = _content_text(getattr(response, "content", ""))
         if not content:
@@ -1109,12 +1109,8 @@ class BaseRole:
             HumanMessage(content=prompt),
         ]
         _capture_messages(capture, messages)
-        if on_chunk and hasattr(model, "astream") and callable(getattr(model, "astream", None)):
-            coro = self.llm_client._stream_and_accumulate(model, messages, on_chunk=on_chunk)
-        else:
-            coro = model.ainvoke(messages)
         response = await asyncio.wait_for(
-            coro,
+            LLMClient._acomplete(model, messages, on_chunk=on_chunk),
             timeout=self._action_timeout_seconds(retried=False, final=False),
         )
         self._record_usage(extract_usage(response))
@@ -1182,12 +1178,8 @@ class BaseRole:
             tool_schema=tools[0]["function"]["parameters"],
             tool_name=tools[0]["function"]["name"],
         )
-        if on_chunk and hasattr(model, "astream") and callable(getattr(model, "astream", None)):
-            coro = self.llm_client._stream_and_accumulate(model, messages, on_chunk=on_chunk)
-        else:
-            coro = model.ainvoke(messages)
         response = await asyncio.wait_for(
-            coro,
+            LLMClient._acomplete(model, messages, on_chunk=on_chunk),
             timeout=self._action_timeout_seconds(retried=False, final=False),
         )
 

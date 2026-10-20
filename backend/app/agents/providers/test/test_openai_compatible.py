@@ -182,6 +182,62 @@ def test_configured_headers_reach_a_plain_profile_without_a_session_header():
     }
 
 
+# ── reasoning stream ──────────────────────────────────────────
+
+def _chat():
+    from app.agents.providers.openai_compatible import ChatOpenAI
+    return ChatOpenAI(model="m", api_key="k", base_url="https://example.test/v1")
+
+
+def _delta_chunk(delta):
+    return {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+
+
+def test_the_default_factory_keeps_the_reasoning_delta():
+    from langchain_core.messages import AIMessageChunk
+
+    model = _chat()
+    first = model._convert_chunk_to_generation_chunk(
+        _delta_chunk({"role": "assistant", "content": "", "reasoning_content": "先想"}),
+        AIMessageChunk, None,
+    )
+    second = model._convert_chunk_to_generation_chunk(
+        _delta_chunk({"content": "", "reasoning": "一想"}), AIMessageChunk, None,
+    )
+    merged = first.message + second.message
+    assert merged.additional_kwargs["reasoning_content"] == "先想一想"
+
+
+def test_a_delta_without_reasoning_is_left_untouched():
+    from langchain_core.messages import AIMessageChunk
+
+    model = _chat()
+    plain = model._convert_chunk_to_generation_chunk(
+        _delta_chunk({"content": "正文", "reasoning_content": ""}), AIMessageChunk, None,
+    )
+    assert plain.message.content == "正文"
+    assert "reasoning_content" not in plain.message.additional_kwargs
+    # A usage-only chunk has no choices; a ``None`` delta yields no chunk at all.
+    usage_only = model._convert_chunk_to_generation_chunk(
+        {"choices": []}, AIMessageChunk, None,
+    )
+    assert "reasoning_content" not in usage_only.message.additional_kwargs
+    assert model._convert_chunk_to_generation_chunk(
+        _delta_chunk(None), AIMessageChunk, None,
+    ) is None
+
+
+def test_reasoning_is_not_attached_to_a_non_ai_chunk():
+    from langchain_core.messages import HumanMessageChunk
+
+    model = _chat()
+    human = model._convert_chunk_to_generation_chunk(
+        _delta_chunk({"role": "user", "content": "x", "reasoning_content": "y"}),
+        HumanMessageChunk, None,
+    )
+    assert "reasoning_content" not in human.message.additional_kwargs
+
+
 def test_unusable_configured_headers_are_dropped():
     cfg = config(headers=(("Authorization", "Bearer leaked"), ("bad name", "v")))
     profile = ProviderRegistry().resolve("openrouter", cfg.base_url, cfg.model_id)
