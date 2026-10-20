@@ -21,6 +21,8 @@
 
 环境要求：Python >= 3.11、Node.js >= 20.19（Vite 8 要求 `^20.19.0 || >=22.12.0`）、至少一个 LLM API Key。默认走 OpenAI 兼容协议（如 [DeepSeek](https://platform.deepseek.com/)）；Anthropic Messages API 与兼容中转需在模型管理里显式选择对应协议。
 
+**Windows 一键启动**：配置好 `backend/.env` 后，双击仓库根目录的 [`start.bat`](start.bat)。它只是把下面第 2、3 步的启动命令分别开两个窗口跑起来（http://127.0.0.1:8000 与 http://localhost:5173）。关闭这两个窗口即可停止服务。依赖仍需按下面步骤自行安装一次。
+
 **1. 配置后端环境变量**：在 `backend/` 下创建 `.env`（完整变量见 [docs/development.md](docs/development.md)）：
 
 ```ini
