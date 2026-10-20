@@ -40,6 +40,11 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-eclipse-maid', 'werewolf', '蚀日侍女'],
   ['wolf-killer-time-wolf', 'werewolf', '蚀时狼妃'],
   ['wolf-killer-order-prince', 'knight', '定序王子'],
+  ['wolf-killer-fool-seer', 'seer', '愚言家'],
+  ['wolf-killer-iron-villager', 'villager', '铁好人'],
+  ['wolf-killer-crow', 'villager', '乌鸦'],
+  ['wolf-killer-cupid', 'guard', '丘比特'],
+  ['wolf-killer-admirer', 'villager', '暗恋者'],
 ];
 
 /** 后端已注册的全部角色；漏一个就会有角色在界面里显示成「未知身份」。 */

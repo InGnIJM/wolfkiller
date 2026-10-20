@@ -47,7 +47,12 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-mirror-girl',
   'wolf-killer-radiance-earl',
   'wolf-killer-order-prince',
+  'wolf-killer-fool-seer',
+  'wolf-killer-crow',
   // 孤独少女与老酒鬼都是「平民」牌：排在神职之后、普通村民之前。
+  'wolf-killer-iron-villager',
+  'wolf-killer-admirer',
+  'wolf-killer-cupid',
   'wolf-killer-old-drunkard',
   'wolf-killer-lonely-girl',
   'wolf-killer-villager',
@@ -91,6 +96,11 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-eclipse-maid', key: 'werewolf', label: '蚀日侍女' },
   { id: 'wolf-killer-time-wolf', key: 'werewolf', label: '蚀时狼妃' },
   { id: 'wolf-killer-order-prince', key: 'knight', label: '定序王子' },
+  { id: 'wolf-killer-fool-seer', key: 'seer', label: '愚言家' },
+  { id: 'wolf-killer-iron-villager', key: 'villager', label: '铁好人' },
+  { id: 'wolf-killer-crow', key: 'villager', label: '乌鸦' },
+  { id: 'wolf-killer-cupid', key: 'guard', label: '丘比特' },
+  { id: 'wolf-killer-admirer', key: 'villager', label: '暗恋者' },
 ];
 
 export const ROLE_META: Record<string, RoleMetaEntry> = Object.fromEntries(
@@ -107,6 +117,15 @@ export const ROLE_META: Record<string, RoleMetaEntry> = Object.fromEntries(
 export function roleMetaFor(roleId: string | null | undefined): RoleMetaEntry | undefined {
   if (!roleId) return undefined;
   return ROLE_META[roleId];
+}
+
+/** 上帝视角按座位读快照上的真实身份短名；座位或角色未知时不猜。 */
+export function roleLabelForSeat(
+  seat: number | null | undefined,
+  players: Record<number, { role?: string }> | undefined,
+): string | undefined {
+  if (seat == null || players == null) return undefined;
+  return roleMetaFor(players[seat]?.role)?.label;
 }
 
 /** 按 `ROLE_ORDER` 排序；未登记的角色排在最后，组内保持座位序。 */
