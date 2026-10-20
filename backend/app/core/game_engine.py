@@ -2715,9 +2715,15 @@ class GameEngine:
             BusEvent.SPEAKING, game_id=self.game_id, seat=seat,
         )
         try:
-            async def on_speech_chunk(text: str) -> None:
+            async def on_speech_chunk(text: str, kind: str = "speech") -> None:
+                # Thinking is a live-only hint: it never reaches a checkpoint,
+                # the conversation log, or any player's prompt.
+                event = (
+                    BusEvent.SPEECH_THINKING if kind == "thinking"
+                    else BusEvent.SPEECH_STREAM
+                )
                 await self.event_bus.publish(
-                    BusEvent.SPEECH_STREAM, game_id=self.game_id, seat=seat, text=text,
+                    event, game_id=self.game_id, seat=seat, text=text,
                 )
 
             try:

@@ -812,6 +812,7 @@ class GameService:
         self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._on_speech_made)
         self.event_bus.subscribe(BusEvent.SPEAKING, self._on_speaking)
         self.event_bus.subscribe(BusEvent.SPEECH_STREAM, self._on_speech_stream)
+        self.event_bus.subscribe(BusEvent.SPEECH_THINKING, self._on_speech_thinking)
         self.event_bus.subscribe(BusEvent.ACTING, self._on_acting)
         self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
@@ -3481,6 +3482,13 @@ class GameService:
         await self.ws_manager.broadcast(game_id, "speaking", seat=seat)
 
     async def _on_speech_stream(self, **kwargs) -> None:
+        await self._notify_live_text("speech_stream", kwargs)
+
+    async def _on_speech_thinking(self, **kwargs) -> None:
+        # Live-only: the thinking tail is never written to the audience table.
+        await self._notify_live_text("speech_thinking", kwargs)
+
+    async def _notify_live_text(self, msg_type: str, kwargs: dict) -> None:
         game_id = self._known_game_id(kwargs)
         seat = kwargs.get("seat")
         text = kwargs.get("text")
@@ -3492,8 +3500,8 @@ class GameService:
             or not isinstance(text, str)
         ):
             return
-        self.ws_manager.queue_v2_notice(game_id, "speech_stream", seat=seat, text=text)
-        await self.ws_manager.broadcast(game_id, "speech_stream", seat=seat, text=text)
+        self.ws_manager.queue_v2_notice(game_id, msg_type, seat=seat, text=text)
+        await self.ws_manager.broadcast(game_id, msg_type, seat=seat, text=text)
 
     async def _on_acting(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)

@@ -13,6 +13,7 @@ class GameEvent(str, Enum):
     SPEECH_MADE = "speech_made"
     SPEAKING = "speaking"
     SPEECH_STREAM = "speech_stream"
+    SPEECH_THINKING = "speech_thinking"
     ACTING = "acting"
     VOTE_CAST = "vote_cast"
     NIGHT_ACTION_SUBMITTED = "night_action_submitted"
