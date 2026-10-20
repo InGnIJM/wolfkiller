@@ -2,10 +2,13 @@ import { Box, Typography, keyframes } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
 import type { GamePhase, PublicReplayEvent } from '../../store/types';
 import {
-  CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, NIGHT_ACTION_LABELS,
+  CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL,
   NIGHT_ACTION_ROLE_NAMES, NIGHT_EVENT_ROLE_NAMES, PLAYER_STATUS_LABELS,
-  SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
+  SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES, VOTE_REWOUND_RESULT, WINNING_CAMP_LABELS,
+  nightActionCaption, thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
+import { roleLabelForSeat } from '../shared/roleMeta';
+import type { PublicPlayerState } from '../../store/types';
 import { BACKDROP } from '../../theme/tokens';
 
 const fadeIn = keyframes`
@@ -14,7 +17,10 @@ const fadeIn = keyframes`
 `;
 
 function campLabel(camp: string): string {
-  return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp;
+  if (camp === 'werewolf') return '狼人';
+  if (camp === 'good') return '好人';
+  if (camp === 'third_party') return '第三方';
+  return camp;
 }
 
 function deathCauseLabel(
@@ -65,16 +71,23 @@ function ordinalEn(n: number): string {
   return EN_ORDINAL[n] ?? String(n);
 }
 
-function nightRole(entry: PublicReplayEvent | null): string | null {
+function nightRole(
+  entry: PublicReplayEvent | null,
+  players: Record<number, PublicPlayerState>,
+): string | null {
   if (!entry) return null;
   // 舞者/假面没有 `night_action` 行（载荷形状不同），它们各自成事件类型。
   const named = NIGHT_EVENT_ROLE_NAMES[entry.event_type];
   if (named) return named;
   if (entry.event_type === 'night_action') {
-    return NIGHT_ACTION_ROLE_NAMES[entry.payload.action_type] ?? null;
+    return roleLabelForSeat(entry.payload.seat, players)
+      ?? NIGHT_ACTION_ROLE_NAMES[entry.payload.action_type]
+      ?? null;
   }
   if (entry.event_type === 'night_thought') {
-    return THOUGHT_ROLE_NAMES[entry.payload.action_type] ?? null;
+    return thoughtActorName(entry.payload.action_type, {
+      roleName: roleLabelForSeat(entry.payload.seat, players),
+    });
   }
   if (entry.event_type === 'witch_thought' || entry.event_type === 'seer_thought') {
     return THOUGHT_ROLE_NAMES[entry.event_type] ?? null;
@@ -93,9 +106,15 @@ function buildReport(phase: string, events: PublicReplayEvent[]): string {
       return `${e.payload.player_seat}号在夜色中出局，死因：${deathCauseLabel(e, phase, events, i)}`;
     }
     if (e.event_type === 'vote_result') {
-      return e.payload.exiled_seat === null
-        ? '公投平票，无人被放逐'
-        : `${e.payload.exiled_seat}号被公投放逐，尘土落定`;
+      if (e.payload.exiled_seat === null) {
+        return voteRoundWasRewound(e.payload.round_number, events)
+          ? VOTE_REWOUND_RESULT
+          : '公投平票，无人被放逐';
+      }
+      return `${e.payload.exiled_seat}号被公投放逐，尘土落定`;
+    }
+    if (e.event_type === 'vote_rewound') {
+      return `${e.payload.seat}号发动逆转时空，放逐投票作废`;
     }
     if (e.event_type === 'sheriff_elected') {
       return e.payload.seat == null
@@ -140,7 +159,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   // 组件签名的 phase 是 string（未知取值原样显示），查表时按联合收窄。
   let phaseLabel = CENTER_PHASE_LABELS[phase as GamePhase] || phase;
   if (phase === 'night') {
-    const role = nightRole(currentEntry);
+    const role = nightRole(currentEntry, players);
     if (role) phaseLabel = `黑夜 · ${role}`;
   }
 
@@ -248,6 +267,7 @@ function EventSummary({
   events: PublicReplayEvent[];
   index: number;
 }) {
+  const players = useGameStore((s) => s.players);
   let text: string;
   let tone = '#E8C887';
 
@@ -273,10 +293,12 @@ function EventSummary({
     }
     case 'night_thought': {
       // 引擎代行时「某角色思考中」是错的：它没有思考，是引擎替它提交的。
-      const who = THOUGHT_ROLE_NAMES[entry.payload.action_type] ?? '角色';
+      const who = thoughtActorName(entry.payload.action_type, {
+        roleName: roleLabelForSeat(entry.payload.seat, players),
+      });
       text = entry.payload.degraded
         ? `${entry.payload.seat}号${DEGRADED_ACTION_LABEL}`
-        : `${who}思考中`;
+        : `${entry.payload.seat}号${who}思考中`;
       tone = '#C4B5FD';
       break;
     }
@@ -294,7 +316,12 @@ function EventSummary({
       tone = '#F4B3B6';
       break;
     case 'night_action':
-      text = `${NIGHT_ACTION_LABELS[entry.payload.action_type] ?? '夜晚行动'} · 目标 ${entry.payload.target_seat}号`;
+      text = nightActionCaption(entry.payload.action_type, {
+        seat: entry.payload.seat,
+        targetSeat: entry.payload.target_seat,
+        intendedSeat: entry.payload.intended_seat,
+        roleName: roleLabelForSeat(entry.payload.seat, players),
+      });
       tone = '#9DC8E8';
       break;
     case 'death':
@@ -307,7 +334,14 @@ function EventSummary({
         : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`;
       break;
     case 'vote_result':
-      text = entry.payload.exiled_seat === null ? '平票，无人被放逐' : `${entry.payload.exiled_seat}号被放逐`;
+      text = entry.payload.exiled_seat === null
+        ? (voteRoundWasRewound(entry.payload.round_number, events)
+          ? VOTE_REWOUND_RESULT
+          : '平票，无人被放逐')
+        : `${entry.payload.exiled_seat}号被放逐`;
+      break;
+    case 'vote_rewound':
+      text = `${entry.payload.seat}号发动逆转时空，放逐投票作废`;
       break;
     case 'technical_abstain':
       text = `${entry.payload.voter_seat}号 系统代投弃权`;
@@ -401,7 +435,7 @@ function EventSummary({
       text = entry.payload.title;
       break;
     case 'winner':
-      text = entry.payload.winning_camp === 'werewolf' ? '狼人阵营获胜' : '好人阵营获胜';
+      text = `${WINNING_CAMP_LABELS[entry.payload.winning_camp] ?? entry.payload.winning_camp}获胜`;
       tone = '#F4B3B6';
       break;
     default:
@@ -444,6 +478,36 @@ function EventSummary({
   );
 }
 
+// 中央舞台只放一行流式摘要，取末尾这么多字，完整正文看底部活动栏
+const LIVE_LINE_CHARS = 40;
+
+function LiveSpeechLine({ seat }: { seat: number }) {
+  const streaming = useGameStore((s) => s.streamingSpeech);
+  const isFollowingLive = useGameStore((s) => s.isFollowingLive);
+  if (!isFollowingLive || streaming === null || streaming.seat !== seat) return null;
+  const { text, thinking } = streaming;
+  if (!text && !thinking) return null;
+  const body = text || thinking;
+  const tail = body.length > LIVE_LINE_CHARS ? `…${body.slice(-LIVE_LINE_CHARS)}` : body;
+  const line = text ? tail : `思考中：${tail}`;
+  return (
+    <Typography
+      data-testid="center-live-speech"
+      variant="body2"
+      noWrap
+      sx={{
+        mt: 0.8,
+        mx: 'auto',
+        maxWidth: '90cqi',
+        color: text ? 'text.primary' : 'text.secondary',
+        fontSize: 'clamp(10px, 1.6cqh, 13px)',
+      }}
+    >
+      {line}
+    </Typography>
+  );
+}
+
 export default function CenterDisplay() {
   const { phase, roundNumber, timeline, timelineIndex, isPaused } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
@@ -473,6 +537,7 @@ export default function CenterDisplay() {
           index={timelineIndex}
         />
       )}
+      {entry?.event_type === 'speaking' && <LiveSpeechLine seat={entry.payload.seat} />}
     </Box>
   );
 }

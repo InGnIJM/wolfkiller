@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -221,6 +221,35 @@ describe('CenterDisplay event summary', () => {
     expect(screen.queryByText('全文在活动栏')).not.toBeInTheDocument();
   });
 
+  it('shows a one-line live tail of the streaming speech or thinking', () => {
+    const speaking: PublicReplayEvent = {
+      ...replayEventMeta,
+      event_type: 'speaking',
+      payload: { seat: 4, round_number: 1 },
+    };
+    renderCenter({ timeline: [speaking], timelineIndex: 0 });
+    expect(screen.queryByTestId('center-live-speech')).not.toBeInTheDocument();
+
+    act(() => useGameStore.getState().setStreamingThinking(4, '先看看谁在跳预言家'));
+    expect(screen.getByTestId('center-live-speech')).toHaveTextContent('思考中：先看看谁在跳预言家');
+
+    act(() => useGameStore.getState().setStreamingSpeech(4, '我'.repeat(45)));
+    expect(screen.getByTestId('center-live-speech')).toHaveTextContent(`…${'我'.repeat(40)}`);
+
+    // 另一个座位的流、空流、离开直播都不显示
+    act(() => useGameStore.getState().setStreamingSpeech(5, '五号'));
+    expect(screen.queryByTestId('center-live-speech')).not.toBeInTheDocument();
+    act(() => useGameStore.setState({
+      streamingSpeech: { seat: 4, text: '', thinking: '', updatedAt: 1 },
+    }));
+    expect(screen.queryByTestId('center-live-speech')).not.toBeInTheDocument();
+    act(() => useGameStore.setState({
+      streamingSpeech: { seat: 4, text: '四号', thinking: '', updatedAt: 1 },
+      isFollowingLive: false,
+    }));
+    expect(screen.queryByTestId('center-live-speech')).not.toBeInTheDocument();
+  });
+
   it('summarizes death, vote and vote-result events', () => {
     renderCenter({
       timeline: [
@@ -274,7 +303,7 @@ describe('CenterDisplay event summary', () => {
       ],
       timelineIndex: 0,
     });
-    expect(screen.getByText('狼人行动 · 目标 2号')).toBeInTheDocument();
+    expect(screen.getByText('狼人行动 · 目标2号')).toBeInTheDocument();
   });
 
   it('summarizes night wolf votes and keeps the acting-role night label', () => {
@@ -614,5 +643,70 @@ describe('CenterDisplay event summary', () => {
       timelineIndex: 0,
     });
     expect(screen.getByText('6号出局，2号殉情')).toBeInTheDocument();
+  });
+
+  it('labels a night action by the acting seat\'s real role', () => {
+    useGameStore.setState({
+      players: {
+        5: {
+          seat_number: 5, is_alive: true, is_sheriff: false,
+          role: 'wolf-killer-eclipse-maid',
+        },
+      },
+    });
+    renderCenter({
+      phase: 'night',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_action',
+          payload: {
+            action_type: 'witch_poison', seat: 5, target_seat: 3, round_number: 2,
+          },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText('黑夜 · 蚀日侍女')).toBeInTheDocument();
+    expect(screen.getByText('5号蚀日侍女 · 毒人 · 目标3号')).toBeInTheDocument();
+  });
+
+  it('marks a time-lock redirect on the night-action summary', () => {
+    renderCenter({
+      phase: 'night',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'night_action',
+          payload: {
+            action_type: 'guard_protect', seat: 6, target_seat: 6,
+            intended_seat: 3, round_number: 2,
+          },
+        },
+      ],
+      timelineIndex: 0,
+    });
+    expect(screen.getByText(/原目标3号，被时间封锁改向/)).toBeInTheDocument();
+  });
+
+  it('does not call a voided exile tally a tie', () => {
+    renderCenter({
+      phase: 'vote_resolution',
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'vote_rewound',
+          payload: { seat: 3, round_number: 2 },
+        },
+        {
+          timestamp: '2026-08-13T00:00:01Z',
+          event_type: 'vote_result',
+          payload: { exiled_seat: null, round_number: 2 },
+        },
+      ],
+      timelineIndex: 1,
+    });
+    expect(screen.getAllByText('放逐投票作废，重新投票').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/平票/)).not.toBeInTheDocument();
   });
 });
