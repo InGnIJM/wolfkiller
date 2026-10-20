@@ -153,6 +153,7 @@ export default function NewBenchmarkPage() {
         // Frozen into the run, never re-read from the live catalog: a benchmark
         // must keep replaying the rule set it was created under.
         witch_self_save: preset.witch_self_save ?? 'first_night_only',
+        victory: preset.victory ?? 'edge',
       },
       block_count: blocks,
       concurrency,

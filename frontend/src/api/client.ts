@@ -4,7 +4,7 @@ import type {
   FieldConstraints, GameFolder, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
   ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
   ModelTestResult, PromptCaptureSetting, ProviderProfileId, PublicGameState, RoleCatalogItem,
-  WitchSelfSavePolicy,
+  VictoryPolicy, WitchSelfSavePolicy,
 } from '../store/types';
 
 function getApiBase(): string {
@@ -20,6 +20,7 @@ export async function createGame(config?: {
   reveal_on_death?: boolean;
   enable_sheriff?: boolean;
   witch_self_save?: WitchSelfSavePolicy;
+  victory?: VictoryPolicy;
   model_assignments?: ModelAssignment[];
 }): Promise<{ game_id: string; model_snapshot?: ModelSnapshotEntry[] }> {
   const res = await fetch(`${getApiBase()}/api/games`, {
