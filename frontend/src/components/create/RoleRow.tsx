@@ -40,7 +40,7 @@ export default function RoleRow({
         '&:hover': { bgcolor: CANVAS.surfaceRaised },
       }}
     >
-      <RolePortrait roleId={role.role_id} width={64} />
+      <RolePortrait roleId={role.role_id} width={72} />
 
       <Box
         sx={{

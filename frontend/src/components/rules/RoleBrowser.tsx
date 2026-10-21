@@ -39,7 +39,7 @@ function RuleList({ items }: { items: readonly string[] }) {
 }
 
 /**
- * 角色索引 + 详情。角色到 35 个之后一列长卡片读不动，改成左索引右详情。
+ * 角色索引 + 详情。角色到 40 个之后一列长卡片读不动，改成左索引右详情。
  * 交互语言与创建向导的左栏一致：搜索防抖、按阵营折叠、条目整行可点。
  */
 export default function RoleBrowser({ groups }: Props) {
@@ -218,11 +218,28 @@ export default function RoleBrowser({ groups }: Props) {
           <Paper
             variant="outlined"
             data-testid={`role-card-${selected.role_id}`}
-            sx={{ p: 2, borderColor: HAIRLINE.soft }}
+            sx={{ p: 2, borderColor: HAIRLINE.soft, overflow: 'hidden' }}
           >
-            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-              <RolePortrait roleId={selected.role_id} width={56} height={72} />
-              <Box sx={{ minWidth: 0 }}>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={2}
+              sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' } }}
+            >
+              <Box
+                sx={{
+                  width: { xs: '100%', sm: 168 },
+                  maxWidth: { xs: 180, sm: 'none' },
+                  mx: { xs: 'auto', sm: 0 },
+                  flexShrink: 0,
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                  border: `1px solid ${HAIRLINE.strong}`,
+                  boxShadow: '0 10px 24px rgba(0, 0, 0, 0.35)',
+                }}
+              >
+                <RolePortrait roleId={selected.role_id} width="100%" showLabel={false} />
+              </Box>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                   <RoleIcon role={selected.role_id} size={22} />
                   <Typography
@@ -235,17 +252,17 @@ export default function RoleBrowser({ groups }: Props) {
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {selected.description}
                 </Typography>
+                <Box sx={{ mt: 1.5 }}>
+                  {(selected.rules ?? []).length > 0 ? (
+                    <RuleList items={selected.rules ?? []} />
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      这个角色还没有更详细的规则条目。
+                    </Typography>
+                  )}
+                </Box>
               </Box>
             </Stack>
-            <Box sx={{ mt: 1.5 }}>
-              {(selected.rules ?? []).length > 0 ? (
-                <RuleList items={selected.rules ?? []} />
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  这个角色还没有更详细的规则条目。
-                </Typography>
-              )}
-            </Box>
           </Paper>
         )}
       </Box>

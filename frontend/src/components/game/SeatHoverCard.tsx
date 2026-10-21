@@ -87,7 +87,7 @@ export default function SeatHoverCard({
       }}
     >
       <Box sx={{ position: 'relative', mx: -1.5, mt: -1.25, mb: 1, overflow: 'hidden' }}>
-        <RolePortrait roleId={roleId} height={108} showLabel={false} />
+        <RolePortrait roleId={roleId} width="100%" height={124} showLabel={false} />
         <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 42, background: BACKDROP.cardScrim }} />
       </Box>
       <Typography

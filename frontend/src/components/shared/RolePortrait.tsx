@@ -6,7 +6,7 @@ import { roleMetaFor } from './roleMeta';
 interface Props {
   roleId: string | null | undefined;
   /**
-   * 立绘条宽度。创建向导 64、规则页 56；填满父容器时传 `'100%'`
+   * 立绘条宽度。创建向导 72、规则页详情 168；填满父容器时传 `'100%'`
    * （座位卡就是这一种，它由外层 `position: absolute; inset: 0` 定尺寸）。
    */
   width?: number | string;

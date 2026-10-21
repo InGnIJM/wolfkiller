@@ -9,7 +9,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import type { GamePreset, RoleCatalogItem } from '../../store/types';
 import { BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
 
-/** 搜索防抖：35 个角色 × 17 个板子的匹配不必每次按键都重算。 */
+/** 搜索防抖：40 个角色 × 多个板子的匹配不必每次按键都重算。 */
 const SEARCH_DEBOUNCE_MS = 200;
 
 interface Props {
