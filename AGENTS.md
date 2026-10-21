@@ -60,7 +60,7 @@ npm run build
 
 `GameEngine` 运行时固定 `PipelineMode.V2`。环境变量 `ROLE_PIPELINE_V2` **不改变对局**。
 
-角色展示元数据（`name_zh` / `icon` / `description` / `rules`）与标准预设集中在 `catalog.py`，经 `/api/catalog/{roles,presets,constraints}` 暴露。它刻意留在冻结的 `RoleSpec` 之外：新增角色只写 `roles/*.py` + 这里的元数据，`registry.digest` 不变、旧档仍可续跑。前端规则介绍页 `components/rules/RulesPage.tsx`（右上角入口，路由 `/rules`）只读这三条公开目录接口，叙述文案在 `components/rules/ruleSections.ts`，与 `docs/gameplay.md` 同一套规则。
+角色展示元数据（`name_zh` / `icon` / `description` / `rules`）与标准预设集中在 `catalog.py`，经 `/api/catalog/{roles,presets,constraints}` 暴露。它刻意留在冻结的 `RoleSpec` 之外：新增角色只写 `roles/*.py` + 这里的元数据；catalog 元数据本身不进 `RoleSpec`，但新增 spec 会让 `registry.digest` 变一次——`recovery_compat` 判 `compatible`，旧档仍可续跑（不需要 force）。前端规则介绍页 `components/rules/RulesPage.tsx`（右上角入口，路由 `/rules`）只读这三条公开目录接口，叙述文案在 `components/rules/ruleSections.ts`，与 `docs/gameplay.md` 同一套规则。
 
 ## 规则（改代码时容易漏）
 

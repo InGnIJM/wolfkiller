@@ -143,7 +143,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 
 ## 模型配置与角色目录
 
-- `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束；角色条目另带 `rules`（玩家向规则条目，供规则介绍页渲染）。它是**展示元数据**，刻意留在冻结的 `RoleSpec` 之外：新增角色只需加 `roles/*.py` 与这里的 `name_zh` / `rules`，`registry.digest` 不变，旧档仍可续跑
+- `catalog.py` + `api/routes/catalog_routes.py`：向前端暴露角色目录、标准预设与人数约束；角色条目另带 `rules`（玩家向规则条目，供规则介绍页渲染）。它是**展示元数据**，刻意留在冻结的 `RoleSpec` 之外：新增角色只需加 `roles/*.py` 与这里的 `name_zh` / `rules`；catalog 元数据本身不进 `RoleSpec`，但新增 spec 会让 `registry.digest` 变一次，`recovery_compat` 判 `compatible`，旧档仍可续跑
 - `stores/model_config_store.py` + `stores/model_key_crypto.py` + `api/routes/model_routes.py`：模型 API 配置 CRUD 与 API Key 加密存储（响应中 Key 仅脱敏返回），含连通性测试端点；配置项还含自定义请求头 `headers`（管理面可见可编辑）与严格模式地址 `strict_base_url`；`POST /api/models/test` 带 `config_id` 时，请求里显式给出的可编辑字段（`base_url` / `model_id` / `strict_base_url` / `api_key` / `provider_profile` / `headers`）一律覆盖已存配置、传 `None` 沿用存储值（`strict_base_url` 传空串表示清空），所以对话框能在保存前试通当前表单值
 - `GameService` 在启动引擎前完整解析 `model_assignments`，按数量独立洗牌得到 `seat → LLMClientConfig`；每座创建并复用一个客户端。角色工厂、Scheduler 和 `NightDirector`（`core/night_flow.py`）都以行为发起座位路由，因此白天、夜晚与失败重试不会串用模型
 - `GET /api/games/{id}` 与 `GET /api/games/{id}/snapshot` 向观众暴露无密钥的 v2 `model_snapshot`（`name / model_id / provider_profile / seats`）；旧档缺少 `seats` 的条目会被滤掉而不是 500。前端座位图悬停卡按 `seats` 反查模型，不把 `model_id` 写入玩家 DTO 或隐私白名单。**自定义请求头不进快照**：它可能携带中转站凭据，`ModelSnapshotEntry` 也不声明该字段，多传也会被丢弃
