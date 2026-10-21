@@ -10,10 +10,10 @@
 
 | 层 | LLM | 测什么 | 成本 | 频率 |
 | --- | --- | --- | --- | --- |
-| 评测层（仓库内 `scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
+| 评测层（仓库内 `backend/scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 **v3 JSON 含决策质量**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 只放行 `run_benchmark.py`；文档里曾经出现的 `perf_benchmark.py` / `export_game_summary.py` **当前不在仓库中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 JSON **自 v3 起含决策质量（当前 `v4`）**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 放行 `run_benchmark.py`、`purge_old_games.py`、`prompt_size_report.py` 与 `cleanup_stale_benchmarks.py`；`perf_benchmark.py` / `export_game_summary.py` **不在版本控制中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 

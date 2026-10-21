@@ -84,7 +84,7 @@ npm run lint       # ESLint
 | 门禁 | 内容 | 状态 |
 | --- | --- | --- |
 | 后端覆盖率 | `tests` + `app` 全量，statement/branch 100%（`--cov-fail-under=100`） | 生效（CI） |
-| 前端覆盖率 | `vite.config.ts` 对 10 个核心文件（labels、gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效（CI `npm run test:coverage`） |
+| 前端覆盖率 | `vite.config.ts` 对 11 个核心文件（labels、gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、seatLayout、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效（CI `npm run test:coverage`） |
 | 隐私扫描 | 公开 DTO 与前端消费链不得含私有字段（`role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等） | 生效（测试门禁） |
 | 凭据扫描 | 提交前 `.githooks/pre-commit` → `secret-scan.sh --staged`；CI 的 `secret-scan` job 用 `--history` 扫全历史 | 生效（钩子 + CI） |
 | 核心源码门禁 | 引擎/校验器/解析器/提示外壳的禁词与角色名测试，证明核心不写死内置角色分支 | 生效（测试门禁） |
@@ -116,7 +116,7 @@ sh .githooks/secret-scan.sh --history        # 手动跑：扫全历史
 
 ### Benchmark 基准评测
 
-采集层随对局事务性落入 SQLite；批量真实对局评测用仓库内的 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。对局结束时服务会自动写 `summary.json`。指标定义与用法见 `docs/benchmark.md`。最近一次本机跑批结论见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。`.gitignore` 放行 `run_benchmark.py` 与 `purge_old_games.py`（后者是不可逆的批量回收工具：它驱动的 `mark_game_deleted` / `GameManifest.remove_game` 都已入库，所以入口与回归测试也入库），其它 `backend/scripts/*` 是本地一次性工具，不在版本控制中。
+采集层随对局事务性落入 SQLite；批量真实对局评测用仓库内的 `backend/scripts/run_benchmark.py` 连接已经运行的 FastAPI 服务。脚本自身不会创建 `GameService`，服务不可达时会明确失败。对局结束时服务会自动写 `summary.json`。指标定义与用法见 `docs/benchmark.md`。最近一次本机跑批结论见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。`.gitignore` 只放行 `run_benchmark.py`、`purge_old_games.py`、`prompt_size_report.py` 与 `cleanup_stale_benchmarks.py`（它们驱动/校验的服务方法都已入库，入口与回归测试因此入库），其它 `backend/scripts/*` 是本地一次性工具，不在版本控制中。
 
 ## 数据存储
 

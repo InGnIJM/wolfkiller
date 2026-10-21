@@ -1,7 +1,7 @@
 # 统一模型调用：InvocationRunner 组件
 
 > 日期：2026-10-07
-> 状态：**进行中** —— P0 组件 / P1 repair 分类已落地；P2–P5 部分落地（见下表），覆盖率门禁 100% 绿（4600 测试通过）。
+> 状态：**进行中** —— P0 组件 / P1 repair 分类已落地；P2–P5 部分落地（见下表）。2026-10-21 复跑门禁：后端 **5043 passed / 100.00%**（statement + branch），前端 **695 passed / lint / build 全绿**；同日复核 P2 仍未开始、P3 梯子未迁移、P4 六处默认值未统一、P5 两项未落，结论与下表一致。
 > 范围：`backend/app/agents/`、`backend/app/roles/base.py`、`backend/app/services/game_service.py`、`backend/app/core/sheriff_flow.py`、评测口径（`benchmark_metrics.py` / `audience_projector.py`）
 > 问题来源：`docs/notes/2026-10-07-eval-review.md`（§2.4/2.5/2.11/3.1、§4 跨层不统一清单）
 
@@ -33,8 +33,8 @@
 >    `pool_seats` / `silenced_seats` 的 list/tuple 之争（实测 13/253 局回放 500）。
 >
 > 仍未落地的与本计划相关的 P0 项（`docs/notes/2026-10-07-eval-review.md` §五）：
-> 三条路回传 token usage（`game_service.py:2358/2400/2870` 仍返回 `None`）、账本 `outcome`
-> 与三处可见性门禁、技术弃票按票种统计与警长票失败可见性、`retry_rate` 与报告保留策略。
+> **2026-10-21 复核**：三条路回传 token usage、技术弃票按票种统计、`retry_rate` 与报告保留策略均已落地
+> （见 P3 / P5 行）；仍未落：账本 `outcome` 与三处可见性门禁、警长票失败可见性（新观众事件）。
 
 ### P1 实际落地的行为变化
 

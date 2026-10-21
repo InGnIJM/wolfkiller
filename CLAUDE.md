@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Cursor / Codex / Gemini 请同时遵循根目录 [`AGENTS.md`](AGENTS.md)；两处描述同一套命令、架构与门禁。
 
-面向人类的详细文档在 `docs/`（[索引](docs/README.md)）：游戏规则 `docs/gameplay.md`、系统架构 `docs/architecture.md`、开发指南与踩坑 `docs/development.md`。现行评测结论见 `docs/notes/2026-09-16-mimo-mixed-arena.md`。本文与 `docs/architecture.md` 描述同一套架构，改动后需同步 `AGENTS.md` / `CLAUDE.md` / `docs/architecture.md`。
+面向人类的详细文档在 `docs/`（[索引](docs/README.md)）：游戏规则 `docs/gameplay.md`、系统架构 `docs/architecture.md`、开发指南与踩坑 `docs/development.md`。现行评测结论见 `docs/notes/2026-10-07-eval-review.md`（最近两次运行复盘与指标口径陷阱）与 `docs/notes/2026-09-16-mimo-mixed-arena.md`（混座方法论）。本文与 `docs/architecture.md` 描述同一套架构，改动后需同步 `AGENTS.md` / `CLAUDE.md` / `docs/architecture.md`。
 
 ## 项目概述
 

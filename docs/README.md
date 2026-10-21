@@ -8,13 +8,16 @@ Wolf Killer 的文档库。新手从根目录 [README](../README.md) 开始；�
 | [architecture.md](architecture.md) | 模块划分、角色流水线、状态机、持久化、前端架构 | 开发者 |
 | [development.md](development.md) | 环境变量、本地开发、测试与门禁、数据存储、踩坑记录 | 开发者 |
 | [benchmark.md](benchmark.md) | 耐久 benchmark API/CLI、指标口径与导出 | 跑评测 / 看报告的人 |
-| [plans/](plans/) | **现行实施计划**（头部写进度与残留）：网易板型扩板（阶段 0–3.6 完成；**阶段 4 进行中：孤独少女、寻香识命与奇迹商人已落地**；**阶段 4.6 自曝愚言家（愚言家 + 铁好人）与阶段 4.7 丘比特奇缘（乌鸦 + 丘比特 + 暗恋者，屠城与第三方）已落地**；**阶段 5 永序之轮与阶段 6 镜隐迷踪（觉醒隐狼 + 魔镜少女）、猎日逐光（蚀日侍女 + 流光伯爵）已落地**；阶段 4.5/6.5/6.6 未开始）、创建向导重设计（已完成）、prompt 原文采集（已完成）、[统一模型调用](plans/2026-10-07-unified-model-invocation.md)（P0/P1 已落地；P2 未开始，P3 成果已落梯子未迁移，P4 决策点已接，P5 的票种口径与保留窗口已落、警长票失败可见性未落） | 想知道还剩什么没做的人 |
+| [plans/](plans/) | **现行实施计划**（头部写进度与残留）：网易板型扩板（阶段 0–5 完成；**阶段 4 的孤独少女 / 寻香识命 / 奇迹商人、4.6 自曝愚言家、4.7 丘比特奇缘**与**阶段 6 的镜隐迷踪 / 猎日逐光**均已落地；**阶段 6 的觉醒狼王（§11.1）、4.5（10人速推场 / 6人明牌场 / 6人暗牌场）、6.5 觉醒女巫、6.6 觉醒狼王自曝未开始**）、创建向导重设计（已完成）、prompt 原文采集（已完成）、[统一模型调用](plans/2026-10-07-unified-model-invocation.md)（P0/P1 已落地；P2 未开始，P3 成果已落梯子未迁移，P4 决策点已接，P5 的票种口径与保留窗口已落、警长票失败可见性未落） | 想知道还剩什么没做的人 |
 | [notes/](notes/) | 工作笔记；含评测快照与可视化讲解 | 按需 |
 | [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md) | 2026-09-16 本机混座评测快照（61 局完成） | 看历史评测结论 |
 | [notes/2026-10-06-rule-execution-audit.md](notes/2026-10-06-rule-execution-audit.md) | 2026-10-06 最近 6 局规则执行漏洞审计 | 查规则实现缺陷 |
 | [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md) | **2026-10-07 最近两次评测复盘与逻辑/流程问题清单**（现行） | 看现行评测结论与指标口径陷阱 |
 | [notes/2026-10-10-known-unfixed-and-metric-leftovers.md](notes/2026-10-10-known-unfixed-and-metric-leftovers.md) | 2026-10-10 盘点后修掉的十项：竞选自爆落 `night_deaths`、狼人节拍、竞选窗口快照、资源镜像、不可放弃强制；票种口径、新角色命中率、板型覆盖等 | 查这十项的症状/根因/门禁 |
+| [notes/2026-10-09-replay-parity-and-phase-rows.md](notes/2026-10-09-replay-parity-and-phase-rows.md)、[sheriff-election-before-deaths](notes/2026-10-09-sheriff-election-before-deaths.md)、[telemetry-parity-and-opening-lines](notes/2026-10-09-telemetry-parity-and-opening-lines.md) | 2026-10-09 回放/阶段行、竞选先于死讯、遥测口径与开眼旁白三批修复 | 查回放与旁白口径 |
+| [notes/2026-10-10-game-review-five-fixes.md](notes/2026-10-10-game-review-five-fixes.md) | 2026-10-10 对局复盘修掉的五项（含死亡批次与回归门禁） | 查对局内缺陷修复 |
 | [notes/2026-10-20-role-portrait-inventory.md](notes/2026-10-20-role-portrait-inventory.md) | 2026-10-20 角色立绘盘点与替换记录（2026-10-21 已补齐 40/40） | 查立绘替换过程与历史缺口 |
+| [notes/2026-10-20-role-portrait-prompts.md](notes/2026-10-20-role-portrait-prompts.md) | 40 角色统一风格立绘的生成提示词与逐角色变量表 | 重绘或新增角色立绘 |
 | [project-analysis.md](project-analysis.md) | **2026-08-31 的历史快照**，不是当前状态 | 只作当时记录 |
 | [superpowers/plans/](superpowers/plans/) | 历史功能实施计划（按日期归档） | 想了解功能演进的人 |
 | [superpowers/specs/](superpowers/specs/) | 历史功能设计稿（按日期归档） | 想了解设计取舍的人 |

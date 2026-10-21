@@ -15,13 +15,11 @@
 | C 规则页 | ✅ | `RulesPage` + `RoleBrowser` 左索引右详情（`9924397`） |
 | D 对局中 | ✅ | `DeathAnnouncement`（`57c7b09`）以及 `SeatMap` 的座位格与悬停卡都改用 `RolePortrait`；`SeatMap` 的取图 prop 从 `art` 换成 `roleId`，卡背/未知身份回退交给组件自己处理 |
 
-**已知残留**：
+**已知残留**（2026-10-21 已全部解决）：
 
-1. `ROLE_ART_BY_ID` 已为阶段 3–6 的 14 个角色**预先登记**（`pure-white` / `wolf-witch` /
-   `demon-hunter` / `crimson-envoy` / `nightmare` / `time-wolf` / `order-prince` /
-   `miracle-merchant` / `lonely-girl` / `mirror-girl` / `awakened-hidden-wolf` /
-   `awakened-wolf-king` / `eclipse-maid` / `radiance-earl`），角色落地时不用再动取图代码。
-   **仍无图**：觉醒预言家、寻香魅影、觉醒狼美人、觉醒猎人（2023 年后新牌，官方卡牌表未收录）。
+1. ~~`ROLE_ART_BY_ID` 已为阶段 3–6 的 14 个角色预先登记，仍无图：觉醒预言家、寻香魅影、觉醒狼美人、觉醒猎人。~~
+   现状：40 个角色已全部补齐自制立绘并入库（`ROLE_ART_BY_ID` 覆盖 40/40，孤儿「觉醒狼王」登记已删），
+   见 [角色立绘盘点](../notes/2026-10-20-role-portrait-inventory.md)。
 
 ---
 
@@ -57,9 +55,8 @@
 `baseline-*` / `after-*` 是改动前后三宽度，`seat-before-after.png` 是单座位放大对比，
 `page-create-*` / `page-settings-*` 是窄屏与宽屏的页面存档。
 
-> 立绘是本地资产：`frontend/src/assets/roles/role-*.webp` 在 `.gitignore` 里；
-> `card-back.webp` 与 `role-old_drunkard.webp` 是自有素材、随仓库发布，
-> 另 10 张自有的备份在 `frontend/src/assets/roles-original/`（入库）。
+> 立绘已改随仓库分发（2026-10-21）：`frontend/src/assets/roles/` 的 40 张自制图入库，
+> `card-back.webp` 继续随包；`frontend/src/assets/roles-original/` 只作历史备份，不被代码引用。
 
 ---
 

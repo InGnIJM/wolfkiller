@@ -2,7 +2,7 @@
 
 Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.md) 描述同一套命令、架构与门禁；改一处必须改另一处，并同步 [docs/architecture.md](docs/architecture.md)。
 
-人类文档从 [README.md](README.md) 和 [docs/README.md](docs/README.md) 进入。已知失败模式见 [MEMORY.md](MEMORY.md)。`docs/superpowers/` 与 `docs/project-analysis.md` 是按日期归档的历史稿，不要当现行说明书。现行评测结论见 [docs/notes/2026-09-16-mimo-mixed-arena.md](docs/notes/2026-09-16-mimo-mixed-arena.md)。
+人类文档从 [README.md](README.md) 和 [docs/README.md](docs/README.md) 进入。已知失败模式见 [MEMORY.md](MEMORY.md)。`docs/superpowers/` 与 `docs/project-analysis.md` 是按日期归档的历史稿，不要当现行说明书。现行评测结论见 [docs/notes/2026-10-07-eval-review.md](docs/notes/2026-10-07-eval-review.md)（最近两次运行复盘与指标口径陷阱）与 [docs/notes/2026-09-16-mimo-mixed-arena.md](docs/notes/2026-09-16-mimo-mixed-arena.md)（混座方法论）。
 
 ## 项目
 
