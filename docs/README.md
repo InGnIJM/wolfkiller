@@ -14,7 +14,7 @@ Wolf Killer 的文档库。新手从根目录 [README](../README.md) 开始；�
 | [notes/2026-10-06-rule-execution-audit.md](notes/2026-10-06-rule-execution-audit.md) | 2026-10-06 最近 6 局规则执行漏洞审计 | 查规则实现缺陷 |
 | [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md) | **2026-10-07 最近两次评测复盘与逻辑/流程问题清单**（现行） | 看现行评测结论与指标口径陷阱 |
 | [notes/2026-10-10-known-unfixed-and-metric-leftovers.md](notes/2026-10-10-known-unfixed-and-metric-leftovers.md) | 2026-10-10 盘点后修掉的十项：竞选自爆落 `night_deaths`、狼人节拍、竞选窗口快照、资源镜像、不可放弃强制；票种口径、新角色命中率、板型覆盖等 | 查这十项的症状/根因/门禁 |
-| [notes/2026-10-20-role-portrait-inventory.md](notes/2026-10-20-role-portrait-inventory.md) | 2026-10-20 角色立绘盘点：40 个角色的已有/官方/缺失清单与补齐路线 | 准备替换官方立绘时看 |
+| [notes/2026-10-20-role-portrait-inventory.md](notes/2026-10-20-role-portrait-inventory.md) | 2026-10-20 角色立绘盘点与替换记录（2026-10-21 已补齐 40/40） | 查立绘替换过程与历史缺口 |
 | [project-analysis.md](project-analysis.md) | **2026-08-31 的历史快照**，不是当前状态 | 只作当时记录 |
 | [superpowers/plans/](superpowers/plans/) | 历史功能实施计划（按日期归档） | 想了解功能演进的人 |
 | [superpowers/specs/](superpowers/specs/) | 历史功能设计稿（按日期归档） | 想了解设计取舍的人 |
