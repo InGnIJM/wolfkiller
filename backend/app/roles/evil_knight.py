@@ -39,6 +39,8 @@ EVIL_KNIGHT_SPEC = RoleSpec(
     allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,
+    # The card forbids self-exposure; the election badge move is the same act.
+    self_explode_forbidden=True,
     instructions=(
         "你是恶夜骑士（狼人阵营）：夜晚与狼队共用同一次狼刀，按阵营合并计票。"
         "你永久免疫一切夜间伤害——狼刀、女巫的毒药都杀不死你，狼队也不能把你选为刀口。"

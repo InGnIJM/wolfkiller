@@ -1042,3 +1042,11 @@ def test_the_side_prompt_preview_matches_the_shared_order() -> None:
         sequence = " → ".join(f"{seat}号" for seat in expected)
         assert f"{side}（" in human
         assert f"{expected[0]}号先发言；顺序 {sequence}。" in human
+
+
+def test_an_unknown_role_is_a_plain_pack_wolf_for_the_badge_move() -> None:
+    """No spec means no static self-explode ban; a missing seat never qualifies."""
+    state = _state(seats=3)
+    state.players[1] = PlayerState(1, "unknown-role", Camp.WEREWOLF.value)
+    assert SheriffDirector._may_explode(state, 1) is True
+    assert SheriffDirector._may_explode(state, 99) is False

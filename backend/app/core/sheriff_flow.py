@@ -537,16 +537,21 @@ class SheriffDirector:
         if wolf:
             # The camp line and the explode line have different gates: a hidden
             # wolf is a werewolf but sits outside the pack, and only the pack may
-            # swallow the badge. Handing it the explode sentence contradicted its
-            # own role contract, which says it can neither self-destruct nor
-            # swallow the badge.
-            if self._may_explode(state, seat):
+            # swallow the badge. Some pack members still cannot self-expose
+            # (Evil Knight / Wolf Beauty), so the pack line must not claim they
+            # are outside the pack just because the explode move is unavailable.
+            if not in_wolf_pack(state, seat):
+                lines.append(
+                    "你是狼人阵营，但你不属于狼窝：警上可起跳伪装、可冲锋带节奏，"
+                    "但**不能自爆，也不能吞警徽**。"
+                )
+            elif self._may_explode(state, seat):
                 lines.append(
                     "你是狼人阵营：警上可起跳伪装、可冲锋带节奏，也可自爆吞警徽（只死自己）。"
                 )
             else:
                 lines.append(
-                    "你是狼人阵营，但你不属于狼窝：警上可起跳伪装、可冲锋带节奏，"
+                    "你是狼人阵营：警上可起跳伪装、可冲锋带节奏，"
                     "但**不能自爆，也不能吞警徽**。"
                 )
             lines.extend(self._wolf_team_block(state, seat))
@@ -592,11 +597,21 @@ class SheriffDirector:
         ``wolf`` at every call site means *werewolf camp*, because a hidden wolf
         still knows what it is. Exploding is a pack move, so it follows pack
         membership instead: a role declaring ``no_wolf_pack`` has no badge to
-        swallow on the team's behalf. A role whose card forbids self-destruction
-        declares ``no_self_explode`` — swallowing the badge is the same move, so
-        it stays out too, even though it belongs to the pack.
+        swallow on the team's behalf. A role whose card forbids self-exposure
+        either declares ``no_self_explode`` or sets ``self_explode_forbidden`` on
+        its spec — swallowing the badge is the same move, so it stays out too,
+        even though it belongs to the pack.
         """
         if not in_wolf_pack(state, seat):
+            return False
+        # A role whose card forbids self-exposure says so on its frozen spec.
+        # This is deliberately a static field rather than an initial resource:
+        # adding a resource to an already-seated role would move the resource
+        # setup marker and force interrupted games through ``drift``.
+        from app.roles.registry import builtin_registry
+        player = state.players[seat]  # in_wolf_pack() already proved it exists
+        spec = builtin_registry.freeze().specs.get(player.role)
+        if spec is not None and spec.self_explode_forbidden:
             return False
         return role_resource_view(state, seat).get(NO_SELF_EXPLODE_RESOURCE, 0) <= 0
 

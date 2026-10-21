@@ -14,7 +14,9 @@ from dataclasses import replace
 
 import pytest
 
-from app.core.effect_applier import derive_effect_id
+from app.core.effect_applier import _Runtime, derive_effect_id
+from app.core.role_runtime import initialize_role_resources
+from app.core.sheriff_flow import SheriffDirector
 from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE, settle
 from app.core.reflect import (
     REFLECT_CAUSE, REFLECT_CHECK_RESOURCE, REFLECT_POISON_RESOURCE,
@@ -78,6 +80,7 @@ def test_spec_reuses_the_shared_kill_contract_and_declares_no_explode() -> None:
     assert EVIL_KNIGHT_SPEC.camp_id == "werewolf"
     assert EVIL_KNIGHT_SPEC.tags == {"wolf"}
     assert EVIL_KNIGHT_SPEC.max_count == 1
+    assert EVIL_KNIGHT_SPEC.self_explode_forbidden is True
     assert EVIL_KNIGHT_SPEC.contracts == (WEREWOLF_KILL_CONTRACT,)
     assert WEREWOLF_KILL_CONTRACT.stable_digest() == \
         WEREWOLF_SPEC.contracts[0].stable_digest()
@@ -90,6 +93,24 @@ def test_spec_reuses_the_shared_kill_contract_and_declares_no_explode() -> None:
         REFLECT_USED_RESOURCE: 0,
         "self_kill_forbidden": 1,
     }
+
+
+def test_the_badge_swallowing_move_is_not_offered_to_the_evil_knight() -> None:
+    """The card says it cannot self-expose; the election is the same move."""
+    state = GameState(
+        "election", phase=GamePhase.SHERIFF_ELECTION, round_number=1,
+        players={
+            1: PlayerState(1, EVIL_KNIGHT, "werewolf"),
+            2: PlayerState(2, WEREWOLF_SPEC.role_id, "werewolf"),
+        },
+    )
+    state._pipeline_runtime = _Runtime()
+    initialize_role_resources(state, builtin_registry.freeze().specs, "a" * 64)
+    assert SheriffDirector._may_explode(state, 1) is False
+    assert SheriffDirector._may_explode(state, 2) is True
+    prompt = SheriffDirector()._context_block(state, 1, wolf=True)
+    assert "不属于狼窝" not in prompt
+    assert "不能自爆" in prompt
 
 
 def test_instructions_name_every_ability() -> None:

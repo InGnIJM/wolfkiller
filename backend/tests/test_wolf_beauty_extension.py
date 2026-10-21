@@ -14,7 +14,9 @@ import pytest
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import EffectApplier, derive_effect_id
+from app.core.effect_applier import EffectApplier, _Runtime, derive_effect_id
+from app.core.role_runtime import initialize_role_resources
+from app.core.sheriff_flow import SheriffDirector
 from app.core.scheduler import Scheduler
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
@@ -125,6 +127,22 @@ def test_spec_shares_the_kill_contract_and_adds_charm_and_revenge() -> None:
     assert charm.validate is validate_wolf_beauty_action
     assert charm.resolve is resolve_wolf_beauty_action
     assert "Wolf Beauty" in WOLF_BEAUTY_SPEC.instructions
+    assert WOLF_BEAUTY_SPEC.self_explode_forbidden is True
+
+
+def test_the_badge_swallowing_move_is_not_offered_to_wolf_beauty() -> None:
+    """She may not self-destruct, and the election is the same move."""
+    state = GameState(
+        "election", phase=GamePhase.SHERIFF_ELECTION, round_number=1,
+        players={
+            1: PlayerState(1, BEAUTY, "werewolf"),
+            2: PlayerState(2, WOLF, "werewolf"),
+        },
+    )
+    state._pipeline_runtime = _Runtime()
+    initialize_role_resources(state, builtin_registry.freeze().specs, "a" * 64)
+    assert SheriffDirector._may_explode(state, 1) is False
+    assert SheriffDirector._may_explode(state, 2) is True
 
 
 def test_revenge_fires_on_exactly_the_two_official_ways_out() -> None:

@@ -631,6 +631,12 @@ class RoleSpec(_FrozenValue):
     #: copied skills) names only the point where its line is always true, so a
     #: dormant clone never wakes it up in front of the table.
     opening_points: frozenset[str] = frozenset()
+    #: The card forbids self-exposing: the sheriff election's badge-swallowing
+    #: move is the same act, so the prompt must not offer it. A static
+    #: capability rather than an ``initial_resources`` marker -- adding a
+    #: resource to an already-seated role would move the resource setup marker
+    #: and force every interrupted game through ``drift``.
+    self_explode_forbidden: bool = False
     #: Derived facts the projector computes for this role's own contexts, from
     #: the closed vocabulary above. Declared on the spec rather than the
     #: contract because ``ActionContract`` is a hashed identity: a new field

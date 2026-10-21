@@ -250,6 +250,8 @@ WOLF_BEAUTY_SPEC = RoleSpec(
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     tags=frozenset({"wolf"}),
     max_count=1,
+    # The card forbids self-exposure; the election badge move is the same act.
+    self_explode_forbidden=True,
     instructions=(
         "Wolf Beauty is a werewolf: at night it joins the wolf channel and the shared kill "
         "vote like any other werewolf. After taking part in the kill it may separately charm "
