@@ -60,7 +60,7 @@
 
 ## 三、旧局兼容性：本次最关键的结论
 
-上游计划 §12 决策 3 写的是「把 `WOLF_KING_SHOT_CONTRACT` 挂到所有狼 → `registry.digest` 全变 → 旧局判 `drift`」。**这个结论不准确**。按当前代码（[recovery_compat.py](../../backend/app/persistence/recovery_compat.py#L116)）：
+上游计划 §12 决策 3 **曾**写的是「把 `WOLF_KING_SHOT_CONTRACT` 挂到所有狼 → `registry.digest` 全变 → 旧局判 `drift`」。**这个结论不准确，计划原文已于 2026-10-21 修正**。按当前代码（[recovery_compat.py](../../backend/app/persistence/recovery_compat.py#L116)）：
 
 `assess()` 只在四类情况下判 `drift` / `incompatible`：
 

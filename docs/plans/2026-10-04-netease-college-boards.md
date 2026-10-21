@@ -953,7 +953,7 @@ LUCKY_GUARD_CONTRACT  = ActionContract(contract_id="lucky_guard",  schedule_poin
 
 **亲传的实现**：`SET_RESOURCE(target=队友, resource="wolf_claw", value=1)`。但队友能否**发动**取决于它是否有 react 契约。
 
-**推荐方案**：把 `WOLF_KING_SHOT_CONTRACT` 声明在**所有狼阵营角色**上，`is_applicable` 统一读 `context.resources.get("wolf_claw", 0) > 0`。普通狼初始 `wolf_claw=0`。**代价**：所有狼角色的 spec 都要加这个契约 → `registry.digest` 全变 → 旧局判 `drift`（可 `force` 续跑）。**这是本阶段最需要评审的决策**。
+**推荐方案**：把爪的响应契约声明在**所有狼窝角色**上（决策单推荐新建 `awakened_wolf_claw`，而不是改既有的 `WOLF_KING_SHOT_CONTRACT`），`is_applicable` 统一读 `context.resources.get(..., 0) > 0`，普通狼初始不带爪。**代价**：狼窝角色的 spec 都要加契约（其中 8 个还要补 `CONSUME_RESOURCE`）→ `registry.digest` 变。**按当前 `recovery_compat`，只新增契约 / 只加 `allowed_effects` 时旧局是 `compatible`（直接续跑）；只有改既有契约 digest、既有角色 `initial_resources` 或 `schema_version` 才判 `drift`。** 详见 [决策单 §三](2026-10-21-awakened-wolf-king.md)。
 
 ### 11.2 觉醒隐狼 + 魔镜少女 → 解锁「镜隐迷踪」
 
@@ -1007,7 +1007,7 @@ LUCKY_GUARD_CONTRACT  = ActionContract(contract_id="lucky_guard",  schedule_poin
 | --- | --- | --- | --- |
 | 1 | 多目标命令走 D1（扩 schema）还是 D2（分多次问） | 契约形状，改晚了旧局不能续跑 | **D1**，阶段 2 前完成 |
 | 2 | 觉醒隐狼/蚀日侍女走 E1（预声明池）还是 E2（动态契约） | 是否与冻结声明架构冲突 | **E1**，官方规则本就是穷举式 |
-| 3 | 觉醒狼王"亲传"是否把 `WOLF_KING_SHOT_CONTRACT` 挂到所有狼角色 | 会让 `registry.digest` 全变、旧局判 `drift` | 倾向**是**，但需接受旧局 `force` 续跑 |
+| 3 | 觉醒狼王"亲传"是否把爪契约挂到所有狼角色 | `registry.digest` 会变，但按 `recovery_compat` **只新增契约 / 只加 `allowed_effects` 时旧局是 `compatible`**；改既有契约 digest、既有角色 `initial_resources` 或 `schema_version` 才 `drift` | **是**；推荐新建 `awakened_wolf_claw` 契约，见 [决策单](2026-10-21-awakened-wolf-king.md) |
 | 4 | 噩梦之影"首夜不与其他狼互知"是否完整实现 | 影响改造 B 的复杂度 | 先**降级**，后续再补 |
 | 5 | 赤月使徒"当晚所有好人技能封印"的窄版本是否够用 | 是否需要新增 `runtime.global_statuses` | 用 **per-seat `silenced` 状态**，避免新增全局状态 |
 | 6 | **假面舞会用哪个规则口径** | **决定假面是否进狼窝、行动顺序、是否有"查舞池"能力** | 见下方详解 |
