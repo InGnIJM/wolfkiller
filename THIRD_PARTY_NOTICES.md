@@ -59,22 +59,19 @@ Wolf Killer 源码基于 **Mozilla Public License Version 2.0 (MPL-2.0)** 发布
 
 ## 4. 美术与多媒体资产说明 (Media & Artwork)
 
-### 4.1 自制角色立绘备份与卡背素材
-- 路径：`frontend/src/assets/roles-original/*.webp`（10 张角色立绘）、`frontend/src/assets/roles/card-back.webp` 与 `frontend/src/assets/roles/role-old_drunkard.webp`。
-- 来源：由本项目作者（金铭）通过 AI 辅助生成并进行手工剪裁、调色及细节修正。
+### 4.1 自制角色立绘与卡背素材
+- 路径：`frontend/src/assets/roles/role-*.webp`（40 张角色立绘）、`frontend/src/assets/roles/card-back.webp`、`frontend/src/assets/roles-original/*.webp`（10 张旧版备份）。
+- 来源：由本项目作者（金铭）通过 AI 辅助生成，并进行手工筛选、裁切、调色及细节修正。
 - 权利说明：版权由 金铭 所有，随本项目 MPL-2.0 开源分发。
 
 ### 4.2 游戏大厅与回放界面背景与截图
 - 路径：`frontend/src/assets/bg/*.webp`、`frontend/src/assets/hero.png`、`docs/assets/*.png`。
 - 来源：本项目自研系统运行截图与原创主题设计背景图。
 
-### 4.3 网易官方立绘本地测试资产（免责声明）
-- 路径：`frontend/src/assets/roles/role-*.webp`。
-- 来源与权利：属于网易公司《狼人杀》官方游戏的美术资产，仅用于开发者本地学习、研究与自测。
-- **合规隔离保护**：
-  - 该批素材已被仓库根目录 `.gitignore:74` 严格忽略，**绝不会提交入库，亦不包含于任何公开发布的代码包或制品中**。
-  - 本地辅助下载脚本 `scripts/fetch-official-role-art.py` 仅供开发者个人本地使用；分发和部署本项目时，系统将使用自研立绘或缺省卡背回退。
-  - 严禁任何使用者将该批素材用于商业营利行为。
+### 4.3 网易官方立绘（已退出仓库）
+- 2026-10-21 起，活动目录 `frontend/src/assets/roles/` 只保留自制立绘与卡背；网易官方立绘不再随仓库分发。
+- `scripts/fetch-official-role-art.py` 为遗留参考脚本，正常路径会跳过已有文件；`--force` 会用网易官方占位图覆盖自制立绘，禁止在发布分支运行。
+- 官方美术资产的权利归网易公司所有；本项目不再分发该批素材。
 
 ### 4.4 初始化模板残留图标
 - 路径：`frontend/src/assets/react.svg`、`frontend/src/assets/vite.svg`、`frontend/public/icons.svg`、`frontend/public/favicon.svg`。

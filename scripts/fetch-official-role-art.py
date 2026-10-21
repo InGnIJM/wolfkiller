@@ -10,16 +10,14 @@ Pillow available — the repo venv does not need it:
     pip install --target=/tmp/imgtool Pillow
     PYTHONPATH=/tmp/imgtool python3 scripts/fetch-official-role-art.py
 
-The images are **not committed** (``.gitignore`` keeps ``role-*.webp`` out):
-they are NetEase's artwork, so they are only for local use, and they are
-placeholders until hand-made art replaces them. The project's own portraits live
-in ``frontend/src/assets/roles-original/`` and are tracked — copy them back over
-``frontend/src/assets/roles/`` to drop the official art. ``card-back.webp`` and
-``role-old_drunkard.webp`` stay tracked in the active folder: the fallback has to
-exist for a fresh clone to render anything at all, and the Old Drunkard has no
-official portrait to fetch.
+This script is **legacy as of 2026-10-21**: the active folder now ships
+hand-made portraits (tracked), and running this with ``--force`` would overwrite
+them with NetEase placeholders. It is kept only for reference / re-fetching the
+old official set. ``card-back.webp`` remains tracked so a fresh clone can render
+something even if a portrait is missing.
 
-Re-running is safe and cheap: unchanged files are skipped unless ``--force``.
+Re-running is safe and cheap only while the target files are still official:
+unchanged files are skipped unless ``--force``.
 """
 
 from __future__ import annotations
@@ -169,7 +167,10 @@ def to_webp(png: bytes) -> bytes:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--force", action="store_true", help="re-download everything")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="re-download everything (WARNING: overwrites hand-made portraits with NetEase placeholders)",
+    )
     parser.add_argument(
         "--include-provisional", action="store_true",
         help="also fetch art for roles that have no role id yet",
