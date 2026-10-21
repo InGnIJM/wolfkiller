@@ -100,7 +100,7 @@ API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 
 - **板型覆盖（`summary.coverage`）**：`boards` 列出这批实际打过的板型（按每局 `summary.roles` 归并，含局数），`seer_present` 标明有没有预言家 —— 评测板型由 run 的 scenario 固定，池化指标旁边从前没有任何地方能看出它出自哪种配置，「单一板型且没有预言家」只能靠人翻 scenario。评测页在决策质量面板显示「板型覆盖：N 人局 × M」，无预言家时明确提示。
 - 纯白之女 / 狼巫 / 石像鬼 / 猎魔人 / 舞者 / 假面：这些角色没有专属结果事件，指标读它们的 `*_REASONING` 决策行与 `DANCE_POOL.pool_seats` / `MASK_GRANTED.in_pool`；弃权（没有目标）不算一次机会。不评分：守墓人（零契约、无模型动作）、摄梦人/噩梦之影/狼美人（没有单一「命中」定义）。
 - 狼队投票集中度：把**全部完成局**的狼票按目标座位号加总后，最多票目标的占比。混座局里座位号不代表同一身份，跨局值会接近均匀分布，**不能当协同度**。要看狼白天是否对齐，按每一轮、该轮存活狼的票面单独算集中度。
-  ⚠️ 因此**评测页刻意不展示** `wolf_vote_concentration` / `wolf_vote_distinct_targets`（API 报告里仍保留，Markdown 报告在用）；页面上那一节只给其余 8 个比率与 2 个计数。
+  ⚠️ 因此**评测页刻意不展示** `wolf_vote_concentration` / `wolf_vote_distinct_targets`（API 报告里仍保留，Markdown 报告在用）；页面上那一节只给其余 14 个比率与 2 个计数（不含狼票集中度）。
 
 **规范性**
 - LLM fallback 率：`parse_result` 为 `fallback` / `parse_failed` 的调用占比。

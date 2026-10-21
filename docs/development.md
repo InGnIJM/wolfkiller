@@ -4,7 +4,7 @@
 
 ## 环境变量
 
-完整定义见 `backend/app/config.py`（读取环境变量的默认值以源码为准）。在 `backend/` 目录创建 `.env` 生效；**`.env` 已被忽略、未提交到仓库，请勿提交**（含真实 API Key）。忽略规则在根 `.gitignore` 的 `**/.env` 与 `**/.env.*`——`backend/.gitignore` 里的 `.env` 只按精确文件名覆盖 `backend/.env`，换个目录或加个 `.local` 后缀就漏过去了。提交前由 `.githooks/pre-commit` 强制检查，见下文「凭据与密钥防泄漏」。
+完整定义见 `backend/app/config.py` 与读取它们的模块（`main.py` / `stores/app_settings_store.py` / `core/prompt_capture.py` 等；默认值以源码为准）。在 `backend/` 目录创建 `.env` 生效；**`.env` 已被忽略、未提交到仓库，请勿提交**（含真实 API Key）。忽略规则在根 `.gitignore` 的 `**/.env` 与 `**/.env.*`——`backend/.gitignore` 里的 `.env` 只按精确文件名覆盖 `backend/.env`，换个目录或加个 `.local` 后缀就漏过去了。提交前由 `.githooks/pre-commit` 强制检查，见下文「凭据与密钥防泄漏」。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -26,6 +26,8 @@
 | `ROLE_PIPELINE_V2` | `v1` | **不改变对局运行时**。仅 `pipeline_mode_from_env()` / `RolePipeline` 适配器测试读取；`GameEngine` 固定走 `PipelineMode.V2` |
 | `WOLFKILLER_DATA_DIR` | `data` | SQLite、游戏日志、模型配置的数据根目录 |
 | `MODEL_CONFIG_PATH` | `{WOLFKILLER_DATA_DIR}/models.json` | 显式覆盖模型配置文件路径 |
+| `APP_SETTINGS_PATH` | `{WOLFKILLER_DATA_DIR}/settings.json` | 显式覆盖应用设置文件路径（训练语料采集开关） |
+| `PROMPT_CAPTURE_ENABLED` | 未设置（默认开） | 训练语料采集的进程级开关：`1` / `true` / `yes` / `on` 开，其他值一律关。界面设置优先于它；只在**建局**时解析，恢复路径不重读（见下文「数据存储」） |
 | `WOLFKILLER_API_URL` | `http://127.0.0.1:8000` | benchmark CLI 连接的后端地址 |
 | `DEBUG` | `false` | 调试模式 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
@@ -124,6 +126,7 @@ sh .githooks/secret-scan.sh --history        # 手动跑：扫全历史
 - 游戏数据：`backend/data/games/<game_id>/`（JSONL 日志 `game.log`、LLM 对话 `conversation.log`、角色记忆 `memories/`）；`game.log` 的无密钥 `model_assignment` 记录可用于重建模型分配
 - 游戏清单：`backend/data/games/index.json`（重启后恢复游戏列表并校验流水线版本兼容性）；新对局以 `model_snapshot_version: 2` 保存按配置分组的 `count` 与 `seats`
 - 模型配置：`backend/data/models.json`（API Key 加密存储）
+- 应用设置：`backend/data/settings.json`（`APP_SETTINGS_PATH` 可覆盖）。与模型配置分开存，目前只有训练语料采集开关；落盘 `{"version": 1, "settings": {...}}`，写入走 tmp + `os.replace`，文件损坏时回落到「未设置」并在日志告警。开关的裁决链是「界面设置 > `PROMPT_CAPTURE_ENABLED` > 默认开」，只在建局时解析一次；对局数据目录里的 `llm_prompts.jsonl` 是否存在就是那局是否继续采集的耐久标记。
 - 设置 `WOLFKILLER_DATA_DIR` 后，默认模型配置随数据目录迁移；`MODEL_CONFIG_PATH` 可显式覆盖模型配置路径。测试同时隔离两个路径，不使用真实 Key。
 - **禁止删除正在进行的游戏数据，否则会导致游戏中断**
 

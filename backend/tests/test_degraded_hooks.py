@@ -1,7 +1,7 @@
 """Every reasoning hook must say "the system acted", never "the player decided".
 
-The 17 role modules each build a thought line for the god view, and all 17 used
-to be reachable with an engine-made command: the placeholder ("系统异常，本轮未
+Every role module that builds a thought line for the god view (35 hooks today)
+used to be reachable with an engine-made command: the placeholder ("系统异常，本轮未
 行动") came back out dressed as ``决定今晚不使用药水：…``. That is what made the
 god view read a system event as a player's motive, and what
 ``_log_audience_pairs`` then wrote into the seat's own history.
