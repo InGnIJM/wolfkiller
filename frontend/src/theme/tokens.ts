@@ -86,10 +86,9 @@ export const BACKDROP = {
 /**
  * 立绘文件表：`role-*.webp` 的路径 → Vite 处理后的资源 URL。
  *
- * 用 `import.meta.glob` 而不是一条条静态 `import`，是因为**立绘不进仓库**
- * （`role-*.webp` 在 `.gitignore` 里，见 `scripts/fetch-official-role-art.py`）。
- * 静态 import 在文件缺失时会让 `npm run build` 直接失败；glob 只会让那张表
- * 少一个键，`roleArt()` 照常回退卡背，**空仓库也能构建、也能跑**。
+ * 用 `import.meta.glob` 而不是一条条静态 `import`：立绘是自制素材、现在随仓库
+ * 分发，但 glob 仍让「某张图临时缺失」只表现为少一个键，`roleArt()` 照常回退
+ * 卡背，**空仓库也能构建、也能跑**。
  *
  * 顺带的好处：换成自制立绘时只要文件名不变，**不用改任何代码**。
  */
@@ -108,8 +107,7 @@ export const CARD_BACK = cardBack;
  * 表里有名字但磁盘上没图时 `roleArt()` 仍回退卡背，所以这张表可以**先行**登记
  * 还没做图的角色，不必等素材。
  *
- * 官方立绘覆盖 29 个角色；官方卡牌表里没有的（老酒鬼属假面舞会）与 2023 年后
- * 的新牌（觉醒预言家、寻香魅影、觉醒狼美人、觉醒猎人）暂时没有图。
+ * 自制立绘覆盖全部 40 个角色；表里有名字但磁盘上没图时 `roleArt()` 仍回退卡背。
  */
 export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-werewolf': 'role-werewolf',
@@ -128,10 +126,8 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-dream-weaver': 'role-dream-weaver',
   'wolf-killer-gargoyle': 'role-gargoyle',
   'wolf-killer-gravekeeper': 'role-gravekeeper',
-  // 假面舞会的舞者与假面（京城大师赛原创板）**故意不登记**：官方卡牌表里没有
-  // 这两张牌，也就没有官方立绘，而 `theme.test.ts` 要求「磁盘上有立绘时，登记过的
-  // 角色都能取到自己的图」——登记了却没图会让那条门禁变红。补图时再登记即可，
-  // 未登记的 id 本来就回退卡背。
+  'wolf-killer-dancer': 'role-dancer',
+  'wolf-killer-mask': 'role-mask',
   'wolf-killer-pure-white': 'role-pure-white',
   'wolf-killer-wolf-witch': 'role-wolf-witch',
   'wolf-killer-demon-hunter': 'role-demon-hunter',
@@ -143,9 +139,17 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-lonely-girl': 'role-lonely-girl',
   'wolf-killer-mirror-girl': 'role-mirror-girl',
   'wolf-killer-awakened-hidden-wolf': 'role-awakened-hidden-wolf',
-  'wolf-killer-awakened-wolf-king': 'role-awakened-wolf-king',
+  'wolf-killer-awakened-hunter': 'role-awakened-hunter',
+  'wolf-killer-awakened-wolf-beauty': 'role-awakened-wolf-beauty',
+  'wolf-killer-awakened-seer': 'role-awakened-seer',
   'wolf-killer-eclipse-maid': 'role-eclipse-maid',
   'wolf-killer-radiance-earl': 'role-radiance-earl',
+  'wolf-killer-fragrance-phantom': 'role-fragrance-phantom',
+  'wolf-killer-fool-seer': 'role-fool-seer',
+  'wolf-killer-iron-villager': 'role-iron-villager',
+  'wolf-killer-crow': 'role-crow',
+  'wolf-killer-cupid': 'role-cupid',
+  'wolf-killer-admirer': 'role-admirer',
 };
 
 /**
@@ -155,7 +159,7 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
  * 彻底失真，而卡背至少是诚实的：
  *   1. 没有角色 id（身份未揭晓）
  *   2. 角色 id 没登记
- *   3. 登记了但磁盘上没有对应文件（立绘不入库，新克隆就是这样）
+ *   3. 登记了但磁盘上没有对应文件（本地删了图，或新角色还没补图）
  */
 export function roleArt(roleId: string | null | undefined): string {
   if (!roleId) return CARD_BACK;

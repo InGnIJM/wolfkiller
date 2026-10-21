@@ -69,7 +69,7 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-idiot', key: 'idiot', label: '白痴' },
   { id: 'wolf-killer-werewolf-king', key: 'werewolf_king', label: '白狼王' },
   // 狼王与白狼王共用狼王配色（同一「狼王」视觉家族），但立绘各走各的 id ——
-  // 狼王还没有自己的立绘，所以显示卡背。两个 id 只差词序，任何地方都不许简写。
+  // 两个 id 只差词序，任何地方都不许简写。
   { id: 'wolf-killer-wolf-king', key: 'werewolf_king', label: '狼王' },
   { id: 'wolf-killer-evil-knight', key: 'werewolf', label: '恶夜骑士' },
   { id: 'wolf-killer-dream-weaver', key: 'guard', label: '摄梦人' },

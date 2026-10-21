@@ -131,9 +131,8 @@ describe('血月剧场素材令牌', () => {
 
 describe('roleArt', () => {
   /**
-   * 「抓图脚本跑过没有」的探针。不能用「任意角色有图」来判断 —— 老酒鬼的立绘
-   * 是自有素材、始终入库，那个判断会永远为真。预言家是纯官方立绘，只在跑过
-   * `scripts/fetch-official-role-art.py` 之后才有图。
+   * 立绘现在随仓库分发，所以预言家探针正常情况下恒为真。保留它是为了在本地
+   * 手动删掉某张图时，仍能跳过「每张都必须存在」的两条断言，而不是误报。
    */
   const officialArtPresent = roleArt('wolf-killer-seer') !== CARD_BACK;
 
