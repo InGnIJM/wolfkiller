@@ -939,6 +939,9 @@ LUCKY_GUARD_CONTRACT  = ActionContract(contract_id="lucky_guard",  schedule_poin
 
 ### 11.1 觉醒狼王（`roles/awakened_wolf_king.py`）
 
+> 决策单（2026-10-21，待拍板）：[2026-10-21-awakened-wolf-king.md](2026-10-21-awakened-wolf-king.md)。
+> 该单已复核本计划 §12 决策 3：**新增契约不改既有契约 digest、不动既有角色 `initial_resources`/`schema_version` 时，旧局是 `compatible` 而不是 `drift`**；因此推荐「新建 `awakened_wolf_claw` 契约」而不是修改 `WOLF_KING_SHOT_CONTRACT`。详见决策单 §三。
+
 | 规则 | 机制 |
 | --- | --- |
 | **可以自曝身份**（官方卡牌明文） | 契约声明在觉醒狼王**自己的 spec** 上，不下沉给所有狼 —— 改动半径最小。官方卡牌对普通狼人只写「每天夜里可以让一个人出局」，没写自曝 |
@@ -1147,7 +1150,7 @@ cd frontend && npm test && npm run lint && npm run build
 | **4.6** | 自曝愚言家 → 愚言家 + 铁好人 | ✅ 已落地 |
 | **4.7** | 丘比特奇缘 → 乌鸦 + 丘比特 + 暗恋者 | ✅ 已落地（屠城 + 第三方） |
 | **6.5** | 觉醒女巫板 → 觉醒女巫 | ⬜ 未开始；无前置 |
-| **6.6** | 觉醒狼王自曝（契约挂在它自己的 spec 上） | ⬜ 未开始；与觉醒狼王同批做 |
+| **6.6** | 觉醒狼王自曝（契约挂在它自己的 spec 上） | ⬜ 未开始；决策单 [2026-10-21-awakened-wolf-king.md](2026-10-21-awakened-wolf-king.md) 待拍板，与觉醒狼王同批做 |
 
 ### 15.6 显式排除表（只登记，不实现）
 
