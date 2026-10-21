@@ -98,8 +98,8 @@ describe('血月剧场素材令牌', () => {
   });
 
   it('立绘表登记的是文件名，不是 URL', () => {
-    // 立绘不入库（role-*.webp 在 .gitignore 里），所以这张表只能记文件名 ——
-    // 记 URL 就等于把「图一定在」写死，新克隆会直接构建失败。
+    // 立绘随仓库分发，但表里仍只记文件名 —— 记 URL 等于把 Vite 的
+    // 构建产物路径写死，换 hash 或本地删图都会直接构建失败。
     for (const [roleId, name] of Object.entries(ROLE_ART_BY_ID)) {
       expect(name, roleId).toMatch(/^role-[a-z0-9_-]+$/);
     }
@@ -148,7 +148,7 @@ describe('roleArt', () => {
   });
 
   it('登记过的角色要么是真图、要么是卡背，不会是第三种东西', () => {
-    // 立绘不入库：磁盘上没图时必须回退卡背，而不是给出一个 404 的地址。
+    // 磁盘上没图时必须回退卡背，而不是给出一个 404 的地址。
     for (const roleId of Object.keys(ROLE_ART_BY_ID)) {
       const art = roleArt(roleId);
       if (art !== CARD_BACK) expect(art, roleId).toMatch(/\.webp$/);

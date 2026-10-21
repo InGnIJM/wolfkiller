@@ -1,26 +1,30 @@
-# 自制立绘备份
+# 早期自制立绘备份（历史）
 
-这 10 张是本项目**自己的**立绘（AI 生成 + 手改），2026-10 换成官方立绘时从这里保留下来。
+这 10 张是本项目**第一批**自制立绘（AI 生成 + 手改，2026-10），
+在 2026-10-21 全量重绘之前留档，**不再被任何代码引用**。
 
-## 为什么留着
+## 现在的立绘策略
 
-官方立绘是网易的美术资产，只适合**本地自用**。要公开发布或分发时，必须换回自有素材
-—— 这一份就是那个退路。后续重新生成 AI 立绘时也可以拿它当风格基准（卡背
-`../roles/card-back.webp` 与老酒鬼 `../roles/role-old_drunkard.webp` 一直是自有的，
-从未被替换，所以不在这份备份里）。
+- 活动目录 `../roles/` 从 2026-10-21 起存放 **40 张自制立绘 + 卡背**，并**随仓库分发**。
+- 网易官方立绘已退出仓库，`scripts/fetch-official-role-art.py` 降级为遗留参考脚本
+  （`--force` 会用官方图覆盖现成自制图，不要在发布分支运行）。
+- `../roles/role-*.webp` 不再是本地资产：取图唯一入口仍是
+  `frontend/src/theme/tokens.ts` 的 `ROLE_ART_BY_ID`，缺图时组件回退卡背。
 
-## 怎么还原
+## 这份备份有什么用
 
-文件名与 `../roles/` 下的**活动立绘同名**（注意 `role-werewolf_king` 与
-`role-wolf_beauty` 用下划线，官方那批用连字符，还原时别改错），直接覆盖即可：
+- 立绘风格演进的过程记录，也是重绘时的风格参考；
+- 若某张新图需要回退到旧版，可以把对应文件复制回 `../roles/`（会被 git 跟踪，
+  记得同时确认 `ROLE_ART_BY_ID` 已登记该角色）。
+
+文件名与活动目录**基本同名**，但 `role-werewolf_king` / `role-wolf_beauty` 用下划线，
+活动目录统一用连字符（`role-werewolf-king.webp` / `role-wolf-beauty.webp`）；还原时请改名。
+卡背 `../roles/card-back.webp` 与老酒鬼在重绘前就是自有的，因此不在这份备份里。
 
 ```bash
-cp frontend/src/assets/roles-original/*.webp frontend/src/assets/roles/
+# 仅作历史参考；正常开发不需要执行
+cp frontend/src/assets/roles-original/role-seer.webp frontend/src/assets/roles/role-seer.webp
 ```
-
-`../roles/role-*.webp` 在 `.gitignore` 里，覆盖进去不会被提交 —— 这正是想要的：
-官方图与自制图都不入库，仓库里只留这份备份与 `card-back` / `role-old_drunkard`
-两张必须随仓库发布的图。
 
 ## 清单
 

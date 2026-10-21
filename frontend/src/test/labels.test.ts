@@ -13,7 +13,7 @@ const componentSources = import.meta.glob('../components/**/*.{ts,tsx}', {
 }) as Record<string, string>;
 
 describe('文案表本身', () => {
-  it('20 个命名空间都在，且没有被清空的表', () => {
+  it('21 个命名空间都在，且没有被清空的表', () => {
     // 命名空间被误删或被清空都会让界面退回显示机器值，而类型系统只保证「键齐全」。
     const tables = Object.entries(labels).filter(
       (entry): entry is [string, Record<string, string>] => typeof entry[1] === 'object',
