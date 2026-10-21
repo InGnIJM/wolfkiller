@@ -218,10 +218,9 @@
 ### 假面舞会（舞者 / 假面 / 老酒鬼）
 
 **不是网易的牌** —— 属「京城大师赛」原创板，官方卡牌表里天然没有。
-三张牌都没有官方立绘可抓（见 `frontend/src/assets/roles-original/README.md`），
-所以舞者与假面**不登记** `frontend/src/theme/tokens.ts` 的 `ROLE_ART_BY_ID`
-（登记了却没有图会让 `theme.test.ts` 的「登记过的角色都能取到自己的图」变红），
-取图时走卡背回退。
+三张牌都没有官方立绘可抓；2026-10-21 起已补自制立绘并登记
+`frontend/src/theme/tokens.ts` 的 `ROLE_ART_BY_ID`（见
+[角色立绘盘点](../notes/2026-10-20-role-portrait-inventory.md)），不再走卡背回退。
 
 板型 12 人：3 狼 1 假面 4 民 预言家 女巫 白痴 舞者（`twelve-player-masquerade`）。
 女巫**保留默认的首夜可自救** —— 三张牌都来自非网易板，「女巫不可自救」那条覆盖只属于
