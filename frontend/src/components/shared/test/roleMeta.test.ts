@@ -98,6 +98,16 @@ describe('roleMeta', () => {
   });
 });
 
+describe('role labels', () => {
+  it('gives every registered role a non-empty Chinese label', () => {
+    for (const id of REGISTERED) {
+      expect(roleMetaFor(id)?.label, id).toBeTruthy();
+    }
+    // 记忆面板曾用一张只含 16 个旧角色的表，新增角色会退回显示机器 id。
+    expect(roleMetaFor('wolf-killer-crow')?.label).toBe('乌鸦');
+  });
+});
+
 describe('ROLE_ORDER', () => {
   it('lists every registered role exactly once', () => {
     expect([...ROLE_ORDER].sort()).toEqual([...REGISTERED].sort());

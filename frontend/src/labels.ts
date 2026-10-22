@@ -422,26 +422,6 @@ export const MEMORY_EVENT_LABELS: Record<string, string> = {
   death: '死亡',
 };
 
-/** 角色 id → 角色名（记忆面板；前端没有角色 id 联合类型）。 */
-export const ROLE_LABELS: Record<string, string> = {
-  'wolf-killer-werewolf': '狼人',
-  'wolf-killer-villager': '村民',
-  'wolf-killer-seer': '预言家',
-  'wolf-killer-witch': '女巫',
-  'wolf-killer-hunter': '猎人',
-  'wolf-killer-guard': '守卫',
-  'wolf-killer-idiot': '白痴',
-  'wolf-killer-werewolf-king': '白狼王',
-  'wolf-killer-knight': '骑士',
-  'wolf-killer-wolf-beauty': '狼美人',
-  'wolf-killer-old-drunkard': '老酒鬼',
-  'wolf-killer-wolf-king': '狼王',
-  'wolf-killer-evil-knight': '恶夜骑士',
-  'wolf-killer-dream-weaver': '摄梦人',
-  'wolf-killer-gargoyle': '石像鬼',
-  'wolf-killer-gravekeeper': '守墓人',
-};
-
 /** 记忆里 `private_knowledge` 的键（存档 JSON，键开放）。 */
 export const KNOWLEDGE_LABELS: Record<string, string> = {
   teammates: '狼队友',

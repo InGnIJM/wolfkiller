@@ -46,7 +46,7 @@ WolfKiller/
 │   └── src/
 │       ├── api/                 # REST 客户端 + WebSocket hook
 │       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store + 应用设置 store
-│       ├── labels.ts            # 取值→文案唯一来源（21 张文案表，键类型为联合）
+│       ├── labels.ts            # 取值→文案唯一来源（20 张文案表，键类型为联合）
 │       ├── theme/               # 设计令牌（tokens.ts 为色值唯一来源）
 │       └── components/
 │           ├── lobby/           # 大厅（普通对局列表、扁平文件夹、批量操作）
@@ -195,7 +195,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
 - **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`
 - **旧档回放的两条路径**：`GET /api/games/{id}/events`（观众流，`audience_events` 表）是首选；无投影的对局回退到 `GET /api/games/{id}/logs`，它把 `game.log` 的记录投影成同一套公开事件。两条路径必须覆盖同一批公开类型 —— `tests/test_game_routes.py::test_every_public_audience_action_type_has_a_replay_branch` 遍历投影器声明的每个类型，用规范 payload 要求回放路径产出对应事件；承载不了的行改为**逐条跳过 + 计数 + 服务端告警**（`api/replay_diagnostics.py`），计数经内部只读接口 `GET /api/diagnostics/replay-drops` 查看，丢弃内容不进公开 DTO。
-- **文案**：后端只发机器值（`wolf_kill`、`wolves_outnumber_good`、`sheriff_election`…），取值→文案表唯一来源为 `frontend/src/labels.ts`，按**渲染语境**分 21 张文案表（死因表与编年史短标签对同一个键可以有不同措辞），键类型尽量收紧为联合类型。三处门禁绑住它：`src/test/labels.test.ts` 扫描组件源码（再出现本地 `*_LABELS`/`*_TAGS` 即红）并断言命名空间非空；后端 `tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读该文件，断言文案覆盖 `app/models/values.py`（死因/胜因/阵营）与 `GamePhase` 的每个取值 —— 这条跨语言断言补上了「后端加了值、界面没加文案」只能靠人眼发现的缝
+- **文案**：后端只发机器值（`wolf_kill`、`wolves_outnumber_good`、`sheriff_election`…），取值→文案表唯一来源为 `frontend/src/labels.ts`，按**渲染语境**分 20 张文案表（死因表与编年史短标签对同一个键可以有不同措辞），键类型尽量收紧为联合类型。三处门禁绑住它：`src/test/labels.test.ts` 扫描组件源码（再出现本地 `*_LABELS`/`*_TAGS` 即红）并断言命名空间非空；后端 `tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读该文件，断言文案覆盖 `app/models/values.py`（死因/胜因/阵营）与 `GamePhase` 的每个取值 —— 这条跨语言断言补上了「后端加了值、界面没加文案」只能靠人眼发现的缝
 - **大厅与评测隔离**：`GET /api/games` 只返回 `benchmark_run_id` 为空且 `source != benchmark` 的普通对局；评测局仍可通过 `GET /api/games/{id}` 回放。大厅用扁平文件夹（`GET/POST /api/folders`、`PUT /api/games/{id}/folder`、`POST /api/games/batch-move|batch-delete`）收纳与批量删除。评测对局只从评测页进出：`GET /api/benchmarks/{id}/games` 并上名称/阶段/胜负等投影；`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST .../games/batch-delete` 先解绑再删档；`DELETE /api/benchmarks/{id}` 取消进行中的 run 并级联删除绑定对局与报告。大厅独立 `DELETE /api/games/{id}` 对评测局仍返回 409。
 
 ## 关键设计约束

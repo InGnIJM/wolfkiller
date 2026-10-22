@@ -382,6 +382,28 @@ describe('HistoryPanel memory detail', () => {
     expect(screen.getByText(/见证 1轮：死亡/)).toBeVisible();
   });
 
+  it('renders a Chinese label for roles added after the old label map', async () => {
+    vi.mocked(fetchGameMemories).mockResolvedValue({
+      game_id: 'game-1',
+      memories: [{
+        seat_number: 3,
+        role: 'wolf-killer-crow',
+        camp: 'good',
+        is_alive: true,
+        private_knowledge: {},
+        action_history: [],
+        witnessed_events: [],
+        last_updated: '2026-01-01T00:00:00Z',
+      }],
+    });
+    useGameStore.setState({ gameId: 'game-1', timeline: [] });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
+
+    expect(await screen.findByText(/3号 · 乌鸦/)).toBeVisible();
+  });
+
   it('shows 无 for empty action history and witnessed events', async () => {
     vi.mocked(fetchGameMemories).mockResolvedValue({
       game_id: 'game-1',

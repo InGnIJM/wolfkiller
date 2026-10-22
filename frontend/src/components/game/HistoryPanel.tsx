@@ -7,10 +7,10 @@ import type { PlayerMemory, PublicReplayEvent } from '../../store/types';
 import {
   DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, EVENT_TAGS, KNOWLEDGE_LABELS,
   MEMORY_ACTION_LABELS, MEMORY_EVENT_LABELS,
-  PLAYER_STATUS_LABELS, ROLE_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
+  PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
   VOTE_REWOUND_RESULT, nightActionCaption, thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
-import { roleLabelForSeat } from '../shared/roleMeta';
+import { roleLabelForSeat, roleMetaFor } from '../shared/roleMeta';
 
 interface Props {
   onClose: () => void;
@@ -138,7 +138,7 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
       }}
     >
       <Typography variant="caption" sx={{ fontWeight: 600 }}>
-        {memory.seat_number}号 · {ROLE_LABELS[memory.role] ?? memory.role}
+        {memory.seat_number}号 · {roleMetaFor(memory.role)?.label ?? memory.role}
         {' · '}
         <Typography component="span" variant="caption" color={memory.is_alive ? 'success.light' : 'text.disabled'}>
           {memory.is_alive ? '存活' : '出局'}
