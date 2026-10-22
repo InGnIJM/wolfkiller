@@ -73,8 +73,8 @@ describe('SeatMap role badges', () => {
     fireResize(800, 600);
 
     expect(screen.getByText('狼人')).toBeInTheDocument();
-    expect(screen.getByText('村民')).toBeInTheDocument();
-    expect(screen.getAllByText(/狼人|女巫|预言家|猎人|村民|守卫/)).toHaveLength(2);
+    expect(screen.getByText('平民')).toBeInTheDocument();
+    expect(screen.getAllByText(/狼人|女巫|预言家|猎人|平民|守卫/)).toHaveLength(2);
   });
 
   it('renders a badge for every known role', () => {
@@ -99,7 +99,7 @@ describe('SeatMap role badges', () => {
     expect(screen.getByText('女巫')).toBeInTheDocument();
     expect(screen.getByText('预言家')).toBeInTheDocument();
     expect(screen.getByText('猎人')).toBeInTheDocument();
-    expect(screen.getByText('村民')).toBeInTheDocument();
+    expect(screen.getByText('平民')).toBeInTheDocument();
     expect(screen.getByText('守卫')).toBeInTheDocument();
     expect(screen.getByText('白痴')).toBeInTheDocument();
     expect(screen.getByText('白狼王')).toBeInTheDocument();
@@ -110,7 +110,7 @@ describe('SeatMap role badges', () => {
 
   it.each([
     ['wolf-killer-werewolf', '狼人'],
-    ['wolf-killer-villager', '村民'],
+    ['wolf-killer-villager', '平民'],
     ['wolf-killer-seer', '预言家'],
     ['wolf-killer-witch', '女巫'],
     ['wolf-killer-hunter', '猎人'],
@@ -182,7 +182,7 @@ describe('SeatMap role badges', () => {
     fireResize(800, 600);
 
     expect(screen.queryByText(/wolf-killer-unknown/)).not.toBeInTheDocument();
-    expect(screen.queryAllByText(/狼人|女巫|预言家|猎人|村民|守卫/)).toHaveLength(0);
+    expect(screen.queryAllByText(/狼人|女巫|预言家|猎人|平民|守卫/)).toHaveLength(0);
     expect(screen.getByLabelText('1号 存活')).toBeInTheDocument();
   });
 
@@ -265,7 +265,7 @@ describe('SeatMap sheriff election sides', () => {
     );
     fireResize(800, 600);
 
-    expect(screen.getByLabelText('3号 村民 出局')).toBeInTheDocument();
+    expect(screen.getByLabelText('3号 平民 出局')).toBeInTheDocument();
     expect(screen.getByText('警下')).toBeInTheDocument();
     expect(screen.queryByText('警上')).not.toBeInTheDocument();
   });
@@ -395,7 +395,7 @@ describe('SeatMap stage layout', () => {
 
     expect(document.querySelector('[data-layout="compact"]')).toBeInTheDocument();
     for (let seat = 1; seat <= 12; seat += 1) {
-      expect(screen.getByLabelText(`${seat}号 村民 存活`)).toBeInTheDocument();
+      expect(screen.getByLabelText(`${seat}号 平民 存活`)).toBeInTheDocument();
     }
   });
 

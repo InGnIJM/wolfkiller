@@ -32,44 +32,54 @@ import Link from '@mui/icons-material/Link';
 import Loyalty from '@mui/icons-material/Loyalty';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { INK, ROLE_COLORS } from '../../theme/tokens';
+import { roleMetaFor } from './roleMeta';
 
 interface Props {
   role: string | null;
   size?: number;
 }
 
-const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; label: string; color: string }> = {
-  'wolf-killer-werewolf': { Icon: Pets, label: '狼人', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-villager': { Icon: Person, label: '村民', color: ROLE_COLORS.villager.color },
-  'wolf-killer-seer': { Icon: Visibility, label: '预言家', color: ROLE_COLORS.seer.color },
-  'wolf-killer-witch': { Icon: Science, label: '女巫', color: ROLE_COLORS.witch.color },
-  'wolf-killer-hunter': { Icon: GpsFixed, label: '猎人', color: ROLE_COLORS.hunter.color },
-  'wolf-killer-guard': { Icon: Security, label: '守卫', color: ROLE_COLORS.guard.color },
-  'wolf-killer-idiot': { Icon: Mood, label: '白痴', color: ROLE_COLORS.idiot.color },
-  'wolf-killer-werewolf-king': { Icon: WorkspacePremium, label: '白狼王', color: ROLE_COLORS.werewolf_king.color },
-  'wolf-killer-wolf-king': { Icon: LocalFireDepartment, label: '狼王', color: ROLE_COLORS.werewolf_king.color },
-  'wolf-killer-evil-knight': { Icon: NightsStay, label: '恶夜骑士', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-dream-weaver': { Icon: Bedtime, label: '摄梦人', color: ROLE_COLORS.guard.color },
-  'wolf-killer-gargoyle': { Icon: Fort, label: '石像鬼', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-gravekeeper': { Icon: Church, label: '守墓人', color: ROLE_COLORS.guard.color },
-  'wolf-killer-knight': { Icon: Gavel, label: '骑士', color: ROLE_COLORS.knight.color },
-  'wolf-killer-wolf-beauty': { Icon: Favorite, label: '狼美人', color: ROLE_COLORS.wolf_beauty.color },
-  'wolf-killer-old-drunkard': { Icon: LocalBar, label: '老酒鬼', color: ROLE_COLORS.old_drunkard.color },
-  'wolf-killer-lonely-girl': { Icon: FavoriteBorder, label: '孤独少女', color: ROLE_COLORS.villager.color },
-  'wolf-killer-awakened-seer': { Icon: AutoAwesome, label: '觉醒预言家', color: ROLE_COLORS.seer.color },
-  'wolf-killer-fragrance-phantom': { Icon: Air, label: '寻香魅影', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-miracle-merchant': { Icon: Storefront, label: '奇迹商人', color: ROLE_COLORS.hunter.color },
-  'wolf-killer-mirror-girl': { Icon: Flip, label: '魔镜少女', color: ROLE_COLORS.seer.color },
-  'wolf-killer-awakened-hidden-wolf': { Icon: Masks, label: '觉醒隐狼', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-radiance-earl': { Icon: LightMode, label: '流光伯爵', color: ROLE_COLORS.guard.color },
-  'wolf-killer-eclipse-maid': { Icon: DarkMode, label: '蚀日侍女', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-time-wolf': { Icon: HourglassBottom, label: '蚀时狼妃', color: ROLE_COLORS.werewolf.color },
-  'wolf-killer-order-prince': { Icon: Replay, label: '定序王子', color: ROLE_COLORS.knight.color },
-  'wolf-killer-fool-seer': { Icon: RecordVoiceOver, label: '愚言家', color: ROLE_COLORS.seer.color },
-  'wolf-killer-iron-villager': { Icon: Shield, label: '铁好人', color: ROLE_COLORS.villager.color },
-  'wolf-killer-crow': { Icon: Flight, label: '乌鸦', color: ROLE_COLORS.villager.color },
-  'wolf-killer-cupid': { Icon: Link, label: '丘比特', color: ROLE_COLORS.guard.color },
-  'wolf-killer-admirer': { Icon: Loyalty, label: '暗恋者', color: ROLE_COLORS.villager.color },
+const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; color: string }> = {
+  'wolf-killer-werewolf': { Icon: Pets, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-villager': { Icon: Person, color: ROLE_COLORS.villager.color },
+  'wolf-killer-seer': { Icon: Visibility, color: ROLE_COLORS.seer.color },
+  'wolf-killer-witch': { Icon: Science, color: ROLE_COLORS.witch.color },
+  'wolf-killer-hunter': { Icon: GpsFixed, color: ROLE_COLORS.hunter.color },
+  'wolf-killer-guard': { Icon: Security, color: ROLE_COLORS.guard.color },
+  'wolf-killer-idiot': { Icon: Mood, color: ROLE_COLORS.idiot.color },
+  'wolf-killer-werewolf-king': { Icon: WorkspacePremium, color: ROLE_COLORS.werewolf_king.color },
+  'wolf-killer-wolf-king': { Icon: LocalFireDepartment, color: ROLE_COLORS.werewolf_king.color },
+  'wolf-killer-evil-knight': { Icon: NightsStay, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-dream-weaver': { Icon: Bedtime, color: ROLE_COLORS.guard.color },
+  'wolf-killer-gargoyle': { Icon: Fort, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-gravekeeper': { Icon: Church, color: ROLE_COLORS.guard.color },
+  'wolf-killer-knight': { Icon: Gavel, color: ROLE_COLORS.knight.color },
+  'wolf-killer-wolf-beauty': { Icon: Favorite, color: ROLE_COLORS.wolf_beauty.color },
+  'wolf-killer-old-drunkard': { Icon: LocalBar, color: ROLE_COLORS.old_drunkard.color },
+  'wolf-killer-lonely-girl': { Icon: FavoriteBorder, color: ROLE_COLORS.villager.color },
+  'wolf-killer-awakened-seer': { Icon: AutoAwesome, color: ROLE_COLORS.seer.color },
+  'wolf-killer-fragrance-phantom': { Icon: Air, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-miracle-merchant': { Icon: Storefront, color: ROLE_COLORS.hunter.color },
+  'wolf-killer-mirror-girl': { Icon: Flip, color: ROLE_COLORS.seer.color },
+  'wolf-killer-awakened-hidden-wolf': { Icon: Masks, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-radiance-earl': { Icon: LightMode, color: ROLE_COLORS.guard.color },
+  'wolf-killer-eclipse-maid': { Icon: DarkMode, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-time-wolf': { Icon: HourglassBottom, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-order-prince': { Icon: Replay, color: ROLE_COLORS.knight.color },
+  'wolf-killer-fool-seer': { Icon: RecordVoiceOver, color: ROLE_COLORS.seer.color },
+  'wolf-killer-iron-villager': { Icon: Shield, color: ROLE_COLORS.villager.color },
+  'wolf-killer-crow': { Icon: Flight, color: ROLE_COLORS.villager.color },
+  'wolf-killer-cupid': { Icon: Link, color: ROLE_COLORS.guard.color },
+  'wolf-killer-admirer': { Icon: Loyalty, color: ROLE_COLORS.villager.color },
+  'wolf-killer-awakened-hunter': { Icon: GpsFixed, color: ROLE_COLORS.hunter.color },
+  'wolf-killer-awakened-wolf-beauty': { Icon: Favorite, color: ROLE_COLORS.wolf_beauty.color },
+  'wolf-killer-crimson-envoy': { Icon: LocalFireDepartment, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-dancer': { Icon: AutoAwesome, color: ROLE_COLORS.guard.color },
+  'wolf-killer-demon-hunter': { Icon: GpsFixed, color: ROLE_COLORS.hunter.color },
+  'wolf-killer-mask': { Icon: Masks, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-nightmare': { Icon: Bedtime, color: ROLE_COLORS.werewolf.color },
+  'wolf-killer-pure-white': { Icon: Visibility, color: ROLE_COLORS.seer.color },
+  'wolf-killer-wolf-witch': { Icon: Science, color: ROLE_COLORS.werewolf.color },
 };
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标
@@ -77,7 +87,7 @@ export default function RoleIcon({ role, size = 28 }: Props) {
   if (!role) return null;
   const entry = ROLE_ICONS[role];
   const Icon = entry ? entry.Icon : Help;
-  const label = entry ? entry.label : '未知身份';
+  const label = roleMetaFor(role)?.label ?? '未知身份';
   const color = entry ? entry.color : INK.faint;
   return (
     <span

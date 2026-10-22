@@ -60,7 +60,7 @@ describe('DeathAnnouncement', () => {
 
   it.each([
     ['wolf-killer-werewolf', '狼人'],
-    ['wolf-killer-villager', '村民'],
+    ['wolf-killer-villager', '平民'],
     ['wolf-killer-seer', '预言家'],
     ['wolf-killer-witch', '女巫'],
     ['wolf-killer-hunter', '猎人'],

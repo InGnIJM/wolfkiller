@@ -18,7 +18,7 @@ describe('血月剧场主题令牌', () => {
     expect(theme.palette.text.disabled).toBe('#7D7468');
   });
 
-  it('语义色映射到角色盘（猎人琥珀 / 村民苔绿 / 预言家雾蓝）', () => {
+  it('语义色映射到角色盘（猎人琥珀 / 平民苔绿 / 预言家雾蓝）', () => {
     expect(theme.palette.warning.main).toBe('#D9A441');
     expect(theme.palette.success.main).toBe('#93B58C');
     expect(theme.palette.info.main).toBe('#7FB4D9');

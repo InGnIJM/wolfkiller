@@ -18,7 +18,7 @@ describe('RoleIcon', () => {
 
   it.each([
     ['wolf-killer-werewolf', '狼人'],
-    ['wolf-killer-villager', '村民'],
+    ['wolf-killer-villager', '平民'],
     ['wolf-killer-seer', '预言家'],
     ['wolf-killer-witch', '女巫'],
     ['wolf-killer-hunter', '猎人'],
@@ -30,6 +30,15 @@ describe('RoleIcon', () => {
     ['wolf-killer-crow', '乌鸦'],
     ['wolf-killer-cupid', '丘比特'],
     ['wolf-killer-admirer', '暗恋者'],
+    ['wolf-killer-awakened-hunter', '觉醒猎人'],
+    ['wolf-killer-awakened-wolf-beauty', '觉醒狼美人'],
+    ['wolf-killer-crimson-envoy', '赤月使徒'],
+    ['wolf-killer-dancer', '舞者'],
+    ['wolf-killer-demon-hunter', '猎魔人'],
+    ['wolf-killer-mask', '假面'],
+    ['wolf-killer-nightmare', '噩梦之影'],
+    ['wolf-killer-pure-white', '纯白之女'],
+    ['wolf-killer-wolf-witch', '狼巫'],
   ])('renders a labelled Material icon for %s', (role, label) => {
     render(<RoleIcon role={role} />);
     expect(screen.getByLabelText(label)).toBeInTheDocument();
