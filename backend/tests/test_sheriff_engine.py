@@ -14,6 +14,8 @@ from app.core.sheriff_flow import (
     DEATH_RIGHT,
     SHERIFF_LEFT,
     SHERIFF_RIGHT,
+    SHERIFF_TECHNICAL_ABSTAIN,
+    SHERIFF_VOTE_FAILURE_CODE,
     SheriffDirector,
     day_speech_order,
     set_sheriff,
@@ -642,6 +644,58 @@ async def test_campaign_and_pk_speeches_are_public_and_do_not_block_day_speech()
     assert [kind for _, kind in spoken] == ["day_speech"] * 4
     day = [record for record in engine.state.speeches if record.phase == "speech"]
     assert {record.player_seat for record in day} == {1, 2, 3, 4}
+
+
+@pytest.mark.asyncio
+async def test_a_sheriff_technical_abstain_is_checkpointed_and_announced() -> None:
+    """A ``vote`` the model could not complete must not pass for a voluntary pass.
+
+    The campaign leaves seats 2 and 3 as candidates; seat 1's ballot is the
+    director's technical sentinel, seat 4 still votes 2. The engine keeps the
+    empty ``SHERIFF_VOTE`` row (the timeline must show the empty ballot), writes
+    the sibling ``sheriff_vote_technical_abstain`` audit row, and commits the
+    label the GameService maps to the existing ``TECHNICAL_ABSTAIN`` event.
+    """
+    engine = _engine()
+    engine._sheriff_director = ScriptedSheriff(
+        campaign=["pass", "run", "run", "pass"],
+        withdraw=["stay", "stay"],
+        votes=[SHERIFF_TECHNICAL_ABSTAIN, 2],
+    )
+    labels: list[str] = []
+    engine._checkpoint_hook = labels.append
+    technical: list[tuple[tuple, dict]] = []
+    engine.game_logger.log_sheriff_vote_technical_abstain = (
+        lambda *args, **kwargs: technical.append((args, kwargs))
+    )
+    audience: list[tuple[str, dict]] = []
+    original = engine.game_logger.log_audience_action
+
+    def capture(game_id, round_num, phase, event_type, payload):
+        audience.append((event_type, dict(payload)))
+        original(game_id, round_num, phase, event_type, payload)
+
+    engine.game_logger.log_audience_action = capture
+    engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
+
+    await engine._execute_sheriff_election()
+
+    assert technical == [
+        ((engine.game_id, 1, 1), {"failure_code": SHERIFF_VOTE_FAILURE_CODE}),
+    ]
+    assert any(
+        label.endswith(
+            f"sheriff_vote_technical_abstain:1:vote:1:{SHERIFF_VOTE_FAILURE_CODE}"
+        )
+        for label in labels
+    )
+    ballots = {
+        payload["voter_seat"]: payload["target_seat"]
+        for event_type, payload in audience
+        if event_type == "SHERIFF_VOTE"
+    }
+    assert ballots == {1: None, 4: 2}
+    assert engine.state.sheriff == 2
 
 
 @pytest.mark.asyncio

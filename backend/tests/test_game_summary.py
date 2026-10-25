@@ -53,6 +53,21 @@ def _seed_game(data_dir: Path, game_id: str = "g1") -> None:
         {"timestamp": "t7", "round": 1, "phase": "vote_casting",
          "operation": "vote_technical_abstain", "seat": 3,
          "data": {"failure_code": "request_timeout"}},
+        {"timestamp": "t7a", "round": 1, "phase": "sheriff_election",
+         "operation": "audience_action",
+         "data": {"event_type": "SHERIFF_VOTE",
+                  "payload": {"voter_seat": 1, "target_seat": 2, "kind": "vote"}}},
+        {"timestamp": "t7b", "round": 1, "phase": "sheriff_election",
+         "operation": "audience_action",
+         "data": {"event_type": "SHERIFF_VOTE",
+                  "payload": {"voter_seat": 2, "target_seat": None, "kind": "vote"}}},
+        {"timestamp": "t7c", "round": 1, "phase": "sheriff_election",
+         "operation": "sheriff_vote_technical_abstain", "seat": 2,
+         "data": {"failure_code": "sheriff_vote_unusable"}},
+        {"timestamp": "t7d", "round": 1, "phase": "night",
+         "operation": "audience_action",
+         "data": {"event_type": "GUARD_REASONING",
+                  "payload": {"seat": 5, "degraded": True, "reasoning": "本轮未提交决策"}}},
         {"timestamp": "t8", "round": 1, "phase": "vote_resolution",
          "operation": "vote_result", "data": {"exiled": 2, "tally": {"1": 1}}},
         {"timestamp": "t9", "round": 1, "phase": "night",
@@ -155,6 +170,10 @@ def test_build_game_summary_from_fixture(tmp_path: Path) -> None:
     assert round1["votes"] == [{"seat": 1, "target": 2}]
     assert round1["speeches"] == [{"seat": 1, "chars": 11}]
     assert round1["deaths"] == [{"player_seat": 3, "cause": "wolf_kill"}]
+    assert round1["sheriff_ballots"] == 2
+    assert round1["sheriff_abstains"] == 1
+    assert round1["sheriff_technical_abstains"] == 1
+    assert round1["degraded_actions"] == 1
     night_events = round1["night_actions"]
     assert [event["event"] for event in night_events] == [
         "SEER_CHECK", "WEREWOLF_KILL",
@@ -172,6 +191,7 @@ def test_build_game_summary_from_fixture(tmp_path: Path) -> None:
     assert summary["llm"]["calls_by_kind"] == {"action": 1, "speech": 2, "night": 1}
     assert summary["llm"]["elapsed_ms"]["p50"] == 1200
     assert summary["llm"]["elapsed_ms"]["p99"] == 3000
+    assert summary["llm"]["degraded_actions"] == 1
 
     assert summary["engine"]["phase_ms"] == {"night": 900}
     assert summary["engine"]["slow_rules"] == [{

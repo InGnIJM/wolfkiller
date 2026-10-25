@@ -30,6 +30,8 @@ from app.core.night_settlement import is_silenced, resolve_delayed_deaths
 from app.core.wolf_pack import in_wolf_pack
 from app.core.vote_service import VoteService
 from app.core.sheriff_flow import (
+    SHERIFF_TECHNICAL_ABSTAIN,
+    SHERIFF_VOTE_FAILURE_CODE,
     SheriffDirector,
     apply_badge,
     badge_targets,
@@ -1412,6 +1414,7 @@ class GameEngine:
             if choice == "explode":
                 await self._election_explode(seat)
                 return True
+            technical = choice == SHERIFF_TECHNICAL_ABSTAIN
             target = choice if type(choice) is int and choice in legal else None
             if target is not None:
                 counts[target] = counts.get(target, 0) + 1
@@ -1426,6 +1429,19 @@ class GameEngine:
                 f"sheriff_vote:{self.state.round_number}:{step}:{seat}:"
                 f"{target if target is not None else 'none'}"
             )
+            if technical:
+                # The ballot above stays empty so the timeline still shows the
+                # seat did not vote; this sibling step is what tells the god
+                # view the emptiness was the engine, not a voluntary pass.
+                self.game_logger.log_sheriff_vote_technical_abstain(
+                    self.game_id, self.state.round_number, seat,
+                    failure_code=SHERIFF_VOTE_FAILURE_CODE,
+                )
+                await self._durable_checkpoint(
+                    f"sheriff_vote_technical_abstain:"
+                    f"{self.state.round_number}:{step}:{seat}:"
+                    f"{SHERIFF_VOTE_FAILURE_CODE}"
+                )
         self.conversation_log.add_sheriff_ballot(ballots, self.state.round_number, step)
         winner, tied = decide_tally(counts)
         if winner is not None:

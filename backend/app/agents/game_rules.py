@@ -24,10 +24,16 @@ TARGET_SELECTION_RULE = (
     "When the contract declares a multi-target action (``target_seats``), give "
     "exactly the required number of distinct live seats and leave ``target_seat`` "
     "empty; a single-target action still uses ``target_seat``. "
+    "For a non-pass single-target action that needs a target, ``target_seat`` must "
+    "be the chosen seat number; a null ``target_seat`` is only valid for ``pass``. "
     "RANDOM_HINT, when present, is an optional server-selected legal fallback "
     "for when you have no useful evidence or independent idea; it never requires "
-    "you to use a skill or select that target. When it is absent, do not invent a "
-    "random value; make a strategic decision from the available facts."
+    "you to use a skill or select that target, but if you choose it you must put "
+    "that seat in the target field the contract uses -- ``target_seat`` for a "
+    "single-target action, or one entry of ``target_seats`` for a multi-target "
+    "action; leaving the target empty does not select the hint and will be "
+    "rejected. When it is absent, do not invent a random value; make a strategic "
+    "decision from the available facts."
 )
 
 

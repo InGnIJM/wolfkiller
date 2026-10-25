@@ -425,6 +425,34 @@ def _with_repair_reminder(messages, suffix: str) -> list:
     return [*active[:-1], merged]
 
 
+#: Appended on the scheduler's second provider attempt. ``Scheduler._command``
+#: asks once, validates the answer against the contract, and asks again only
+#: after a rule rejection; the hint is what makes the second ask a *repair*
+#: instead of an identical replay. It names the failure the 2026-10-21 game hit
+#: (non-pass actions with ``target_seat=null``) without assuming it is the only
+#: one: the contract + context remain the authority.
+_RULE_RETRY_HINT = (
+    "\n\n【规则校验失败】上一次输出的动作没有通过引擎校验："
+    "非 pass 动作必须按 ROLE_CONTRACT 把目标写进 target_seat（单目标）或 "
+    "target_seats（多目标）；使用 RANDOM_HINT 时也要把该号码抄进对应字段，"
+    "留空不会替你选择。请重新输出同一契约的 JSON。"
+)
+
+
+def _pipeline_request_id(action_key: str, attempt: int) -> str:
+    """Durable request id for one pipeline action attempt.
+
+    The first attempt keeps the historical ``pipeline:<action_key>`` key, so
+    already-resolved rows from interrupted games still replay exactly. A rule
+    rejection increments ``attempt``; that attempt must get a distinct id or
+    :meth:`ModelInvocationService.invoke_sync` returns the cached rejected
+    answer and the "re-ask once" path never reaches the model.
+    """
+    if attempt > 0:
+        return f"pipeline:{action_key}:retry:{attempt}"
+    return f"pipeline:{action_key}"
+
+
 def _night_turn(
     llm_client, messages, *, tool_name: str, schema: dict[str, object],
 ) -> _NightTurn:
@@ -2024,6 +2052,19 @@ class GameService:
                 "seat": int(parts[2]) if len(parts) > 2 else 0,
                 "choice": parts[3] if len(parts) > 3 else "stay",
             }
+        elif label.startswith("sheriff_vote_technical_abstain:"):
+            # ``...:<round>:<step>:<seat>:<failure_code>``. The matching
+            # ``SHERIFF_VOTE`` step still carries ``target_seat=None``; this
+            # sibling is what tells the god view the empty ballot was cast by
+            # the engine, not a voluntary pass. Reuse the existing
+            # ``technical_abstain`` audience event so no DTO/frontend changes.
+            parts = label.split(":")
+            event_type = "TECHNICAL_ABSTAIN"
+            payload = {
+                "round_number": engine.state.round_number,
+                "voter_seat": int(parts[-2]),
+                "failure_code": parts[-1],
+            }
         elif label.startswith("sheriff_vote"):
             parts = label.split(":")
             raw_target = parts[4] if len(parts) > 4 else "none"
@@ -2938,6 +2979,11 @@ class GameService:
                 SystemMessage(content=_SYSTEM_PROMPT),
                 HumanMessage(content=prompt),
             ]
+            if attempt > 0:
+                # Scheduler attempt 1 only exists after a rule rejection. Merge
+                # the repair request into the last user turn; a second user
+                # turn would be rejected or reordered by some gateways.
+                messages = _with_repair_reminder(messages, _RULE_RETRY_HINT)
             if (
                 engine is not None
                 and request.contract.schedule_point in _NIGHT_ACTOR_POINTS
@@ -3107,9 +3153,10 @@ class GameService:
                     merged = merge_usage(merged, item)
                 return _durable_command_payload(command), _usage_mapping(merged)
 
+            request_id = _pipeline_request_id(request.action_key, attempt)
             result = self._model_invocations.invoke_sync(
                 game_id=context.game_id,
-                request_id=f"pipeline:{request.action_key}",
+                request_id=request_id,
                 actor_seat=request.actor_seat,
                 action_position=request.action_key,
                 frozen_request=frozen_request,
@@ -3121,7 +3168,7 @@ class GameService:
             self._wait_model_consumption_allowed_sync(context.game_id)
             if capture is not None and not result.reused:
                 capture.flush(build_prompt_record(
-                    request_id=f"pipeline:{request.action_key}",
+                    request_id=request_id,
                     call_kind="pipeline",
                     round_number=request.round_number, phase=request.phase,
                     seat=request.actor_seat,

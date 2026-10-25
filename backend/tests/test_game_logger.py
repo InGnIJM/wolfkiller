@@ -24,6 +24,20 @@ def test_log_vote_telemetry_keeps_only_operational_metadata(tmp_path):
     }
 
 
+def test_log_sheriff_vote_technical_abstain_names_the_engine_failure(tmp_path):
+    logger = GameLogger(data_dir=str(tmp_path))
+
+    logger.log_sheriff_vote_technical_abstain(
+        "g1", 1, 7, failure_code="sheriff_vote_unusable",
+    )
+
+    record = json.loads(_read_last_line(tmp_path / "games" / "g1" / "game.log"))
+    assert record["operation"] == "sheriff_vote_technical_abstain"
+    assert record["phase"] == "sheriff_election"
+    assert record["seat"] == 7
+    assert record["data"] == {"failure_code": "sheriff_vote_unusable"}
+
+
 def test_log_narration_writes_structured_record(tmp_path):
     logger = GameLogger(data_dir=str(tmp_path))
     logger.log_narration("g1", 1, "night", "天亮了", "昨晚是平安夜，没有人死亡。")

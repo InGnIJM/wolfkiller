@@ -84,6 +84,8 @@ def _round_bucket(rounds: dict, rnd: object) -> dict:
         bucket = {
             "speeches": [], "votes": [], "deaths": [], "night_actions": [],
             "technical_abstains": 0, "rejected_actions": 0,
+            "sheriff_ballots": 0, "sheriff_abstains": 0,
+            "sheriff_technical_abstains": 0, "degraded_actions": 0,
             "exiled": None, "tally": {},
         }
         rounds[key] = bucket
@@ -176,13 +178,27 @@ def _summarize(
             bucket["tally"] = tally if isinstance(tally, dict) else {}
         elif op == "vote_technical_abstain":
             _round_bucket(rounds, rnd)["technical_abstains"] += 1
+        elif op == "sheriff_vote_technical_abstain":
+            # Sibling of the empty ``SHERIFF_VOTE`` audience row: the same
+            # ballot, but the cause is a model failure rather than ``pass``.
+            _round_bucket(rounds, rnd)["sheriff_technical_abstains"] += 1
         elif op == "audience_action":
             event_type = data.get("event_type")
+            payload = (
+                data.get("payload")
+                if isinstance(data.get("payload"), dict) else {}
+            )
+            if payload.get("degraded") is True:
+                # The engine stood in for the seat (night action / wolf vote).
+                # ``action_rejected`` already covers rule violations; this
+                # covers parse-failure fallbacks that never reached validation.
+                _round_bucket(rounds, rnd)["degraded_actions"] += 1
+            if event_type == "SHERIFF_VOTE":
+                bucket = _round_bucket(rounds, rnd)
+                bucket["sheriff_ballots"] += 1
+                if payload.get("target_seat") is None:
+                    bucket["sheriff_abstains"] += 1
             if event_type in _TRACKED_EVENTS:
-                payload = (
-                    data.get("payload")
-                    if isinstance(data.get("payload"), dict) else {}
-                )
                 row = {
                     "event": event_type,
                     "seat": payload.get("seat"),
@@ -227,6 +243,11 @@ def _summarize(
     if winner is None:
         winner = manifest.get("winner")
 
+    llm_summary = _llm_aggregate(llm_records)
+    llm_summary["degraded_actions"] = sum(
+        bucket["degraded_actions"] for bucket in rounds.values()
+    )
+
     return {
         "game_id": game_id,
         "created_at": manifest.get("created_at") or log_created_at,
@@ -238,7 +259,7 @@ def _summarize(
         ),
         "roles": roles,
         "rounds": {str(rnd): rounds[rnd] for rnd in sorted(rounds)},
-        "llm": _llm_aggregate(llm_records),
+        "llm": llm_summary,
         "engine": {"phase_ms": phase_ms, "slow_rules": slow_rules},
         "model_errors": model_errors,
         "model_snapshot": manifest.get("model_snapshot"),

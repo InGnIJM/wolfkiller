@@ -10,6 +10,8 @@ from app.core.sheriff_flow import (
     DEATH_RIGHT,
     SHERIFF_LEFT,
     SHERIFF_RIGHT,
+    SHERIFF_TECHNICAL_ABSTAIN,
+    SHERIFF_VOTE_FAILURE_CODE,
     SheriffDirector,
     apply_badge,
     badge_reasoning,
@@ -344,7 +346,7 @@ def test_director_turns_use_invoke_and_fall_back() -> None:
     broken = SheriffDirector(bad_invoke)
     assert broken.campaign_turn(state, 2, wolf=False) == "pass"
     assert broken.withdraw_turn(state, 2, wolf=False) == "stay"
-    assert broken.vote_turn(state, 4, (2, 3), wolf=False) is None
+    assert broken.vote_turn(state, 4, (2, 3), wolf=False) == SHERIFF_TECHNICAL_ABSTAIN
 
     def wolf_invoke(messages, tool_name, schema, seat):
         if tool_name == "sheriff_campaign":
@@ -361,6 +363,91 @@ def test_director_turns_use_invoke_and_fall_back() -> None:
     assert wolves.vote_turn(state, 1, (2, 3), wolf=True) == "explode"
     assert wolves.side_turn(state, 2, (SHERIFF_LEFT, SHERIFF_RIGHT)) == SHERIFF_LEFT
     assert wolves.badge_turn(state, 2, (3, 4)) == ("tear", None, "")
+
+
+def test_a_vote_without_a_target_is_reasked_once_with_a_repair_hint() -> None:
+    """vote 少 target_seat 不是主动弃票：必须换问法再问一次。
+
+    最新一局 9/9 张警长票都是 ``action_type=vote`` 但落库没有
+    ``target_seat``；旧的 ``vote_turn`` 把它与 ``pass`` 一起吞成 ``None``，
+    观众流因此显示 9 个「弃权」，警徽直接流失。
+    """
+    prompts: list[str] = []
+
+    def invoke(messages, tool_name, schema, seat):
+        prompts.append(messages[1]["content"])
+        if len(prompts) == 1:
+            return '{"action_type":"vote","reasoning":"我投2号"}'
+        return '{"action_type":"vote","target_seat":2,"reasoning":"我投2号"}'
+
+    director = SheriffDirector(invoke)
+    assert director.vote_turn(_state(), 4, (2, 3), wolf=False) == 2
+    assert len(prompts) == 2
+    assert "target_seat" in prompts[1]
+    assert prompts[0] != prompts[1]
+
+
+def test_a_vote_still_missing_its_target_after_the_retry_is_a_technical_abstain() -> None:
+    prompts: list[str] = []
+
+    def invoke(messages, tool_name, schema, seat):
+        prompts.append(1)
+        return '{"action_type":"vote","reasoning":"我投2号"}'
+
+    director = SheriffDirector(invoke)
+    assert (
+        director.vote_turn(_state(), 4, (2, 3), wolf=False)
+        == SHERIFF_TECHNICAL_ABSTAIN
+    )
+    assert len(prompts) == 2
+
+
+def test_a_pass_ballot_is_not_retried() -> None:
+    prompts: list[str] = []
+
+    def invoke(messages, tool_name, schema, seat):
+        prompts.append(1)
+        return '{"action_type":"pass","reasoning":"不投任何人"}'
+
+    director = SheriffDirector(invoke)
+    assert director.vote_turn(_state(), 4, (2, 3), wolf=False) is None
+    assert len(prompts) == 1
+
+
+def test_a_retry_can_still_return_pass() -> None:
+    prompts: list[str] = []
+
+    def invoke(messages, tool_name, schema, seat):
+        prompts.append(1)
+        if len(prompts) == 1:
+            return '{"action_type":"vote","reasoning":"我投2号"}'
+        return '{"action_type":"pass","reasoning":"不投任何人"}'
+
+    director = SheriffDirector(invoke)
+    assert director.vote_turn(_state(), 4, (2, 3), wolf=False) is None
+    assert len(prompts) == 2
+
+
+def test_a_provider_failure_is_a_technical_abstain() -> None:
+    def invoke(messages, tool_name, schema, seat):
+        raise RuntimeError("timeout")
+
+    director = SheriffDirector(invoke)
+    assert (
+        director.vote_turn(_state(), 4, (2, 3), wolf=False)
+        == SHERIFF_TECHNICAL_ABSTAIN
+    )
+
+
+def test_the_technical_abstain_failure_code_is_stable() -> None:
+    assert SHERIFF_VOTE_FAILURE_CODE == "sheriff_vote_unusable"
+
+
+def test_the_vote_prompt_requires_a_target_for_vote_not_for_pass() -> None:
+    human = SheriffDirector().vote_prompt(_state(), 4, (2, 3))[1]["content"]
+    assert "action_type=vote 时" in human
+    assert "必须" in human
+    assert "target_seat" in human
 
 
 def test_a_refused_transfer_target_keeps_the_reason_but_logs_the_degrade(caplog) -> None:

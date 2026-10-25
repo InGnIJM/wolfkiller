@@ -301,6 +301,20 @@ class GameLogger:
             data=data,
         )
 
+    def log_sheriff_vote_technical_abstain(
+        self, game_id: str, round_num: int, seat: int, *, failure_code: str,
+    ) -> None:
+        """Record the sheriff ballot the engine had to cast for a seat.
+
+        The plain ``SHERIFF_VOTE`` row still carries ``target_seat=None`` so the
+        timeline shows the empty ballot; this sibling row is the only trace that
+        the emptiness was a model failure rather than a voluntary ``pass``.
+        """
+        self.log_operation(
+            game_id, "sheriff_vote_technical_abstain", round_num,
+            "sheriff_election", seat=seat, data={"failure_code": failure_code},
+        )
+
     def log_vote_result(
         self, game_id: str, round_num: int, exiled: Optional[int], tally: dict,
     ) -> None:

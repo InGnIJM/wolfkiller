@@ -47,6 +47,23 @@ _VOTE = "vote"
 _TRANSFER = "transfer"
 _TEAR = "tear"
 
+#: Returned by :meth:`SheriffDirector.vote_turn` when the seat did not cast a
+#: usable ballot. It is deliberately distinct from ``None`` (a voluntary
+#: ``pass``): the engine must publish a ``TECHNICAL_ABSTAIN`` for this value
+#: instead of letting the god view read a model failure as a player decision.
+SHERIFF_TECHNICAL_ABSTAIN = "technical_abstain"
+SHERIFF_VOTE_FAILURE_CODE = "sheriff_vote_unusable"
+
+#: Appended to the last user turn before the one repair re-ask. The original
+#: prompt already says a vote needs a target, but 9/9 sheriff ballots in the
+#: 2026-10-21 game came back as ``action_type=vote`` with the target only in the
+#: prose reasoning. A second, explicit request is the budgeted repair.
+_VOTE_TARGET_HINT = (
+    "\n\n【系统提示】上一次你选择了 action_type=vote，但没有把合法的 "
+    "target_seat 写成候选人座位号。请重新输出：action_type=vote 时 "
+    "target_seat 必须是候选人之一；只有 action_type=pass 才不填 target_seat。"
+)
+
 #: Declared by a werewolf-camp role whose card forbids self-destruction. It
 #: travels as a resource so the pack-wide kill contract stays byte-identical
 #: across roles, and this module is its only reader: the badge-swallowing move
@@ -360,6 +377,36 @@ def parse_vote(raw: object, legal: set[int] | frozenset[int], *, wolf: bool) -> 
     return None
 
 
+def _vote_target_missing(raw: object, legal: Sequence[int]) -> bool:
+    """True only for the one failure that deserves a repair: vote without a seat.
+
+    A ``pass`` is a valid voluntary abstention and must not be re-asked. An
+    ``explode`` is likewise complete. Everything else (unknown action, absent
+    target, out-of-candidate seat) is an unusable vote the director should
+    retry once before declaring a technical abstention.
+    """
+    payload = _as_object(raw)
+    if payload.get("action_type") != _VOTE:
+        return False
+    target = payload.get("target_seat")
+    return not (type(target) is int and target in legal)
+
+
+def _with_vote_retry_hint(
+    messages: list[dict[str, str]], hint: str,
+) -> list[dict[str, str]]:
+    """Merge the repair hint into the last user turn.
+
+    Some gateways reject two consecutive user messages; the sheriff prompts end
+    on a user turn, so the hint is appended to that content instead of added as
+    a new turn (mirrors ``game_service._with_repair_reminder``).
+    """
+    return [
+        *messages[:-1],
+        {**messages[-1], "content": f"{messages[-1].get('content') or ''}{hint}"},
+    ]
+
+
 def parse_side(raw: object, legal: Sequence[str]) -> str:
     side = _as_object(raw).get("side")
     if type(side) is str and side in legal:
@@ -648,8 +695,8 @@ class SheriffDirector:
         human = (
             f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，因此拥有警长投票权，"
             f"请在候选人中选择：{listed}。结合警上发言判断谁更适合当警长。"
-            f"输出 action_type=vote 且 target_seat 为候选座位；不投任何人时输出 "
-            f"action_type=pass 且**省略 target_seat**。\n"
+            f"输出 action_type=vote 时**必须**把 target_seat 填为候选人座位号；"
+            f"不投任何人时输出 action_type=pass，且**不要**填 target_seat。\n"
             + self._context_block(state, seat, wolf=wolf)
         )
         return self._messages(self._system(), human)
@@ -753,24 +800,35 @@ class SheriffDirector:
         explode = wolf and self._may_explode(state, seat)
         actions = [_VOTE, _PASS] + ([_EXPLODE] if explode else [])
         try:
-            value = self._invoke_json(
-                # ``wolf`` (camp) is what the prompt needs: dropping it here left
-                # the wolf roster out of the ballot while campaign, withdraw and
-                # every day-time tool carried it, so wolves voted without knowing
-                # their own team. ``explode`` stays schema-only.
-                self.vote_prompt(state, seat, candidates, wolf=wolf),
-                tool_name="sheriff_vote",
-                schema=_schema(
-                    actions,
-                    {"target_seat": {"type": ["integer", "null"], "minimum": 1}},
-                    optional=("target_seat",),
-                ),
-                seat=seat,
+            # ``wolf`` (camp) is what the prompt needs: dropping it here left the
+            # wolf roster out of the ballot while campaign, withdraw and every
+            # day-time tool carried it, so wolves voted without knowing their own
+            # team. ``explode`` stays schema-only.
+            prompt = self.vote_prompt(state, seat, candidates, wolf=wolf)
+            schema = _schema(
+                actions,
+                {"target_seat": {"type": ["integer", "null"], "minimum": 1}},
+                optional=("target_seat",),
             )
-            return parse_vote(value, set(candidates), wolf=explode)
+            legal = set(candidates)
+            value = self._invoke_json(
+                prompt, tool_name="sheriff_vote", schema=schema, seat=seat,
+            )
+            if _vote_target_missing(value, candidates):
+                # A vote without a usable target is an unusable answer, not a
+                # voluntary abstention. Ask exactly once more with the repair
+                # hint; only then fall back to a technical abstention so the god
+                # view can tell the two apart.
+                value = self._invoke_json(
+                    _with_vote_retry_hint(prompt, _VOTE_TARGET_HINT),
+                    tool_name="sheriff_vote", schema=schema, seat=seat,
+                )
+                if _vote_target_missing(value, candidates):
+                    return SHERIFF_TECHNICAL_ABSTAIN
+            return parse_vote(value, legal, wolf=explode)
         except Exception:
             logger.warning("sheriff vote failed seat=%s", seat, exc_info=True)
-            return None
+            return SHERIFF_TECHNICAL_ABSTAIN
 
     def side_turn(self, state: GameState, seat: int, sides: Sequence[str]) -> str:
         try:

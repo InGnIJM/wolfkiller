@@ -65,6 +65,31 @@ def test_a_system_cast_ballot_is_mapped_with_its_failure_code() -> None:
     }
 
 
+def test_a_sheriff_technical_abstain_uses_the_same_public_event() -> None:
+    """警长票的引擎失败复用放逐票的 ``technical_abstain`` 事件。
+
+    事件类型/前端渲染不变，只是 label 前缀不同；否则 9/9 张空票只能显示成
+    玩家主动弃权。
+    """
+    state = GameState(game_id="game")
+    state.round_number = 1
+    engine = SimpleNamespace(game_id="game", state=state)
+    events = GameService._checkpoint_domain_events(
+        engine,
+        "00000088:sheriff_vote_technical_abstain:1:vote:4:sheriff_vote_unusable",
+    )
+    assert len(events) == 1
+    assert events[0]["event_type"] == "TECHNICAL_ABSTAIN"
+    assert events[0]["payload"] == {
+        "round_number": 1,
+        "voter_seat": 4,
+        "failure_code": "sheriff_vote_unusable",
+    }
+    projected = AudienceProjector().project_events("game", events)
+    assert projected[0]["event_type"] == "technical_abstain"
+    assert projected[0]["payload"]["voter_seat"] == 4
+
+
 @pytest.mark.asyncio
 async def test_a_failed_vote_step_announces_the_abstention_instead_of_the_ballot() -> None:
     engine = _engine("vote-abstain", (1, 2))

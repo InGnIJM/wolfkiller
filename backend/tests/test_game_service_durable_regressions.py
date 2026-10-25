@@ -312,17 +312,20 @@ def fake_provider(monkeypatch):
             self.model_name = "fake-model"
             self.provider_profile = SimpleNamespace(profile_id="custom-openai")
             self.calls = 0
+            self.messages: list[object] = []
             self.closed = False
             self.instances.append(self)
 
-        def invoke_json(self, *_args, **_kwargs):
+        def invoke_json(self, messages, *_args, **_kwargs):
             self.calls += 1
+            self.messages.append(messages)
             return SimpleNamespace(payload=self.payload, usage=SimpleNamespace(
                 prompt_tokens=1, completion_tokens=2, total_tokens=3,
             ))
 
-        def invoke_action(self, *_args, **_kwargs):
+        def invoke_action(self, messages, *_args, **_kwargs):
             self.calls += 1
+            self.messages.append(messages)
             return SimpleNamespace(payload=self.payload)
 
         async def aclose(self):
@@ -371,6 +374,57 @@ async def test_durable_night_and_action_gateway_persist_then_reuse_results(durab
     # A committed step consumes the resolved requests, rather than redispatching.
     await engine._durable_checkpoint("gateway_checked")
     assert {row["status"] for row in repository.list_model_requests(game_id)} == {"consumed"}
+
+
+@pytest.mark.asyncio
+async def test_durable_pipeline_retry_is_a_new_request_with_a_repair_hint(
+    durable, fake_provider,
+):
+    """规则拒绝后的第二次尝试必须真的再问一次，不能命中第一次的缓存。
+
+    最新一局里守卫/女巫/觉醒隐狼的 ``target_seat=null`` 被拒绝两次，时间戳
+    只差 1ms，因为两次都用了同一个 ``pipeline:<action_key>`` request id；
+    第二次命中已 resolved 的结果，模型根本没被重新询问。
+    """
+    from app.models.pipeline import IssuedActionRequest
+
+    service, repository = durable
+    game_id = await service.create_game(
+        role_counts={"wolf-killer-werewolf": 1, "wolf-killer-guard": 1},
+        model_seat_assignments={1: None, 2: None},
+    )
+    await service.wait_game(game_id)
+    engine = service._engines[game_id]
+    renderer = MagicMock()
+    renderer.render.return_value = "test action prompt"
+    provider = service._command_provider(
+        service._registry_snapshot, renderer,
+        lambda seat: fake_provider.instances[seat - 1], engine._director,
+    )
+    spec = service._registry_snapshot.require("wolf-killer-guard")
+    request = IssuedActionRequest(
+        2, spec.role_id, spec.contracts[0], 0, 1, "night", "window", "guard:1",
+    )
+    context = SimpleNamespace(game_id=game_id, round_number=1, phase="night", facts={})
+
+    fake_provider.payload = {
+        "action_type": "guard", "target_seat": None, "reasoning": "no target",
+    }
+    first = provider(request, context, 0)
+    assert first.target_seat is None
+
+    fake_provider.payload = {
+        "action_type": "guard", "target_seat": 2, "reasoning": "guard 2",
+    }
+    retry = provider(request, context, 1)
+    assert retry.target_seat == 2
+
+    client = fake_provider.instances[1]
+    assert client.calls == 2
+    assert "规则校验失败" in client.messages[-1][-1].content
+    assert {
+        row["request_id"] for row in repository.list_model_requests(game_id)
+    } == {"pipeline:guard:1", "pipeline:guard:1:retry:1"}
 
 
 @pytest.mark.asyncio

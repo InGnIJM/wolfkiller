@@ -35,6 +35,8 @@ def test_renderer_includes_anti_anchoring_target_rule() -> None:
     assert "TARGET_SELECTION_RULE=" in rendered
     assert "Use evidence" in rendered
     assert "RANDOM_HINT" in rendered
+    assert "a null ``target_seat`` is only valid for ``pass``" in rendered
+    assert "one entry of ``target_seats`` for a multi-target" in rendered
     assert "alive_seats" in rendered
     assert "target whitelist" not in rendered.lower()
 
