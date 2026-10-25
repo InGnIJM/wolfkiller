@@ -180,14 +180,30 @@ def test_pure_white_preset_matches_the_netease_tournament_board() -> None:
     assert preset["recommended_timeout_seconds"] == 7200
 
 
-def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 25
+def test_presets_cover_six_nine_ten_and_twelve_player_fields():
+    assert len(STANDARD_PRESETS) == 27
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
+    six = by_id["six-player-standard"]
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
+    speed = by_id["ten-player-speed"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
+    assert sum(six["role_counts"].values()) == 6
+    assert six["role_counts"]["wolf-killer-werewolf"] == 2
+    assert six["role_counts"]["wolf-killer-villager"] == 2
+    assert six["role_counts"]["wolf-killer-seer"] == 1
+    assert six["role_counts"]["wolf-killer-hunter"] == 1
+    assert "wolf-killer-witch" not in six["role_counts"]
+    assert six["enable_sheriff"] is False
+    assert six["victory"] == "city"
     assert sum(nine["role_counts"].values()) == 9
     assert sum(ten["role_counts"].values()) == 10
     assert ten["role_counts"]["wolf-killer-guard"] == 1
+    assert sum(speed["role_counts"].values()) == 10
+    assert speed["role_counts"]["wolf-killer-villager"] == 4
+    assert "wolf-killer-guard" not in speed["role_counts"]
+    assert speed["enable_sheriff"] is True
+    assert speed["witch_self_save"] == "never"
+    assert speed["victory"] == "edge"
     assert sum(idiot["role_counts"].values()) == 12
     assert idiot["role_counts"]["wolf-killer-werewolf"] == 4
     assert idiot["role_counts"]["wolf-killer-idiot"] == 1
@@ -210,6 +226,65 @@ def test_presets_cover_nine_ten_and_twelve_player_fields():
     assert beauty["role_counts"]["wolf-killer-old-drunkard"] == 1
     assert beauty["role_counts"]["wolf-killer-guard"] == 1
     assert beauty["enable_sheriff"] is True
+
+
+def test_ten_player_speed_matches_the_official_fast_board() -> None:
+    """NetEase's 10-player speed board: no Guard, four villagers, sheriff on,
+    witch forbidden from saving herself, edge victory."""
+    board = next(p for p in STANDARD_PRESETS if p["id"] == "ten-player-speed")
+    assert board["role_counts"] == {
+        "wolf-killer-werewolf": 3,
+        "wolf-killer-villager": 4,
+        "wolf-killer-seer": 1,
+        "wolf-killer-witch": 1,
+        "wolf-killer-hunter": 1,
+    }
+    assert sum(board["role_counts"].values()) == 10
+    assert board["enable_sheriff"] is True
+    assert board["witch_self_save"] == "never"
+    assert board["victory"] == "edge"
+
+
+def test_six_player_standard_uses_city_victory_and_no_sheriff() -> None:
+    """The six-player board is 2 wolves + Seer/Hunter + two villagers; it ends
+    only when all good players or all wolves are dead."""
+    board = next(p for p in STANDARD_PRESETS if p["id"] == "six-player-standard")
+    assert board["role_counts"] == {
+        "wolf-killer-werewolf": 2,
+        "wolf-killer-villager": 2,
+        "wolf-killer-seer": 1,
+        "wolf-killer-hunter": 1,
+    }
+    assert sum(board["role_counts"].values()) == 6
+    assert board["enable_sheriff"] is False
+    assert board["victory"] == "city"
+
+
+def test_new_presets_materialize_via_the_frozen_registry() -> None:
+    from app.models.game import GameConfig
+
+    snapshot = builtin_registry.freeze()
+    for preset_id in ("six-player-standard", "ten-player-speed"):
+        board = next(p for p in STANDARD_PRESETS if p["id"] == preset_id)
+        total = sum(board["role_counts"].values())
+        snapshot.validate_role_counts(board["role_counts"], total)
+        config = GameConfig(
+            role_counts=dict(board["role_counts"]),
+            enable_sheriff=board["enable_sheriff"],
+            victory=board["victory"],
+        )
+        assert config.total_players == total, preset_id
+        assert config.enable_sheriff is board["enable_sheriff"], preset_id
+        assert config.victory == board["victory"], preset_id
+        assert config.reveal_on_death is False, preset_id
+        roles = builtin_registry.create_roles(
+            board["role_counts"], total, object(), lambda seat: object(),
+        )
+        assert sorted(roles) == list(range(1, total + 1)), preset_id
+        counted: dict[str, int] = {}
+        for role in roles.values():
+            counted[role.role_name] = counted.get(role.role_name, 0) + 1
+        assert counted == board["role_counts"], preset_id
 
 
 def test_wolf_beauty_knight_preset_matches_the_netease_tournament_board() -> None:
@@ -280,6 +355,7 @@ def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
         "twelve-player-eternal-cycle",
         "twelve-player-fool-seer", "twelve-player-cupid",
         "twelve-player-awakened-witch",
+        "ten-player-speed",
     }
     for preset in STANDARD_PRESETS:
         expected = "never" if preset["id"] in netease else "first_night_only"
@@ -372,7 +448,7 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 25
+    assert len(response.presets) == 27
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
     assert response.presets[-1].id == "twelve-player-awakened-witch"
