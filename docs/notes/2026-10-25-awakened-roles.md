@@ -10,7 +10,7 @@
 的 **6.5 觉醒女巫 / 6.6 觉醒狼王**，以及决策单
 [2026-10-21-awakened-wolf-king.md](../plans/2026-10-21-awakened-wolf-king.md)。
 两张牌同批上线：新增角色 **2 个**、新增标准预设 **1 套**（12 人觉醒女巫）；`builtin_registry.freeze()`
-实测为 **42 角色 / 25 预设**（`catalog.ROLE_METADATA` 也是 42 条，二者一一覆盖）。
+实测为 **42 角色 / 27 预设**（`catalog.ROLE_METADATA` 也是 42 条，二者一一覆盖）。
 
 ## 一、来源与规则口径
 
@@ -150,7 +150,7 @@ NIGHT_WITCH_ACTION
 - `catalog.py`：`ROLE_METADATA` 新增两条（`wolf-killer-awakened-wolf-king`、`wolf-killer-awakened-witch`，
   各带非空 `rules`）；`STANDARD_PRESETS` 新增 `twelve-player-awakened-witch`（`enable_sheriff=true`、
   `witch_self_save="never"`、`recommended_timeout_seconds=7200`、`victory` 缺省即屠边）。
-- 计数：**42 角色 / 25 预设**（原 40 / 24）；`test_catalog_routes.py` 的角色、预设、端点数量断言同步。
+- 计数：**42 角色 / 27 预设**（原 40 / 24）；`test_catalog_routes.py` 的角色、预设、端点数量断言同步。
 - 前端：`roleMeta.ts` 两个新角色行、`labels.ts` / `store/types.ts` 的新事件与结果值；
   `theme/tokens.ts` 的 `ROLE_ART_BY_ID` **沿用母角色立绘**（`role-wolf-king` / `role-witch`），
   没有新增立绘素材，`theme.test` 的「一角色一图」把它们列为已知例外。
@@ -228,7 +228,7 @@ NIGHT_WITCH_ACTION
 - `backend/tests/test_awakened_engine_flow.py`：协助者提示词、私聊记录只对被点名的座位可见、`assist_votes`
   派生事实的容错、引擎对畸形 `brew_plan` 的拒绝、`night_assist:` 检查点的观众事件、tally 走合成命令
   （不产生模型请求）。
-- `backend/tests/test_catalog_routes.py`：42 角色 / 25 预设、每个角色非空 `rules`、新预设的
+- `backend/tests/test_catalog_routes.py`：42 角色 / 27 预设、每个角色非空 `rules`、新预设的
   `witch_self_save="never"` 与警长开关。
 - `backend/tests/test_audience_projector.py` 的事件全集快照，`test_game_routes.py` 的回放分支 / DTO
   默认字段，前端 `eventCoverage.test.tsx` / `labels.test.ts`。

@@ -13,6 +13,8 @@
 > `initial_resources`**，所以旧局仍判 `compatible`）、D4=E1、D5=推荐值（order 56、每夜一次、狼窝限定）、
 > D7=V1、D8=沿用狼王立绘（不新增素材）、D9 计数改为 **42 角色 / 25 预设**。完整规则、已知简化与
 > 旧局兼容结论见 [觉醒狼王 / 觉醒女巫实现记录](../notes/2026-10-25-awakened-roles.md)。
+>
+> 2026-10-25 阶段 4.5 追加 `ten-player-speed` / `six-player-standard` 后，当前为 **42 角色 / 27 预设**。
 
 ---
 
