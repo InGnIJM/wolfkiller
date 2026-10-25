@@ -114,6 +114,9 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-villager': 'role-villager',
   'wolf-killer-seer': 'role-seer',
   'wolf-killer-witch': 'role-witch',
+  // 觉醒女巫尚未有独立立绘，沿用女巫的现有立绘（不另造新素材）；与母角色共用
+  // 文件名是有意的，theme.test 的「一角色一图」断言把它列为已知例外。
+  'wolf-killer-awakened-witch': 'role-witch',
   'wolf-killer-hunter': 'role-hunter',
   'wolf-killer-guard': 'role-guard',
   'wolf-killer-idiot': 'role-idiot',
@@ -122,6 +125,9 @@ export const ROLE_ART_BY_ID: Record<string, string> = {
   'wolf-killer-wolf-beauty': 'role-wolf-beauty',
   'wolf-killer-old-drunkard': 'role-old_drunkard',
   'wolf-killer-wolf-king': 'role-wolf-king',
+  // 觉醒狼王尚未有独立立绘，沿用狼王的现有立绘（不另造新素材）；与母角色共用
+  // 文件名是有意的，theme.test 的「一角色一图」断言把它列为已知例外。
+  'wolf-killer-awakened-wolf-king': 'role-wolf-king',
   'wolf-killer-evil-knight': 'role-evil-knight',
   'wolf-killer-dream-weaver': 'role-dream-weaver',
   'wolf-killer-gargoyle': 'role-gargoyle',

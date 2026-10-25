@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import theme from '../theme';
 import { BACKDROP, BACKGROUNDS, CARD_BACK, INK, ROLE_ART_BY_ID, roleArt } from '../theme/tokens';
 
+/**
+ * 暂时没有独立立绘、按约定沿用同族母角色立绘的觉醒牌（值 = 母角色 id）。
+ * 它们在立绘表里与母角色共用同一个文件名是**有意**的，不算「借图 bug」；
+ * 补上独立立绘时从这里删掉，下面两条「一角色一图」断言会重新把它们算进去。
+ */
+const SHARED_FAMILY_ART = new Map([
+  ['wolf-killer-awakened-wolf-king', 'wolf-killer-wolf-king'],
+  ['wolf-killer-awakened-witch', 'wolf-killer-witch'],
+]);
+
 describe('血月剧场主题令牌', () => {
   it('使用血月剧场画布色与双色主轴', () => {
     expect(theme.palette.background.default).toBe('#0B0A0F');
@@ -104,8 +114,14 @@ describe('血月剧场素材令牌', () => {
       expect(name, roleId).toMatch(/^role-[a-z0-9_-]+$/);
     }
     // 每个角色一张自己的图：共用文件名就等于共用图，正是这次要消灭的问题。
-    const names = Object.values(ROLE_ART_BY_ID);
+    // 例外：觉醒狼王 / 觉醒女巫暂时沿用同族母角色的立绘（见上方常量）。
+    const names = Object.entries(ROLE_ART_BY_ID)
+      .filter(([roleId]) => !SHARED_FAMILY_ART.has(roleId))
+      .map(([, name]) => name);
     expect(new Set(names).size).toBe(names.length);
+    for (const [awakened, base] of SHARED_FAMILY_ART) {
+      expect(ROLE_ART_BY_ID[awakened], awakened).toBe(ROLE_ART_BY_ID[base]);
+    }
   });
 
   it('遮罩参数落在可读范围内，暗角从 40% 开始', () => {
@@ -161,8 +177,10 @@ describe('roleArt', () => {
     }
   });
 
-  it.runIf(officialArtPresent)('每个角色取到的地址互不相同', () => {
-    const urls = Object.keys(ROLE_ART_BY_ID).map((roleId) => roleArt(roleId));
+  it.runIf(officialArtPresent)('每个角色取到的地址互不相同（沿用同族立绘的觉醒牌除外）', () => {
+    const urls = Object.keys(ROLE_ART_BY_ID)
+      .filter((roleId) => !SHARED_FAMILY_ART.has(roleId))
+      .map((roleId) => roleArt(roleId));
     expect(new Set(urls).size).toBe(urls.length);
   });
 });

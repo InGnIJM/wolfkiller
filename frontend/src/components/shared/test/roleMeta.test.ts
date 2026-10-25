@@ -7,6 +7,7 @@ import type { RoleColorKey } from '../../../theme/tokens';
 const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-werewolf', 'werewolf', '狼人'],
   ['wolf-killer-witch', 'witch', '女巫'],
+  ['wolf-killer-awakened-witch', 'witch', '觉醒女巫'],
   ['wolf-killer-seer', 'seer', '预言家'],
   ['wolf-killer-hunter', 'hunter', '猎人'],
   ['wolf-killer-awakened-hunter', 'hunter', '觉醒猎人'],
@@ -15,6 +16,7 @@ const ROLES: readonly [string, RoleColorKey, string][] = [
   ['wolf-killer-idiot', 'idiot', '白痴'],
   ['wolf-killer-werewolf-king', 'werewolf_king', '白狼王'],
   ['wolf-killer-wolf-king', 'werewolf_king', '狼王'],
+  ['wolf-killer-awakened-wolf-king', 'werewolf_king', '觉醒狼王'],
   ['wolf-killer-evil-knight', 'werewolf', '恶夜骑士'],
   ['wolf-killer-dream-weaver', 'guard', '摄梦人'],
   ['wolf-killer-gargoyle', 'werewolf', '石像鬼'],

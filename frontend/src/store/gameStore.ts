@@ -360,6 +360,10 @@ function deriveState(
       }
       case 'dance_pool':
       case 'mask_granted':
+      case 'awakened_witch_assist_pick':
+      case 'awakened_witch_assist_chat':
+      case 'awakened_witch_assist_vote':
+      case 'awakened_witch_poison_result':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
       case 'self_explode':

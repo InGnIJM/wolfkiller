@@ -7,10 +7,11 @@ import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent } from '../../store/types';
 import {
   DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
-  VOTE_REWOUND_RESULT, thoughtActorName, voteRoundWasRewound,
+  VOTE_REWOUND_RESULT, awakenedWitchPoisonResultLabel, awakenedWitchVoteLabel,
+  thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
 import { roleLabelForSeat } from '../shared/roleMeta';
-import { AVATAR_PALETTE, INK } from '../../theme/tokens';
+import { AVATAR_PALETTE, INK, ROLE_COLORS } from '../../theme/tokens';
 
 const livePulse = keyframes`
   0%, 100% { opacity: 0.4; transform: scale(0.85); }
@@ -370,6 +371,7 @@ function ChatView({
   label = '狼群密谋',
   tag = 'WOLF CHAT',
   metaKind = '狼聊',
+  tone = '#F4B3B6',
 }: {
   seat: number;
   text: string;
@@ -380,16 +382,18 @@ function ChatView({
   label?: string;
   tag?: string;
   metaKind?: string;
+  /** 卡片主色：狼队频道是粉色，觉醒女巫的协助者密谈走女巫紫。 */
+  tone?: string;
 }) {
   return (
-    <ActivityFrame tone="#F4B3B6">
+    <ActivityFrame tone={tone}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={seat} />
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
             {seat}号
           </Typography>
-          <Typography variant="caption" sx={{ color: '#F4B3B6', letterSpacing: 2, fontWeight: 700 }}>
+          <Typography variant="caption" sx={{ color: tone, letterSpacing: 2, fontWeight: 700 }}>
             {label}
           </Typography>
         </Box>
@@ -410,7 +414,7 @@ function ChatView({
             sx={{
               display: 'block',
               mt: 1,
-              color: '#F4B3B6',
+              color: tone,
               fontWeight: 600,
               letterSpacing: 0.5,
             }}
@@ -845,6 +849,54 @@ export default function ActivityCard() {
           subtitle={`目标${entry.payload.in_pool ? '在' : '不在'}舞池中，本次阵营比较被翻转 · 第${entry.payload.round_number}轮`}
           tone="#C9A7E8"
           tag="MASK"
+        />
+      );
+    case 'awakened_witch_assist_pick':
+      return (
+        <DayVerdictView
+          seat={entry.payload.target_seat}
+          title={`毒药目标：${entry.payload.target_seat}号`}
+          subtitle={`协助者：${entry.payload.assistant_seats.map((seat) => `${seat}号`).join('、')} · 第${entry.payload.round_number}轮`}
+          tone={ROLE_COLORS.witch.color}
+          tag="POISON PICK"
+        />
+      );
+    case 'awakened_witch_assist_chat':
+      return (
+        <ChatView
+          seat={entry.payload.seat}
+          text={entry.payload.text}
+          roundNumber={entry.payload.round_number}
+          timestamp={entry.timestamp}
+          durationSec={durationSec}
+          label="协助者密谈"
+          tag="ASSIST CHAT"
+          metaKind="密谈"
+          tone={ROLE_COLORS.witch.color}
+        />
+      );
+    case 'awakened_witch_assist_vote':
+      return (
+        <ChatView
+          seat={entry.payload.seat}
+          text={`${awakenedWitchVoteLabel(entry.payload.vote)} · 毒药目标 ${entry.payload.target_seat}号\n理由：${entry.payload.reasoning || '（无理由）'}`}
+          roundNumber={entry.payload.round_number}
+          timestamp={entry.timestamp}
+          durationSec={durationSec}
+          label="协助者表态"
+          tag="ASSIST VOTE"
+          metaKind="表态"
+          tone={ROLE_COLORS.witch.color}
+        />
+      );
+    case 'awakened_witch_poison_result':
+      return (
+        <DayVerdictView
+          seat={entry.payload.target_seat}
+          title={`${entry.payload.target_seat}号毒药${awakenedWitchPoisonResultLabel(entry.payload.result)}`}
+          subtitle={`协助者表决结果 · 第${entry.payload.round_number}轮`}
+          tone={ROLE_COLORS.witch.color}
+          tag="POISON RESULT"
         />
       );
     case 'crimson_explode':

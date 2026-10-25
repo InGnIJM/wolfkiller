@@ -137,6 +137,40 @@ export interface CrimsonExplodePayload {
   silenced_seats: number[];
 }
 
+/**
+ * 觉醒女巫的调配毒药是一个「协助者表决」流程：公开观众流只发布目标、协助者
+ * 名单、协助者的密谈/表态与最终结果；协助者的身份阵营与个人选择仍不可见。
+ */
+export type AwakenedWitchAssistVote = 'agree' | 'veto' | 'pass';
+export type AwakenedWitchPoisonResult = 'passed' | 'vetoed' | 'incomplete' | 'aborted';
+
+export interface AwakenedWitchAssistPickPayload {
+  round_number: number;
+  target_seat: number;
+  assistant_seats: number[];
+}
+
+export interface AwakenedWitchAssistChatPayload {
+  round_number: number;
+  seat: number;
+  target_seat: number;
+  text: string;
+}
+
+export interface AwakenedWitchAssistVotePayload {
+  round_number: number;
+  seat: number;
+  target_seat: number;
+  vote: AwakenedWitchAssistVote;
+  reasoning: string;
+}
+
+export interface AwakenedWitchPoisonResultPayload {
+  round_number: number;
+  target_seat: number;
+  result: AwakenedWitchPoisonResult;
+}
+
 export interface SheriffElectedPayload {
   round_number: number;
   seat: number | null;
@@ -406,6 +440,10 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'crimson_explode', CrimsonExplodePayload>
   | PublicReplayEnvelope<'dance_pool', DancePoolPayload>
   | PublicReplayEnvelope<'mask_granted', MaskGrantedPayload>
+  | PublicReplayEnvelope<'awakened_witch_assist_pick', AwakenedWitchAssistPickPayload>
+  | PublicReplayEnvelope<'awakened_witch_assist_chat', AwakenedWitchAssistChatPayload>
+  | PublicReplayEnvelope<'awakened_witch_assist_vote', AwakenedWitchAssistVotePayload>
+  | PublicReplayEnvelope<'awakened_witch_poison_result', AwakenedWitchPoisonResultPayload>
   | PublicReplayEnvelope<'knight_duel', KnightDuelPayload>
   | PublicReplayEnvelope<'wolf_beauty_charm', WolfBeautyCharmPayload>
   | PublicReplayEnvelope<'wraith_illusion', WraithIllusionPayload>

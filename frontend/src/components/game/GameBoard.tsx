@@ -67,13 +67,17 @@ function sheriffVoteTargets(
 function nightRoundOf(event: PublicReplayEvent): number | null {
   switch (event.event_type) {
     // 舞池与面具也是当夜发生的事（它们没有 night_action 行，各自成类型），
-    // 所以和狼票/夜间事件按同一轮归窗。
+    // 所以和狼票/夜间事件按同一轮归窗；觉醒女巫的毒药协助四拍同理。
     case 'wolf_vote':
     case 'wolf_chat_message':
     case 'night_thought':
     case 'night_action':
     case 'dance_pool':
     case 'mask_granted':
+    case 'awakened_witch_assist_pick':
+    case 'awakened_witch_assist_chat':
+    case 'awakened_witch_assist_vote':
+    case 'awakened_witch_poison_result':
       return event.payload.round_number;
     default:
       return null;

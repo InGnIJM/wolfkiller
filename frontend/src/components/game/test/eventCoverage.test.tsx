@@ -8,7 +8,7 @@
  * `feat(frontend): render the X event` 的改动时，也要回来给表补一行。
  *
  * 清单来源（改后端投影时同步这里）：
- * - `backend/app/services/audience_projector.py` 的 `_EVENTS`：28 类公开投影
+ * - `backend/app/services/audience_projector.py` 的 `_EVENTS`：35 类公开投影
  *   （其中 `narration` 也由 `game_routes.py` 的旧档合成路径产生）
  * - 旧档里仍会出现的 `witch_thought` / `seer_thought`
  */
@@ -195,6 +195,44 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'render', center: 'render', history: 'render' },
   },
   {
+    what: '觉醒女巫毒药协助选人（毒药目标 + 协助者名单）',
+    event: {
+      ...at,
+      event_type: 'awakened_witch_assist_pick',
+      payload: { target_seat: 4, assistant_seats: [2, 7], round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
+    what: '觉醒女巫协助者密谈（带原文）',
+    event: {
+      ...at,
+      event_type: 'awakened_witch_assist_chat',
+      payload: { seat: 7, target_seat: 4, text: '我同意毒4号', round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
+    what: '觉醒女巫协助者表态（agree / veto / pass）',
+    event: {
+      ...at,
+      event_type: 'awakened_witch_assist_vote',
+      payload: {
+        seat: 7, target_seat: 4, vote: 'agree', reasoning: '4号像狼', round_number: 2,
+      },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
+    what: '觉醒女巫毒药结果（passed / vetoed / incomplete / aborted）',
+    event: {
+      ...at,
+      event_type: 'awakened_witch_poison_result',
+      payload: { target_seat: 4, result: 'passed', round_number: 2 },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '骑士翻牌决斗',
     event: {
       ...at,
@@ -377,7 +415,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(36);
+    expect(listed).toHaveLength(40);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];

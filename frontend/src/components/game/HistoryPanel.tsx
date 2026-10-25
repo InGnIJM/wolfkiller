@@ -8,9 +8,11 @@ import {
   DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, EVENT_TAGS, KNOWLEDGE_LABELS,
   MEMORY_ACTION_LABELS, MEMORY_EVENT_LABELS,
   PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
-  VOTE_REWOUND_RESULT, nightActionCaption, thoughtActorName, voteRoundWasRewound,
+  VOTE_REWOUND_RESULT, awakenedWitchPoisonResultLabel, awakenedWitchVoteLabel,
+  nightActionCaption, thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
 import { roleLabelForSeat, roleMetaFor } from '../shared/roleMeta';
+import { ROLE_COLORS } from '../../theme/tokens';
 
 interface Props {
   onClose: () => void;
@@ -29,6 +31,9 @@ function eventTone(event: PublicReplayEvent): string {
     || event.event_type === 'wolf_beauty_revenge'
   ) return '#F4B3B6';
   if (event.event_type === 'narration') return '#7D7468';
+  // 觉醒女巫的毒药协助四拍都归女巫紫；放在 includes('vote') 之前，
+  // 否则 assist_vote 会被当成白天/警长票染成金色。
+  if (event.event_type.startsWith('awakened_witch_')) return ROLE_COLORS.witch.color;
   if (event.event_type.includes('vote')) return '#E8C887';
   if (event.event_type.includes('thought')) return '#C4B5FD';
   if (
@@ -44,6 +49,9 @@ const NIGHT_TYPES = new Set([
   'night_action', 'wolf_vote', 'witch_thought', 'seer_thought',
   'night_thought', 'wolf_chat_message', 'narration', 'wolf_beauty_charm',
   'wraith_illusion', 'dance_pool', 'mask_granted', 'fragrance_bond',
+  // 觉醒女巫的调配毒药整晚都在夜间频道里发生。
+  'awakened_witch_assist_pick', 'awakened_witch_assist_chat',
+  'awakened_witch_assist_vote', 'awakened_witch_poison_result',
 ]);
 
 // A revenge lands in the phase of the exit that triggered it: an exile or a
@@ -323,6 +331,44 @@ function EventCard({
         </Typography>
       );
       break;
+    case 'awakened_witch_assist_pick':
+      content = (
+        <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
+          毒药目标 {event.payload.target_seat}号，协助者：{event.payload.assistant_seats.map((seat) => `${seat}号`).join('、')} · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
+    case 'awakened_witch_assist_chat':
+      content = (
+        <>
+          <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
+            {event.payload.seat}号协助者密谈（毒药目标 {event.payload.target_seat}号） · 第{event.payload.round_number}轮
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
+            {event.payload.text}
+          </Typography>
+        </>
+      );
+      break;
+    case 'awakened_witch_assist_vote':
+      content = (
+        <>
+          <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
+            {event.payload.seat}号协助者{awakenedWitchVoteLabel(event.payload.vote)}（毒药目标 {event.payload.target_seat}号） · 第{event.payload.round_number}轮
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
+            {event.payload.reasoning || '（无理由）'}
+          </Typography>
+        </>
+      );
+      break;
+    case 'awakened_witch_poison_result':
+      content = (
+        <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
+          {event.payload.target_seat}号毒药{awakenedWitchPoisonResultLabel(event.payload.result)} · 第{event.payload.round_number}轮
+        </Typography>
+      );
+      break;
     case 'crimson_explode':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
@@ -598,6 +644,11 @@ export default function HistoryPanel({ onClose }: Props) {
     || event.event_type === 'narration'
     // 舞池/面具是夜间行动，只是各自带自己的载荷，所以有自己的事件类型。
     || event.event_type === 'dance_pool' || event.event_type === 'mask_granted'
+    // 觉醒女巫的毒药调配也发生在夜里。
+    || event.event_type === 'awakened_witch_assist_pick'
+    || event.event_type === 'awakened_witch_assist_chat'
+    || event.event_type === 'awakened_witch_assist_vote'
+    || event.event_type === 'awakened_witch_poison_result'
   ));
   const thoughts = indexedEvents.filter(({ event }) => (
     event.event_type === 'wolf_chat_message' || event.event_type === 'witch_thought' || event.event_type === 'seer_thought' || event.event_type === 'night_thought'

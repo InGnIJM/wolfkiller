@@ -5,11 +5,12 @@ import {
   CENTER_PHASE_LABELS, DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL,
   NIGHT_ACTION_ROLE_NAMES, NIGHT_EVENT_ROLE_NAMES, PLAYER_STATUS_LABELS,
   SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES, VOTE_REWOUND_RESULT, WINNING_CAMP_LABELS,
+  awakenedWitchPoisonResultLabel, awakenedWitchVoteLabel,
   nightActionCaption, thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
 import { roleLabelForSeat } from '../shared/roleMeta';
 import type { PublicPlayerState } from '../../store/types';
-import { BACKDROP } from '../../theme/tokens';
+import { BACKDROP, ROLE_COLORS } from '../../theme/tokens';
 
 const fadeIn = keyframes`
   from { opacity: 0; transform: translateY(4px); }
@@ -398,6 +399,26 @@ function EventSummary({
     case 'mask_granted':
       text = `${entry.payload.seat}号给${entry.payload.target_seat}号戴面具（${entry.payload.in_pool ? '在' : '不在'}舞池）`;
       tone = '#C9A7E8';
+      break;
+    case 'awakened_witch_assist_pick':
+      text = `毒药目标 ${entry.payload.target_seat}号 · 协助者 ${entry.payload.assistant_seats.join('、')}号`;
+      tone = ROLE_COLORS.witch.color;
+      break;
+    case 'awakened_witch_assist_chat': {
+      const brief = entry.payload.text.length > 18
+        ? `…${entry.payload.text.slice(-18)}`
+        : entry.payload.text;
+      text = `${entry.payload.seat}号协助者密谈：${brief}`;
+      tone = ROLE_COLORS.witch.color;
+      break;
+    }
+    case 'awakened_witch_assist_vote':
+      text = `${entry.payload.seat}号表态${awakenedWitchVoteLabel(entry.payload.vote)}（毒药目标 ${entry.payload.target_seat}号）`;
+      tone = ROLE_COLORS.witch.color;
+      break;
+    case 'awakened_witch_poison_result':
+      text = `${entry.payload.target_seat}号毒药${awakenedWitchPoisonResultLabel(entry.payload.result)}`;
+      tone = ROLE_COLORS.witch.color;
       break;
     case 'crimson_explode':
       text = `${entry.payload.seat}号自爆，封印${entry.payload.silenced_seats.length}个好人技能`;

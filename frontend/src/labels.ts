@@ -15,6 +15,8 @@
  *   （`TERMINAL`）留在组件里。
  */
 import type {
+  AwakenedWitchAssistVote,
+  AwakenedWitchPoisonResult,
   DeathCause,
   ExecutionStatus,
   GamePhase,
@@ -119,6 +121,30 @@ export const NIGHT_ACTION_VERBS: Record<NightActionType, string> = {
 
 /** 定序王子作废当轮放逐票后，同轮 ``exiled_seat === null`` 的票型文案。 */
 export const VOTE_REWOUND_RESULT = '放逐投票作废，重新投票';
+
+/**
+ * 觉醒女巫协助者表态（`awakened_witch_assist_vote.vote`）。
+ * 投票取值是后端闭集，三个面都走这里，避免各写一份把 `veto` 显示成机器值。
+ */
+export function awakenedWitchVoteLabel(vote: AwakenedWitchAssistVote): string {
+  switch (vote) {
+    case 'agree': return '同意';
+    case 'veto': return '反对';
+    case 'pass': return '弃权';
+    default: return vote;
+  }
+}
+
+/** 觉醒女巫调配毒药的最终结果（`awakened_witch_poison_result.result`）。 */
+export function awakenedWitchPoisonResultLabel(result: AwakenedWitchPoisonResult): string {
+  switch (result) {
+    case 'passed': return '生效';
+    case 'vetoed': return '被否决';
+    case 'incomplete': return '未完成';
+    case 'aborted': return '中止';
+    default: return result;
+  }
+}
 
 export function nightActionCaption(
   actionType: NightActionType,
@@ -229,6 +255,11 @@ export const NIGHT_EVENT_ROLE_NAMES: Partial<Record<PublicEventType, string>> = 
   mask_granted: '假面',
   wraith_illusion: '觉醒狼美人',
   fragrance_bond: '寻香魅影',
+  // 觉醒女巫的毒药调配分四拍公开：选人、协助者密谈、协助者表态、结果。
+  awakened_witch_assist_pick: '觉醒女巫',
+  awakened_witch_assist_chat: '觉醒女巫',
+  awakened_witch_assist_vote: '觉醒女巫',
+  awakened_witch_poison_result: '觉醒女巫',
 };
 
 /** 思考事件 → 角色短名，和上表同为「正在行动的是谁」，共用同一套短名。 */
@@ -300,6 +331,10 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
   crimson_explode: '自爆',
   dance_pool: '舞池',
   mask_granted: '假面',
+  awakened_witch_assist_pick: '毒药协助选人',
+  awakened_witch_assist_chat: '协助者密谈',
+  awakened_witch_assist_vote: '协助者表态',
+  awakened_witch_poison_result: '毒药结果',
   knight_duel: '决斗',
   wolf_beauty_charm: '魅惑',
   wraith_illusion: '幻象',

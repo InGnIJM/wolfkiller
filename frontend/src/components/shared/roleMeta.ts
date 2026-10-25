@@ -18,6 +18,7 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-werewolf',
   'wolf-killer-werewolf-king',
   'wolf-killer-wolf-king',
+  'wolf-killer-awakened-wolf-king',
   'wolf-killer-evil-knight',
   'wolf-killer-gargoyle',
   'wolf-killer-wolf-beauty',
@@ -32,6 +33,7 @@ export const ROLE_ORDER: readonly string[] = [
   'wolf-killer-time-wolf',
   'wolf-killer-seer',
   'wolf-killer-witch',
+  'wolf-killer-awakened-witch',
   'wolf-killer-hunter',
   'wolf-killer-awakened-hunter',
   'wolf-killer-guard',
@@ -61,6 +63,7 @@ export const ROLE_ORDER: readonly string[] = [
 const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   { id: 'wolf-killer-werewolf', key: 'werewolf', label: '狼人' },
   { id: 'wolf-killer-witch', key: 'witch', label: '女巫' },
+  { id: 'wolf-killer-awakened-witch', key: 'witch', label: '觉醒女巫' },
   { id: 'wolf-killer-seer', key: 'seer', label: '预言家' },
   { id: 'wolf-killer-hunter', key: 'hunter', label: '猎人' },
   { id: 'wolf-killer-awakened-hunter', key: 'hunter', label: '觉醒猎人' },
@@ -71,6 +74,7 @@ const ROLE_ROWS: readonly { id: string; key: RoleColorKey; label: string }[] = [
   // 狼王与白狼王共用狼王配色（同一「狼王」视觉家族），但立绘各走各的 id ——
   // 两个 id 只差词序，任何地方都不许简写。
   { id: 'wolf-killer-wolf-king', key: 'werewolf_king', label: '狼王' },
+  { id: 'wolf-killer-awakened-wolf-king', key: 'werewolf_king', label: '觉醒狼王' },
   { id: 'wolf-killer-evil-knight', key: 'werewolf', label: '恶夜骑士' },
   { id: 'wolf-killer-dream-weaver', key: 'guard', label: '摄梦人' },
   { id: 'wolf-killer-gargoyle', key: 'werewolf', label: '石像鬼' },
