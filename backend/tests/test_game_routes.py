@@ -2542,27 +2542,49 @@ async def test_create_game_maps_runtime_configuration_validation_to_bad_request(
 def test_awakened_witch_replay_rejects_malformed_payloads() -> None:
     """Every new branch must drop a malformed old archive instead of 500ing."""
     invalid = [
-        ("AWAKENED_WITCH_ASSIST_PICK", {"target_seat": 0, "assistant_seats": [2]}),
-        ("AWAKENED_WITCH_ASSIST_PICK", {"target_seat": 3, "assistant_seats": []}),
-        ("AWAKENED_WITCH_ASSIST_PICK", {"target_seat": 3, "assistant_seats": [2, 0]}),
-        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 1, "target_seat": 3, "text": ""}),
-        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 0, "target_seat": 3, "text": "x"}),
-        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 1, "target_seat": 0, "text": "x"}),
-        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 1, "target_seat": 3, "text": 1}),
-        ("AWAKENED_WITCH_ASSIST_VOTE", {
-            "seat": 1, "target_seat": 3, "vote": "maybe", "reasoning": "x",
+        ("AWAKENED_WITCH_ASSIST_PICK", {
+            "round_number": 1, "target_seat": 0, "assistant_seats": [2],
+        }),
+        ("AWAKENED_WITCH_ASSIST_PICK", {
+            "round_number": 1, "target_seat": 3, "assistant_seats": [],
+        }),
+        ("AWAKENED_WITCH_ASSIST_PICK", {
+            "round_number": 1, "target_seat": 3, "assistant_seats": [2, 0],
+        }),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {
+            "round_number": 1, "seat": 1, "target_seat": 3, "text": "",
+        }),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {
+            "round_number": 1, "seat": 0, "target_seat": 3, "text": "x",
+        }),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {
+            "round_number": 1, "seat": 1, "target_seat": 0, "text": "x",
+        }),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {
+            "round_number": 1, "seat": 1, "target_seat": 3, "text": 1,
         }),
         ("AWAKENED_WITCH_ASSIST_VOTE", {
-            "seat": 1, "target_seat": 3, "vote": "agree", "reasoning": 1,
+            "round_number": 1, "seat": 1, "target_seat": 3,
+            "vote": "maybe", "reasoning": "x",
         }),
         ("AWAKENED_WITCH_ASSIST_VOTE", {
-            "seat": 0, "target_seat": 3, "vote": "agree", "reasoning": "x",
+            "round_number": 1, "seat": 1, "target_seat": 3,
+            "vote": "agree", "reasoning": 1,
         }),
         ("AWAKENED_WITCH_ASSIST_VOTE", {
-            "seat": 1, "target_seat": 0, "vote": "agree", "reasoning": "x",
+            "round_number": 1, "seat": 0, "target_seat": 3,
+            "vote": "agree", "reasoning": "x",
         }),
-        ("AWAKENED_WITCH_POISON_RESULT", {"target_seat": 3, "result": "maybe"}),
-        ("AWAKENED_WITCH_POISON_RESULT", {"target_seat": 0, "result": "passed"}),
+        ("AWAKENED_WITCH_ASSIST_VOTE", {
+            "round_number": 1, "seat": 1, "target_seat": 0,
+            "vote": "agree", "reasoning": "x",
+        }),
+        ("AWAKENED_WITCH_POISON_RESULT", {
+            "round_number": 1, "target_seat": 3, "result": "maybe",
+        }),
+        ("AWAKENED_WITCH_POISON_RESULT", {
+            "round_number": 1, "target_seat": 0, "result": "passed",
+        }),
     ]
     for event_type, payload in invalid:
         record = _replay_record(
