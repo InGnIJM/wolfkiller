@@ -15,6 +15,7 @@ from app.models.game import Camp, GameState, GamePhase, GameConfig, PlayerState
 from app.models.actions import (
     VoteAction, SpeechRecord, DeathReport, WinResult, is_last_words_eligible,
 )
+from app.models.conversation import ConversationScope
 from app.models.contracts import ActionContract, ActionRequest
 from app.core.state_machine import GameStateMachine, GameEvent as SM_Event
 from app.core.rule_engine import RuleEngine
@@ -55,6 +56,7 @@ from app.core.sheriff_flow import (
 from app.core.point_journal import PendingEvent, PointCheckpoint, PointKey, WorkCursor, point_journal
 from app.core.registry_identity import frozen_registry_digest
 from app.core.role_pipeline import PipelineResult, RolePipeline
+from app.core.role_runtime import role_private_data_view
 from app.core.scheduler import PipelinePaused, PointResult, Scheduler
 from app.models.pipeline import IssuedActionRequest, SchedulePoint
 from app.models.vote import CastVoteArgs, VoteError, VoteStatus
@@ -609,6 +611,108 @@ class GameEngine:
             "night",
         )
 
+    def _brew_plan(self) -> tuple[int, Mapping[str, object]] | None:
+        """The current round's Awakened Witch brew plan, if any.
+
+        The engine does not know the role: the plan is a generic private slot
+        written by the brew contract. Its presence is what makes the three
+        assist sub-steps run at all.
+        """
+        for seat in sorted(self.state.players):
+            data = role_private_data_view(self.state, seat)
+            plan = data.get("brew_plan")
+            if isinstance(plan, Mapping) and plan.get("round") == self.state.round_number:
+                return seat, plan
+        return None
+
+    @staticmethod
+    def _assist_seats(plan: Mapping[str, object]) -> tuple[int, ...]:
+        seats = plan.get("assist_seats") or ()
+        if not isinstance(seats, (list, tuple)) or any(type(seat) is not int for seat in seats):
+            raise PipelinePaused("invalid assist plan")
+        return tuple(seats)
+
+    def _assist_chat_records(
+        self, seats: tuple[int, ...], round_number: int,
+    ) -> list[object]:
+        wanted = set(seats)
+        return [
+            record for record in self.conversation_log.records
+            if record.scope is ConversationScope.NIGHT_INTEL
+            and record.round_number == round_number
+            and record.speaker_seat in wanted
+            and set(record.visible_to or ()) == wanted
+        ]
+
+    async def _run_assist_chat(self, plan: Mapping[str, object]) -> None:
+        seats = self._assist_seats(plan)
+        # The official rule only allows the assistants to talk when there is
+        # more than one of them; a lone assistant simply votes.
+        if len(seats) < 2:
+            return
+        target = plan.get("target")
+        if type(target) is not int or target <= 0:
+            raise PipelinePaused("invalid assist plan")
+        for seat in seats:
+            records = self._assist_chat_records(seats, self.state.round_number)
+            if any(record.speaker_seat == seat for record in records):
+                continue
+            history = tuple(
+                f"{record.speaker_seat}号：{record.content}" for record in records
+            )
+            await self.announce_actor(seat)
+            text = await asyncio.to_thread(
+                self._director.assist_discussion_turn,
+                self.state, seat, target, seats, history,
+            )
+            if not text:
+                continue
+            self.conversation_log.add_night_intel(
+                text, self.state.round_number, list(seats), speaker_seat=seat,
+            )
+            payload = {
+                "round_number": self.state.round_number,
+                "seat": seat, "target_seat": target, "text": text,
+            }
+            self._log_audience_pairs(
+                (("AWAKENED_WITCH_ASSIST_CHAT", payload),), self.state.phase.value,
+            )
+            self._pending_point_events = (("AWAKENED_WITCH_ASSIST_CHAT", payload),)
+            await self._durable_checkpoint(
+                f"night_assist_chat:{self.state.round_number}:{seat}:{len(history)}"
+            )
+
+    async def _run_assist_point(self, point: SchedulePoint) -> None:
+        scheduler = self._pipeline_scheduler
+        if scheduler is not None and scheduler.point_completed(self.state, point):
+            # The audience events were committed with the completing checkpoint;
+            # replaying the point would insert them a second time.
+            return
+        raw = await self._execute_v2_point(point)
+        observation = RolePipeline.observe_v2(raw)
+        events = self._audience_events_from(observation.public_events)
+        self._log_audience_pairs(events, self.state.phase.value)
+        self._pending_point_events = events
+        await self._durable_checkpoint(f"night_assist:{point.value}")
+
+    async def _run_assist_steps(self) -> None:
+        found = self._brew_plan()
+        if found is None:
+            return
+        _, plan = found
+        if not self._assist_seats(plan):
+            await self._run_assist_point(SchedulePoint.NIGHT_WITCH_ASSIST_PICK)
+            found = self._brew_plan()
+            if found is None:
+                return
+            _, plan = found
+        seats = self._assist_seats(plan)
+        if not seats:
+            return
+        await self._run_assist_chat(plan)
+        await self._run_assist_point(SchedulePoint.NIGHT_WITCH_ASSIST_VOTE)
+        await self._run_assist_point(SchedulePoint.NIGHT_WITCH_ASSIST_TALLY)
+
     async def _execute_staged_night(self) -> None:
         pending = self._pending_night_batch
         director = self._director
@@ -822,7 +926,15 @@ class GameEngine:
         if pending.stage == 9:
             raw = await self._execute_v2_point(_NIGHT_POINTS[3])
             await self._log_stage_audience(raw)
-            pending = replace(pending, raw_results=pending.raw_results + (raw,), stage=10)
+            # Keep the batch at stage 9 with three raw results while the
+            # Awakened Witch's sub-points run: appending the fourth result to a
+            # batch still at stage 9 violates ``_PendingNightBatch``'s
+            # ``len(raw_results) == points_done`` invariant. The result is
+            # appended in the same ``replace`` that advances to stage 10.
+            await self._run_assist_steps()
+            pending = replace(
+                pending, raw_results=pending.raw_results + (raw,), stage=10,
+            )
             self._pending_night_batch = pending
             await self._durable_checkpoint(
                 f"night_point:{self.state.round_number}:{_NIGHT_POINTS[3].value}"

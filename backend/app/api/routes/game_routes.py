@@ -104,6 +104,18 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "FRAGRANCE_BOND": frozenset({"seat", "target_seats", "round_number"}),
     "DANCE_POOL": frozenset({"seat", "pool_seats", "round_number"}),
     "MASK_GRANTED": frozenset({"seat", "target_seat", "in_pool", "round_number"}),
+    "AWAKENED_WITCH_ASSIST_PICK": frozenset({
+        "target_seat", "assistant_seats", "round_number",
+    }),
+    "AWAKENED_WITCH_ASSIST_CHAT": frozenset({
+        "seat", "target_seat", "text", "round_number",
+    }),
+    "AWAKENED_WITCH_ASSIST_VOTE": frozenset({
+        "seat", "target_seat", "vote", "reasoning", "round_number",
+    }),
+    "AWAKENED_WITCH_POISON_RESULT": frozenset({
+        "target_seat", "result", "round_number",
+    }),
 }
 
 #: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
@@ -156,10 +168,15 @@ _REASONING_EVENT_SCHEMA = frozenset(
 )
 _REASONING_EVENT_TYPES = {
     "HUNTER_REASONING": ("hunter_reasoning", frozenset({"shoot", "pass"})),
-    "WOLF_KING_REASONING": ("wolf_king_reasoning", frozenset({"shoot", "pass"})),
+    "WOLF_KING_REASONING": (
+        "wolf_king_reasoning",
+        frozenset({"shoot", "pass", "sweep", "pass_claw", "explode"}),
+    ),
     "DREAM_WEAVER_REASONING": ("dream_weaver_reasoning", frozenset({"dream", "pass"})),
     "GARGOYLE_REASONING": ("gargoyle_reasoning", frozenset({"check", "pass"})),
-    "WITCH_REASONING": ("witch_reasoning", frozenset({"save", "poison", "pass"})),
+    "WITCH_REASONING": (
+        "witch_reasoning", frozenset({"save", "poison", "pass", "assist"}),
+    ),
     "SEER_REASONING": ("seer_reasoning", frozenset({"check", "pass"})),
     "GUARD_REASONING": ("guard_reasoning", frozenset({"guard", "pass"})),
     "WEREWOLF_KING_REASONING": ("werewolf_king_reasoning", frozenset({"explode", "pass"})),
@@ -745,6 +762,49 @@ def _public_day_verdict_event(
         return [{"event_type": "crimson_explode", "payload": {
             "round_number": round_number, "seat": seat,
             "silenced_seats": list(silence)}}]
+    if event_type == "AWAKENED_WITCH_ASSIST_PICK":
+        target = payload.get("target_seat")
+        seats = payload.get("assistant_seats")
+        if not _is_positive_int(target):
+            return []
+        if not isinstance(seats, (list, tuple)) or not seats or any(
+            not _is_positive_int(item) for item in seats
+        ):
+            return []
+        return [{"event_type": "awakened_witch_assist_pick", "payload": {
+            "round_number": round_number, "target_seat": target,
+            "assistant_seats": list(seats)}}]
+    if event_type == "AWAKENED_WITCH_ASSIST_CHAT":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        text = payload.get("text")
+        if not _is_positive_int(seat) or not _is_positive_int(target):
+            return []
+        if not isinstance(text, str) or not text:
+            return []
+        return [{"event_type": "awakened_witch_assist_chat", "payload": {
+            "round_number": round_number, "seat": seat,
+            "target_seat": target, "text": text}}]
+    if event_type == "AWAKENED_WITCH_ASSIST_VOTE":
+        seat = payload.get("seat"); target = payload.get("target_seat")
+        vote = payload.get("vote"); reasoning = payload.get("reasoning")
+        if not _is_positive_int(seat) or not _is_positive_int(target):
+            return []
+        if vote not in {"agree", "veto", "pass"}:
+            return []
+        if not isinstance(reasoning, str):
+            return []
+        return [{"event_type": "awakened_witch_assist_vote", "payload": {
+            "round_number": round_number, "seat": seat, "target_seat": target,
+            "vote": vote, "reasoning": reasoning}}]
+    if event_type == "AWAKENED_WITCH_POISON_RESULT":
+        target = payload.get("target_seat"); result = payload.get("result")
+        if not _is_positive_int(target):
+            return []
+        if result not in {"passed", "vetoed", "incomplete", "aborted"}:
+            return []
+        return [{"event_type": "awakened_witch_poison_result", "payload": {
+            "round_number": round_number, "target_seat": target,
+            "result": result}}]
     if event_type == "SHERIFF_ELECTED":
         seat = payload.get("seat")
         reason = payload.get("reason")
@@ -946,6 +1006,8 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         return _public_role_skill_event(event_type, payload, round_number)
     if event_type in ("EXILE_CANCELLED", "SELF_EXPLODE", "CRIMSON_EXPLODE",
                       "DANCE_POOL", "MASK_GRANTED", "PLAYER_REVEALED",
+                      "AWAKENED_WITCH_ASSIST_PICK", "AWAKENED_WITCH_ASSIST_CHAT",
+                      "AWAKENED_WITCH_ASSIST_VOTE", "AWAKENED_WITCH_POISON_RESULT",
                       "SHERIFF_ELECTED", "SHERIFF_BADGE",
                       "SHERIFF_RUN", "SHERIFF_WITHDRAW", "SHERIFF_VOTE", "SHERIFF_SIDE",
                       "VOTE_REWOUND"):

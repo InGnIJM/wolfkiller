@@ -175,6 +175,29 @@ class ConversationLog:
         self._persist(record)
         return record
 
+    def add_night_intel(
+        self, content: str, round_num: int, visible_to: list[int],
+        speaker_seat: Optional[int] = None, phase: str = "night",
+    ) -> Conversation:
+        """Record a private night message for an explicit seat group.
+
+        Used by the Awakened Witch's poison-brewing assistants: only the seats
+        listed in ``visible_to`` receive the record in their prompt history; the
+        rest of the table never sees it. ``speaker_role`` is deliberately omitted
+        so the channel cannot leak a role identity to the group.
+        """
+        record = Conversation(
+            scope=ConversationScope.NIGHT_INTEL,
+            content=content,
+            round_number=round_num,
+            phase=phase,
+            speaker_seat=speaker_seat,
+            visible_to=sorted(set(visible_to)),
+        )
+        self.records.append(record)
+        self._persist(record)
+        return record
+
     def get_thoughts_for_seat(self, seat: int) -> list[Conversation]:
         """Return all thought records belonging to a specific player."""
         return [

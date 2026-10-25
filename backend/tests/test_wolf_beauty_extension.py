@@ -112,7 +112,7 @@ def test_spec_shares_the_kill_contract_and_adds_charm_and_revenge() -> None:
     assert WOLF_BEAUTY_SPEC.camp_id == "werewolf"
     assert WOLF_BEAUTY_SPEC.max_count == 1
     assert WOLF_BEAUTY_SPEC.tags == {"wolf"}
-    assert WOLF_BEAUTY_SPEC.initial_private_data == {"last_charmed": None}
+    assert WOLF_BEAUTY_SPEC.initial_private_data == {"last_charmed": None, "awakened_claw_gift": None}
     # The kill declaration must be byte-identical or the registry refuses the
     # shared aggregation.
     assert WOLF_BEAUTY_SPEC.contracts[0] is WEREWOLF_KILL_CONTRACT

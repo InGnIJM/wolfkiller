@@ -26,6 +26,9 @@ from app.models.pipeline import (
 from app.roles.base import BaseRole
 from app.roles.target_memory import is_consecutive_repeat, target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 LAST_MASKED_KEY = "last_masked"
 POOL_CHECKS_KEY = "pool_checks"
@@ -176,12 +179,14 @@ MASK_SPEC = RoleSpec(
     display_name="Mask",
     camp_id="werewolf",
     opening_narration=("假面请睁眼", "请选择今晚要戴面具的玩家。"),
-    contracts=(WEREWOLF_KILL_CONTRACT, MASK_GRANT_CONTRACT),
+    contracts=(WEREWOLF_KILL_CONTRACT, MASK_GRANT_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
     initial_resources={POISON_IMMUNE_RESOURCE: 1},
-    initial_private_data={LAST_MASKED_KEY: None, POOL_CHECKS_KEY: ()},
+    initial_private_data={
+        LAST_MASKED_KEY: None, POOL_CHECKS_KEY: (), AWAKENED_CLAW_GIFT_KEY: None,
+    },
     allowed_effects=frozenset({
-        EffectKind.SUBMIT_DAMAGE, EffectKind.ADD_STATUS,
-        EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
+        EffectKind.SET_PRIVATE_DATA, EffectKind.SUBMIT_DAMAGE, EffectKind.ADD_STATUS,
+        EffectKind.EMIT_EVENT,
     }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,

@@ -17,7 +17,7 @@ _MAX_HISTORY = 20_000
 _HOISTED_FACTS = frozenset(
     {
         "public_role_rules", "speeches", "votes", "directional_wolves",
-        "selected_targets", "time_lock_spent",
+        "selected_targets", "time_lock_spent", "assist_votes",
     }
 )
 

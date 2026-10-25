@@ -35,6 +35,9 @@ from app.models.pipeline import (
 from app.roles.base import BaseRole
 from app.roles.target_memory import target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 #: Private slot holding ``{"seat": n, "round": r}`` for the last charm, the same
 #: shape every other nightly role writes (see ``roles/target_memory.py``).
@@ -280,8 +283,9 @@ AWAKENED_WOLF_BEAUTY_SPEC = RoleSpec(
         WEREWOLF_KILL_CONTRACT,
         AWAKENED_BEAUTY_CHARM_CONTRACT,
         AWAKENED_BEAUTY_STAND_IN_CONTRACT,
+        AWAKENED_CLAW_GIFT_CONTRACT,
     ),
-    initial_private_data={LAST_ILLUSION_KEY: None},
+    initial_private_data={LAST_ILLUSION_KEY: None, AWAKENED_CLAW_GIFT_KEY: None},
     # ``stand_in`` is the seat the illusion would send instead; ``stand_in_used``
     # records that the replacement already happened. Both start at zero, so the
     # charm contract reads a declared key rather than a missing one.

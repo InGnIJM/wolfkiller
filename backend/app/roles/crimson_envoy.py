@@ -27,6 +27,9 @@ from app.models.pipeline import (
 )
 from app.roles.base import BaseRole
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 EXPLODE_CAUSE = "self_explode"
 #: One-shot markers, declared as resources so the shared kill contract can stay
@@ -193,7 +196,7 @@ CRIMSON_EXPLODE_CONTRACT = ActionContract(
     fallback_action_type="pass",
     allowed_effects=frozenset({
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
-        EffectKind.ADD_STATUS, EffectKind.EMIT_EVENT,
+        EffectKind.SET_PRIVATE_DATA, EffectKind.ADD_STATUS, EffectKind.EMIT_EVENT,
     }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     # No per-game limit: a "pass" is also an accepted action and the envoy must
@@ -318,11 +321,15 @@ CRIMSON_ENVOY_SPEC = RoleSpec(
     role_id="wolf-killer-crimson-envoy",
     display_name="Crimson Envoy",
     camp_id="werewolf",
-    contracts=(WEREWOLF_KILL_CONTRACT, CRIMSON_EXPLODE_CONTRACT, CRIMSON_LINGER_CONTRACT),
+    contracts=(
+        WEREWOLF_KILL_CONTRACT, CRIMSON_EXPLODE_CONTRACT,
+        CRIMSON_LINGER_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT,
+    ),
     initial_resources={EXPLODE_RESOURCE: 1, LINGER_RESOURCE: 1},
+    initial_private_data={AWAKENED_CLAW_GIFT_KEY: None},
     allowed_effects=frozenset({
         EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
-        EffectKind.ADD_STATUS, EffectKind.EMIT_EVENT,
+        EffectKind.SET_PRIVATE_DATA, EffectKind.ADD_STATUS, EffectKind.EMIT_EVENT,
     }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,

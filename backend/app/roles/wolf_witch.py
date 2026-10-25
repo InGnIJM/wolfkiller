@@ -22,6 +22,9 @@ from app.models.pipeline import (
 from app.roles.base import BaseRole
 from app.roles.pure_white import ROLE_CHECK_NAMESPACE
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 #: The one identity the Wolf Witch can sentence, and the cause it dies of.
 PURE_WHITE_ROLE_ID = "wolf-killer-pure-white"
@@ -154,10 +157,13 @@ WOLF_WITCH_SPEC = RoleSpec(
     display_name="Wolf Witch",
     camp_id="werewolf",
     opening_narration=("狼巫请睁眼", "请查验一名非狼阵营玩家的具体身份；第二夜起验中纯白之女即当夜处决。"),
-    contracts=(WEREWOLF_KILL_CONTRACT, WOLF_WITCH_CHECK_CONTRACT),
-    initial_private_data={ROLE_CHECK_NAMESPACE: ()},
+    contracts=(WEREWOLF_KILL_CONTRACT, WOLF_WITCH_CHECK_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
+    initial_private_data={
+        ROLE_CHECK_NAMESPACE: (), AWAKENED_CLAW_GIFT_KEY: None,
+    },
     allowed_effects=frozenset({
-        EffectKind.RECORD_PRIVATE_FACT, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
+        EffectKind.RECORD_PRIVATE_FACT, EffectKind.SET_PRIVATE_DATA,
+        EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
     }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,

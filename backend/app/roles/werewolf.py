@@ -10,6 +10,9 @@ from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
     RuleViolation, SchedulePoint,
 )
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 def werewolf_applicable(context: ActionContext) -> bool:
     return context.actor_alive
@@ -93,8 +96,11 @@ WEREWOLF_SPEC = RoleSpec(
     tags=frozenset({"wolf"}),
     role_id="wolf-killer-werewolf", display_name="Werewolf", camp_id="werewolf",
     schema_version=2,
-    contracts=(WEREWOLF_KILL_CONTRACT,),
-    allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+    contracts=(WEREWOLF_KILL_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
+    initial_private_data={AWAKENED_CLAW_GIFT_KEY: None},
+    allowed_effects=frozenset({
+        EffectKind.SET_PRIVATE_DATA, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
+    }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     instructions=(
         "Living Werewolves use their private channel and the registered vote to choose one "

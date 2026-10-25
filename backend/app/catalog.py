@@ -48,6 +48,21 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "守卫守护与解药同时落在同一刀口上时，该玩家仍然死亡（对穿）。",
         ],
     },
+    "wolf-killer-awakened-witch": {
+        "name_zh": "觉醒女巫", "icon": "witch",
+        "description": "好人神职，一瓶解药和三瓶调配毒药；毒药需要全部协助者同意才生效",
+        "rules": [
+            "属于好人阵营神职。拥有一瓶解药和三瓶毒药，每晚只能选择其中一个技能使用。",
+            "解药只能救当晚被狼人刀杀的玩家；12 人场全程不能自救。解药与守卫的守护同时落在同一刀口上时仍然死亡（同守同救）。",
+            "毒药：先选一名存活玩家作为毒杀目标，再按第 1 / 2 / 3 次分别选择 1 / 2 / 3 名存活玩家作为协助者。"
+            "每名玩家整局只能协助一次；可以选自己，也可以选毒药目标。",
+            "协助者知道彼此座位与被毒目标，≥2 名协助者时可以短暂交流；他们不知道彼此的身份，也不知道彼此的选择。"
+            "觉醒女巫不知道协助者的选择结果；若她不在协助者中，也不参与交流。",
+            "所有协助者都选择「毒」时毒药才生效；任意一人选择「不毒」或未表态，毒药就不生效。"
+            "无论是否生效，发动一次毒药调配就消耗一次次数。",
+            "毒药无视守卫的守护；被毒死的猎人不能开枪，被毒死的狼王/觉醒狼王不能发动狼王爪。",
+        ],
+    },
     "wolf-killer-hunter": {
         "name_zh": "猎人", "icon": "hunter",
         "description": "死亡时可以开枪带走一名玩家",
@@ -107,6 +122,21 @@ ROLE_METADATA: dict[str, dict[str, Any]] = {
             "可以发动的出局方式：夜间被狼刀、白天被放逐、被猎人开枪带走。",
             "不能发动的出局方式：自爆、被女巫毒杀、被狼美人殉情带走、被骑士决斗出局。",
             "发动时不需要翻牌；被带走的猎人仍然可以开枪反击。",
+        ],
+    },
+    "wolf-killer-awakened-wolf-king": {
+        "name_zh": "觉醒狼王", "icon": "wolf_king",
+        "description": "狼人，拥有两次狼王爪，可亲传队友；不亲传时出局可带走两人",
+        "rules": [
+            "属于狼人阵营，夜晚与狼队共同讨论和刀人；可以自爆身份，也可以自刀。",
+            "拥有两次「狼王爪」：每晚可以把一次爪亲传给一名存活、尚未持爪的狼窝队友；"
+            "每名队友整局最多获得一次，不能传给自己，隐狼不在传递范围。",
+            "不亲传时，出局后可以一次发动双爪带走两名存活玩家；已经传出一爪，则只剩一次单爪。",
+            "可以发动的出局方式：夜间被狼刀、白天被放逐、被猎人开枪带走；"
+            "被毒、自爆、被狼美人殉情带走、被骑士决斗出局时不能发动；成为最后一狼时也不能发动。",
+            "被狼王爪带走的人死因是「狼王爪」；被带走的猎人不能开枪，被带走的狼美人不会殉情。",
+            "白天发言前可以自爆：公开身份、自己出局、当日结束、不带走任何人，且不触发狼王爪。"
+            "警长竞选期也可以自爆吞警徽。",
         ],
     },
     "wolf-killer-evil-knight": {
@@ -884,6 +914,26 @@ STANDARD_PRESETS: list[dict] = [
         "enable_sheriff": True,
         "witch_self_save": "never",
         "victory": "city",
+        "recommended_timeout_seconds": 7200,
+    },
+    {
+        # NetEase's official 2024 "Awakened Witch" 12-player board: the wolf
+        # side fields the Awakened Wolf King, the good side the Awakened Witch;
+        # the witch can never save herself on this board.
+        "id": "twelve-player-awakened-witch",
+        "name": "十二人觉醒女巫",
+        "description": "3狼 1觉醒狼王 4民 1预言家 1守卫 1猎人 1觉醒女巫",
+        "role_counts": {
+            "wolf-killer-werewolf": 3,
+            "wolf-killer-awakened-wolf-king": 1,
+            "wolf-killer-villager": 4,
+            "wolf-killer-seer": 1,
+            "wolf-killer-guard": 1,
+            "wolf-killer-hunter": 1,
+            "wolf-killer-awakened-witch": 1,
+        },
+        "enable_sheriff": True,
+        "witch_self_save": "never",
         "recommended_timeout_seconds": 7200,
     },
 ]

@@ -20,6 +20,9 @@ from app.models.pipeline import (
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 #: Ways out that still let the Wolf King use its claw. Four are deliberately
 #: absent:
@@ -139,13 +142,15 @@ WOLF_KING_SHOT_CONTRACT = ActionContract(
 WOLF_KING_SPEC = RoleSpec(
     tags=frozenset({"wolf"}),
     role_id="wolf-killer-wolf-king", display_name="Wolf King", camp_id="werewolf",
-    contracts=(WEREWOLF_KILL_CONTRACT, WOLF_KING_SHOT_CONTRACT),
+    contracts=(WEREWOLF_KILL_CONTRACT, WOLF_KING_SHOT_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
     # The claw is a one-shot resource rather than a per-game counter: the
     # consume effect carries a ``resource_equals`` precondition, so a second
     # attempt in the same window is rejected as a conflict instead of firing.
     initial_resources={"wolf_claw": 1},
+    initial_private_data={AWAKENED_CLAW_GIFT_KEY: None},
     allowed_effects=frozenset({
-        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+        EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
     }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,

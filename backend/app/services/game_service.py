@@ -156,6 +156,8 @@ _DAY_POINT_SKIPPED_EVENTS = frozenset({
 _NIGHT_ACTOR_POINTS = frozenset({
     SchedulePoint.NIGHT_ACTION,
     SchedulePoint.NIGHT_WITCH_ACTION,
+    SchedulePoint.NIGHT_WITCH_ASSIST_PICK,
+    SchedulePoint.NIGHT_WITCH_ASSIST_VOTE,
     SchedulePoint.NIGHT_SEER_ACTION,
 })
 
@@ -1944,6 +1946,10 @@ class GameService:
             events = _pending_window_rows(engine, event_id)
             if events:
                 return events
+        if label.startswith("night_assist:"):
+            events = _pending_window_rows(engine, event_id)
+            if events:
+                return events
         payload: dict[str, object]
         event_type: str
         if label == "game_initialized":
@@ -2932,6 +2938,14 @@ class GameService:
         so a point never stalls on a malformed model response.
         """
         def provider(request, context, attempt, *, prompt_sink=None, usage_sink=None):
+            if request.contract.contract_id == "awakened_witch_assist_tally":
+                # The tally is a deterministic engine resolution, not a model
+                # decision: the votes are already in ``assist_votes``. Returning
+                # a synthetic command keeps the write entry and the point journal
+                # intact without inventing a model request or a token bill.
+                return PipelineActionCommand(
+                    action_type="resolve", target_seat=None, reasoning="",
+                )
             if self._pack_ballot_point(request, context):
                 # A collected wolf ballot carries its own provenance: the real
                 # votes keep ``degraded=False`` and only the engine-produced

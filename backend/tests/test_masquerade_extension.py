@@ -438,7 +438,7 @@ def test_mask_spec_reads_the_pool_and_runs_after_the_dancer() -> None:
     assert MASK_SPEC.tags == frozenset({"wolf"})
     assert MASK_SPEC.max_count == 1
     assert MASK_SPEC.initial_resources == {POISON_IMMUNE_RESOURCE: 1}
-    assert MASK_SPEC.initial_private_data == {LAST_MASKED_KEY: None, POOL_CHECKS_KEY: ()}
+    assert MASK_SPEC.initial_private_data == {LAST_MASKED_KEY: None, POOL_CHECKS_KEY: (), "awakened_claw_gift": None}
     assert MASK_SPEC.contracts[0].to_json() == WEREWOLF_SPEC.contracts[0].to_json()
     assert MASK_GRANT_CONTRACT.schedule_point is SchedulePoint.NIGHT_ACTION
     assert MASK_GRANT_CONTRACT.order == 30

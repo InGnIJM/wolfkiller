@@ -174,13 +174,13 @@ def test_day_action_window_asks_the_king_once_per_slot_until_it_explodes() -> No
     first = runner.run_point(game, SchedulePoint.DAY_ACTION, slot="r1-s2")
     assert asked == [("werewolf_king_explode", "speech")]
     assert [e["event_type"] for e in first.events] == ["WEREWOLF_KING_REASONING"]
-    assert role_resource_view(game, 1) == {"explode": 1}
+    assert role_resource_view(game, 1) == {"explode": 1, }
 
     second = runner.run_point(game, SchedulePoint.DAY_ACTION, slot="r1-s3")
     assert len(asked) == 2
     assert [e["event_type"] for e in second.events] == [
         "SELF_EXPLODE", "DAY_INTERRUPTED", "WEREWOLF_KING_REASONING"]
-    assert role_resource_view(game, 1) == {"explode": 0}
+    assert role_resource_view(game, 1) == {"explode": 0, }
     assert game._pipeline_runtime.pending_damage == (
         {"target": 1, "amount": 1, "cause": "self_explode"},
         {"target": 3, "amount": 1, "cause": "self_explode"},
@@ -258,7 +258,7 @@ async def test_explode_interrupts_the_speech_round_and_the_hunter_cannot_react(t
     assert engine.state._pipeline_runtime.pending_damage == ()
     # Seat 4 lives: the hunter never got a shot.
     assert [seat for seat, p in engine.state.players.items() if p.is_alive] == [2, 4, 5, 6, 7]
-    assert role_resource_view(engine.state, 1) == {"explode": 0}
+    assert role_resource_view(engine.state, 1) == {"explode": 0, }
     messages = [r.content for r in engine.conversation_log.get_public()]
     assert any("白天进程被中断" in m and "1号、3号" in m for m in messages)
     records = [json.loads(line) for line in
@@ -331,7 +331,7 @@ async def test_passing_king_lets_the_round_finish_normally(tmp_path) -> None:
     assert await engine._execute_speech_round() is False
     assert [s.player_seat for s in engine.state.speeches] == [1, 2, 3, 4, 5, 6, 7]
     assert engine.sm.get_state() is GamePhase.VOTE_CASTING
-    assert role_resource_view(engine.state, 1) == {"explode": 1}
+    assert role_resource_view(engine.state, 1) == {"explode": 1, }
 
 
 def test_day_action_is_disabled_without_a_day_action_role_or_scheduler(tmp_path) -> None:

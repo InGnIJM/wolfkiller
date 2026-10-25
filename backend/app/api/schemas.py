@@ -536,6 +536,37 @@ class PublicPlayerStatusResponse(_PublicResponse):
     status: Annotated[str, Field(min_length=1)]
 
 
+class PublicAwakenedWitchAssistPickResponse(_PublicResponse):
+    """The Awakened Witch's assistant roster for one poison brew."""
+    round_number: NonNegativePublicInt
+    target_seat: PositivePublicInt
+    assistant_seats: list[PositivePublicInt] = Field(default_factory=list)
+
+
+class PublicAwakenedWitchAssistChatResponse(_PublicResponse):
+    """One private line spoken inside the Awakened Witch's assistant group."""
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: PositivePublicInt
+    text: Annotated[str, Field(min_length=1)]
+
+
+class PublicAwakenedWitchAssistVoteResponse(_PublicResponse):
+    """One assistant's agree / veto / pass vote."""
+    round_number: NonNegativePublicInt
+    seat: PositivePublicInt
+    target_seat: PositivePublicInt
+    vote: Literal["agree", "veto", "pass"]
+    reasoning: str = ""
+
+
+class PublicAwakenedWitchPoisonResultResponse(_PublicResponse):
+    """Whether the brew landed, was vetoed, was incomplete, or was abandoned."""
+    round_number: NonNegativePublicInt
+    target_seat: PositivePublicInt
+    result: Literal["passed", "vetoed", "incomplete", "aborted"]
+
+
 class _PublicReplayEvent(_PublicResponse):
     timestamp: PublicUTCTimestamp
 
@@ -710,6 +741,26 @@ class PublicSpeakingReplayEvent(_PublicReplayEvent):
     payload: PublicSpeakingResponse
 
 
+class PublicAwakenedWitchAssistPickReplayEvent(_PublicReplayEvent):
+    event_type: Literal["awakened_witch_assist_pick"]
+    payload: PublicAwakenedWitchAssistPickResponse
+
+
+class PublicAwakenedWitchAssistChatReplayEvent(_PublicReplayEvent):
+    event_type: Literal["awakened_witch_assist_chat"]
+    payload: PublicAwakenedWitchAssistChatResponse
+
+
+class PublicAwakenedWitchAssistVoteReplayEvent(_PublicReplayEvent):
+    event_type: Literal["awakened_witch_assist_vote"]
+    payload: PublicAwakenedWitchAssistVoteResponse
+
+
+class PublicAwakenedWitchPoisonResultReplayEvent(_PublicReplayEvent):
+    event_type: Literal["awakened_witch_poison_result"]
+    payload: PublicAwakenedWitchPoisonResultResponse
+
+
 PublicReplayEvent = Annotated[
     Union[
         PublicExileCancelledReplayEvent,
@@ -730,6 +781,10 @@ PublicReplayEvent = Annotated[
         PublicSheriffVoteReplayEvent,
         PublicSheriffSideReplayEvent,
         PublicSpeakingReplayEvent,
+        PublicAwakenedWitchAssistPickReplayEvent,
+        PublicAwakenedWitchAssistChatReplayEvent,
+        PublicAwakenedWitchAssistVoteReplayEvent,
+        PublicAwakenedWitchPoisonResultReplayEvent,
         PublicPlayerRevealedReplayEvent,
         PublicSpeechReplayEvent,
         PublicDeathReplayEvent,

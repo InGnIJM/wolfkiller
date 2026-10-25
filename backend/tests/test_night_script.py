@@ -30,6 +30,9 @@ SCRIPT = {
     "wolf-killer-demon-hunter": ("猎魔人请睁眼", "请选择今晚要狩猎的玩家。"),
     "wolf-killer-guard": ("守卫请睁眼", "请选择今晚要守护的玩家。"),
     "wolf-killer-dream-weaver": ("摄梦人请睁眼", "请选择今晚要摄梦的玩家。"),
+    "wolf-killer-awakened-wolf-king": (
+        "觉醒狼王请睁眼", "请选择是否将一次狼王爪亲传给存活狼队友。",
+    ),
     "wolf-killer-crow": ("乌鸦请睁眼", "请诅咒一名玩家。"),
     "wolf-killer-cupid": ("丘比特请睁眼", "请选择两名玩家连为挚友。"),
     "wolf-killer-admirer": ("暗恋者请睁眼", "请选择一名玩家作为你的暗恋对象。"),

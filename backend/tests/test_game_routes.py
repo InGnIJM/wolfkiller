@@ -1121,11 +1121,13 @@ _DEFAULT_VALUES: dict[str, object] = {
     "choice": "run", "kind": "vote", "side": "sheriff_left", "reason": "vote",
     "winning_camp": "good", "failure_code": "timeout", "phase": "speech",
     "action_type": "pass", "role": "wolf-killer-villager",
+    "assistant_seats": [2, 3], "vote": "agree",
 }
 
 #: 取值受限的字段按类型改写（`run` 只对 SHERIFF_RUN 合法）。
 _FIELD_OVERRIDES: dict[str, dict[str, object]] = {
     "SHERIFF_WITHDRAW": {"choice": "stay"},
+    "AWAKENED_WITCH_POISON_RESULT": {"result": "passed"},
 }
 _REASONING_ACTIONS = {
     "WITCH_REASONING": "save", "SEER_REASONING": "check", "GUARD_REASONING": "guard",
@@ -2535,3 +2537,38 @@ async def test_create_game_maps_runtime_configuration_validation_to_bad_request(
         await game_routes.create_game(CreateGameRequest())
     assert caught.value.status_code == 400
     assert caught.value.detail == "unknown model configuration"
+
+
+def test_awakened_witch_replay_rejects_malformed_payloads() -> None:
+    """Every new branch must drop a malformed old archive instead of 500ing."""
+    invalid = [
+        ("AWAKENED_WITCH_ASSIST_PICK", {"target_seat": 0, "assistant_seats": [2]}),
+        ("AWAKENED_WITCH_ASSIST_PICK", {"target_seat": 3, "assistant_seats": []}),
+        ("AWAKENED_WITCH_ASSIST_PICK", {"target_seat": 3, "assistant_seats": [2, 0]}),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 1, "target_seat": 3, "text": ""}),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 0, "target_seat": 3, "text": "x"}),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 1, "target_seat": 0, "text": "x"}),
+        ("AWAKENED_WITCH_ASSIST_CHAT", {"seat": 1, "target_seat": 3, "text": 1}),
+        ("AWAKENED_WITCH_ASSIST_VOTE", {
+            "seat": 1, "target_seat": 3, "vote": "maybe", "reasoning": "x",
+        }),
+        ("AWAKENED_WITCH_ASSIST_VOTE", {
+            "seat": 1, "target_seat": 3, "vote": "agree", "reasoning": 1,
+        }),
+        ("AWAKENED_WITCH_ASSIST_VOTE", {
+            "seat": 0, "target_seat": 3, "vote": "agree", "reasoning": "x",
+        }),
+        ("AWAKENED_WITCH_ASSIST_VOTE", {
+            "seat": 1, "target_seat": 0, "vote": "agree", "reasoning": "x",
+        }),
+        ("AWAKENED_WITCH_POISON_RESULT", {"target_seat": 3, "result": "maybe"}),
+        ("AWAKENED_WITCH_POISON_RESULT", {"target_seat": 0, "result": "passed"}),
+    ]
+    for event_type, payload in invalid:
+        record = _replay_record(
+            "audience_action", {"event_type": event_type, "payload": payload},
+            phase="night",
+        )
+        assert game_routes._public_operation_events(record) == [], (
+            event_type, payload,
+        )

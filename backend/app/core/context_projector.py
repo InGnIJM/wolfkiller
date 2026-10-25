@@ -83,6 +83,12 @@ _PUBLIC_RESOURCES = frozenset({
     "reflect_check", "reflect_poison", "reflect_used",
     # The Eclipse Maid inherits a devoured seat's *current* potions / gun.
     "antidote", "poison", "gun",
+    # The Awakened Wolf King sees whether a teammate has ever received a claw,
+    # so it never wastes a night on an illegal pass. The claw itself is carried
+    # in the recipient's private gift slot, not a public resource.
+    "awakened_claw_received",
+    # The Awakened Witch excludes a player who has already assisted her.
+    "assist_used",
 })
 _SPEECH_FIELDS = ("player_seat", "text", "round_number")
 _VOTE_FIELDS = ("voter_seat", "target_seat", "round_number")
@@ -151,12 +157,37 @@ def _time_lock_spent(state: GameState, actor: PlayerState) -> bool:
     return runtime.role_resources.get(locked, {}).get("time_lock_hit", 0) > 0
 
 
+def _assist_votes(state: GameState, actor: PlayerState) -> tuple[dict[str, object], ...]:
+    """The Awakened Witch's tally view: how each selected assistant voted.
+
+    The witch is never told these choices in her prompt — the prompt renderer
+    hoists this fact out — but the deterministic tally contract must see them.
+    The plan lives in the witch's declared private slot; the votes are the
+    assistants' own one-night resources.
+    """
+    plan = role_private_data_view(state, actor.seat_number).get("brew_plan")
+    if not isinstance(plan, Mapping):
+        return ()
+    seats = plan.get("assist_seats") or ()
+    if not isinstance(seats, (list, tuple)):
+        return ()
+    votes: list[dict[str, object]] = []
+    for seat in seats:
+        if type(seat) is not int:
+            continue
+        value = role_resource_view(state, seat).get("assist_vote")
+        if type(value) is int:
+            votes.append({"seat": seat, "vote": value})
+    return tuple(votes)
+
+
 #: ``RoleSpec.projected_facts`` name -> builder. Kept one-to-one with
 #: ``models/pipeline.PROJECTED_FACT_NAMES`` (a gate asserts the sets are equal).
 _DERIVED_FACT_BUILDERS = {
     "directional_wolves": _directional_wolves,
     "wolf_hint_seat": _wolf_hint_seat,
     "time_lock_spent": _time_lock_spent,
+    "assist_votes": _assist_votes,
 }
 
 

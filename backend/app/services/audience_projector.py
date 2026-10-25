@@ -64,6 +64,25 @@ _EVENTS: dict[str, tuple[str, frozenset[str]]] = {
     # landed inside the pool.
     "DANCE_POOL": ("dance_pool", frozenset({"seat", "pool_seats", "round_number"})),
     "MASK_GRANTED": ("mask_granted", frozenset({"seat", "target_seat", "in_pool", "round_number"})),
+    # The Awakened Witch's poison is a committee action: the pick names the
+    # group, the chat/vote lines let the god view follow it, and the result
+    # separates a successful brew from a veto or an incomplete vote.
+    "AWAKENED_WITCH_ASSIST_PICK": (
+        "awakened_witch_assist_pick",
+        frozenset({"target_seat", "assistant_seats", "round_number"}),
+    ),
+    "AWAKENED_WITCH_ASSIST_CHAT": (
+        "awakened_witch_assist_chat",
+        frozenset({"seat", "target_seat", "text", "round_number"}),
+    ),
+    "AWAKENED_WITCH_ASSIST_VOTE": (
+        "awakened_witch_assist_vote",
+        frozenset({"seat", "target_seat", "vote", "reasoning", "round_number"}),
+    ),
+    "AWAKENED_WITCH_POISON_RESULT": (
+        "awakened_witch_poison_result",
+        frozenset({"target_seat", "result", "round_number"}),
+    ),
 }
 
 _PUBLIC_ROLE_ACTIONS = {

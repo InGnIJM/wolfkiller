@@ -34,6 +34,13 @@ class SchedulePoint(str, Enum):
     NIGHT_ACTION = "night_action"
     NIGHT_WOLF_VOTE = "night_wolf_vote"
     NIGHT_WITCH_ACTION = "night_witch_action"
+    # The Awakened Witch's three sub-steps. They are deliberately NOT entries in
+    # ``GameEngine._NIGHT_POINTS``: the engine runs them inside the existing
+    # witch stage, so the persisted stage numbers (and every old checkpoint)
+    # stay untouched.
+    NIGHT_WITCH_ASSIST_PICK = "night_witch_assist_pick"
+    NIGHT_WITCH_ASSIST_VOTE = "night_witch_assist_vote"
+    NIGHT_WITCH_ASSIST_TALLY = "night_witch_assist_tally"
     NIGHT_SEER_ACTION = "night_seer_action"
     NIGHT_COMMIT = "night_commit"
     DAWN_REACTION = "dawn_reaction"
@@ -386,7 +393,9 @@ class ActionContext(_FrozenValue):
 #: one builder per name (a test asserts the two sets are equal). Every name in
 #: this set is hook-only or prompt-visible by construction — ``directional_wolves``
 #: names living werewolf seats and is therefore hoisted out of the prompt.
-PROJECTED_FACT_NAMES = frozenset({"directional_wolves", "wolf_hint_seat", "time_lock_spent"})
+PROJECTED_FACT_NAMES = frozenset({
+    "directional_wolves", "wolf_hint_seat", "time_lock_spent", "assist_votes",
+})
 
 
 #: The reasoning a command carries when the engine, not a model, produced it.

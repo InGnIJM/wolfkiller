@@ -222,7 +222,10 @@ def test_response_queue_filters_the_forbidden_reasons_before_opening() -> None:
     queue = ResponseQueue(snapshot)
     for allowed in ("wolf_kill", "exile", "hunter_shot"):
         event = DomainEvent("event:" + "2" * 16, "PLAYER_DIED", {"target_seat": 1}, allowed)
-        assert len(queue.open(game, event, depth=0)) == 1, allowed
+        # The Wolf King carries the ordinary claw plus the shared awakened-claw
+        # response; the latter is skipped at execution because this seat holds
+        # no ``awakened_claw`` resource, but the queue does open its window.
+        assert len(queue.open(game, event, depth=0)) == 2, allowed
     for forbidden in ("self_explode", "poison", "charm", "knight_duel", "unknown"):
         event = DomainEvent(
             "event:" + "3" * 16, "PLAYER_DIED", {"target_seat": 1}, forbidden)

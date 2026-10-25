@@ -18,6 +18,9 @@ from app.models.pipeline import (
 from app.roles.base import BaseRole
 from app.roles.target_memory import is_consecutive_repeat, target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 #: Private slot: who the Nightmare feared last, and on which night.
 FEARED_KEY = "last_feared"
@@ -140,8 +143,8 @@ NIGHTMARE_SPEC = RoleSpec(
     camp_id="werewolf",
     # 它排在所有夜间角色之前，所以这一句也是当晚的第一句开眼旁白。
     opening_narration=("噩梦之影请睁眼", "请选择今晚要恐惧的玩家。"),
-    contracts=(WEREWOLF_KILL_CONTRACT, NIGHTMARE_FEAR_CONTRACT),
-    initial_private_data={FEARED_KEY: None},
+    contracts=(WEREWOLF_KILL_CONTRACT, NIGHTMARE_FEAR_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
+    initial_private_data={FEARED_KEY: None, AWAKENED_CLAW_GIFT_KEY: None},
     # The role-level set is the union of what its own contract needs and what
     # the shared kill contract needs (SUBMIT_DAMAGE / EMIT_EVENT).
     allowed_effects=frozenset({

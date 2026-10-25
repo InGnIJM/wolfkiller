@@ -20,6 +20,9 @@ from app.roles.target_memory import (
     is_consecutive_repeat, last_target, target_memory,
 )
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 #: Private slot: who Wolf Beauty charmed last, and on which night.
 LAST_CHARMED_KEY = "last_charmed"
@@ -234,8 +237,9 @@ WOLF_BEAUTY_SPEC = RoleSpec(
         WEREWOLF_KILL_CONTRACT,
         WOLF_BEAUTY_CHARM_CONTRACT,
         WOLF_BEAUTY_REVENGE_CONTRACT,
+        AWAKENED_CLAW_GIFT_CONTRACT,
     ),
-    initial_private_data={LAST_CHARMED_KEY: None},
+    initial_private_data={LAST_CHARMED_KEY: None, AWAKENED_CLAW_GIFT_KEY: None},
     # Its charm shares the witch's point, so it declares its own line there.
     opening_narration=("狼美人请睁眼", "请魅惑一名玩家（不能连续两晚同一人）。"),
     # Wolf Beauty may never be the wolf team's own kill target. The kill
@@ -244,8 +248,8 @@ WOLF_BEAUTY_SPEC = RoleSpec(
     # the self-vote for whoever declares it.
     initial_resources={"self_kill_forbidden": 1},
     allowed_effects=frozenset(
-        {EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA, EffectKind.ADD_RELATION,
-         EffectKind.EMIT_EVENT}
+        {EffectKind.SET_PRIVATE_DATA, EffectKind.SUBMIT_DAMAGE,
+         EffectKind.ADD_RELATION, EffectKind.EMIT_EVENT}
     ),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     tags=frozenset({"wolf"}),

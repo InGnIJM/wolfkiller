@@ -24,6 +24,7 @@ from app.core.reflect import (
 )
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
+from app.roles.wolf_claw import AWAKENED_CLAW_GIFT_CONTRACT
 from app.roles.evil_knight import EVIL_KNIGHT_SPEC, EvilKnight
 from app.roles.registry import builtin_registry
 from app.roles.seer import SEER_SPEC, resolve_seer_action
@@ -81,7 +82,7 @@ def test_spec_reuses_the_shared_kill_contract_and_declares_no_explode() -> None:
     assert EVIL_KNIGHT_SPEC.tags == {"wolf"}
     assert EVIL_KNIGHT_SPEC.max_count == 1
     assert EVIL_KNIGHT_SPEC.self_explode_forbidden is True
-    assert EVIL_KNIGHT_SPEC.contracts == (WEREWOLF_KILL_CONTRACT,)
+    assert EVIL_KNIGHT_SPEC.contracts == (WEREWOLF_KILL_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT)
     assert WEREWOLF_KILL_CONTRACT.stable_digest() == \
         WEREWOLF_SPEC.contracts[0].stable_digest()
     # No explode contract is exactly what makes "cannot self-destruct" true.

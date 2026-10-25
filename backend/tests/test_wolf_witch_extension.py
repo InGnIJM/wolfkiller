@@ -26,6 +26,7 @@ from app.roles.registry import RegistrySnapshot, RoleRegistry, builtin_registry
 from app.roles.villager import VILLAGER_SPEC
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC
 from app.roles.witch import WITCH_SPEC
+from app.roles.wolf_claw import AWAKENED_CLAW_GIFT_CONTRACT
 from app.roles.wolf_witch import (
     PURE_WHITE_ROLE_ID, WOLF_WITCH_CHECK_CONTRACT, WOLF_WITCH_SPEC, WolfWitch,
     resolve_wolf_witch_action, validate_wolf_witch_action, wolf_witch_applicable,
@@ -82,7 +83,7 @@ def test_spec_shares_the_kill_contract_and_stays_in_the_pack() -> None:
     assert WOLF_WITCH_SPEC.tags == frozenset({"wolf"})
     assert WOLF_WITCH_SPEC.max_count == 1
     assert WOLF_WITCH_SPEC.contracts == (
-        WEREWOLF_KILL_CONTRACT, WOLF_WITCH_CHECK_CONTRACT,
+        WEREWOLF_KILL_CONTRACT, WOLF_WITCH_CHECK_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT,
     )
     # Byte-identical, or the registry would reject the duplicate contract id.
     assert WOLF_WITCH_SPEC.contracts[0].to_json() == WEREWOLF_SPEC.contracts[0].to_json()

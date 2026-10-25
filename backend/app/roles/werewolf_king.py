@@ -6,6 +6,9 @@ from app.models.pipeline import (
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 _EXPLODE_CAUSE = "self_explode"
 
@@ -115,7 +118,9 @@ WEREWOLF_KING_EXPLODE_CONTRACT = ActionContract(
     contract_id="werewolf_king_explode", schedule_point=SchedulePoint.DAY_ACTION,
     order=20, action_types=("explode", "pass"),
     actions_requiring_target=frozenset({"explode"}), fallback_action_type="pass",
-    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+    allowed_effects=frozenset({
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
+    }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     # No per-game limit: a "pass" also counts as an accepted action, and the
     # king must be asked again before every later speaker. The one-shot is
@@ -128,9 +133,13 @@ WEREWOLF_KING_EXPLODE_CONTRACT = ActionContract(
 WEREWOLF_KING_SPEC = RoleSpec(
     tags=frozenset({"wolf"}),
     role_id="wolf-killer-werewolf-king", display_name="Werewolf King", camp_id="werewolf",
-    contracts=(WEREWOLF_KILL_CONTRACT, WEREWOLF_KING_EXPLODE_CONTRACT),
+    contracts=(WEREWOLF_KILL_CONTRACT, WEREWOLF_KING_EXPLODE_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
     initial_resources={"explode": 1},
-    allowed_effects=frozenset({EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+    initial_private_data={AWAKENED_CLAW_GIFT_KEY: None},
+    allowed_effects=frozenset({
+        EffectKind.CONSUME_RESOURCE, EffectKind.SUBMIT_DAMAGE,
+        EffectKind.SET_PRIVATE_DATA, EffectKind.EMIT_EVENT,
+    }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,
     instructions=(

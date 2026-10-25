@@ -20,12 +20,16 @@ from __future__ import annotations
 
 from app.models.pipeline import EffectKind, RoleSpec
 from app.roles.werewolf import SELF_KILL_FORBIDDEN, WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 EVIL_KNIGHT_SPEC = RoleSpec(
     tags=frozenset({"wolf"}),
     role_id="wolf-killer-evil-knight", display_name="Evil Knight",
     camp_id="werewolf",
-    contracts=(WEREWOLF_KILL_CONTRACT,),
+    contracts=(WEREWOLF_KILL_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
+    initial_private_data={AWAKENED_CLAW_GIFT_KEY: None},
     initial_resources={
         # Permanent immunity to every lethal night effect.
         "night_immune": 1,
@@ -36,7 +40,9 @@ EVIL_KNIGHT_SPEC = RoleSpec(
         # It may never be the pack's own kill target.
         SELF_KILL_FORBIDDEN: 1,
     },
-    allowed_effects=frozenset({EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT}),
+    allowed_effects=frozenset({
+        EffectKind.SET_PRIVATE_DATA, EffectKind.SUBMIT_DAMAGE, EffectKind.EMIT_EVENT,
+    }),
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     max_count=1,
     # The card forbids self-exposure; the election badge move is the same act.

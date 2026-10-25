@@ -29,6 +29,9 @@ from app.models.pipeline import (
 from app.roles.base import BaseRole
 from app.roles.target_memory import target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
+from app.roles.wolf_claw import (
+    AWAKENED_CLAW_GIFT_CONTRACT, AWAKENED_CLAW_GIFT_KEY,
+)
 
 #: Private slot: whom the Wolf locked last, and on which night. The projector's
 #: ``time_lock_spent`` fact reads it to find the seat that may carry the hit marker.
@@ -139,8 +142,8 @@ TIME_WOLF_SPEC = RoleSpec(
     camp_id="werewolf",
     # 它排在所有夜间角色之前，所以这一句也是当晚的第一句开眼旁白。
     opening_narration=("蚀时狼妃请睁眼", "请选择要封锁到时间夹缝中的玩家。"),
-    contracts=(WEREWOLF_KILL_CONTRACT, TIME_LOCK_CONTRACT),
-    initial_private_data={LOCKED_KEY: None},
+    contracts=(WEREWOLF_KILL_CONTRACT, TIME_LOCK_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT),
+    initial_private_data={LOCKED_KEY: None, AWAKENED_CLAW_GIFT_KEY: None},
     projected_facts=frozenset({"time_lock_spent"}),
     allowed_effects=frozenset({
         EffectKind.SUBMIT_DAMAGE, EffectKind.SET_PRIVATE_DATA,

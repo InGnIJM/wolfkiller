@@ -34,6 +34,8 @@ def test_public_event_catalogue_is_frozen() -> None:
         "sheriff_elected", "sheriff_badge", "sheriff_run",
         "sheriff_withdraw", "sheriff_vote", "sheriff_side",
         "narration", "player_status",
+        "awakened_witch_assist_pick", "awakened_witch_assist_chat",
+        "awakened_witch_assist_vote", "awakened_witch_poison_result",
     }
 
 

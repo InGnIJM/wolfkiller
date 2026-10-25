@@ -97,6 +97,7 @@ def test_spec_declares_the_kill_the_illusion_and_the_replacement() -> None:
     assert AWAKENED_WOLF_BEAUTY_SPEC.max_count == 1
     assert [c.contract_id for c in AWAKENED_WOLF_BEAUTY_SPEC.contracts] == [
         "werewolf_kill", "awakened_beauty_charm", "awakened_beauty_stand_in",
+        "awakened_wolf_claw_gift",
     ]
     assert AWAKENED_WOLF_BEAUTY_SPEC.initial_resources == {
         STAND_IN_RESOURCE: 0, STAND_IN_USED_RESOURCE: 0,

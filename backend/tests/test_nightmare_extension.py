@@ -97,7 +97,7 @@ def test_spec_is_a_werewolf_in_the_pack_with_a_first_move_window() -> None:
     assert NIGHTMARE_SPEC.tags == frozenset({"wolf"})
     assert NIGHTMARE_SPEC.max_count == 1
     assert NIGHTMARE_SPEC.contracts[0].to_json() == WEREWOLF_SPEC.contracts[0].to_json()
-    assert NIGHTMARE_SPEC.initial_private_data == {FEARED_KEY: None}
+    assert NIGHTMARE_SPEC.initial_private_data == {FEARED_KEY: None, "awakened_claw_gift": None}
     assert NIGHTMARE_FEAR_CONTRACT.schedule_point is SchedulePoint.NIGHT_ACTION
     assert NIGHTMARE_FEAR_CONTRACT.order == 10
     # The Guard is the next night action on this board.

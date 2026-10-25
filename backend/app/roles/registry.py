@@ -54,11 +54,13 @@ from app.roles.eclipse_maid import ECLIPSE_MAID_SPEC, EclipseMaid
 from app.roles.awakened_seer import AWAKENED_SEER_SPEC, AwakenedSeer
 from app.roles.fragrance_phantom import FRAGRANCE_PHANTOM_SPEC, FragrancePhantom
 from app.roles.wolf_king import WOLF_KING_SPEC, WolfKing
+from app.roles.awakened_wolf_king import AWAKENED_WOLF_KING_SPEC, AwakenedWolfKing
 from app.roles.wolf_beauty import WOLF_BEAUTY_SPEC, WolfBeauty
 from app.roles.awakened_wolf_beauty import (
     AWAKENED_WOLF_BEAUTY_SPEC, AwakenedWolfBeauty,
 )
 from app.roles.witch import WITCH_SPEC, Witch
+from app.roles.awakened_witch import AWAKENED_WITCH_SPEC, AwakenedWitch
 from app.roles.fool_seer import FOOL_SEER_SPEC, FoolSeer
 from app.roles.iron_villager import IRON_VILLAGER_SPEC, IronVillager
 from app.roles.crow import CROW_SPEC, Crow
@@ -570,6 +572,7 @@ def _contract(
 builtin_registry = RoleRegistry()
 builtin_registry.register_pipeline(WEREWOLF_SPEC)
 builtin_registry.register_pipeline(WITCH_SPEC)
+builtin_registry.register_pipeline(AWAKENED_WITCH_SPEC)
 builtin_registry.register_pipeline(SEER_SPEC)
 builtin_registry.register_pipeline(HUNTER_SPEC)
 builtin_registry.register_pipeline(AWAKENED_HUNTER_SPEC)
@@ -582,6 +585,7 @@ builtin_registry.register_pipeline(WOLF_BEAUTY_SPEC)
 builtin_registry.register_pipeline(AWAKENED_WOLF_BEAUTY_SPEC)
 builtin_registry.register_pipeline(WEREWOLF_KING_SPEC)
 builtin_registry.register_pipeline(WOLF_KING_SPEC)
+builtin_registry.register_pipeline(AWAKENED_WOLF_KING_SPEC)
 builtin_registry.register_pipeline(EVIL_KNIGHT_SPEC)
 builtin_registry.register_pipeline(DREAM_WEAVER_SPEC)
 builtin_registry.register_pipeline(GARGOYLE_SPEC)
@@ -608,6 +612,9 @@ builtin_registry.register_pipeline(IRON_VILLAGER_SPEC)
 builtin_registry.register_pipeline(CROW_SPEC)
 builtin_registry.register_pipeline(CUPID_SPEC)
 builtin_registry.register_pipeline(ADMIRER_SPEC)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-awakened-wolf-king", Camp.WEREWOLF, AwakenedWolfKing, ())
+)
 builtin_registry.register(
     LegacyRoleSpec("wolf-killer-villager", Camp.GOOD, Villager, ())
 )
@@ -658,6 +665,9 @@ builtin_registry.register(
             ),
         ),
     )
+)
+builtin_registry.register(
+    LegacyRoleSpec("wolf-killer-awakened-witch", Camp.GOOD, AwakenedWitch, ())
 )
 builtin_registry.register(
     LegacyRoleSpec(

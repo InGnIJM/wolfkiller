@@ -77,7 +77,7 @@ def test_catalog_item_empty_display_falls_back_to_role_id():
 def test_role_catalog_covers_all_registered_roles():
     items = role_catalog(builtin_registry.freeze())
 
-    assert len(items) == 40
+    assert len(items) == 42
     ids = {item["role_id"] for item in items}
     assert {
         "wolf-killer-guard", "wolf-killer-idiot", "wolf-killer-werewolf-king",
@@ -181,7 +181,7 @@ def test_pure_white_preset_matches_the_netease_tournament_board() -> None:
 
 
 def test_presets_cover_nine_ten_and_twelve_player_fields():
-    assert len(STANDARD_PRESETS) == 24
+    assert len(STANDARD_PRESETS) == 25
     by_id = {p["id"]: p for p in STANDARD_PRESETS}
     nine, ten = by_id["nine-player-standard"], by_id["ten-player-standard"]
     idiot, king = by_id["twelve-player-idiot"], by_id["twelve-player-wolf-king"]
@@ -279,6 +279,7 @@ def test_only_the_netease_boards_override_the_witch_self_save_policy() -> None:
         "twelve-player-mirror",         "twelve-player-sun-hunt",
         "twelve-player-eternal-cycle",
         "twelve-player-fool-seer", "twelve-player-cupid",
+        "twelve-player-awakened-witch",
     }
     for preset in STANDARD_PRESETS:
         expected = "never" if preset["id"] in netease else "first_night_only"
@@ -317,7 +318,8 @@ def test_masquerade_roles_are_playable_through_the_frozen_snapshot() -> None:
     assert pool.multi_target_actions == {"pool": 3}
     assert pool.order < grant.order
     assert grant.selected_target_fact_namespaces == frozenset({"status_labels"})
-    assert mask.initial_resources == dancer.initial_resources == {"poison_immune": 1}
+    assert mask.initial_resources == {"poison_immune": 1}
+    assert dancer.initial_resources == {"poison_immune": 1}
     # Every preset must be acceptable to the frozen snapshot's own validation.
     for preset in STANDARD_PRESETS:
         snapshot.validate_role_counts(
@@ -360,7 +362,7 @@ async def test_list_roles_endpoint_returns_every_registered_role():
 
     response = await catalog_routes.list_roles()
 
-    assert len(response.roles) == 40
+    assert len(response.roles) == 42
     assert response.roles[0].role_id
 
 
@@ -370,12 +372,12 @@ async def test_list_presets_endpoint_returns_standards():
 
     response = await catalog_routes.list_presets()
 
-    assert len(response.presets) == 24
+    assert len(response.presets) == 25
     assert response.presets[0].name == "九人标准场"
     assert response.presets[0].recommended_timeout_seconds == 3600
-    assert response.presets[-1].id == "twelve-player-cupid"
+    assert response.presets[-1].id == "twelve-player-awakened-witch"
     assert response.presets[-1].recommended_timeout_seconds == 7200
-    assert response.presets[-1].victory == "city"
+    assert response.presets[-1].victory == "edge"
     # The wizard reads this key straight off the wire.
     assert "recommended_timeout_seconds" in response.model_dump()["presets"][0]
 

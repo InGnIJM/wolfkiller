@@ -28,6 +28,7 @@ SELF_KILL_FORBIDDEN_RESOURCE = "self_kill_forbidden"
 
 _WOLF_DISCUSSION_TOOL_NAME = "werewolf_discussion"
 _WOLF_VOTE_TOOL_NAME = "werewolf_kill"
+_WITCH_ASSIST_SPEECH_TOOL_NAME = "awakened_witch_assist_speech"
 
 
 def _wolf_discussion_schema() -> dict[str, object]:
@@ -549,6 +550,71 @@ class NightDirector:
                 exc_info=True,
             )
             return WolfVote(seat, "pass", None, DEGRADED_REASONING, degraded=True)
+
+    # ── Awakened Witch assistant discussion ────────────────────
+
+    def assist_discussion_prompt(
+        self, state: GameState, seat: int, target: int,
+        assistants: Sequence[int], history: Sequence[str],
+    ) -> list[dict[str, str]]:
+        """One private message from a poison-brewing assistant.
+
+        The group knows its seats and the poison target; it must not know the
+        others' identities or choices. The prompt therefore carries the actor's
+        own identity (it already knows that), the target, the roster, and the
+        messages said so far.
+        """
+        player = state.players[seat]
+        spec = self._snapshot.specs.get(player.role)
+        identity = spec.display_name if spec is not None else player.role
+        roster = "、".join(f"{item}号" for item in assistants)
+        said = "\n".join(history) if history else "（暂无发言）"
+        system = (
+            BASE_RULES
+            + "你是觉醒女巫毒药调配的协助者之一。你们只在夜里短暂交流，"
+            "是否毒杀目标由全体协助者各自决定；任何一人反对，毒药就不生效。"
+            "不要透露自己的身份或阵营，也不要编造别人的身份；用中文简短发言。"
+        )
+        human = (
+            f"你是 {seat} 号（你自己的身份：{identity}）。\n"
+            f"本次毒药目标是 {target} 号。\n"
+            f"协助者：{roster}。\n"
+            f"此前的交流：\n{said}\n"
+            "请说一句你的判断或建议（不超过 80 字）。"
+            '只输出 JSON：{"speak": true, "text": "你的发言"}；不想发言则 '
+            '{"speak": false, "text": ""}。'
+        )
+        return self._messages(system, human)
+
+    def assist_discussion_turn(
+        self, state: GameState, seat: int, target: int,
+        assistants: Sequence[int], history: Sequence[str],
+    ) -> str:
+        try:
+            value = self._invoke_json(
+                self.assist_discussion_prompt(state, seat, target, assistants, history),
+                tool_name=_WITCH_ASSIST_SPEECH_TOOL_NAME,
+                schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "speak": {"type": "boolean"},
+                        "text": {"type": "string", "maxLength": _MAX_UTTERANCE},
+                    },
+                    "required": ["speak", "text"],
+                },
+                seat=seat,
+            )
+            if value.get("speak") is not True:
+                return ""
+            return _clean(value.get("text"), "text", _MAX_UTTERANCE)
+        except Exception:
+            logger.warning(
+                "Awakened Witch assistant speech failed for seat %s round %s; skipping",
+                seat, state.round_number,
+                exc_info=True,
+            )
+            return ""
 
     # ── narration ──────────────────────────────────────────────
 

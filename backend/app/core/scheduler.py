@@ -740,6 +740,25 @@ class Scheduler:
         slot = Scheduler._slot(slot)
         return f"{phase}#{slot}" if slot else phase
 
+    def point_completed(self, state: GameState, point: SchedulePoint) -> bool:
+        """True when this point's journal already holds a complete result.
+
+        The Awakened Witch's sub-points run inside the night's witch stage and
+        are checkpointed separately. On resume the engine asks this before
+        running a sub-point again; without it the completed point would be
+        replayed and its audience events committed a second time.
+        """
+        if type(state) is not GameState:
+            raise TypeError("state must be GameState")
+        if type(point) is not SchedulePoint:
+            raise TypeError("point must be SchedulePoint")
+        key = PointKey(
+            state.game_id, state.round_number, self.point_phase(state), point,
+            frozen_registry_digest(state, self.registry),
+        )
+        saved = point_journal(state).get(key)
+        return saved is not None and saved.complete_result is not None
+
     def run_point(self, state: GameState, point: SchedulePoint, *, slot: str = "",
                   defer_event_types: tuple[str, ...] = ()) -> PointResult:
         if type(state) is not GameState: raise TypeError("state must be GameState")
