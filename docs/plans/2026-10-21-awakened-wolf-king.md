@@ -1,16 +1,24 @@
 # 觉醒狼王（阶段 6.6）决策单
 
 > 日期：2026-10-21
-> 状态：**决策单 · 待拍板**（拍板后转实施计划；本文不改代码）
+> 状态：**已批准 · 已实现**（2026-10-25；与觉醒女巫（阶段 6.5）同批落地，预设 `twelve-player-awakened-witch`）
 > 范围：`backend/app/roles/`、`catalog.py`、前端角色目录/立绘、测试与文档计数
 > 上游：[网易板型扩板计划](2026-10-04-netease-college-boards.md) §11.1 / §15.4 / §15.5
 > 目标：在「冻结声明 + 纯 Hook + 唯一写入口」内落地觉醒狼王，**不改核心模块**（最多动一个资源标签常量），并给出一套可复现的旧局兼容结论。
+
+> **实施结果（2026-10-25）**：角色 id `wolf-killer-awakened-wolf-king`，与觉醒女巫同批随
+> `twelve-player-awakened-witch` 上线；决策单 D6 里为觉醒狼王单列的两套预设（娱乐场 / 进阶场）
+> **未做**。实际采用 D1=N1 + 「最后一狼不能发动」（实现选择，卡面未写，见 §五）、D2=S1、D3=A（但队友获赠的爪改存
+> `awakened_claw_gift` 私有槽并由新增的 `awakened_wolf_claw_gift` 契约发动，**不改既有角色
+> `initial_resources`**，所以旧局仍判 `compatible`）、D4=E1、D5=推荐值（order 56、每夜一次、狼窝限定）、
+> D7=V1、D8=沿用狼王立绘（不新增素材）、D9 计数改为 **42 角色 / 25 预设**。完整规则、已知简化与
+> 旧局兼容结论见 [觉醒狼王 / 觉醒女巫实现记录](../notes/2026-10-25-awakened-roles.md)。
 
 ---
 
 ## 零、结论先行
 
-推荐组合：**D1=N1 / D2=S1 / D3=A / D4=E1 / D5=推荐值 / D6=两套预设 / D7=V1 / D8=先出图再登记**。
+原推荐组合（实际落地见文首「实施结果」）：**D1=N1 / D2=S1 / D3=A / D4=E1 / D5=推荐值 / D6=两套预设 / D7=V1 / D8=先出图再登记**。
 
 一句话：**新增一套独立的 `awakened_wolf_claw` 契约（单爪 + 双爪两个响应契约），挂到 12 个狼窝角色上；不要改既有的 `wolf_king_shot` 契约**。这样：
 
@@ -18,7 +26,7 @@
 - 普通狼王（`wolf-killer-wolf-king`）的行为与旧档逐字节不变；
 - 觉醒狼王不亲传时自己出局带走两人，亲传后队友「相当于狼王」。
 
-代价：11 个既有狼窝角色的 spec 各加一个契约（其中 8 个还要补 `CONSUME_RESOURCE` 权限），`registry.digest` 会变；每个狼窝角色死亡时会多一个「不适用 → 跳过」的响应窗口。
+代价：11 个既有狼窝角色的 spec 各加一个 `awakened_wolf_claw_gift` 契约 + `SET_PRIVATE_DATA` 权限（最终实现不再补 `CONSUME_RESOURCE`），`registry.digest` 会变；每个狼窝角色死亡时会多一个「不适用 → 跳过」的响应窗口。
 
 ---
 
@@ -171,10 +179,10 @@
 
 ### D9 文案 / 计数 / 门禁
 
-- 角色 40 → **41**；预设 24 → **26**（若 P1）。
-- `catalog.py` 加 `ROLE_METADATA`（`name_zh`、`icon`、`description`、非空 `rules`）；`test_catalog_routes.py` 的 40/24 断言改 41/26。
-- 前端：`roleMeta.ts` 的 `ROLE_ROWS` 加一行（配色键建议 `werewolf_king`，label「觉醒狼王」）；如 G1 再改 `ROLE_ART_BY_ID`。
-- 文档：`README.md` 角色清单、`docs/gameplay.md` 角色表与板子数、`AGENTS.md` / `CLAUDE.md` 角色清单与「40 角色 24 预设」、`docs/architecture.md` 的目录说明、大计划 §11.1/§15.5 状态、立绘盘点笔记的 40/40 说明、`docs/README.md` 索引。
+- 角色 40 → **42**；预设 24 → **25**（只做了觉醒女巫板一套，未做原建议的两套）。
+- `catalog.py` 加 `ROLE_METADATA`（`name_zh`、`icon`、`description`、非空 `rules`）；`test_catalog_routes.py` 的计数断言同步为 42 角色 / 25 预设。
+- 前端：`roleMeta.ts` 的 `ROLE_ROWS` 加一行（配色键 `werewolf_king`，label「觉醒狼王」）；`ROLE_ART_BY_ID` 沿用狼王立绘。
+- 文档：`README.md` 角色清单、`docs/gameplay.md` 角色表与板子数、`AGENTS.md` / `CLAUDE.md` 角色清单与「42 角色 25 预设」、`docs/architecture.md` 的目录说明、大计划 §11.1/§15.5 状态、立绘盘点笔记的 40/40 说明、`docs/README.md` 索引。
 - 死因**不新增**（复用 `wolf_king_shot`），所以取值目录五处同步不用动。
 
 ---
@@ -192,7 +200,7 @@
 | 自刀 | 允许（不声明 `self_kill_forbidden`）；仍然走狼队共享票，不是单方面自尽 |
 | 被爪带走者 | 死因 `wolf_king_shot`；猎人不能开枪、狼美人不殉情、被带走者不发动自己的爪 |
 | 队友持爪出局 | 同 N1 死因集合，单爪提示（每名队友只有 1 爪） |
-| 最后一狼 | 不额外限制（与普通狼王一致）；LAL 口径不同，记录为已知差异 |
+| 最后一狼 | **禁止发动**（实现选择：代码注释记为官方 2023 问答口径，卡面/公告未写；与普通狼王不同，差异只做在新契约内） |
 
 ---
 
@@ -202,9 +210,9 @@
 | --- | --- |
 | `backend/app/roles/wolf_claw.py`（新） | 共享契约与 hooks：`AWAKENED_CLAW_RESOURCE`、`AWAKENED_WOLF_CLAW_CONTRACT`（单爪，`DAWN_REACTION` order=42）、`AWAKENED_WOLF_CLAW_SWEEP_CONTRACT`（双爪，order=41）、`*_applicable` / `validate_*` / `resolve_*`；复用 `wolf_king_shot` 死因与 `WOLF_KING_SHOT`/`WOLF_KING_REASONING` 事件 |
 | `backend/app/roles/awakened_wolf_king.py`（新） | `AWAKENED_WOLF_KING_SPEC`：`camp_id="werewolf"`，`contracts=(WEREWOLF_KILL_CONTRACT, 亲传契约, 自爆契约, 双爪契约, 单爪契约)`，`initial_resources={"awakened_claw": 2, "explode": 1}`，`allowed_effects` 含 `CONSUME_RESOURCE / SET_RESOURCE / SUBMIT_DAMAGE / EMIT_EVENT / SET_PRIVATE_DATA`，`max_count=1`，完整 `instructions` |
-| 11 个狼窝角色文件 | 导入并追加 `AWAKENED_WOLF_CLAW_CONTRACT`；8 个补 `EffectKind.CONSUME_RESOURCE`（`werewolf` / `awakened_wolf_beauty` / `evil_knight` / `mask` / `nightmare` / `time_wolf` / `wolf_beauty` / `wolf_witch`） |
-| `backend/app/catalog.py` | `ROLE_METADATA` 新条目 + `rules`；两套预设（P1） |
-| 前端 | `roleMeta.ts` 新行；`ROLE_ART_BY_ID`（G1）；不需要新页面 |
+| 11 个狼窝角色文件 | 导入并追加 `AWAKENED_CLAW_GIFT_CONTRACT` + `initial_private_data` 的 `awakened_claw_gift: None` + `SET_PRIVATE_DATA` 权限；**不改它们的 `initial_resources`** |
+| `backend/app/catalog.py` | `ROLE_METADATA` 新条目 + `rules`；一套预设（12 人觉醒女巫板；两套觉醒狼王专属板未做） |
+| 前端 | `roleMeta.ts` 新行；`ROLE_ART_BY_ID` 沿用狼王立绘（不新增素材） |
 | 测试 | `tests/test_awakened_wolf_king_extension.py`：亲传/双爪/单爪/自爆/死因集合/自刀允许/队友持爪/最后一狼；`test_catalog_routes.py` 计数；`test_recovery_compat` 的 compatible 用例；老契约 digest 钉值 |
 | 文档 | 见 D9 |
 
@@ -219,8 +227,8 @@
 ## 七、验收门禁
 
 1. 后端全量 `pytest tests app --cov=app --cov-branch --cov-fail-under=100` 100%；前端 `npm test` / `lint` / `build`。
-2. 新角色扩展测试（≥12 例）覆盖：两爪 sweep / 一爪单发 / 零爪跳过 / 亲传消耗与获赠 / 每名队友最多一次 / 亲传后队友出局单发 / 自爆日中断且不触发爪 / N1 死因正反例 / 自刀不被拒 / 最后一狼可发动 / 观看事件两条 shot。
-3. `test_catalog_routes.py` 41 角色 / 26 预设，新角色 `rules` 非空。
+2. 新角色扩展测试（≥12 例）覆盖：两爪 sweep / 一爪单发 / 零爪跳过 / 亲传消耗与获赠 / 每名队友最多一次 / 亲传后队友出局单发 / 自爆日中断且不触发爪 / N1 死因正反例 / 自刀不被拒 / 最后一狼不能发动 / 观看事件两条 shot。
+3. `test_catalog_routes.py` **42 角色 / 25 预设**，新角色 `rules` 非空。
 4. `test_recovery_compat`：只新增契约时旧局 `compatible`；`WOLF_KING_SHOT_CONTRACT.stable_digest()` 钉值不变。
 5. `test_values.py` / 回放 DTO / 前端 eventCoverage 不变（复用死因与事件，V1 前提下应零改动）。
 6. 文档计数与角色清单同步（D9）。
@@ -229,27 +237,28 @@
 
 ## 八、风险与已知简化
 
-1. **跳过窗口的开销**：每个狼窝角色死亡都会为单爪契约开一个不适用窗口（写检查点）；这是 D3-A 的代价，不影响语义，但会让 journal 多几行。若不能接受，改走 D3-C（核心池），风险更大。
-2. **获赠者是否知道**：`resources` 会显示 `awakened_claw: 1`，但普通狼的 `instructions` 不知道这是什么。建议先在提示词里靠资源名与契约动作名承载；实跑若发现获赠者总是 pass，再加 `RoleSpec.private_facts` 的获赠说明（会多一个私有键，不影响旧档）。
+1. **跳过窗口的开销**：每个狼窝角色死亡都会为 `awakened_wolf_claw_gift` 契约开一个不适用窗口（写检查点）；这是 D3-A 的代价，不影响语义，但会让 journal 多几行。若不能接受，改走 D3-C（核心池），风险更大。
+2. **获赠者是否知道**：最终实现把赠爪说明写进队友的 `awakened_claw_gift` 私有槽（声明在 `initial_private_data`，会出现在其提示词的事实区），不靠「`resources` 自己会说话」。
 3. **双爪只能选 2 或（先 pass 再）1**：无法在一次提示里选「正好 1 人但保留另一爪」；这是固定目标数 schema 的限制，规则上不损失（第二爪在死亡后本来也只能用一次）。
-4. **LAL 口径差异**：LAL 不允许夜间死亡/自爆发动、且最后一狼不能发动；本作按网易卡面 + 普通狼王口径，差异已记录。
-5. **立绘**：G1 需要新图；G2 期间角色目录仍显示卡背。
+4. **LAL 口径差异**：LAL 不允许夜间死亡 / 自爆发动、且最后一狼不能发动；本作按网易卡面 + 普通狼王口径，**最后一狼禁止是独立实现选择（非卡面明文）**，其余 LAL 差异（夜间死亡仍可发动）保留为已知差异。
+5. **立绘**：未新增素材，两张新牌沿用狼王 / 女巫现有立绘（`ROLE_ART_BY_ID` 登记为已知共用例外）。
 
 ---
 
-## 九、需要你拍板的清单
+## 九、需要你拍板的清单（已拍板并落地）
 
-- [ ] D1：N1 / N2 / N3
-- [ ] D2：S1 / S2 / S3（是否显式 `PLAYER_REVEALED`）
-- [ ] D3：A / B / C（是否接受 11 个既有 spec 变更与跳过窗口）
-- [ ] D4：E1 / E2 / E3
-- [ ] D5：接受推荐值（order 56、每夜一次、狼窝限定、`awakened_claw`、`resource_labels` 校验）
-- [ ] D6：P1 / P2 / P3，以及两套阵容是否按推荐
-- [ ] D7：V1 / V2
-- [ ] D8：G1 / G2
-- [ ] D9：计数按 41 / 26
+- [x] D1：N1（+ 最后一狼不能发动——独立实现选择，卡面未写）
+- [x] D2：S1（显式 `PLAYER_REVEALED`）
+- [x] D3：A（11 个既有 spec 追加 `awakened_wolf_claw_gift` 契约与私槽；不改 `initial_resources`）
+- [x] D4：E1
+- [x] D5：接受推荐值（order 56、每夜一次、狼窝限定、`awakened_claw`、`resource_labels` 校验）
+- [x] D6：只做一套预设（`twelve-player-awakened-witch`；两套觉醒狼王专属板未做）
+- [x] D7：V1
+- [x] D8：沿用母角色立绘（不新增素材）
+- [x] D9：计数按 **42 / 25**
 
-拍板后我会把本文状态改为「已批准」，补实施计划与代码提交。
+2026-10-25 已按上述组合与觉醒女巫同批落地；实现差异见文首「实施结果」与
+[实现记录](../notes/2026-10-25-awakened-roles.md)。
 
 ---
 

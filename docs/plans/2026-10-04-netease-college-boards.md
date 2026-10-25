@@ -15,9 +15,10 @@
 > 另有非网易原创板「十二人假面舞会」单列。每套复刻官方赛制的预设都显式写
 > `witch_self_save="never"`；假面舞会沿用默认（首夜可自救）。
 >
-> **2026-10-21 现状（40 角色 / 24 预设）**：阶段 0–5 全部落地，阶段 6 的镜隐迷踪 / 猎日逐光（§11.2 / §11.3）也已落地；
-> 未开工的是 §15.5 的 **4.5（10人速推场 / 6人明牌场 / 6人暗牌场）**、**6.5 觉醒女巫**、**6.6 觉醒狼王 + 自曝**，
-> 以及 §11.1 的觉醒狼王本体。下表 §15.2 已按此更新。
+> **2026-10-25 现状（42 角色 / 25 预设）**：阶段 0–5 全部落地，阶段 6 的镜隐迷踪 / 猎日逐光（§11.2 / §11.3）、
+> **6.5 觉醒女巫 / 6.6 觉醒狼王（§11.1）** 也已落地（同批随 12 人预设 `twelve-player-awakened-witch` 上线，
+> 觉醒狼王不再单列自曝阶段）；未开工的只剩 §15.5 的 **4.5（10人速推场 / 6人明牌场 / 6人暗牌场）**。
+> 下表 §15.2 已按此更新。
 >
 > **改造 D（多目标命令 schema）已推迟到阶段 3.5 之前。** 本文档 §2.4 的紧迫性理由
 > 经逐行核实不成立：`action_key` / `window_id` 由
@@ -945,15 +946,17 @@ LUCKY_GUARD_CONTRACT  = ActionContract(contract_id="lucky_guard",  schedule_poin
 | 规则 | 机制 |
 | --- | --- |
 | **可以自曝身份**（官方卡牌明文） | 契约声明在觉醒狼王**自己的 spec** 上，不下沉给所有狼 —— 改动半径最小。官方卡牌对普通狼人只写「每天夜里可以让一个人出局」，没写自曝 |
-| 保留狼王全部特征 + **2 次**狼王爪 | `initial_resources={"wolf_claw": 2}` |
-| 夜间可将一次狼王爪**亲传给任意存活狼队友** | **运行期能力转移** |
-| 每亲传一次即消耗一次自己的爪 | `CONSUME_RESOURCE(wolf_claw, 1)` |
-| 每个狼队友最多获得 1 次 | 目标侧 `wolf_claw` 标记，`resource_equals == 0` 前置条件 |
-| 不亲传则可发动两次（带走两人） | `per_game_limit=2` |
+| 保留狼王全部特征 + **2 次**狼王爪 | `initial_resources={"awakened_claw": 2}`（与普通狼王的 `wolf_claw` 隔离） |
+| 夜间可将一次狼王爪**亲传给任意存活狼队友** | **运行期能力转移**：`SET_PRIVATE_DATA(awakened_claw_gift)` 写到目标 |
+| 每亲传一次即消耗一次自己的爪 | `CONSUME_RESOURCE(awakened_claw, 1)` |
+| 每个狼队友最多获得 1 次 | 目标侧 `awakened_claw_received` 标记 + `selected_target.resource_labels` 校验 |
+| 不亲传则可发动两次（带走两人） | 双爪契约 `awakened_wolf_claw_sweep`（2 目标）+ 单爪契约 `awakened_wolf_claw`（1 目标） |
 
-**亲传的实现**：`SET_RESOURCE(target=队友, resource="wolf_claw", value=1)`。但队友能否**发动**取决于它是否有 react 契约。
+**亲传的实现**：`SET_RESOURCE(target=队友, resource="awakened_claw_received", value=1)` + `SET_PRIVATE_DATA(target=队友, key="awakened_claw_gift", ...)`。队友能否**发动**取决于其 spec 是否声明了响应契约：11 个既有狼窝角色都追加了 `awakened_wolf_claw_gift` 契约，`is_applicable` 读私有槽；觉醒狼王本人用资源版 `awakened_wolf_claw`。
 
-**推荐方案**：把爪的响应契约声明在**所有狼窝角色**上（决策单推荐新建 `awakened_wolf_claw`，而不是改既有的 `WOLF_KING_SHOT_CONTRACT`），`is_applicable` 统一读 `context.resources.get(..., 0) > 0`，普通狼初始不带爪。**代价**：狼窝角色的 spec 都要加契约（其中 8 个还要补 `CONSUME_RESOURCE`）→ `registry.digest` 变。**按当前 `recovery_compat`，只新增契约 / 只加 `allowed_effects` 时旧局是 `compatible`（直接续跑）；只有改既有契约 digest、既有角色 `initial_resources` 或 `schema_version` 才判 `drift`。** 详见 [决策单 §三](2026-10-21-awakened-wolf-king.md)。
+**推荐方案**：把受赠爪的响应契约声明在**所有狼窝角色**上（决策单推荐新建 `awakened_wolf_claw`，而不是改既有的 `WOLF_KING_SHOT_CONTRACT`），受赠者由 `awakened_claw_gift` 私有槽加 `awakened_wolf_claw_gift` 契约发动，普通狼初始不带爪。**代价**：狼窝角色的 spec 都要加契约与私槽 → `registry.digest` 变。**按当前 `recovery_compat`，只新增契约 / 只加 `allowed_effects` / 只加 `initial_private_data` 时旧局是 `compatible`（直接续跑）；只有改既有契约 digest、既有角色 `initial_resources` 或 `schema_version` 才判 `drift`。** 详见 [决策单 §三](2026-10-21-awakened-wolf-king.md)。
+
+**2026-10-25 已落地**：`roles/awakened_wolf_king.py` + `roles/wolf_claw.py`，角色 id `wolf-killer-awakened-wolf-king`，随 12 人预设 `twelve-player-awakened-witch` 上线（觉醒女巫同批）。实际与初稿的差异：只做了一套预设（决策单 D6 的觉醒狼王娱乐场 / 进阶场两套未做）；队友获赠的爪改存 `awakened_claw_gift` 私有槽 + 新增的 `awakened_wolf_claw_gift` 契约，不再给 11 个既有狼窝角色补 `initial_resources`，所以旧局仍判 `compatible`；「最后一狼不能发动」按实现选择落地（代码注释记为官方问答口径，卡面未写）。详细规则、简化与兼容性见 [实现记录](../notes/2026-10-25-awakened-roles.md)。
 
 ### 11.2 觉醒隐狼 + 魔镜少女 → 解锁「镜隐迷踪」
 
@@ -1131,13 +1134,13 @@ cd frontend && npm test && npm run lint && npm run build
 
 | 板型 | 官方配置 | 新增角色 |
 | --- | --- | --- |
-| **12人觉醒女巫** / **10人觉醒女巫** | `3狼 · 觉醒狼王 · 4平民 · 预言家 · 守卫 · 猎人 · 觉醒女巫` | 觉醒女巫 |
-| **觉醒狼王娱乐场** / **进阶场** | 娱乐板 + 含摄梦人的进阶板 | —（觉醒狼王尚未实现，见阶段 6.6） |
+| **12人觉醒女巫** / **10人觉醒女巫** | `3狼 · 觉醒狼王 · 4平民 · 预言家 · 守卫 · 猎人 · 觉醒女巫` | 觉醒女巫 ✅ 12 人进阶场已实现（`twelve-player-awakened-witch`）；10 人娱乐场未做 |
+| **觉醒狼王娱乐场** / **进阶场** | 娱乐板 + 含摄梦人的进阶板 | —（觉醒狼王已实现，见阶段 6.6；两套专属板**未做预设**） |
 | **12人自曝愚言家** | `愚言家 · 铁好人 · 猎人 · 女巫 · 守卫 · 狼王 · 3狼 · 3平民` | 愚言家、铁好人 |
 | **12人丘比特奇缘** | `预言家·女巫·猎人·白痴·摄梦人·乌鸦·噩梦之影·狼巫·蚀时狼妃·狼王·丘比特·暗恋者` | 乌鸦、丘比特、暗恋者 |
 
 **乙档合计新增角色 8 个**：`觉醒狼美人`、`觉醒猎人`、`觉醒女巫`、`愚言家`、`铁好人`、`乌鸦`、`丘比特`、`暗恋者`
-（2026-10-21 核对：前两个与愚言家、铁好人、乌鸦、丘比特、暗恋者已落地，**觉醒女巫与觉醒狼王尚未实现**）
+（2026-10-25 核对：8 个全部落地；觉醒女巫与觉醒狼王随 12 人预设 `twelve-player-awakened-witch` 上线）
 
 > 丘比特奇缘的第三方阵营已落地：`WinningCamp.third_party`、`GameConfig.victory`（`edge` / `city`）与 `seat_allegiances()`。
 
@@ -1149,8 +1152,8 @@ cd frontend && npm test && npm run lint && npm run build
 | **4.5** | 10人速推场 / 6人明牌场 / 6人暗牌场 | ⬜ 未开始；先解决 6 人场的 `min_players` 与屠边 |
 | **4.6** | 自曝愚言家 → 愚言家 + 铁好人 | ✅ 已落地 |
 | **4.7** | 丘比特奇缘 → 乌鸦 + 丘比特 + 暗恋者 | ✅ 已落地（屠城 + 第三方） |
-| **6.5** | 觉醒女巫板 → 觉醒女巫 | ⬜ 未开始；无前置 |
-| **6.6** | 觉醒狼王自曝（契约挂在它自己的 spec 上） | ⬜ 未开始；决策单 [2026-10-21-awakened-wolf-king.md](2026-10-21-awakened-wolf-king.md) 待拍板，与觉醒狼王同批做 |
+| **6.5** | 觉醒女巫板 → 觉醒女巫 | ✅ 已实现（2026-10-25，预设 `twelve-player-awakened-witch`；10 人娱乐场未做） |
+| **6.6** | 觉醒狼王自曝（契约挂在它自己的 spec 上） | ✅ 已实现（2026-10-25，与觉醒女巫同批；爪契约与自爆契约见 [实现记录](../notes/2026-10-25-awakened-roles.md)） |
 
 ### 15.6 显式排除表（只登记，不实现）
 
@@ -1170,5 +1173,6 @@ cd frontend && npm test && npm run lint && npm run build
 **对应不实现的角色**：`觉醒愚者`、`觉醒骑士`、`觉醒摄梦人`、`白昼学者`、`寂夜导师`、
 `狼鸦之爪`、`炼金魔女`、`子狐`、`河豚`、`白猫`、`熊`、`魔术师`、`羊驼`、`咒狐`、`千面人`
 
-> 官方卡牌表里共 45 张，本计划实现其中 29 个 + 乙档新增 8 个；其余按上表登记排除。
+> 官方卡牌表里共 45 张，本计划实现其中 **30 个**（2026-10-25 起含觉醒狼王）+ 乙档新增 8 个；
+> 其余按上表登记排除。当前注册表合计 **42 角色 / 25 预设**。
 > 「幸运儿」不是身份牌而是奇迹商人授予的状态，所以不在角色清单里。

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、狼王、骑士、狼美人、老酒鬼、恶夜骑士、摄梦人、石像鬼、守墓人、纯白之女、狼巫、猎魔人、赤月使徒、噩梦之影、舞者与假面、觉醒狼美人、觉醒猎人、孤独少女、觉醒预言家、寻香魅影、奇迹商人、魔镜少女、觉醒隐狼、流光伯爵、蚀日侍女、蚀时狼妃、定序王子、愚言家、铁好人、乌鸦、丘比特、暗恋者）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
+Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家（狼人、平民、预言家、女巫、觉醒女巫、猎人，十人局可选的守卫，十二人板可选的白痴、白狼王、狼王、觉醒狼王、骑士、狼美人、老酒鬼、恶夜骑士、摄梦人、石像鬼、守墓人、纯白之女、狼巫、猎魔人、赤月使徒、噩梦之影、舞者与假面、觉醒狼美人、觉醒猎人、孤独少女、觉醒预言家、寻香魅影、奇迹商人、魔镜少女、觉醒隐狼、流光伯爵、蚀日侍女、蚀时狼妃、定序王子、愚言家、铁好人、乌鸦、丘比特、暗恋者）均由创建对局时配置的大语言模型控制，无需真人参与。前端提供基于时间轴的观看/回放界面。
 
 ## 常用命令
 
@@ -138,7 +138,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **隐私边界**：公开 DTO 与前端消费链不含任何私有字段（`role_init / visible_to / night_intel / check_results / has_antidote / has_poison / has_gun` 等）；观众可见的 `night_thought.reasoning`、狼聊与狼票是上帝视角公开事件，私有 `thought` 模板不进入 audience 表。有隐私扫描测试保障；角色 Hook 函数体零状态访问
 - **状态过滤**：`state_filter.py` 委托 `ContextProjector` 返回冻结投影的安全纯数据副本，狼人看不到好人专属信息（反之亦然）
 - **发言顺序**：存活玩家从"最近死亡玩家的下一位存活玩家"开始按座位号依次发言（`game_engine.py` 的 `_execute_speech_round`；无死亡记录时回退为最小存活座位开局）；平票复投时排除断点续跑中已完成补充发言的座位，LLM 玩家需要知晓当前发言进度（由 `prompt_builder.py` 注入轮次上下文）
-- **测试门禁**：后端 pytest 全量（`tests` + `app/`）+ statement/branch 100%（`--cov-fail-under=100`），数量以实际运行为准；守卫 / 白痴 / 白狼王 / 骑士 / 狼美人 / 老酒鬼六个扩展样例（`test_guard_extension.py` / `test_idiot_extension.py` / `test_werewolf_king_extension.py` / `test_knight_extension.py` / `test_wolf_beauty_extension.py` / `test_old_drunkard_extension.py`）；`test_catalog_routes.py` 断言 40 角色 24 预设，并要求每个已注册角色都有非空 `rules` 规则条目（新增角色漏写展示规则即红）；阶段 4.6 / 4.7 的扩展样例在 `test_fool_seer_and_cupid.py`；阶段 3.6 的扩展样例：`test_awakened_wolf_beauty_extension.py` / `test_awakened_hunter_extension.py`；阶段 4 的孤独少女：`test_lonely_girl_extension.py`；寻香识命：`test_fragrance_extension.py`；阶段 3 与 3.5 的扩展样例：`test_pure_white_extension.py` / `test_wolf_witch_extension.py` / `test_demon_hunter_extension.py` / `test_crimson_envoy_extension.py` / `test_nightmare_extension.py` / `test_masquerade_extension.py`。`test_guard_extension.py` **不再**维护 `CORE_BLOBS_BEFORE_GUARD`。
+- **测试门禁**：后端 pytest 全量（`tests` + `app/`）+ statement/branch 100%（`--cov-fail-under=100`），数量以实际运行为准；守卫 / 白痴 / 白狼王 / 骑士 / 狼美人 / 老酒鬼六个扩展样例（`test_guard_extension.py` / `test_idiot_extension.py` / `test_werewolf_king_extension.py` / `test_knight_extension.py` / `test_wolf_beauty_extension.py` / `test_old_drunkard_extension.py`）；`test_catalog_routes.py` 断言 42 角色 25 预设，并要求每个已注册角色都有非空 `rules` 规则条目（新增角色漏写展示规则即红）；阶段 4.6 / 4.7 的扩展样例在 `test_fool_seer_and_cupid.py`；阶段 3.6 的扩展样例：`test_awakened_wolf_beauty_extension.py` / `test_awakened_hunter_extension.py`；阶段 6.5 / 6.6 的觉醒女巫 / 觉醒狼王：`test_awakened_witch_extension.py` / `test_awakened_wolf_king_extension.py`；阶段 4 的孤独少女：`test_lonely_girl_extension.py`；寻香识命：`test_fragrance_extension.py`；阶段 3 与 3.5 的扩展样例：`test_pure_white_extension.py` / `test_wolf_witch_extension.py` / `test_demon_hunter_extension.py` / `test_crimson_envoy_extension.py` / `test_nightmare_extension.py` / `test_masquerade_extension.py`。`test_guard_extension.py` **不再**维护 `CORE_BLOBS_BEFORE_GUARD`。
 
 ## 注意事项
 
