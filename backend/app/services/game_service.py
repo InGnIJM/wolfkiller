@@ -2858,8 +2858,19 @@ class GameService:
         )
 
     @staticmethod
-    def _fallback_target(request, context, history: str, *, rng=None) -> int | None:
-        """Choose one contract-valid first-night fallback target, if needed."""
+    def _fallback_target(
+        request, context, history: str, *, rng=None, state=None, registry=None,
+    ) -> int | None:
+        """Choose one contract-valid first-night fallback target, if needed.
+
+        Each candidate is validated against the context projected for its *own*
+        command, exactly as the scheduler does before an accept. A validate hook
+        that reads ``selected_target`` facts (the Awakened Wolf King's claw asks
+        for the teammate's ``resource_labels``) cannot answer against the
+        unprojected base context: it raised ``ValueError``, the provider reported
+        that as a model failure and the scheduler turned it into a fatal
+        ``PipelinePaused`` — the game died on its first night.
+        """
         if (
             context.round_number != 1
             or history.strip()
@@ -2874,13 +2885,34 @@ class GameService:
             return None
         action_type = target_actions[0]
         validator = ActionValidator()
-        candidates = [
-            seat for seat in alive
-            if not validator.validate(
-                context, request.contract,
-                PipelineActionCommand(action_type=action_type, target_seat=seat, reasoning="server fallback"),
+        projector = (
+            ContextProjector()
+            if isinstance(state, GameState) and registry is not None else None
+        )
+        candidates = []
+        for seat in alive:
+            command = PipelineActionCommand(
+                action_type=action_type, target_seat=seat, reasoning="server fallback",
             )
-        ]
+            try:
+                rule_context = (
+                    context if projector is None
+                    else projector.project_selected_target(
+                        state, request, context, command, registry,
+                    )
+                )
+                violations = validator.validate(rule_context, request.contract, command)
+            except Exception:
+                # The hint is a convenience, never a rule: a candidate the engine
+                # cannot decide is skipped instead of ending the game.
+                logger.debug(
+                    "Fallback hint candidate skipped: target=%s contract=%s",
+                    seat, getattr(request.contract, "contract_id", "?"),
+                    exc_info=True,
+                )
+                continue
+            if not violations:
+                candidates.append(seat)
         return (rng or random).choice(candidates) if candidates else None
 
     def _pause_once_or_degrade(
@@ -2983,6 +3015,8 @@ class GameService:
             fallback_target = self._fallback_target(
                 request, context, history,
                 rng=engine._rng if engine is not None else None,
+                state=getattr(engine, "state", None),
+                registry=snapshot,
             )
             if fallback_target is not None:
                 context = replace(context, facts={

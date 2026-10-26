@@ -180,6 +180,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **快照版本化**：检查点包含 pipeline、registry、spec/effect schema 与编排状态；缺少规范/迁移器时拒绝恢复。
 - **写入口不变式**：`runtime.statuses` / `runtime.relations` 的值一律是普通 `set`，不能写 `frozenset`（`_set_map` 归一化时两者等价，但 `_apply_one` 对既有值直接 `.add()`，frozenset 会 `AttributeError`）。`ADD_RELATION` 是集合成员关系：**跨批次重复写入是幂等的**（狼美人隔一晚重魅同一人合法），但同一批次内重复仍是批次完整性违规。
 - **拒绝的分类**：`EffectConflict`（`EffectRejected` 子类）表示「批次合法、状态不允许」——模型可能合法地选到状态已不允许的目标。模型驱动的契约在 `Scheduler._apply_or_degrade` 遇到它降级为 `fallback_action_type` 并落 `stage_telemetry` 故障行（`code=effect_rejected`），不丢整局；结构性违规（effect id 错序、权限/visibility 越界、revision mismatch、`clone()` 期 runtime 损坏）仍是普通 `EffectRejected`，保持致命。结算（`settle_pending`）与纯 `react` 契约没有 fallback，其拒绝仍致命。
+- **首夜随机提示的候选必须投影后再校验**：`GameService._fallback_target()` 给每个候选座位造命令后先走 `ContextProjector.project_selected_target()` 补齐该命令的规则上下文，再交给 `ActionValidator`；无法判定的候选直接跳过。此前它用未投影的 base context 校验：觉醒狼王 `awakened_wolf_claw_pass` 的 validate hook 读 `selected_target.resource_labels` 抛 `ValueError`，耐久账本记成 `model_invocation_error`、`Scheduler` 再转 `PipelinePaused`（全仓无捕获点）→ 引擎任务崩、对局 `failed`，含觉醒狼王的板子首夜必崩（2026-10-26 事故）。提示是便利，不得升级为致命错误；门禁 `tests/test_fallback_hint_projection.py`。
 注册表 digest 只与**文档自身**比对（见上一条），不再要求与运行中的注册表全等。模型快照不含 API Key；旧快照缺 `count/seats` 时保持未知，不反推座位映射。**编排状态的字段集是精确匹配的**（`persistence/engine_checkpoint.py` 会拒绝字段集不符的检查点），所以只为提交一次而存在的临时槽位（白天窗口事件 `_pending_point_events`、旁白 `_pending_narration`）刻意不进编排状态：它们在写入后立刻由紧随其后的那一步提交，崩溃时最坏丢掉这一步。
 
 ### 公开事件同步
