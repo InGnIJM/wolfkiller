@@ -64,6 +64,13 @@ class VoteWindow(BaseModel):
     vote_round: StrictInt = Field(ge=1)
     eligible_voters: frozenset[StrictInt]
     eligible_targets: frozenset[StrictInt]
+    #: The sheriff at the moment this ballot opened. The 1.5-vote weight is
+    #: part of the capability, not of the live office: a sheriff killed after
+    #: the ballots are in (the hunter's exile shot is the real case) must not
+    #: retroactively rewrite what those ballots weighed. ``None`` is the
+    #: historical behaviour for games without a living sheriff and for windows
+    #: decoded from checkpoints written before this field existed.
+    sheriff_seat: StrictInt | None = None
     deadline: StrictFloat = Field(gt=0)
 
     @property

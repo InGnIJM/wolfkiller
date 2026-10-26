@@ -522,9 +522,14 @@ class ActionContract(_FrozenValue):
                 "minItems": count,
                 "maxItems": count,
             }
-        else:
-            # A single-target contract keeps its historical shape byte for
-            # byte: the model is still forced to name the target field.
+        elif set(self.action_types) & set(self.actions_requiring_target):
+            # Only a contract with at least one target-bearing action forces
+            # the field. A contract whose every action takes no target (the
+            # Awakened Wolf King's ``explode``, the Order Prince's ``rewind``)
+            # must not be told to name a seat: ``required`` made the model put
+            # one in, and the validator then rejected the legal action with
+            # ``target_forbidden``. The nullable property stays in the schema
+            # either way, so an action that takes no target can still send null.
             required.append("target_seat")
         required.append("reasoning")
         return {

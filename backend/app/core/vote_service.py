@@ -6,7 +6,7 @@ import hashlib
 import time
 from collections.abc import Callable
 
-from app.core.sheriff_flow import ballot_weight
+from app.core.sheriff_flow import ballot_weight_for, sheriff_active
 from app.core.effect_applier import (
     EffectApplier,
     EffectPermission,
@@ -86,6 +86,12 @@ class VoteService:
                 vote_round=self._state.vote_round,
                 eligible_voters=eligible_exile_voters(self._state),
                 eligible_targets=eligible_exile_targets(self._state),
+                # Freeze the office now: the exile decision and every later
+                # re-read of this window must use the same 1.5-vote basis even
+                # if the sheriff is killed during the exile reaction.
+                sheriff_seat=(
+                    self._state.sheriff if sheriff_active(self._state) else None
+                ),
                 deadline=float(self._clock() + timeout_seconds),
             )
             return self._windows.setdefault(window.window_id, window)
@@ -95,6 +101,16 @@ class VoteService:
             return self._windows[window_id]
         except KeyError:
             raise VoteError("vote_window_not_found") from None
+
+    def window_weight(self, window_id: str, voter_seat: int) -> int:
+        """Ballot weight in this window's frozen half-vote units.
+
+        Reading the office here instead of from ``state`` is what keeps a
+        post-ballot sheriff death from rewriting the tally that decided the
+        exile.
+        """
+        window = self.window(window_id)
+        return ballot_weight_for(window.sheriff_seat, voter_seat)
 
     def arm_window(self, window_id: str, *, timeout_seconds: float) -> VoteWindow:
         """Start the authoritative deadline after engine setup is complete."""
@@ -121,6 +137,7 @@ class VoteService:
                     "vote_round": window.vote_round,
                     "eligible_voters": sorted(window.eligible_voters),
                     "eligible_targets": sorted(window.eligible_targets),
+                    "sheriff_seat": window.sheriff_seat,
                     "remaining_ms": max(0, round((window.deadline - now) * 1000)),
                 })
             return {"windows": windows, "closed": sorted(self._closed)}
@@ -134,22 +151,35 @@ class VoteService:
             raise ValueError("invalid vote checkpoint")
         now = float(self._clock())
         windows: dict[str, VoteWindow] = {}
+        legacy_names = {
+            "window_id", "game_id", "round_number", "vote_round",
+            "eligible_voters", "eligible_targets", "remaining_ms",
+        }
         for raw in windows_raw:
-            names = {
-                "window_id", "game_id", "round_number", "vote_round",
-                "eligible_voters", "eligible_targets", "remaining_ms",
-            }
-            if not isinstance(raw, dict) or set(raw) != names:
+            names = legacy_names | {"sheriff_seat"}
+            if not isinstance(raw, dict) or set(raw) not in (legacy_names, names):
                 raise ValueError("invalid vote window checkpoint")
             remaining = raw["remaining_ms"]
             if type(remaining) is not int or remaining < 0:
                 raise ValueError("invalid vote remaining time")
+            # A window written before the snapshot existed had no way to know
+            # which sheriff it was counting; the live office at restore time is
+            # exactly the pre-fix behaviour, so old checkpoints resume unchanged.
+            sheriff_seat = raw.get(
+                "sheriff_seat",
+                self._state.sheriff if sheriff_active(self._state) else None,
+            )
+            if sheriff_seat is not None and (
+                type(sheriff_seat) is not int or sheriff_seat <= 0
+            ):
+                raise ValueError("invalid vote window sheriff")
             try:
                 window = VoteWindow(
                     game_id=raw["game_id"], round_number=raw["round_number"],
                     vote_round=raw["vote_round"],
                     eligible_voters=frozenset(raw["eligible_voters"]),
                     eligible_targets=frozenset(raw["eligible_targets"]),
+                    sheriff_seat=sheriff_seat,
                     deadline=max(1e-9, now + remaining / 1000.0),
                 )
             except (TypeError, ValueError) as error:
@@ -235,7 +265,9 @@ class VoteService:
             if receipt.status is VoteStatus.ACCEPTED_VOTE:
                 target = receipt.target_seat
                 assert target is not None
-                tally[target] = tally.get(target, 0) + ballot_weight(self._state, receipt.voter_seat)
+                tally[target] = tally.get(target, 0) + self.window_weight(
+                    window_id, receipt.voter_seat,
+                )
         # One extra ballot for the mark, once per tally, including a seat nobody
         # voted for. Only seats that can still be exiled receive it.
         cursed = seats_with_status(self._state, CURSE_STATUS) & eligible_exile_targets(self._state)

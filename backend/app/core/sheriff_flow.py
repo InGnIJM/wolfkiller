@@ -158,7 +158,15 @@ def sheriff_active(state: GameState) -> bool:
     return player is not None and player.is_alive and player.is_sheriff
 
 
+def ballot_weight_for(sheriff_seat: int | None, voter_seat: int) -> int:
+    """Half-vote units for one ballot, given the sheriff fixed for the window."""
+    if sheriff_seat is None:
+        return 1
+    return 3 if voter_seat == sheriff_seat else 2
+
+
 def ballot_weight(state: GameState, voter_seat: int) -> int:
+    """Live-office variant; prefer ``ballot_weight_for`` inside a vote window."""
     if not sheriff_active(state):
         return 1
     return 3 if voter_seat == state.sheriff else 2

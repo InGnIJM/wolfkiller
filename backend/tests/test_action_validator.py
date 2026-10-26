@@ -159,6 +159,44 @@ def test_pipeline_validate_rejects_command_shape(validator, command, expected):
     )
 
 
+def no_target_contract(**changes: object) -> PipelineActionContract:
+    """A single-target contract whose only non-pass action takes no target."""
+    values: dict[str, object] = {
+        "contract_id": "explode",
+        "schedule_point": SchedulePoint.DAY_ACTION,
+        "order": 20,
+        "action_types": ("explode", "pass"),
+        "actions_requiring_target": frozenset(),
+        "fallback_action_type": "pass",
+    }
+    values.update(changes)
+    return PipelineActionContract(**values)
+
+
+def test_pipeline_validate_accepts_a_null_target_for_an_action_that_takes_none(
+    validator,
+):
+    contract = no_target_contract()
+    context = pipeline_context(
+        contract=contract, contract_id="explode", phase="speech",
+        schedule_point=SchedulePoint.DAY_ACTION, action_key="pipeline-game:2:day:1:explode",
+    )
+    assert validator.validate(context, contract, pipeline_command("explode", None)) == ()
+    assert validator.validate(context, contract, pipeline_command("pass", None)) == ()
+
+
+def test_pipeline_validate_still_rejects_a_seat_on_a_no_target_action(validator):
+    """The prompt fix must not weaken the gate: a seat is still rejected."""
+    contract = no_target_contract()
+    context = pipeline_context(
+        contract=contract, contract_id="explode", phase="speech",
+        schedule_point=SchedulePoint.DAY_ACTION, action_key="pipeline-game:2:day:1:explode",
+    )
+    assert violation_codes(
+        validator.validate(context, contract, pipeline_command("explode", 2))
+    ) == ("target_forbidden",)
+
+
 def multi_target_contract(**changes: object) -> PipelineActionContract:
     values: dict[str, object] = {
         "contract_id": "dance-pool",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import replace
 
 import pytest
@@ -35,15 +36,116 @@ def test_renderer_includes_anti_anchoring_target_rule() -> None:
     assert "TARGET_SELECTION_RULE=" in rendered
     assert "Use evidence" in rendered
     assert "RANDOM_HINT" in rendered
-    assert "a null ``target_seat`` is only valid for ``pass``" in rendered
+    assert "Fill the target field exactly as the contract requires" in rendered
+    assert "ACTION TARGET RULE: the action(s) ``act`` need exactly one" in rendered
+    assert "``target_seat``: null; a seat there is rejected by the engine" in rendered
     assert "one entry of ``target_seats`` for a multi-target" in rendered
     assert "alive_seats" in rendered
     assert "target whitelist" not in rendered.lower()
 
 
-def test_renderer_emits_the_contract_schema_verbatim() -> None:
-    import json
+def _render_contract(contract: ActionContract, **changes: object) -> str:
+    """Render one contract with a context bound to it (no role-specific facts)."""
+    spec = RoleSpec(
+        "custom_role", display_name="Custom", camp_id="good", contracts=(contract,),
+        instructions="Use only declared facts.", visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+    context = ActionContext(
+        "g", 2, {"alive_seats": (1, 2, 3, 4)},
+        config_version="a" * 64, contract_id=contract.contract_id,
+        contract_version=contract.schema_version, contract_digest=contract.stable_digest(),
+        round_number=1, phase="night", window_id="w",
+        schedule_point=contract.schedule_point, actor_seat=1,
+        actor_role_id=spec.role_id, actor_alive=True, action_key="k",
+    )
+    return PromptRenderer().render(spec, contract, replace(context, **changes), "")
 
+
+def _prompt_line(rendered: str, prefix: str) -> str:
+    return next(row for row in rendered.splitlines() if row.startswith(prefix))
+
+
+def test_no_target_contract_renders_the_null_target_rule() -> None:
+    """A no-target action must be told to send null, never to invent a seat."""
+    contract = ActionContract(
+        "no_target_choice", SchedulePoint.DAY_ACTION, 20, ("explode", "pass"),
+        frozenset(), "pass", visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+
+    rule = _prompt_line(_render_contract(contract), "TARGET_SELECTION_RULE=")
+
+    assert "no action in this contract takes a target" in rule
+    assert "``target_seat``: null for every action (including ``explode``)" in rule
+    assert "a seat number there is rejected by the engine" in rule
+    assert "only valid for ``pass``" not in rule
+
+
+def test_single_target_contract_renders_the_seat_rule() -> None:
+    contract = ActionContract(
+        "single_choice", SchedulePoint.NIGHT_ACTION, 10, ("save", "poison", "pass"),
+        frozenset({"save", "poison"}), "pass", visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+
+    rule = _prompt_line(_render_contract(contract), "TARGET_SELECTION_RULE=")
+
+    assert "the action(s) ``poison``, ``save`` need exactly one target" in rule
+    assert "Every other action, including ``pass``, takes no target" in rule
+    assert "must send ``target_seat``: null" in rule
+
+
+def test_multi_target_contract_renders_the_target_seats_rule() -> None:
+    contract = ActionContract(
+        "multi_choice", SchedulePoint.NIGHT_ACTION, 20, ("pool", "pass"),
+        frozenset(), "pass", multi_target_actions={"pool": 3},
+        visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+
+    rule = _prompt_line(_render_contract(contract), "TARGET_SELECTION_RULE=")
+
+    assert (
+        "the multi-target action(s) ``pool`` need exactly 3 distinct live seats "
+        "in ``target_seats``" in rule
+    )
+    assert "must leave ``target_seat`` null" in rule
+    assert "every action that takes no target must send ``target_seat``: null" in rule
+
+
+def test_role_contract_publishes_the_contract_target_shape() -> None:
+    """The target shape travels with the contract so the model can read it."""
+    contract = ActionContract(
+        "multi_choice", SchedulePoint.NIGHT_ACTION, 20, ("pool", "pass"),
+        frozenset(), "pass", multi_target_actions={"pool": 3},
+        visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+
+    rendered = _render_contract(contract)
+    static = json.loads(_prompt_line(rendered, "ROLE_CONTRACT=").split("=", 1)[1])
+
+    assert static["action_types"] == ["pool", "pass"]
+    assert static["actions_requiring_target"] == []
+    assert static["multi_target_actions"] == {"pool": 3}
+
+    # The target-bearing set is sorted, so two declarations with the same
+    # members render byte-identically regardless of set iteration order.
+    first = ActionContract(
+        "sorted_choice", SchedulePoint.NIGHT_ACTION, 10, ("save", "poison", "pass"),
+        frozenset({"save", "poison"}), "pass", visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+    second = ActionContract(
+        "sorted_choice", SchedulePoint.NIGHT_ACTION, 10, ("save", "poison", "pass"),
+        frozenset({"poison", "save"}), "pass", visibility_namespaces=frozenset({"PUBLIC"}),
+    )
+    first_static = json.loads(
+        _prompt_line(_render_contract(first), "ROLE_CONTRACT=").split("=", 1)[1]
+    )
+    second_static = json.loads(
+        _prompt_line(_render_contract(second), "ROLE_CONTRACT=").split("=", 1)[1]
+    )
+    assert first_static["actions_requiring_target"] == ["poison", "save"]
+    assert first_static == second_static
+
+
+def test_renderer_emits_the_contract_schema_verbatim() -> None:
     spec, contract, context = values()
     rendered = PromptRenderer().render(spec, contract, context, "")
     line = next(
@@ -54,8 +156,6 @@ def test_renderer_emits_the_contract_schema_verbatim() -> None:
 
 
 def test_renderer_publishes_the_multi_target_schema() -> None:
-    import json
-
     contract = ActionContract(
         "dance_pool", SchedulePoint.NIGHT_ACTION, 20, ("pool", "pass"),
         frozenset(), "pass", multi_target_actions={"pool": 3},

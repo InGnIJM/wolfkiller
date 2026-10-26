@@ -5,6 +5,10 @@ Concrete role powers, camps, targets, and win conditions belong to the frozen
 role contract and projected context for the current game.
 """
 
+from collections.abc import Iterable
+
+from app.models.pipeline import ActionContract
+
 # A fallback is deliberately opt-in.  The server adds this field only after it
 # has established that the actor has no usable information or team consensus.
 #
@@ -21,11 +25,9 @@ TARGET_SELECTION_RULE = (
     "validation rules forbid must not be chosen, even though it appears in the "
     "list. "
     "Use evidence or an existing team consensus whenever available. "
-    "When the contract declares a multi-target action (``target_seats``), give "
-    "exactly the required number of distinct live seats and leave ``target_seat`` "
-    "empty; a single-target action still uses ``target_seat``. "
-    "For a non-pass single-target action that needs a target, ``target_seat`` must "
-    "be the chosen seat number; a null ``target_seat`` is only valid for ``pass``. "
+    "Fill the target field exactly as the contract requires: an action that needs a "
+    "target must name a legal live seat, and an action that takes no target must "
+    "leave the field empty (null). "
     "RANDOM_HINT, when present, is an optional server-selected legal fallback "
     "for when you have no useful evidence or independent idea; it never requires "
     "you to use a skill or select that target, but if you choose it you must put "
@@ -35,6 +37,63 @@ TARGET_SELECTION_RULE = (
     "rejected. When it is absent, do not invent a random value; make a strategic "
     "decision from the available facts."
 )
+
+
+def _quoted(names: Iterable[str]) -> str:
+    return ", ".join(f"``{name}``" for name in names)
+
+
+def target_selection_rule_for(contract: ActionContract) -> str:
+    """Return the base rule plus the clause implied by ``contract``'s actions.
+
+    The engine rejects a seat on an action that takes no target
+    (``target_forbidden``), so the generic text must not imply that every
+    non-pass action names one: the Awakened Wolf King's ``explode`` and the
+    Order Prince's ``rewind`` take no passenger at all. Deriving the clause
+    from the frozen contract (never from a role name) is what lets a new role
+    reuse the rule without editing this module.
+    """
+    if type(contract) is not ActionContract:
+        raise TypeError("contract must be an exact ActionContract")
+    required = sorted(
+        set(contract.action_types) & set(contract.actions_requiring_target)
+    )
+    multi = sorted(contract.multi_target_actions)
+    if multi:
+        count = contract.multi_target_actions[multi[0]]
+        clause = (
+            f"ACTION TARGET RULE: the multi-target action(s) {_quoted(multi)} need "
+            f"exactly {count} distinct live seats in ``target_seats`` and must leave "
+            "``target_seat`` null"
+        )
+        if required:
+            clause += (
+                f"; the single-target action(s) {_quoted(required)} need one legal "
+                "live seat in ``target_seat``"
+            )
+        clause += (
+            "; every action that takes no target must send ``target_seat``: null, "
+            "and a seat there is rejected by the engine."
+        )
+    elif required:
+        clause = (
+            f"ACTION TARGET RULE: the action(s) {_quoted(required)} need exactly one "
+            "target: put the chosen legal live seat in ``target_seat``. Every other "
+            "action, including ``pass``, takes no target and must send "
+            "``target_seat``: null; a seat there is rejected by the engine."
+        )
+    else:
+        named = sorted(
+            action for action in contract.action_types
+            if action != contract.fallback_action_type
+        )
+        label = f" (including {_quoted(named)})" if named else ""
+        clause = (
+            "ACTION TARGET RULE: no action in this contract takes a target. Send "
+            f"``target_seat``: null for every action{label}; a seat number there is "
+            "rejected by the engine."
+        )
+    return TARGET_SELECTION_RULE + " " + clause
 
 
 XML_CONTEXT_RULES = (

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.sheriff_flow import ballot_weight_for
 from app.models.actions import VoteAction
 from app.models.game import GameConfig, GamePhase, GameState, PlayerState
 from app.services.audience_projector import AudienceProjector
@@ -73,6 +74,26 @@ def test_the_exile_is_the_unique_maximum_of_the_weighted_tally() -> None:
     weighted = payload["weighted_counts"]
     top = [seat for seat, value in weighted.items() if value == max(weighted.values())]
     assert top == [str(payload["exiled_seat"])]
+
+
+def test_the_published_tally_uses_the_frozen_window_basis() -> None:
+    """The 37f99754 round-3 shape: the sheriff is dead when the frame is built.
+
+    The engine's ``vote_ballot_weight`` reads the sheriff snapshot taken when
+    the ballot opened. A projection that re-read the live office (none here)
+    would print the head count 6/2 for a decision made at 13/4.
+    """
+    votes = [
+        VoteAction(1, 7), VoteAction(2, 7), VoteAction(3, 4), VoteAction(4, 7),
+        VoteAction(5, 7), VoteAction(7, 4), VoteAction(9, 7), VoteAction(10, 7),
+    ]
+    engine = engine_with(votes, sheriff=None)
+    engine.vote_ballot_weight = lambda seat: ballot_weight_for(4, seat)
+
+    payload = result_frame(engine, 7)
+
+    assert payload["counts"] == {"4": 2, "7": 6}
+    assert payload["weighted_counts"] == {"4": 4, "7": 13}
 
 
 def test_a_tie_has_no_unique_maximum() -> None:

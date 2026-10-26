@@ -114,6 +114,24 @@ class TestOutputParser:
     def werewolf_contract(self):
         return builtin_registry.require("wolf-killer-werewolf").contracts[0]
 
+    @pytest.fixture
+    def no_target_contract(self):
+        # ``parse_action_payload`` is the legacy (speech/vote) parser, so the
+        # contract here is a legacy one. Its non-pass action takes no target:
+        # an explicit null must parse, a seat must still be rejected by the
+        # ``target_forbidden`` gate (the validator/parser gates are untouched).
+        from app.models.contracts import ActionContract as LegacyContract
+        from app.models.game import GamePhase
+
+        return LegacyContract(
+            contract_id="no_target_choice",
+            phase=GamePhase.SPEECH,
+            action_types=("explode", "pass"),
+            actions_requiring_target=frozenset(),
+            resolution_priority=20,
+            fallback_action_type="pass",
+        )
+
     def test_parse_action_payload_returns_validated_command(self, werewolf_contract):
         command = OutputParser().parse_action_payload(
             {"action_type": "kill", "target_seat": 3, "reasoning": "suspicious"},
@@ -123,6 +141,28 @@ class TestOutputParser:
         assert command.action_type == "kill"
         assert command.target_seat == 3
         assert command.reasoning == "suspicious"
+
+    def test_parse_action_payload_accepts_a_null_target_for_a_no_target_action(
+        self, no_target_contract
+    ):
+        command = OutputParser().parse_action_payload(
+            {"action_type": "explode", "target_seat": None, "reasoning": "决意自爆"},
+            no_target_contract,
+        )
+
+        assert command.action_type == "explode"
+        assert command.target_seat is None
+
+    def test_parse_action_payload_still_rejects_a_seat_on_a_no_target_action(
+        self, no_target_contract
+    ):
+        with pytest.raises(ToolCallError) as error:
+            OutputParser().parse_action_payload(
+                {"action_type": "explode", "target_seat": 3, "reasoning": "带走 3 号"},
+                no_target_contract,
+            )
+
+        assert error.value.code == "target_forbidden"
 
     def test_parse_action_payload_coerces_string_values_per_schema(self, werewolf_contract):
         command = OutputParser().parse_action_payload(

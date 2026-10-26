@@ -157,7 +157,10 @@ class TestActionContracts:
         assert schema["properties"]["reasoning"]["maxLength"] == 500
 
     def test_pipeline_contract_exposes_model_gateway_tool_schema(self):
-        contract = _pipeline_contract(action_types=("check", "pass"))
+        contract = _pipeline_contract(
+            action_types=("check", "pass"),
+            actions_requiring_target=frozenset({"check"}),
+        )
 
         schema = contract.json_schema()
 
@@ -200,6 +203,42 @@ class TestActionContracts:
         assert schema["required"] == [
             "schema_version", "action_type", "target_seat", "reasoning",
         ]
+
+    def test_no_target_contract_does_not_require_the_nullable_target_field(self):
+        """A contract whose actions take no target must not force ``target_seat``.
+
+        ``awakened_wolf_king_explode`` declares no target-bearing action, yet
+        the schema listed ``target_seat`` as required; the model filled a seat
+        and the validator then rejected the legal ``explode`` with
+        ``target_forbidden``. The nullable property stays documented so an
+        action that takes no target can still send null explicitly.
+        """
+        contract = _pipeline_contract(
+            action_types=("explode", "pass"),
+            actions_requiring_target=frozenset(),
+        )
+
+        schema = contract.json_schema()
+
+        assert schema["required"] == ["schema_version", "action_type", "reasoning"]
+        assert schema["properties"]["target_seat"] == {"type": ["integer", "null"]}
+        assert "target_seats" not in schema["properties"]
+
+    def test_the_target_requirement_does_not_reach_the_contract_digest(self):
+        """``json_schema()`` is presentation; the digest covers the fields only.
+
+        Old games keep resuming against their frozen contract digests, so a
+        schema-only fix must not make every in-flight game look ``drift``.
+        """
+        contract = _pipeline_contract(
+            action_types=("explode", "pass"),
+            actions_requiring_target=frozenset(),
+        )
+
+        before = contract.stable_digest()
+        contract.json_schema()
+
+        assert contract.stable_digest() == before
 
     @pytest.mark.parametrize("changes", [
         {"multi_target_actions": {"unknown": 3}},

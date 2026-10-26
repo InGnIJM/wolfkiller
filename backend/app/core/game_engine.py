@@ -109,6 +109,13 @@ _POST_SPEECH_SLOT = "post_speech"
 # exile vote has been counted and before anybody is exiled.
 _VOTE_VERDICT_SLOT = "vote_verdict"
 
+# A reaction window may kill a seat whose own death-response contract (the
+# Awakened Wolf King's gifted claw, the Wolf King's claw, ...) still owes the
+# table an answer. Each wave seeds the deaths the previous window settled; the
+# cap keeps a malformed chain from hanging the engine, and an overflow is
+# recorded as a telemetry fault instead of being skipped silently.
+_MAX_REACTION_WAVES = 8
+
 
 def _wolf_kill_target(pending_damage: tuple[object, ...]) -> Optional[int]:
     """Extract the current night's wolf kill target from pending damage.
@@ -1350,6 +1357,7 @@ class GameEngine:
         )
         await self._run_response_point(SchedulePoint.DAWN_REACTION, commit)
         reaction = await self._settle_and_publish()
+        reaction += await self._run_reaction_waves(slot_prefix="night_react")
         await self._durable_checkpoint(
             f"night_reaction:{self.state.round_number}:{self._seat_list(reaction)}"
         )
@@ -2053,6 +2061,7 @@ class GameEngine:
                 slot=self._day_slot(self.state.vote_round, seat),
             )
             reaction = await self._settle_and_publish()
+            reaction += await self._run_reaction_waves(slot_prefix="day_react")
             await self._durable_checkpoint(
                 f"day_reaction:{label}:{self._seat_list(reaction)}"
             )
@@ -2523,10 +2532,6 @@ class GameEngine:
         cancelled = exiled_seat is not None and await self._apply_exile(exiled_seat)
         self._log_vote_result(None if cancelled else exiled_seat)
 
-        # Reset this round's votes and casting bookkeeping so the next round
-        # starts with an empty ballot instead of re-exiling the same seat.
-        self._clear_tiebreak_state()
-
         # Announce vote result
         if cancelled:
             self.conversation_log.add_vote_result(
@@ -2549,6 +2554,11 @@ class GameEngine:
             f"vote_result:{self.state.round_number}:1:"
             f"{'none' if cancelled or exiled_seat is None else exiled_seat}"
         )
+        # Reset this round's votes and casting bookkeeping only after the
+        # result is durable: the active window carries the frozen sheriff basis
+        # the VOTE_RESULT event is built from. The label above is literal ``1``
+        # on this path, so clearing afterwards cannot change it.
+        self._clear_tiebreak_state()
 
         if not await self._check_game_over():
             self.sm.transition(SM_Event.VOTE_RESOLVED)
@@ -2620,6 +2630,125 @@ class GameEngine:
                 WorkCursor("response", 0, 0), work_count=0,
             ))
         return await self._run_pipeline_point(point, slot=slot)
+
+    def _reaction_seeded_seats(self) -> set[int]:
+        """Seats whose death already seeded a finished ``DAWN_REACTION`` window.
+
+        The death ledger alone cannot tell a night-death window from a death a
+        reaction window produced: both are ordinary ``DeathReport`` rows. The
+        journal is the durable record of which seats were seeded, so a chain
+        like "a death reaction killed the claw holder" can ask for exactly the
+        deaths nobody has reacted to yet.
+        """
+        seeded: set[int] = set()
+        for key, checkpoint in point_journal(self.state).entries():
+            if key.round_number != self.state.round_number:
+                continue
+            if key.point is not SchedulePoint.DAWN_REACTION:
+                continue
+            for event in checkpoint.events:
+                if not isinstance(event, Mapping):
+                    continue
+                if event.get("event_type") != "PLAYER_DIED":
+                    continue
+                payload = event.get("payload")
+                if not isinstance(payload, Mapping):
+                    continue
+                seat = payload.get("target_seat")
+                if type(seat) is int:
+                    seeded.add(seat)
+        return seeded
+
+    @staticmethod
+    def _reaction_wave_slot(slot_prefix: str, seats: tuple[int, ...]) -> str:
+        """Deterministic slot token for one wave.
+
+        The slot is derived from the sorted seat set, not from a counter, so a
+        resumed run asks the journal for exactly the same window instead of
+        opening a second one for the same deaths. ``Scheduler._slot`` accepts
+        letters, digits, ``_ . : -``; the caller supplies a letter-leading
+        prefix and the seats are joined with dots.
+        """
+        return f"{slot_prefix}-{'.'.join(str(seat) for seat in seats)}"
+
+    async def _run_reaction_waves(
+        self, *, slot_prefix: str,
+    ) -> tuple[DeathReport, ...]:
+        """React to deaths that only a previous reaction window produced.
+
+        A response window settles its damage immediately
+        (``_settle_and_publish``), so a death reaction can kill the holder of a
+        gifted claw; that death used to be published and then forgotten. Each
+        loop below seeds every current-round death no finished window has seen
+        into its own ``DAWN_REACTION`` point, settles what the window deals, and
+        repeats until nothing new lands. The cap turns a pathological chain into
+        a recorded fault rather than a hang.
+        """
+        settled_total: list[DeathReport] = []
+        for _ in range(_MAX_REACTION_WAVES):
+            seeded = self._reaction_seeded_seats()
+            deaths = tuple(sorted(
+                (
+                    death for death in self.state.death_history
+                    if death.round_number == self.state.round_number
+                    and death.player_seat not in seeded
+                ),
+                key=lambda death: death.player_seat,
+            ))
+            if not deaths:
+                return tuple(settled_total)
+            seats = tuple(sorted({death.player_seat for death in deaths}))
+            slot = self._reaction_wave_slot(slot_prefix, seats)
+            commit = self._synthetic_commit(
+                f"reaction:{slot}",
+                tuple(self._died_event(death) for death in deaths),
+            )
+            await self._run_response_point(
+                SchedulePoint.DAWN_REACTION, commit, slot=slot,
+            )
+            settled = await self._settle_and_publish()
+            settled_total.extend(settled)
+            await self._durable_checkpoint(
+                f"reaction_wave:{self.state.round_number}:{slot}:"
+                f"{self._seat_list(settled)}"
+            )
+        leftover = tuple(sorted(
+            (
+                death for death in self.state.death_history
+                if death.round_number == self.state.round_number
+                and death.player_seat not in self._reaction_seeded_seats()
+            ),
+            key=lambda death: death.player_seat,
+        ))
+        if leftover:
+            self._record_reaction_wave_overflow(leftover)
+        return tuple(settled_total)
+
+    def _record_reaction_wave_overflow(
+        self, deaths: tuple[DeathReport, ...],
+    ) -> None:
+        """Announce a chain the wave cap stopped, instead of dropping it silently."""
+        seats = ",".join(str(death.player_seat) for death in deaths)
+        logger.error(
+            "Reaction wave cap reached: game=%s round=%s wave_cap=%d pending=%s",
+            self.game_id, self.state.round_number, _MAX_REACTION_WAVES, seats,
+        )
+        try:
+            self.game_logger.log_operation(
+                self.game_id, "stage_telemetry", self.state.round_number,
+                self.state.phase.value,
+                data={
+                    "scope": "reaction",
+                    "stage": SchedulePoint.DAWN_REACTION.value,
+                    "code": "reaction_wave_overflow",
+                    "wave_cap": _MAX_REACTION_WAVES,
+                    "pending_seats": [death.player_seat for death in deaths],
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist reaction wave overflow for game=%s", self.game_id,
+            )
 
     def _pending_win_result(self, pending: "_PendingWin") -> WinResult:
         """Rebuild the published result from the pending camp/reason snapshot.
@@ -2723,12 +2852,17 @@ class GameEngine:
         """Run the exile's response window; returns the deaths it settled.
 
         The exiled seat itself is not among them (it is marked dead directly),
-        which is why the caller names it in the announcing step as well.
+        which is why the caller names it in the announcing step as well. Deaths
+        the window *causes* (a death reaction) are followed by their own waves,
+        so a claw holder killed by such a reaction can still answer.
         """
         await self._run_response_point(
             SchedulePoint.DAWN_REACTION, self._exile_commit(exiled_seat),
         )
-        return await self._settle_and_publish()
+        settled = await self._settle_and_publish()
+        return settled + await self._run_reaction_waves(
+            slot_prefix="exile_react",
+        )
 
     def _reveal_from_verdict(self, seat: int) -> None:
         """A role publicly flipped its card to survive the vote."""
@@ -3043,6 +3177,22 @@ class GameEngine:
                     tally.get(vote.target_seat, 0) + ballot_weight(self.state, vote.voter_seat)
                 )
         return tally
+
+    def vote_ballot_weight(self, voter_seat: int) -> int:
+        """Half-vote weight of one ballot as this window fixed it.
+
+        With a live window this reads the sheriff snapshot taken when the
+        ballot opened, not the current office: a death reaction can kill the
+        sheriff after the votes are in, and that must not rewrite the
+        published ``VOTE_RESULT.weighted_counts``. Without a window (legacy
+        games, a vote tallied before the window exists) it keeps the historical
+        live-office behaviour.
+        """
+        if self._active_vote_window_id is not None:
+            return self._vote_service.window_weight(
+                self._active_vote_window_id, voter_seat,
+            )
+        return ballot_weight(self.state, voter_seat)
 
     @staticmethod
     def _tied_top_candidates(tally: dict[int, int]) -> list[int]:

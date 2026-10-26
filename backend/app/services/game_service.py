@@ -67,7 +67,8 @@ from app.agents.invocation import (
 from app.core.scheduler import DecisionPaused, Scheduler
 from app.core.sheriff_flow import ballot_weight
 from app.models.pipeline import (
-    DEGRADED_REASONING, ActionCommand as PipelineActionCommand, SchedulePoint,
+    DEGRADED_REASONING, ActionCommand as PipelineActionCommand, ActionContract,
+    SchedulePoint,
 )
 from app.models.contracts import AcceptedAction, ActionCommand as ContractActionCommand
 from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
@@ -427,18 +428,48 @@ def _with_repair_reminder(messages, suffix: str) -> list:
     return [*active[:-1], merged]
 
 
-#: Appended on the scheduler's second provider attempt. ``Scheduler._command``
-#: asks once, validates the answer against the contract, and asks again only
-#: after a rule rejection; the hint is what makes the second ask a *repair*
-#: instead of an identical replay. It names the failure the 2026-10-21 game hit
-#: (non-pass actions with ``target_seat=null``) without assuming it is the only
-#: one: the contract + context remain the authority.
-_RULE_RETRY_HINT = (
-    "\n\n【规则校验失败】上一次输出的动作没有通过引擎校验："
-    "非 pass 动作必须按 ROLE_CONTRACT 把目标写进 target_seat（单目标）或 "
-    "target_seats（多目标）；使用 RANDOM_HINT 时也要把该号码抄进对应字段，"
-    "留空不会替你选择。请重新输出同一契约的 JSON。"
-)
+def _rule_retry_hint(contract: ActionContract) -> str:
+    """Repair instruction appended to the scheduler's second provider attempt.
+
+    ``Scheduler._command`` asks once, validates the answer against the
+    contract, and asks again only after a rule rejection; the hint is what makes
+    the second ask a *repair* instead of an identical replay. The text is
+    contract-aware: a contract whose non-pass action takes no target
+    (``awakened_wolf_king_explode``, ``order_rewind``) must be told to send
+    ``null``, not to invent a seat the validator then rejects with
+    ``target_forbidden``. ``RANDOM_HINT`` only exists for first-night target
+    contracts, so that reminder is conditional too.
+    """
+    required = sorted(
+        set(contract.action_types) & set(contract.actions_requiring_target)
+    )
+    multi = sorted(contract.multi_target_actions)
+    if multi:
+        count = contract.multi_target_actions[multi[0]]
+        body = (
+            "多目标动作（" + "、".join(multi) + "）必须把 "
+            f"{count} 个互不相同的存活座位写进 target_seats，并把 target_seat 留空（null）"
+        )
+        if required:
+            body += (
+                "；需要单目标的动作（" + "、".join(required)
+                + "）必须把座位号写进 target_seat"
+            )
+        body += "；其余动作一律把 target_seat 写成 null"
+    elif required:
+        body = (
+            "需要目标的动作（" + "、".join(required) + "）必须把目标座位号写进 target_seat；"
+            "其余动作（包括 pass）必须把 target_seat 写成 null"
+        )
+    else:
+        body = (
+            "本契约的所有动作都不需要目标：包括非 pass 动作在内，"
+            "一律把 target_seat 写成 null，不要填任何座位号"
+        )
+    hint = "\n\n【规则校验失败】上一次输出的动作没有通过引擎校验：" + body
+    if required or multi:
+        hint += "；使用 RANDOM_HINT 时也要把该号码抄进对应字段，留空不会替你选择"
+    return hint + "。请重新输出同一契约的 JSON。"
 
 
 def _pipeline_request_id(action_key: str, attempt: int) -> str:
@@ -2002,6 +2033,11 @@ class GameService:
             exiled_seat = None if parts[-1] == "none" else int(parts[-1])
             counts: dict[str, int] = {}
             weighted: dict[str, int] = {}
+            # The engine freezes the sheriff's 1.5-vote basis on the ballot
+            # window; ask it for the weight so the published tally is the one
+            # that decided the exile, not one re-read after the sheriff died.
+            # Non-engine callers (projection unit tests) keep the legacy read.
+            weight_for = getattr(engine, "vote_ballot_weight", None)
             for vote in engine.state.votes:
                 if vote.target_seat is not None:
                     key = str(vote.target_seat)
@@ -2011,7 +2047,11 @@ class GameService:
                     # once a sheriff sits — so a head count can disagree with
                     # the outcome it is published next to. Both numbers travel:
                     # how many hands went up, and what the decision was made of.
-                    weight = ballot_weight(engine.state, vote.voter_seat)
+                    weight = (
+                        weight_for(vote.voter_seat)
+                        if callable(weight_for)
+                        else ballot_weight(engine.state, vote.voter_seat)
+                    )
                     weighted[key] = weighted.get(key, 0) + weight
             event_type = "VOTE_RESULT"
             payload = {
@@ -3031,7 +3071,9 @@ class GameService:
                 # Scheduler attempt 1 only exists after a rule rejection. Merge
                 # the repair request into the last user turn; a second user
                 # turn would be rejected or reordered by some gateways.
-                messages = _with_repair_reminder(messages, _RULE_RETRY_HINT)
+                messages = _with_repair_reminder(
+                    messages, _rule_retry_hint(request.contract),
+                )
             if (
                 engine is not None
                 and request.contract.schedule_point in _NIGHT_ACTOR_POINTS
