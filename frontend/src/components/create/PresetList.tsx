@@ -30,7 +30,10 @@ function isOfficial(preset: GamePreset): boolean {
 export default function PresetList({
   presets, roles, selectedPresetId, onSelect,
 }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const en = i18n.language.toLowerCase().startsWith('en');
+  const presetName = (preset: GamePreset) => (en ? (preset.name_en ?? preset.name) : preset.name);
+  const presetDesc = (preset: GamePreset) => (en ? (preset.description_en ?? preset.description) : preset.description);
   const [rawQuery, setRawQuery] = useState('');
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
@@ -49,14 +52,20 @@ export default function PresetList({
     const needle = query.trim().toLowerCase();
     if (!needle) return presets;
     return presets.filter((preset) => {
+      if (presetName(preset).toLowerCase().includes(needle)) return true;
+      if (presetDesc(preset).toLowerCase().includes(needle)) return true;
       if (preset.name.toLowerCase().includes(needle)) return true;
       if (preset.description.toLowerCase().includes(needle)) return true;
-      // 阵容里的角色中文名也参与匹配，这样搜「摄梦」能找到狼王摄梦人板。
+      // 阵容里的角色中英文名都参与匹配，这样搜「摄梦」或 dream 能找到狼王摄梦人板。
       return Object.keys(preset.role_counts).some(
-        (roleId) => roleById.get(roleId)?.name_zh.toLowerCase().includes(needle),
+        (roleId) => {
+          const role = roleById.get(roleId);
+          return role?.name_zh.toLowerCase().includes(needle)
+            || role?.name_en?.toLowerCase().includes(needle);
+        },
       );
     });
-  }, [presets, query, roleById]);
+  }, [presets, query, roleById, en]);
 
   const groups = useMemo(() => {
     const bySize = new Map<number, GamePreset[]>();
@@ -202,14 +211,16 @@ function PresetItem({
   selected: boolean;
   onSelect: (preset: GamePreset) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const en = i18n.language.toLowerCase().startsWith('en');
+  const displayName = en ? (preset.name_en ?? preset.name) : preset.name;
   return (
     <Box
       component="button"
       type="button"
       onClick={() => onSelect(preset)}
       aria-pressed={selected}
-      aria-label={preset.name}
+      aria-label={displayName}
       sx={{
         display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
         border: 0, borderLeft: '2px solid', borderRadius: 1,
@@ -225,13 +236,13 @@ function PresetItem({
       <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', minWidth: 0 }}>
         <Typography
           variant="body2"
-          title={preset.name}
+          title={displayName}
           sx={{
             fontWeight: selected ? 700 : 400, color: selected ? INK.primary : INK.dim,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}
         >
-          {preset.name}
+          {displayName}
         </Typography>
         {isOfficial(preset) && (
           <Box
