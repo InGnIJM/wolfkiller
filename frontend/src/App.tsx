@@ -1,13 +1,19 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams,
 } from 'react-router-dom';
 import {
   ThemeProvider, CssBaseline, Box, Typography, AppBar, Toolbar,
-  Container, Button, CircularProgress,
+  Container, Button, CircularProgress, useMediaQuery,
 } from '@mui/material';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
-import theme from './theme';
+import i18n from './i18n';
+import { createAppTheme } from './theme';
+import {
+  resolveLanguage, resolveThemeMode, useUiSettingsStore,
+} from './store/uiSettingsStore';
+import { BLOOD_MOON } from './theme/tokens';
 import PageBackground from './components/shared/PageBackground';
 import GameList from './components/lobby/GameList';
 import GameBoard from './components/game/GameBoard';
@@ -21,7 +27,16 @@ const NewBenchmarkPage = lazy(() => import('./components/benchmarks/NewBenchmark
 const BenchmarkDetailPage = lazy(() => import('./components/benchmarks/BenchmarkDetailPage'));
 
 function RouteFallback() {
-  return <Box role="status" aria-label="正在加载页面" sx={{ flex: 1, display: 'grid', placeItems: 'center' }}><CircularProgress size={28} /></Box>;
+  const { t } = useTranslation();
+  return (
+    <Box
+      role="status"
+      aria-label={t('common.loading')}
+      sx={{ flex: 1, display: 'grid', placeItems: 'center' }}
+    >
+      <CircularProgress size={28} />
+    </Box>
+  );
 }
 
 function GameRoute() {
@@ -33,6 +48,23 @@ function GameRoute() {
 
 export function AppShell() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
+  const language = useUiSettingsStore((s) => s.language);
+  const themeMode = useUiSettingsStore((s) => s.themeMode);
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)');
+  const resolvedLanguage = resolveLanguage(language);
+  const resolvedMode = resolveThemeMode(themeMode, prefersDark);
+  const theme = useMemo(() => createAppTheme(resolvedMode), [resolvedMode]);
+
+  useEffect(() => {
+    void i18n.changeLanguage(resolvedLanguage);
+    document.documentElement.lang = resolvedLanguage;
+  }, [resolvedLanguage]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedMode;
+  }, [resolvedMode]);
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -59,8 +91,8 @@ export function AppShell() {
                   color: 'secondary.main',
                   border: '1px solid',
                   borderColor: 'divider',
-                  bgcolor: 'rgba(194,46,66,0.18)',
-                  boxShadow: '0 0 16px rgba(229,72,77,0.22)',
+                  bgcolor: `color-mix(in srgb, ${BLOOD_MOON.crimsonDeep} 18%, transparent)`,
+                  boxShadow: `0 0 16px color-mix(in srgb, ${BLOOD_MOON.crimson} 22%, transparent)`,
                 }}
               >
                 <DarkModeIcon sx={{ fontSize: 17 }} />
@@ -94,20 +126,20 @@ export function AppShell() {
                     color: 'secondary.dark',
                   }}
                 >
-                  血月剧场 · AI WEREWOLF
+                  {t('nav.subtitle')}
                 </Typography>
               </Box>
               <Button color="inherit" size="small" onClick={() => navigate('/rules')}>
-                规则介绍
+                {t('nav.rules')}
               </Button>
               <Button color="inherit" size="small" onClick={() => navigate('/benchmarks')}>
-                模型评测
+                {t('nav.benchmarks')}
               </Button>
               <Button color="inherit" size="small" onClick={() => navigate('/models')}>
-                模型管理
+                {t('nav.models')}
               </Button>
               <Button color="inherit" size="small" onClick={() => navigate('/settings')}>
-                设置
+                {t('nav.settings')}
               </Button>
             </Toolbar>
           </Container>
