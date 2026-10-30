@@ -3,6 +3,11 @@
 // 风格提案：frontend/design-demos/01-crimson-gothic.html
 // 规则：组件禁止硬编码色值，一律引用本文件或 MUI 主题语义槽
 // 图片路径只在本文件登记
+//
+// 双主题：导出的常量全部是对 `var(--wk-*)` 的引用，实体色值
+// 收在 `MODE_TOKENS` 里按 dark / light 各一份，由主题工厂经
+// `MuiCssBaseline` 注入 `:root`。组件引用令牌即可随主题切换，
+// 不需要知道当前模式。
 // ============================================================
 
 import bgGame from '../assets/bg/bg-game.webp';
@@ -10,57 +15,124 @@ import bgLobby from '../assets/bg/bg-lobby.webp';
 import bgMain from '../assets/bg/bg-main.webp';
 import cardBack from '../assets/roles/card-back.webp';
 
+export type ThemeMode = 'dark' | 'light';
+
+/** 一套模式实体色值。加字段时两份一起加，`cssVars()` 才有东西可发。 */
+export interface ModeTokens {
+  canvas: { bg: string; bgElevated: string; surface: string; surfaceRaised: string };
+  hairline: { strong: string; soft: string };
+  ink: { primary: string; dim: string; faint: string };
+  bloodMoon: {
+    crimson: string; crimsonDeep: string; crimsonDark: string;
+    gold: string; goldLight: string; goldDark: string;
+  };
+  roleColors: Record<RoleColorKey, { color: string; bg: string }>;
+  backdrop: {
+    dim: number; saturate: number; scrimTop: string; scrimBottom: string;
+    vignette: string; textPlate: string; cardScrim: string;
+  };
+  /** 半透明承托板（活动卡底、中央面板压底） */
+  plate: { strong: string; soft: string };
+  /** AppBar 的磨砂底 */
+  appBar: string;
+  /** 覆盖在内容上的淡纱（活动卡内嵌块等） */
+  scrim: { soft: string };
+  /** 墨色水洗底（编年史分组条等极淡填充） */
+  inkWash: string;
+  /** 投影色（座位图、悬停卡、角色浏览器） */
+  shadow: { card: string; pop: string; soft: string };
+  /** CssBaseline 的 body 三层渐变与文字选中色 */
+  bodyGradient: string;
+  selection: string;
+  /** 压在饱和强调色（绯红/金/角色色）上的前景：深底下用暗墨，浅底下用白 */
+  onAccent: string;
+  /** 「第N天」大标题的渐变文字（backgroundClip:text），深底用亮金、浅底用暗金 */
+  titleGradient: string;
+  /** MUI action.* 通道 */
+  action: {
+    hover: string; selected: string; focus: string;
+    disabled: string; disabledBackground: string;
+  };
+}
+
 /** 基础画布与表面 */
 export const CANVAS = {
   /** 页面最深底色 */
-  bg: '#0B0A0F',
+  bg: 'var(--wk-canvas-bg)',
   /** 渐变上层的暖黑 */
-  bgElevated: '#120E18',
+  bgElevated: 'var(--wk-canvas-bg-elevated)',
   /** 卡片 / Paper 表面 */
-  surface: '#171221',
+  surface: 'var(--wk-canvas-surface)',
   /** 更亮一级的表面（悬浮、弹层内嵌块） */
-  surfaceRaised: '#1D1729',
+  surfaceRaised: 'var(--wk-canvas-surface-raised)',
 } as const;
 
 /** 金色发丝线（分隔、描边） */
 export const HAIRLINE = {
-  strong: 'rgba(212, 168, 83, 0.22)',
-  soft: 'rgba(212, 168, 83, 0.12)',
+  strong: 'var(--wk-hairline-strong)',
+  soft: 'var(--wk-hairline-soft)',
 } as const;
 
 /** 墨色文字层级 */
 export const INK = {
-  primary: '#F2E9DC',
-  dim: '#B3A89A',
-  faint: '#7D7468',
+  primary: 'var(--wk-ink-primary)',
+  dim: 'var(--wk-ink-dim)',
+  faint: 'var(--wk-ink-faint)',
 } as const;
 
 /** 血月双色：品牌红 + 纹饰金 */
 export const BLOOD_MOON = {
-  crimson: '#E5484D',
-  crimsonDeep: '#C22E42',
-  crimsonDark: '#8F1F30',
-  gold: '#D4A853',
-  goldLight: '#E8C887',
-  goldDark: '#A87F33',
+  crimson: 'var(--wk-moon-crimson)',
+  crimsonDeep: 'var(--wk-moon-crimson-deep)',
+  crimsonDark: 'var(--wk-moon-crimson-dark)',
+  gold: 'var(--wk-moon-gold)',
+  goldLight: 'var(--wk-moon-gold-light)',
+  goldDark: 'var(--wk-moon-gold-dark)',
 } as const;
 
 /** 角色语义色（座位徽章、日志分类共用） */
 export const ROLE_COLORS = {
-  werewolf: { color: '#E5484D', bg: 'rgba(229, 72, 77, 0.14)' },
-  witch: { color: '#B08BE0', bg: 'rgba(176, 139, 224, 0.14)' },
-  seer: { color: '#7FB4D9', bg: 'rgba(127, 180, 217, 0.14)' },
-  hunter: { color: '#D9A441', bg: 'rgba(217, 164, 65, 0.14)' },
-  villager: { color: '#93B58C', bg: 'rgba(147, 181, 140, 0.14)' },
-  guard: { color: '#74ABA3', bg: 'rgba(116, 171, 163, 0.14)' },
-  idiot: { color: '#D9C27A', bg: 'rgba(217, 194, 122, 0.14)' },
-  werewolf_king: { color: '#F0F0F0', bg: 'rgba(240, 240, 240, 0.12)' },
-  knight: { color: '#8FA8D9', bg: 'rgba(143, 168, 217, 0.14)' },
-  wolf_beauty: { color: '#D96A9A', bg: 'rgba(217, 106, 154, 0.14)' },
-  old_drunkard: { color: '#B99A6B', bg: 'rgba(185, 154, 107, 0.14)' },
+  werewolf: { color: 'var(--wk-role-werewolf)', bg: 'var(--wk-role-werewolf-bg)' },
+  witch: { color: 'var(--wk-role-witch)', bg: 'var(--wk-role-witch-bg)' },
+  seer: { color: 'var(--wk-role-seer)', bg: 'var(--wk-role-seer-bg)' },
+  hunter: { color: 'var(--wk-role-hunter)', bg: 'var(--wk-role-hunter-bg)' },
+  villager: { color: 'var(--wk-role-villager)', bg: 'var(--wk-role-villager-bg)' },
+  guard: { color: 'var(--wk-role-guard)', bg: 'var(--wk-role-guard-bg)' },
+  idiot: { color: 'var(--wk-role-idiot)', bg: 'var(--wk-role-idiot-bg)' },
+  werewolf_king: { color: 'var(--wk-role-werewolf-king)', bg: 'var(--wk-role-werewolf-king-bg)' },
+  knight: { color: 'var(--wk-role-knight)', bg: 'var(--wk-role-knight-bg)' },
+  wolf_beauty: { color: 'var(--wk-role-wolf-beauty)', bg: 'var(--wk-role-wolf-beauty-bg)' },
+  old_drunkard: { color: 'var(--wk-role-old-drunkard)', bg: 'var(--wk-role-old-drunkard-bg)' },
 } as const;
 
 export type RoleColorKey = keyof typeof ROLE_COLORS;
+
+/** 半透明承托板（活动卡底、中央面板压底），随模式反转深浅。 */
+export const PLATE = {
+  strong: 'var(--wk-plate-strong)',
+  soft: 'var(--wk-plate-soft)',
+} as const;
+
+/** 内容上的淡纱。 */
+export const SCRIM = {
+  soft: 'var(--wk-scrim-soft)',
+} as const;
+
+/** 墨色水洗底。 */
+export const INK_WASH = 'var(--wk-ink-wash)';
+
+/** 投影色。 */
+export const SHADOW = {
+  card: 'var(--wk-shadow-card)',
+  pop: 'var(--wk-shadow-pop)',
+  soft: 'var(--wk-shadow-soft)',
+} as const;
+
+/** 压在饱和强调色上的前景（徽章图标、圆形标记里的字）。 */
+export const ON_ACCENT = 'var(--wk-on-accent)';
+
+/** 「第N天」大标题的渐变文字。 */
+export const TITLE_GRADIENT = 'var(--wk-title-gradient)';
 
 /** 全站页面背景。组件按 variant 取用，不直接写图片路径。 */
 export const BACKGROUNDS = {
@@ -71,17 +143,219 @@ export const BACKGROUNDS = {
 
 export type BackgroundVariant = keyof typeof BACKGROUNDS;
 
-/** 背景压暗、渐变遮罩与文字承托。对比度不够时只调这里。 */
+/**
+ * 背景遮罩与文字承托。`fadeMs` 两种模式相同且要进 `setTimeout`，
+ * 所以保留数字、不变量化；其余成员是 CSS 变量引用。
+ */
 export const BACKDROP = {
-  dim: 0.55,
-  saturate: 0.8,
-  scrimTop: 'rgba(11, 10, 15, 0.25)',
-  scrimBottom: 'rgba(11, 10, 15, 0.7)',
-  vignette: 'radial-gradient(ellipse at center, transparent 40%, rgba(11, 10, 15, 0.72) 100%)',
-  textPlate: 'rgba(23, 18, 33, 0.72)',
-  cardScrim: 'linear-gradient(transparent, rgba(11, 10, 15, 0.85))',
+  dim: 'var(--wk-backdrop-dim)',
+  saturate: 'var(--wk-backdrop-saturate)',
+  scrimTop: 'var(--wk-backdrop-scrim-top)',
+  scrimBottom: 'var(--wk-backdrop-scrim-bottom)',
+  vignette: 'var(--wk-backdrop-vignette)',
+  textPlate: 'var(--wk-backdrop-text-plate)',
+  cardScrim: 'var(--wk-backdrop-card-scrim)',
   fadeMs: 300,
 } as const;
+
+const DARK_TOKENS: ModeTokens = {
+  canvas: {
+    bg: '#0B0A0F',
+    bgElevated: '#120E18',
+    surface: '#171221',
+    surfaceRaised: '#1D1729',
+  },
+  hairline: {
+    strong: 'rgba(212, 168, 83, 0.22)',
+    soft: 'rgba(212, 168, 83, 0.12)',
+  },
+  ink: {
+    primary: '#F2E9DC',
+    dim: '#B3A89A',
+    faint: '#7D7468',
+  },
+  bloodMoon: {
+    crimson: '#C9566B',
+    crimsonDeep: '#A8374A',
+    crimsonDark: '#6E2236',
+    gold: '#D4A853',
+    goldLight: '#E8C887',
+    goldDark: '#A87F33',
+  },
+  roleColors: {
+    werewolf: { color: '#E5484D', bg: 'rgba(229, 72, 77, 0.14)' },
+    witch: { color: '#B08BE0', bg: 'rgba(176, 139, 224, 0.14)' },
+    seer: { color: '#7FB4D9', bg: 'rgba(127, 180, 217, 0.14)' },
+    hunter: { color: '#D9A441', bg: 'rgba(217, 164, 65, 0.14)' },
+    villager: { color: '#93B58C', bg: 'rgba(147, 181, 140, 0.14)' },
+    guard: { color: '#74ABA3', bg: 'rgba(116, 171, 163, 0.14)' },
+    idiot: { color: '#D9C27A', bg: 'rgba(217, 194, 122, 0.14)' },
+    werewolf_king: { color: '#F0F0F0', bg: 'rgba(240, 240, 240, 0.12)' },
+    knight: { color: '#8FA8D9', bg: 'rgba(143, 168, 217, 0.14)' },
+    wolf_beauty: { color: '#D96A9A', bg: 'rgba(217, 106, 154, 0.14)' },
+    old_drunkard: { color: '#B99A6B', bg: 'rgba(185, 154, 107, 0.14)' },
+  },
+  backdrop: {
+    dim: 0.55,
+    saturate: 0.8,
+    scrimTop: 'rgba(11, 10, 15, 0.25)',
+    scrimBottom: 'rgba(11, 10, 15, 0.7)',
+    vignette: 'radial-gradient(ellipse at center, transparent 40%, rgba(11, 10, 15, 0.72) 100%)',
+    textPlate: 'rgba(23, 18, 33, 0.72)',
+    cardScrim: 'linear-gradient(transparent, rgba(11, 10, 15, 0.85))',
+  },
+  plate: {
+    strong: 'rgba(23, 18, 33, 0.82)',
+    soft: 'rgba(23, 18, 33, 0.6)',
+  },
+  appBar: 'rgba(23, 18, 33, 0.88)',
+  scrim: { soft: 'rgba(0, 0, 0, 0.25)' },
+  inkWash: 'rgba(242, 233, 220, 0.03)',
+  shadow: {
+    card: 'rgba(0, 0, 0, 0.45)',
+    pop: 'rgba(0, 0, 0, 0.55)',
+    soft: 'rgba(0, 0, 0, 0.35)',
+  },
+  bodyGradient: [
+    'radial-gradient(1100px 520px at 50% -8%, rgba(168,55,74,0.24), transparent 62%)',
+    'radial-gradient(900px 700px at 50% 118%, rgba(212,168,83,0.11), transparent 60%)',
+    'linear-gradient(180deg, #120E18, #0B0A0F 42%)',
+  ].join(', '),
+  selection: 'rgba(201, 86, 107, 0.35)',
+  onAccent: '#171221',
+  titleGradient: 'linear-gradient(180deg, #F7EFE2, #CAA96A)',
+  action: {
+    hover: 'rgba(212, 168, 83, 0.09)',
+    selected: 'rgba(212, 168, 83, 0.14)',
+    focus: 'rgba(212, 168, 83, 0.18)',
+    disabled: 'rgba(242, 233, 220, 0.12)',
+    disabledBackground: 'rgba(242, 233, 220, 0.08)',
+  },
+};
+
+const LIGHT_TOKENS: ModeTokens = {
+  canvas: {
+    bg: '#F3EDE3',
+    bgElevated: '#FAF6EC',
+    surface: '#FFFCF4',
+    surfaceRaised: '#FFFFFF',
+  },
+  hairline: {
+    strong: 'rgba(146, 112, 44, 0.32)',
+    soft: 'rgba(146, 112, 44, 0.16)',
+  },
+  ink: {
+    primary: '#241E2B',
+    dim: '#5C5347',
+    faint: '#7D7264',
+  },
+  bloodMoon: {
+    crimson: '#D63340',
+    crimsonDeep: '#B02838',
+    crimsonDark: '#7C1B2B',
+    gold: '#8A6B22',
+    goldLight: '#A3802F',
+    goldDark: '#66501B',
+  },
+  roleColors: {
+    werewolf: { color: '#C43640', bg: 'rgba(198, 54, 64, 0.12)' },
+    witch: { color: '#7A57B8', bg: 'rgba(122, 87, 184, 0.12)' },
+    seer: { color: '#35739F', bg: 'rgba(53, 115, 159, 0.12)' },
+    hunter: { color: '#8F6A13', bg: 'rgba(143, 106, 19, 0.14)' },
+    villager: { color: '#4A7A43', bg: 'rgba(74, 122, 67, 0.12)' },
+    guard: { color: '#3A7A70', bg: 'rgba(58, 122, 112, 0.12)' },
+    idiot: { color: '#8A762E', bg: 'rgba(138, 118, 46, 0.14)' },
+    werewolf_king: { color: '#4A4457', bg: 'rgba(74, 68, 87, 0.12)' },
+    knight: { color: '#4B6AAE', bg: 'rgba(75, 106, 174, 0.12)' },
+    wolf_beauty: { color: '#B0416F', bg: 'rgba(176, 65, 111, 0.12)' },
+    old_drunkard: { color: '#7A5D36', bg: 'rgba(122, 93, 54, 0.14)' },
+  },
+  backdrop: {
+    dim: 0.9,
+    saturate: 0.85,
+    scrimTop: 'rgba(243, 237, 227, 0.55)',
+    scrimBottom: 'rgba(243, 237, 227, 0.85)',
+    vignette: 'radial-gradient(ellipse at center, rgba(243, 237, 227, 0.3) 0%, rgba(243, 237, 227, 0.82) 100%)',
+    textPlate: 'rgba(255, 252, 244, 0.85)',
+    cardScrim: 'linear-gradient(transparent, rgba(243, 237, 227, 0.9))',
+  },
+  plate: {
+    strong: 'rgba(255, 252, 244, 0.85)',
+    soft: 'rgba(255, 252, 244, 0.68)',
+  },
+  appBar: 'rgba(255, 252, 244, 0.86)',
+  scrim: { soft: 'rgba(43, 34, 25, 0.08)' },
+  inkWash: 'rgba(36, 30, 43, 0.04)',
+  shadow: {
+    card: 'rgba(43, 34, 25, 0.22)',
+    pop: 'rgba(43, 34, 25, 0.3)',
+    soft: 'rgba(43, 34, 25, 0.18)',
+  },
+  bodyGradient: [
+    'radial-gradient(1100px 520px at 50% -8%, rgba(214,51,64,0.10), transparent 62%)',
+    'radial-gradient(900px 700px at 50% 118%, rgba(138,107,34,0.12), transparent 60%)',
+    'linear-gradient(180deg, #FAF6EC, #F3EDE3 42%)',
+  ].join(', '),
+  selection: 'rgba(214, 51, 64, 0.25)',
+  onAccent: '#FFFFFF',
+  titleGradient: 'linear-gradient(180deg, #8A6B22, #5E4A1C)',
+  action: {
+    hover: 'rgba(138, 107, 34, 0.1)',
+    selected: 'rgba(138, 107, 34, 0.16)',
+    focus: 'rgba(138, 107, 34, 0.2)',
+    disabled: 'rgba(36, 30, 43, 0.12)',
+    disabledBackground: 'rgba(36, 30, 43, 0.07)',
+  },
+};
+
+export const MODE_TOKENS: Record<ThemeMode, ModeTokens> = {
+  dark: DARK_TOKENS,
+  light: LIGHT_TOKENS,
+};
+
+/** 把一套实体色值摊平成 `--wk-*` CSS 变量表，由主题工厂注入 `:root`。 */
+export function cssVars(mode: ThemeMode): Record<string, string> {
+  const t = MODE_TOKENS[mode];
+  const vars: Record<string, string> = {
+    '--wk-canvas-bg': t.canvas.bg,
+    '--wk-canvas-bg-elevated': t.canvas.bgElevated,
+    '--wk-canvas-surface': t.canvas.surface,
+    '--wk-canvas-surface-raised': t.canvas.surfaceRaised,
+    '--wk-hairline-strong': t.hairline.strong,
+    '--wk-hairline-soft': t.hairline.soft,
+    '--wk-ink-primary': t.ink.primary,
+    '--wk-ink-dim': t.ink.dim,
+    '--wk-ink-faint': t.ink.faint,
+    '--wk-moon-crimson': t.bloodMoon.crimson,
+    '--wk-moon-crimson-deep': t.bloodMoon.crimsonDeep,
+    '--wk-moon-crimson-dark': t.bloodMoon.crimsonDark,
+    '--wk-moon-gold': t.bloodMoon.gold,
+    '--wk-moon-gold-light': t.bloodMoon.goldLight,
+    '--wk-moon-gold-dark': t.bloodMoon.goldDark,
+    '--wk-backdrop-dim': String(t.backdrop.dim),
+    '--wk-backdrop-saturate': String(t.backdrop.saturate),
+    '--wk-backdrop-scrim-top': t.backdrop.scrimTop,
+    '--wk-backdrop-scrim-bottom': t.backdrop.scrimBottom,
+    '--wk-backdrop-vignette': t.backdrop.vignette,
+    '--wk-backdrop-text-plate': t.backdrop.textPlate,
+    '--wk-backdrop-card-scrim': t.backdrop.cardScrim,
+    '--wk-plate-strong': t.plate.strong,
+    '--wk-plate-soft': t.plate.soft,
+    '--wk-app-bar': t.appBar,
+    '--wk-scrim-soft': t.scrim.soft,
+    '--wk-ink-wash': t.inkWash,
+    '--wk-shadow-card': t.shadow.card,
+    '--wk-shadow-pop': t.shadow.pop,
+    '--wk-shadow-soft': t.shadow.soft,
+    '--wk-on-accent': t.onAccent,
+    '--wk-title-gradient': t.titleGradient,
+  };
+  for (const [key, pair] of Object.entries(t.roleColors)) {
+    vars[`--wk-role-${key.replace(/_/g, '-')}`] = pair.color;
+    vars[`--wk-role-${key.replace(/_/g, '-')}-bg`] = pair.bg;
+  }
+  return vars;
+}
 
 /**
  * 立绘文件表：`role-*.webp` 的路径 → Vite 处理后的资源 URL。
@@ -179,3 +453,9 @@ export const AVATAR_PALETTE = [
   '#7A1E2B', '#7A5A1E', '#2E5670', '#553D78', '#3E5A39',
   '#2F5F58', '#70432F', '#454A63', '#5E3550',
 ] as const;
+
+/**
+ * 宝石盘上的前景文字。盘色不随主题切换，前景因此也固定为浅墨 ——
+ * 不能用 `INK.primary`（浅色模式会变深，压不进深色盘）。
+ */
+export const AVATAR_INK = '#F2E9DC';

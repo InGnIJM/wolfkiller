@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import theme from '../theme';
-import { BACKDROP, BACKGROUNDS, CARD_BACK, INK, ROLE_ART_BY_ID, roleArt } from '../theme/tokens';
+import theme, { createAppTheme } from '../theme';
+import {
+  BACKDROP, BACKGROUNDS, CARD_BACK, MODE_TOKENS, ROLE_ART_BY_ID, roleArt,
+} from '../theme/tokens';
+import type { ModeTokens } from '../theme/tokens';
 
 /**
  * 暂时没有独立立绘、按约定沿用同族母角色立绘的觉醒牌（值 = 母角色 id）。
@@ -13,11 +16,11 @@ const SHARED_FAMILY_ART = new Map([
 ]);
 
 describe('血月剧场主题令牌', () => {
-  it('使用血月剧场画布色与双色主轴', () => {
+  it('使用血月剧场画布色与酒红金双色主轴', () => {
     expect(theme.palette.background.default).toBe('#0B0A0F');
     expect(theme.palette.background.paper).toBe('#171221');
-    expect(theme.palette.primary.main).toBe('#C22E42');
-    expect(theme.palette.primary.light).toBe('#E5484D');
+    expect(theme.palette.primary.main).toBe('#A8374A');
+    expect(theme.palette.primary.light).toBe('#C9566B');
     expect(theme.palette.secondary.main).toBe('#D4A853');
   });
 
@@ -89,13 +92,13 @@ function composite(
 }
 
 /** 白像素经 brightness(dim) 与指定 scrim，再叠文字承托，得到正文实际落点。 */
-function plateOver(scrim: string): [number, number, number] {
+function plateOver(tokens: ModeTokens, scrim: string): [number, number, number] {
   const brightened: [number, number, number] = [
-    255 * BACKDROP.dim,
-    255 * BACKDROP.dim,
-    255 * BACKDROP.dim,
+    255 * tokens.backdrop.dim,
+    255 * tokens.backdrop.dim,
+    255 * tokens.backdrop.dim,
   ];
-  return composite(composite(brightened, scrim), BACKDROP.textPlate);
+  return composite(composite(brightened, scrim), tokens.backdrop.textPlate);
 }
 
 describe('血月剧场素材令牌', () => {
@@ -124,24 +127,37 @@ describe('血月剧场素材令牌', () => {
     }
   });
 
-  it('遮罩参数落在可读范围内，暗角从 40% 开始', () => {
-    expect(BACKDROP.dim).toBeGreaterThanOrEqual(0.5);
-    expect(BACKDROP.dim).toBeLessThanOrEqual(0.62);
-    expect(BACKDROP.saturate).toBe(0.8);
-    expect(BACKDROP.scrimTop).toBe('rgba(11, 10, 15, 0.25)');
-    expect(BACKDROP.scrimBottom).toBe('rgba(11, 10, 15, 0.7)');
-    expect(BACKDROP.vignette).toContain('transparent 40%');
-    expect(BACKDROP.textPlate).toBe('rgba(23, 18, 33, 0.72)');
-    expect(BACKDROP.cardScrim).toBe('linear-gradient(transparent, rgba(11, 10, 15, 0.85))');
+  it('深色遮罩参数落在可读范围内，暗角从 40% 开始', () => {
+    const backdrop = MODE_TOKENS.dark.backdrop;
+    expect(backdrop.dim).toBeGreaterThanOrEqual(0.5);
+    expect(backdrop.dim).toBeLessThanOrEqual(0.62);
+    expect(backdrop.saturate).toBe(0.8);
+    expect(backdrop.scrimTop).toBe('rgba(11, 10, 15, 0.25)');
+    expect(backdrop.scrimBottom).toBe('rgba(11, 10, 15, 0.7)');
+    expect(backdrop.vignette).toContain('transparent 40%');
+    expect(backdrop.textPlate).toBe('rgba(23, 18, 33, 0.72)');
+    expect(backdrop.cardScrim).toBe('linear-gradient(transparent, rgba(11, 10, 15, 0.85))');
     expect(BACKDROP.fadeMs).toBe(300);
   });
 
-  it('正文在最亮与最暗承托上的对比度都不低于 4.5:1', () => {
-    for (const scrim of [BACKDROP.scrimTop, BACKDROP.scrimBottom]) {
-      const plate = plateOver(scrim);
-      expect(contrastRatio(parseHex(INK.primary), plate)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(parseHex(INK.dim), plate)).toBeGreaterThanOrEqual(4.5);
+  it.each(['dark', 'light'] as const)('%s 模式正文在最亮与最暗承托上的对比度都不低于 4.5:1', (mode) => {
+    const tokens = MODE_TOKENS[mode];
+    for (const scrim of [tokens.backdrop.scrimTop, tokens.backdrop.scrimBottom]) {
+      const plate = plateOver(tokens, scrim);
+      expect(contrastRatio(parseHex(tokens.ink.primary), plate)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(parseHex(tokens.ink.dim), plate)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it('两种模式的令牌结构同形，且浅色模式输出浅色画布', () => {
+    const light = createAppTheme('light');
+    expect(light.palette.mode).toBe('light');
+    expect(light.palette.background.default).toBe(MODE_TOKENS.light.canvas.bg);
+    expect(light.palette.text.primary).toBe(MODE_TOKENS.light.ink.primary);
+    expect(Object.keys(MODE_TOKENS.dark)).toEqual(Object.keys(MODE_TOKENS.light));
+    expect(Object.keys(MODE_TOKENS.dark.roleColors)).toEqual(
+      Object.keys(MODE_TOKENS.light.roleColors),
+    );
   });
 });
 
