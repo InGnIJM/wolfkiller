@@ -183,3 +183,28 @@ def test_default_path_follows_the_data_directory(tmp_path, monkeypatch):
     get_app_settings_store().set_prompt_capture_enabled(True)
 
     assert (tmp_path / SETTINGS_FILENAME).exists()
+
+
+def test_auto_review_enabled_roundtrip_and_resolution(tmp_path, monkeypatch):
+    from app.stores.app_settings_store import AUTO_REVIEW_ENV, resolve_auto_review_setting
+
+    path = tmp_path / "settings.json"
+    store = JsonAppSettingsStore(str(path))
+    monkeypatch.delenv(AUTO_REVIEW_ENV, raising=False)
+
+    assert store.get_auto_review_enabled() is None
+    assert resolve_auto_review_setting(store.get_auto_review_enabled()) == (True, "default")
+
+    monkeypatch.setenv(AUTO_REVIEW_ENV, "false")
+    assert resolve_auto_review_setting(store.get_auto_review_enabled()) == (False, "env")
+
+    monkeypatch.setenv(AUTO_REVIEW_ENV, "1")
+    assert resolve_auto_review_setting(store.get_auto_review_enabled()) == (True, "env")
+
+    store.set_auto_review_enabled(False)
+    assert store.get_auto_review_enabled() is False
+    assert resolve_auto_review_setting(store.get_auto_review_enabled()) == (False, "ui")
+
+    store.set_auto_review_enabled(None)
+    assert store.get_auto_review_enabled() is None
+

@@ -358,3 +358,25 @@ def test_manifest_update_game_persists_model_snapshot(tmp_path):
     assert entries["g1"]["model_snapshot"] == [
         {"config_id": None, "name": "环境默认 (.env)"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_game_validates_commentary_config_id_before_creating(tmp_path, monkeypatch):
+    from app.api.websocket.ws_handler import WSManager
+    from app.core.event_bus import EventBus
+    from app.services.game_service import GameService
+
+    monkeypatch.setattr(
+        game_service, "get_model_config_store",
+        lambda: JsonModelConfigStore(str(tmp_path / "models.json")),
+    )
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+    try:
+        with pytest.raises(ValueError, match="unknown model config"):
+            await service.create_game(
+                commentary_enabled=True,
+                commentary_config_id="missing-comm-cfg",
+            )
+    finally:
+        await service.aclose()
+

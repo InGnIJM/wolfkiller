@@ -158,3 +158,24 @@ async def test_route_and_game_service_resolve_through_the_same_function(
         assert resolve_capture_setting(service._prompt_capture_setting()) == expected
     finally:
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auto_review_endpoints_get_and_patch(monkeypatch):
+    from app.api.settings_schemas import AutoReviewSettingsRequest
+    from app.stores.app_settings_store import AUTO_REVIEW_ENV
+
+    monkeypatch.delenv(AUTO_REVIEW_ENV, raising=False)
+    initial = await settings_routes.get_auto_review()
+    assert (initial.enabled, initial.source) == (True, "default")
+
+    updated = await settings_routes.update_auto_review(
+        AutoReviewSettingsRequest(enabled=False),
+    )
+    assert (updated.enabled, updated.source) == (False, "ui")
+
+    cleared = await settings_routes.update_auto_review(
+        AutoReviewSettingsRequest(enabled=None),
+    )
+    assert (cleared.enabled, cleared.source) == (True, "default")
+
