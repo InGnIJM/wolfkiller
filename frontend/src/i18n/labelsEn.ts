@@ -453,6 +453,11 @@ export function roleName(roleId: string | null | undefined): string | undefined 
   return ROLE_NAME_LABELS[roleId];
 }
 
+export function recoveryBlockLabel(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return RECOVERY_BLOCK_LABELS[code] ?? code;
+}
+
 export function roleLabelForSeat(
   seat: number | null | undefined,
   players: Record<number, { role?: string }> | undefined,

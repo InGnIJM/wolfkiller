@@ -6,8 +6,9 @@ import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import type { ExecutionStatus, GamePhase, WinningCamp } from '../../store/types';
-import { EXECUTION_LABELS, PHASE_LABELS, WINNER_LABELS } from '../../labels';
-import { recoveryBlockLabel } from './recoveryLabels';
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
+import type { LabelsModule } from '../../i18n/useLabels';
 import { HAIRLINE } from '../../theme/tokens';
 
 interface Props {
@@ -41,10 +42,10 @@ const WINNER_COLOR: Record<WinningCamp, 'success' | 'error' | 'info'> = {
 };
 
 // 未知阵营（旧档脏数据）不渲染徽标，与旧行为一致。
-function winnerMeta(winner: string): { label: string; color: 'success' | 'error' | 'info' } | null {
-  if (!(winner in WINNER_LABELS)) return null;
+function winnerMeta(winner: string, L: LabelsModule): { label: string; color: 'success' | 'error' | 'info' } | null {
+  if (!(winner in L.WINNER_LABELS)) return null;
   const camp = winner as WinningCamp;
-  return { label: WINNER_LABELS[camp], color: WINNER_COLOR[camp] };
+  return { label: L.WINNER_LABELS[camp], color: WINNER_COLOR[camp] };
 }
 
 export default function GameCard({
@@ -52,7 +53,9 @@ export default function GameCard({
   executionStatus, recoverable = false, recoveryBlockCode, controlBusy = false,
   onPause, onResume, onRecover, onMove, selected = false, onToggleSelect,
 }: Props) {
-  const win = winner ? winnerMeta(winner) : null;
+  const { t } = useTranslation();
+  const L = useLabels();
+  const win = winner ? winnerMeta(winner, L) : null;
   const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
 
   return (
@@ -75,7 +78,7 @@ export default function GameCard({
               checked={selected}
               onChange={onToggleSelect}
               onClick={(event) => event.stopPropagation()}
-              slotProps={{ input: { 'aria-label': `选择 ${name}` } }}
+              slotProps={{ input: { 'aria-label': t('lobby.selectGame', { name }) } }}
             />
           </Box>
         )}
@@ -88,13 +91,13 @@ export default function GameCard({
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3 }}>
                   {/* phase 由调用方（GameList）先查表，未解析的机器值在这里兜底 */}
-                  {PHASE_LABELS[phase as GamePhase] ?? phase} · 第 {roundNumber} 轮
+                  {t('lobby.phaseAndRound', { phase: L.PHASE_LABELS[phase as GamePhase] ?? phase, round: roundNumber })}
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                 {executionStatus && (
                   <Chip
-                    label={EXECUTION_LABELS[executionStatus]}
+                    label={L.EXECUTION_LABELS[executionStatus]}
                     size="small"
                     color={
                       executionStatus === 'failed' || executionStatus === 'recovery_blocked'
@@ -104,7 +107,7 @@ export default function GameCard({
                         : 'default'
                     }
                     variant="outlined"
-                    title={recoveryBlockLabel(recoveryBlockCode) ?? undefined}
+                    title={L.recoveryBlockLabel(recoveryBlockCode) ?? undefined}
                   />
                 )}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -135,7 +138,7 @@ export default function GameCard({
               size="small"
               color={executionStatus === 'recovery_blocked' || executionStatus === 'failed' ? 'error' : 'warning'}
               disabled={controlBusy || !recoverable}
-              title={!recoverable ? recoveryBlockLabel(recoveryBlockCode) ?? '此对局无法恢复' : undefined}
+              title={!recoverable ? L.recoveryBlockLabel(recoveryBlockCode) ?? t('game.recoverImpossible') : undefined}
               onClick={(event) => {
                 event.stopPropagation();
                 onRecover();
@@ -143,11 +146,11 @@ export default function GameCard({
               startIcon={<RestartAltIcon fontSize="small" />}
               sx={{ py: 0.25, px: 1, minWidth: 0, fontSize: '0.75rem', whiteSpace: 'nowrap' }}
             >
-              {executionStatus === 'recovery_blocked' ? '重试恢复' : '恢复对局'}
+              {executionStatus === 'recovery_blocked' ? t('game.retryRecover') : t('game.recoverGame')}
             </Button>
           )}
           <IconButton
-            aria-label="对局操作"
+            aria-label={t('lobby.gameActions')}
             onClick={(event) => setMenuEl(event.currentTarget)}
           >
             <MoreVertIcon />
@@ -159,12 +162,12 @@ export default function GameCard({
           >
             {executionStatus === 'running' && onPause && (
               <MenuItem disabled={controlBusy} onClick={() => { setMenuEl(null); onPause(); }}>
-                <PauseCircleIcon fontSize="small" sx={{ mr: 1 }} />暂停执行
+                <PauseCircleIcon fontSize="small" sx={{ mr: 1 }} />{t('lobby.pauseExecution')}
               </MenuItem>
             )}
             {executionStatus === 'paused' && onResume && (
               <MenuItem disabled={controlBusy} onClick={() => { setMenuEl(null); onResume(); }}>
-                <PlayCircleIcon fontSize="small" sx={{ mr: 1 }} />继续执行
+                <PlayCircleIcon fontSize="small" sx={{ mr: 1 }} />{t('lobby.resumeExecution')}
               </MenuItem>
             )}
             {(executionStatus === 'interrupted'
@@ -172,18 +175,18 @@ export default function GameCard({
               || executionStatus === 'recovery_blocked') && onRecover && (
               <MenuItem
                 disabled={controlBusy || !recoverable}
-                title={!recoverable ? recoveryBlockLabel(recoveryBlockCode) ?? '此对局无法恢复' : undefined}
+                title={!recoverable ? L.recoveryBlockLabel(recoveryBlockCode) ?? t('game.recoverImpossible') : undefined}
                 onClick={() => { setMenuEl(null); onRecover(); }}
               >
                 <RestartAltIcon fontSize="small" sx={{ mr: 1 }} />
-                {executionStatus === 'recovery_blocked' ? '重试恢复' : '恢复对局'}
+                {executionStatus === 'recovery_blocked' ? t('game.retryRecover') : t('game.recoverGame')}
               </MenuItem>
             )}
-            <MenuItem onClick={() => { setMenuEl(null); onRename(); }}>重命名</MenuItem>
+            <MenuItem onClick={() => { setMenuEl(null); onRename(); }}>{t('lobby.rename')}</MenuItem>
             {onMove && (
-              <MenuItem onClick={() => { setMenuEl(null); onMove(); }}>移动到文件夹</MenuItem>
+              <MenuItem onClick={() => { setMenuEl(null); onMove(); }}>{t('lobby.moveToFolder')}</MenuItem>
             )}
-            <MenuItem onClick={() => { setMenuEl(null); onDelete(); }}>删除</MenuItem>
+            <MenuItem onClick={() => { setMenuEl(null); onDelete(); }}>{t('lobby.delete')}</MenuItem>
           </Menu>
         </Box>
       </Box>
