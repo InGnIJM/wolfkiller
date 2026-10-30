@@ -75,3 +75,11 @@ test_simple.py
 # Role portraits are self-made art and ship with the repository. `card-back.webp`
 # stays tracked too: a fresh clone must render something even before portraits
 # are generated.
+
+# Post-training artifacts (post_training/)
+# Exported datasets are large and fully regenerable from backend/data via
+# post_training/export_dataset.py; the script and its tests stay tracked.
+post_training/data/
+post_training/tmp/
+post_training/*.sqlite3
+post_training/.venv/
