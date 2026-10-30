@@ -1,14 +1,16 @@
 import { Box, Typography } from '@mui/material';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 
 import type { SeatModelInfo } from '../../store/seatModels';
 import RolePortrait from '../shared/RolePortrait';
 import { providerProfileLabel } from '../models/providerProfiles';
 import { BACKDROP, BLOOD_MOON, CANVAS, HAIRLINE, INK, SHADOW } from '../../theme/tokens';
 
-function campLabel(camp?: string): string | undefined {
-  if (camp === 'werewolf') return '狼人阵营';
-  if (camp === 'good') return '好人阵营';
-  if (camp === 'third_party') return '第三方阵营';
+function campLabel(camp: string | undefined, t: TFunction): string | undefined {
+  if (camp === 'werewolf') return t('game.campWerewolf');
+  if (camp === 'good') return t('game.campGood');
+  if (camp === 'third_party') return t('game.campThird');
   return undefined;
 }
 
@@ -19,15 +21,17 @@ function statusLine(options: {
   isCurrentSpeaker: boolean;
   voteTarget?: number | null;
   badgeSide?: 'on' | 'off';
-}): string {
-  const parts = [options.isAlive ? '存活' : '出局'];
-  if (options.isAlive && options.canVote === false) parts.push('无投票权');
-  if (options.badgeSide === 'on') parts.push('警上');
-  if (options.badgeSide === 'off') parts.push('警下');
-  if (options.isSheriff) parts.push('警长');
-  if (options.isCurrentSpeaker) parts.push('发言中');
+}, t: TFunction): string {
+  const parts = [t(options.isAlive ? 'game.alive' : 'game.dead')];
+  if (options.isAlive && options.canVote === false) parts.push(t('game.noVoteRight'));
+  if (options.badgeSide === 'on') parts.push(t('game.onBadge'));
+  if (options.badgeSide === 'off') parts.push(t('game.offBadge'));
+  if (options.isSheriff) parts.push(t('game.sheriff'));
+  if (options.isCurrentSpeaker) parts.push(t('game.speaking'));
   if (options.voteTarget !== undefined) {
-    parts.push(options.voteTarget === null ? '弃权' : `→ ${options.voteTarget}号`);
+    parts.push(options.voteTarget === null
+      ? t('game.abstain')
+      : `→ ${t('game.seatNumber', { seat: options.voteTarget })}`);
   }
   return parts.join(' · ');
 }
@@ -68,7 +72,8 @@ export default function SeatHoverCard({
   /** 目录里的规则条目；未揭晓或缺目录时不传。 */
   rules?: readonly string[];
 }) {
-  const identity = [roleLabel, campLabel(camp)].filter(Boolean).join(' · ');
+  const { t } = useTranslation();
+  const identity = [roleLabel, campLabel(camp, t)].filter(Boolean).join(' · ');
   const skillRules = roleId ? (rules ?? []).filter((rule) => rule.trim().length > 0) : [];
   const skillDescription = roleId ? description?.trim() : '';
   const showSkills = Boolean(skillDescription || skillRules.length > 0);
@@ -99,7 +104,7 @@ export default function SeatHoverCard({
           color: INK.primary,
         }}
       >
-        {roman} · {seat}号
+        {roman} · {t('game.seatNumber', { seat })}
       </Typography>
       {identity ? (
         <Typography
@@ -116,7 +121,7 @@ export default function SeatHoverCard({
       ) : null}
       {showSkills ? (
         <>
-          {skillDescription ? <HoverRow label="技能" value={skillDescription} /> : null}
+          {skillDescription ? <HoverRow label={t('game.skillLabel')} value={skillDescription} /> : null}
           {skillRules.length > 0 ? (
             <Box
               component="ul"
@@ -149,17 +154,17 @@ export default function SeatHoverCard({
         </>
       ) : null}
       <Box sx={{ my: 1, height: 1, bgcolor: HAIRLINE.soft }} />
-      <HoverRow label="状态" value={statusLine({
+      <HoverRow label={t('game.statusLabel')} value={statusLine({
         isAlive, canVote, isSheriff, isCurrentSpeaker, voteTarget, badgeSide,
-      })} />
-      <HoverRow label="模型" value={model?.name ?? '未知'} emphasize />
+      }, t)} />
+      <HoverRow label={t('game.modelLabel')} value={model?.name ?? t('game.unknown')} emphasize />
       {model ? (
         <>
           <Typography sx={{ mt: 0.15, pl: 4.5, fontSize: '0.66rem', color: INK.dim }}>
             {model.model_id}
           </Typography>
           <Typography sx={{ pl: 4.5, fontSize: '0.62rem', color: INK.faint }}>
-            {providerProfileLabel(model.provider_profile)}
+            {providerProfileLabel(model.provider_profile, t)}
           </Typography>
         </>
       ) : null}

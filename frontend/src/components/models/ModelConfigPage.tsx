@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Container, Stack, Typography } from '@mui/material';
 
@@ -9,6 +10,7 @@ import type { ModelConfig, ModelConfigInput, ModelTestResult } from '../../store
 import { BACKDROP } from '../../theme/tokens';
 
 export default function ModelConfigPage() {
+  const { t } = useTranslation();
   const { configs, loading, error, load, create, update, remove } = useModelConfigStore();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ModelConfig | null>(null);
@@ -60,13 +62,13 @@ export default function ModelConfigPage() {
     }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 400 }}>模型配置</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 400 }}>{t('models.title')}</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            创建游戏时可选；「环境默认 (.env)」始终可用
+            {t('models.subtitle')}
           </Typography>
         </Box>
         <Button variant="contained" disableElevation onClick={openCreate}>
-          新建模型配置
+          {t('models.create')}
         </Button>
       </Box>
 
@@ -75,10 +77,10 @@ export default function ModelConfigPage() {
       {!loading && configs.length === 0 && (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.disabled" sx={{ fontWeight: 400, mb: 1 }}>
-            暂无模型配置
+            {t('models.empty')}
           </Typography>
           <Typography variant="body2" color="text.disabled">
-            点击「新建模型配置」添加，或直接使用环境默认
+            {t('models.emptyHint')}
           </Typography>
         </Box>
       )}
@@ -101,35 +103,35 @@ export default function ModelConfigPage() {
                     {config.name}
                     {config.key_invalid && (
                       <Typography component="span" variant="body2" color="warning.main" sx={{ ml: 1 }}>
-                        密钥失效，请重输
+                        {t('models.keyInvalidBadge')}
                       </Typography>
                     )}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     {config.model_id} · {config.base_url}
                     {config.provider_profile && config.provider_profile !== 'auto'
-                      ? ` · ${providerProfileLabel(config.provider_profile)}`
+                      ? ` · ${providerProfileLabel(config.provider_profile, t)}`
                       : ''}
                     {config.temperature != null ? ` · temp ${config.temperature}` : ''}
                     {Object.keys(config.headers ?? {}).length > 0
-                      ? ` · ${Object.keys(config.headers).length} 个自定义请求头`
+                      ? ` · ${t('models.customHeadersCount', { count: Object.keys(config.headers).length })}`
                       : ''}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    API Key：{config.has_key ? config.api_key_masked : '未设置'}
+                    {t('models.apiKeyLabel')}{config.has_key ? config.api_key_masked : t('models.keyNotSet')}
                   </Typography>
                 </Box>
                 <Stack direction="row" spacing={1}>
-                  <Button size="small" color="inherit" onClick={() => void handleTest(config)}>测试</Button>
-                  <Button size="small" color="inherit" onClick={() => openEdit(config)}>编辑</Button>
-                  <Button size="small" color="inherit" onClick={() => void remove(config.id)}>删除</Button>
+                  <Button size="small" color="inherit" onClick={() => void handleTest(config)}>{t('models.test')}</Button>
+                  <Button size="small" color="inherit" onClick={() => openEdit(config)}>{t('models.edit')}</Button>
+                  <Button size="small" color="inherit" onClick={() => void remove(config.id)}>{t('common.delete')}</Button>
                 </Stack>
               </Box>
               {result && (
                 result.ok ? (
-                  <Alert severity="success" sx={{ mt: 1 }}>连接成功（{result.latency_ms}ms）</Alert>
+                  <Alert severity="success" sx={{ mt: 1 }}>{t('models.testOk', { ms: result.latency_ms })}</Alert>
                 ) : (
-                  <Alert severity="error" sx={{ mt: 1 }}>连接失败：{result.error}</Alert>
+                  <Alert severity="error" sx={{ mt: 1 }}>{t('models.testFail', { error: result.error })}</Alert>
                 )
               )}
             </Box>

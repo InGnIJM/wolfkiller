@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useState } from 'react';
 import {
   Button, Dialog, DialogActions, DialogContent, DialogTitle,
@@ -38,13 +40,13 @@ function headerRowsFrom(headers: Record<string, string> | undefined): HeaderRow[
   return entries.map(([key, value]) => ({ key, value }));
 }
 
-function headerRowError(row: HeaderRow, duplicate: boolean): string {
+function headerRowError(row: HeaderRow, duplicate: boolean, t: TFunction): string {
   const key = row.key.trim();
-  if (!key) return '名称必填';
-  if (!HEADER_NAME_PATTERN.test(key)) return '名称含非法字符';
-  if (RESERVED_HEADERS.has(key.toLowerCase())) return '该请求头由系统管理，不能自定义';
-  if (/[\r\n\0]/.test(row.value)) return '值不能包含换行';
-  if (duplicate) return '名称重复';
+  if (!key) return t('models.nameRequired');
+  if (!HEADER_NAME_PATTERN.test(key)) return t('models.headerNameInvalid');
+  if (RESERVED_HEADERS.has(key.toLowerCase())) return t('models.headerReserved');
+  if (/[\r\n\0]/.test(row.value)) return t('models.headerValueNewline');
+  if (duplicate) return t('models.headerDuplicate');
   return '';
 }
 
@@ -56,6 +58,7 @@ interface Props {
 }
 
 export default function ModelConfigDialog({ open, initial, onClose, onSave }: Props) {
+  const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? '');
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? '');
   const [modelId, setModelId] = useState(initial?.model_id ?? '');
@@ -74,18 +77,18 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   const [testing, setTesting] = useState(false);
   const [touched, setTouched] = useState(false);
 
-  const nameError = !name.trim() ? '名称必填' : '';
+  const nameError = !name.trim() ? t('models.nameRequired') : '';
   const urlError = !/^https?:\/\//.test(baseUrl.trim())
-    ? '必须以 http:// 或 https:// 开头'
+    ? t('models.baseUrlScheme')
     : '';
-  const modelError = !modelId.trim() ? '模型 ID 必填' : '';
+  const modelError = !modelId.trim() ? t('models.modelIdRequired') : '';
   const duplicateKeys = new Set(
     headerRows
       .map((row) => row.key.trim().toLowerCase())
       .filter((key, index, keys) => Boolean(key) && keys.indexOf(key) !== index),
   );
   const headerErrors = headerRows.map((row) =>
-    headerRowError(row, duplicateKeys.has(row.key.trim().toLowerCase())),
+    headerRowError(row, duplicateKeys.has(row.key.trim().toLowerCase()), t),
   );
   const headersError = headerErrors.some(Boolean);
   const tooManyHeaders = headerRows.length > MAX_HEADER_ROWS;
@@ -177,11 +180,11 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{initial ? '编辑模型配置' : '新建模型配置'}</DialogTitle>
+      <DialogTitle>{t(initial ? 'models.editTitle' : 'models.createTitle')}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
-            label="名称"
+            label={t('models.nameLabel')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onBlur={() => setTouched(true)}
@@ -192,7 +195,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
           />
           <TextField
             select
-            label="接口协议"
+            label={t('models.protocolLabel')}
             value={providerProfile}
             onChange={(e) => {
               const next = e.target.value;
@@ -204,14 +207,14 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             slotProps={{ select: { native: true } }}
             helperText={
               isAnthropic
-                ? 'Anthropic Messages API：Base URL 不含 /v1；temperature 会被截断到 0~1'
-                : '自动识别仅支持官方域名；中转站请手动选择协议'
+                ? t('models.anthropicHint')
+                : t('models.autoHint')
             }
             size="small"
             fullWidth
           >
             {PROVIDER_PROFILE_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
+              <option key={option.id} value={option.id}>{t(option.labelKey)}</option>
             ))}
           </TextField>
           <TextField
@@ -229,7 +232,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             fullWidth
           />
           <TextField
-            label="模型 ID"
+            label={t('models.modelIdLabel')}
             placeholder={isAnthropic ? 'claude-sonnet-4-5' : 'deepseek-v4-flash'}
             value={modelId}
             onChange={(e) => {
@@ -243,7 +246,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             fullWidth
           />
           <TextField
-            label={initial?.has_key ? 'API Key（留空 = 保留原 key）' : 'API Key'}
+            label={t(initial?.has_key ? 'models.apiKeyKeep' : 'models.apiKey')}
             type="password"
             value={apiKey}
             onChange={(e) => {
@@ -258,12 +261,12 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             onClick={() => setShowAdvanced((v) => !v)}
             sx={{ alignSelf: 'flex-start', cursor: 'pointer', bgcolor: 'transparent', border: 'none', color: 'primary.main', p: 0 }}
           >
-            {showAdvanced ? '▾ 高级选项' : '▸ 高级选项（可选）'}
+            {t(showAdvanced ? 'models.advancedShow' : 'models.advancedHide')}
           </Typography>
           {showAdvanced && (
             <>
               <TextField
-                label="Temperature（可选，0~2）"
+                label={t('models.temperatureLabel')}
                 type="number"
                 value={temperature}
                 onChange={(e) => setTemperature(e.target.value)}
@@ -272,7 +275,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                 fullWidth
               />
               <TextField
-                label="严格模式地址（可选，留空按厂商自动推导）"
+                label={t('models.strictUrlLabel')}
                 value={strictUrl}
                 onChange={(e) => {
                   setStrictUrl(e.target.value);
@@ -283,7 +286,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
               />
               <Stack spacing={1}>
                 <Typography variant="body2" color="text.secondary">
-                  自定义请求头（可选）
+                  {t('models.customHeaders')}
                 </Typography>
                 {headerRows.map((row, index) => (
                   <Stack
@@ -293,7 +296,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                     sx={{ alignItems: 'flex-start' }}
                   >
                     <TextField
-                      label="名称"
+                      label={t('models.nameLabel')}
                       value={row.key}
                       onChange={(e) => updateHeaderRow(index, { key: e.target.value })}
                       onBlur={() => setTouched(true)}
@@ -301,18 +304,18 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                       helperText={touched ? headerErrors[index] : ''}
                       size="small"
                       fullWidth
-                      slotProps={{ htmlInput: { 'aria-label': '请求头名称' } }}
+                      slotProps={{ htmlInput: { 'aria-label': t('models.headerNameAria') } }}
                     />
                     <TextField
-                      label="值"
+                      label={t('models.headerValue')}
                       value={row.value}
                       onChange={(e) => updateHeaderRow(index, { value: e.target.value })}
                       size="small"
                       fullWidth
-                      slotProps={{ htmlInput: { 'aria-label': '请求头值' } }}
+                      slotProps={{ htmlInput: { 'aria-label': t('models.headerValueAria') } }}
                     />
                     <IconButton
-                      aria-label={`删除请求头 ${index + 1}`}
+                      aria-label={t('models.deleteHeader', { index: index + 1 })}
                       onClick={() => removeHeaderRow(index)}
                       size="small"
                       sx={{ mt: 0.5, color: 'text.secondary' }}
@@ -327,11 +330,11 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                   size="small"
                   sx={{ alignSelf: 'flex-start' }}
                 >
-                  添加请求头
+                  {t('models.addHeader')}
                 </Button>
                 {tooManyHeaders && (
                   <Typography variant="body2" color="error.main">
-                    最多 {MAX_HEADER_ROWS} 个请求头
+                    {t('models.maxHeaders', { max: MAX_HEADER_ROWS })}
                   </Typography>
                 )}
               </Stack>
@@ -343,13 +346,13 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
               color={testResult.ok ? 'success.main' : 'error.main'}
             >
               {testResult.ok
-                ? `连接成功（${testResult.latency_ms}ms）`
-                : `连接失败：${testResult.error}`}
+                ? t('models.testOk', { ms: testResult.latency_ms })
+                : t('models.testFail', { error: testResult.error })}
             </Typography>
           )}
           {!tested && !hasErrors && (
             <Typography variant="body2" color="text.secondary">
-              保存前需通过连接测试
+              {t('models.testBeforeSave')}
             </Typography>
           )}
         </Stack>
@@ -360,16 +363,16 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
           onClick={() => void handleTest()}
           disabled={testing || hasErrors}
         >
-          测试连接
+          {t('models.testConnection')}
         </Button>
-        <Button color="inherit" onClick={onClose}>取消</Button>
+        <Button color="inherit" onClick={onClose}>{t('common.cancel')}</Button>
         <Button
           variant="contained"
           disableElevation
           onClick={() => void handleSave()}
           disabled={!canSave}
         >
-          保存
+          {t('models.save')}
         </Button>
       </DialogActions>
     </Dialog>

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import i18n from '../../../i18n';
 import {
   PROVIDER_PROFILE_OPTIONS, isProviderProfileId, providerProfileLabel,
 } from '../providerProfiles';
+
+const t = i18n.t.bind(i18n);
 
 describe('providerProfiles', () => {
   it('exposes the OpenCode profiles', () => {
@@ -12,13 +15,13 @@ describe('providerProfiles', () => {
     ]);
     expect(isProviderProfileId('opencode')).toBe(true);
     expect(isProviderProfileId('opencode-go')).toBe(true);
-    expect(providerProfileLabel('opencode')).toBe('OpenCode Zen（自动附带 x-opencode-session）');
-    expect(providerProfileLabel('opencode-go')).toBe('OpenCode Go（自动附带 x-opencode-session）');
+    expect(providerProfileLabel('opencode', t)).toBe('OpenCode Zen（自动附带 x-opencode-session）');
+    expect(providerProfileLabel('opencode-go', t)).toBe('OpenCode Go（自动附带 x-opencode-session）');
   });
 
   it('exposes the Responses dialect profile', () => {
     expect(isProviderProfileId('openai-responses')).toBe(true);
-    expect(providerProfileLabel('openai-responses')).toBe('OpenAI Responses API（/responses）');
+    expect(providerProfileLabel('openai-responses', t)).toBe('OpenAI Responses API（/responses）');
     expect(
       PROVIDER_PROFILE_OPTIONS.find((o) => o.id === 'openai-responses')?.baseUrlPlaceholder,
     ).toBe('https://api.openai.com/v1');
@@ -34,6 +37,6 @@ describe('providerProfiles', () => {
   it('rejects unknown profile ids', () => {
     expect(isProviderProfileId('opencode-zen')).toBe(false);
     expect(isProviderProfileId('')).toBe(false);
-    expect(providerProfileLabel('mystery')).toBe('mystery');
+    expect(providerProfileLabel('mystery', t)).toBe('mystery');
   });
 });
