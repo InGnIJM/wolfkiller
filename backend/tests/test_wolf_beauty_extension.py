@@ -86,11 +86,11 @@ def context(
 
 def revenge_context(
     *, reason: str = "exile", alive: bool = False, last_charmed: object = 3,
-    target: int = 1,
+    target: int = 1, alive_seats: object = (2, 3),
 ) -> ActionContext:
     contract = WOLF_BEAUTY_REVENGE_CONTRACT
     return ActionContext(
-        "g", 7, {"alive_seats": (2, 3), "last_charmed": last_charmed},
+        "g", 7, {"alive_seats": alive_seats, "last_charmed": last_charmed},
         config_version="a" * 64, contract_id=contract.contract_id,
         contract_version=contract.schema_version, contract_digest=contract.stable_digest(),
         round_number=2, phase="vote_resolution", window_id="w",
@@ -313,6 +313,21 @@ def test_revenge_stays_silent_for_the_forbidden_and_unrelated_cases() -> None:
         replace(revenge_context(), source_event_id=None, trigger_event=None)) == ()
     assert react_wolf_beauty_revenge(revenge_context(last_charmed="3")) == ()
     assert react_wolf_beauty_revenge(revenge_context(last_charmed=0)) == ()
+
+
+def test_revenge_skips_a_charmed_seat_that_is_already_gone() -> None:
+    """A charmed seat that died before the verdict cannot follow anyone out.
+
+    The write boundary rejects a dead target and a pure react has no fallback,
+    so this used to be fatal (the 2026-09-29 ``fd6e9d73`` failure: the charmed
+    seat 4 was killed at night, the Wolf Beauty was exiled the next day).
+    """
+    gone = revenge_context(last_charmed=4)
+    assert wolf_beauty_revenge_applicable(gone) is False
+    assert react_wolf_beauty_revenge(gone) == ()
+    # A malformed fact set is treated as "nobody is on the table".
+    assert wolf_beauty_revenge_applicable(
+        revenge_context(alive_seats=3)) is False
 
 
 def test_wolf_beauty_is_registered_in_both_registries() -> None:
