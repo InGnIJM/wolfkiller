@@ -440,3 +440,18 @@ def test_invoke_action_parses_json_hidden_in_thinking_blocks(anthropic_config):
 
     assert result.payload["target_seat"] == 4
     assert result.transport == "json_fallback"
+
+
+@pytest.mark.asyncio
+async def test_dedicated_aclose_leaves_the_shared_anthropic_pool_alive(relay_config):
+    """One-shot clients must own their httpx pool, not LangChain's shared one."""
+    seat = LLMClient(config=relay_config)
+    seat_http = seat.get_model()._client._client
+    one_shot = LLMClient(config=relay_config, dedicated_http_clients=True)
+    dedicated_http = one_shot.get_model()._client._client
+    assert dedicated_http is not seat_http
+    try:
+        await one_shot.aclose()
+        assert seat_http.is_closed is False
+    finally:
+        await seat.aclose()
