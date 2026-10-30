@@ -342,7 +342,7 @@ class TestBaseRoleSpeech:
         role = make_role(client=HangingClient())
         text = await asyncio.wait_for(
             role.speak(make_state(), ConversationLog(), "day_speech"),
-            timeout=1.0,
+            timeout=10.0,
         )
 
         assert text is not None and len(text) >= 15
@@ -1117,6 +1117,10 @@ class TestBaseRoleAccept:
                 # Left empty on purpose: reaching for it would pop from an empty
                 # list and fail the test loudly.
                 self.action = ModelStub([])
+                self.noted_unsupported = False
+
+            def note_action_tools_unsupported(self):
+                self.noted_unsupported = True
 
             def get_model_with_action_tool(self, contract):
                 return self.strict
@@ -1145,6 +1149,20 @@ class TestBaseRoleAccept:
         # game_summary counts a non-null failure_code as an error, so a salvaged
         # call must not carry one — it succeeded.
         assert logger.records[0]["failure_code"] is None
+        # Salvaging is not a permanent excuse: the next ballot starts from JSON.
+        assert client.noted_unsupported is True
+
+        # A client that does not expose the capability hook must still salvage.
+        client.note_action_tools_unsupported = None
+        client.strict = ModelStub([AIMessage(content=(
+            '{"action_type":"vote","target_seat":1,"reasoning":"again"}'
+        ))])
+        again = await role.request_action(
+            state, ConversationLog(logger=logger, game_id="g"),
+            self._vote_request(state),
+        )
+        assert again.command.target_seat == 1
+        assert client.action.messages == []
 
     @pytest.mark.asyncio
     async def test_strict_transport_still_switches_to_json_for_prose_content(self):

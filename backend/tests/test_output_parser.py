@@ -153,16 +153,23 @@ class TestOutputParser:
         assert command.action_type == "explode"
         assert command.target_seat is None
 
-    def test_parse_action_payload_still_rejects_a_seat_on_a_no_target_action(
+    def test_parse_action_payload_ignores_a_seat_on_a_no_target_action(
         self, no_target_contract
     ):
-        with pytest.raises(ToolCallError) as error:
-            OutputParser().parse_action_payload(
-                {"action_type": "explode", "target_seat": 3, "reasoning": "带走 3 号"},
-                no_target_contract,
-            )
+        """A redundant seat on a legal no-target action is inert, not a failure.
 
-        assert error.value.code == "target_forbidden"
+        The model cannot make ``explode`` take a passenger by naming one; the
+        contract is the authority. Failing here cost a full repair round-trip
+        in the 2026-10-27 game, while the ``ActionValidator`` still rejects a
+        hand-built command that names a seat (see test_action_validator.py).
+        """
+        command = OutputParser().parse_action_payload(
+            {"action_type": "explode", "target_seat": 3, "reasoning": "带走 3 号"},
+            no_target_contract,
+        )
+
+        assert command.action_type == "explode"
+        assert command.target_seat is None
 
     def test_parse_action_payload_coerces_string_values_per_schema(self, werewolf_contract):
         command = OutputParser().parse_action_payload(
@@ -217,18 +224,27 @@ class TestOutputParser:
         with pytest.raises(ToolCallError):
             OutputParser().parse_action_payload(payload, werewolf_contract)
 
-    @pytest.mark.parametrize(
-        "payload",
-        [
-            {"action_type": "kill", "target_seat": None, "reasoning": "x"},
-            {"action_type": "pass", "target_seat": 3, "reasoning": "x"},
-        ],
-    )
-    def test_parse_action_payload_rejects_contract_invalid_target_usage(
-        self, werewolf_contract, payload
+    def test_parse_action_payload_still_requires_a_target_for_a_target_action(
+        self, werewolf_contract
     ):
-        with pytest.raises(ToolCallError):
-            OutputParser().parse_action_payload(payload, werewolf_contract)
+        with pytest.raises(ToolCallError) as error:
+            OutputParser().parse_action_payload(
+                {"action_type": "kill", "target_seat": None, "reasoning": "x"},
+                werewolf_contract,
+            )
+
+        assert error.value.code == "target_required"
+
+    def test_parse_action_payload_ignores_a_seat_on_a_pass(
+        self, werewolf_contract
+    ):
+        command = OutputParser().parse_action_payload(
+            {"action_type": "pass", "target_seat": 3, "reasoning": "x"},
+            werewolf_contract,
+        )
+
+        assert command.action_type == "pass"
+        assert command.target_seat is None
 
     def test_parse_tool_action_requires_the_contract_tool_name(self, werewolf_contract):
         with pytest.raises(ToolCallError, match="tool name"):
