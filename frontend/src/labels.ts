@@ -422,6 +422,12 @@ export const WINNER_LABELS: Record<WinningCamp, string> = {
 };
 
 /** 阵营名（结算弹窗标题）。 */
+export const CAMP_LABELS: Record<WinningCamp, string> = {
+  good: '好人',
+  werewolf: '狼人',
+  third_party: '第三方',
+};
+
 export const WINNING_CAMP_LABELS: Record<WinningCamp, string> = {
   good: '好人阵营',
   werewolf: '狼人阵营',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { roleName } from '../../../labels';
 import { rankOf, roleMetaFor, ROLE_META, ROLE_ORDER } from '../roleMeta';
+import { ROLE_NAME_LABELS as L_ROLE_NAMES } from '../../../labels';
 import { CARD_BACK, ROLE_ART_BY_ID, ROLE_COLORS, roleArt } from '../../../theme/tokens';
 import type { RoleColorKey } from '../../../theme/tokens';
 
@@ -60,8 +61,8 @@ describe('roleMeta', () => {
 
   it('maps every role id to its label, colors, and its own portrait', () => {
     for (const [roleId, key, label] of ROLES) {
+      expect(L_ROLE_NAMES[roleId]).toBe(label);
       expect(roleMetaFor(roleId)).toEqual({
-        label,
         color: ROLE_COLORS[key].color,
         bg: ROLE_COLORS[key].bg,
         // 立绘按角色 id 取，不再按配色键 —— 共用配色键的角色不再共用一张图。

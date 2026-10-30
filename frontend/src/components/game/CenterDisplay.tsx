@@ -14,7 +14,7 @@ const fadeIn = keyframes`
 `;
 
 function campLabel(camp: string, L: LabelsModule): string {
-  return camp in L.WINNING_CAMP_LABELS ? L.WINNING_CAMP_LABELS[camp as WinningCamp] : camp;
+  return camp in L.CAMP_LABELS ? L.CAMP_LABELS[camp as WinningCamp] : camp;
 }
 
 function deathCauseLabel(

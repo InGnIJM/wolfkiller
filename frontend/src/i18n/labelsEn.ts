@@ -362,6 +362,12 @@ export const WINNER_LABELS: Record<WinningCamp, string> = {
   third_party: 'Third party wins',
 };
 
+export const CAMP_LABELS: Record<WinningCamp, string> = {
+  good: 'Good',
+  werewolf: 'Werewolves',
+  third_party: 'Third party',
+};
+
 export const WINNING_CAMP_LABELS: Record<WinningCamp, string> = {
   good: 'Good camp',
   werewolf: 'Werewolf camp',

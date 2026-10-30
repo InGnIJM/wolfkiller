@@ -148,7 +148,6 @@ export const en: typeof zh = {
     revealOff: 'Closed cards: roles are not revealed when a player is out.',
     replayFromStart: 'Replay from start',
     viewGame: 'View game',
-  },
     listJoin: ', ',
     evUnknown: 'unknown',
     evExplodeInElection: 'election self-destruct',
@@ -301,6 +300,7 @@ export const en: typeof zh = {
     hpDayUnit: 'Day {{round}}',
     hpNightUnit: 'Night {{round}}',
     memoryLoadFailed: 'Failed to load memory data',
+  },
   review: {
     title: 'Post-game review',
     regenerate: 'Regenerate',

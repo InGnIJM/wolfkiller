@@ -150,7 +150,6 @@ export const zh = {
     revealOff: '身份不公开：玩家出局时不会向场上公开身份。',
     replayFromStart: '从头播放',
     viewGame: '查看对局',
-  },
     listJoin: '、',
     evUnknown: '未明',
     evExplodeInElection: '竞选自爆',
@@ -303,6 +302,7 @@ export const zh = {
     hpDayUnit: '第{{round}}天',
     hpNightUnit: '第{{round}}夜',
     memoryLoadFailed: '记忆数据加载失败',
+  },
   review: {
     title: '赛后复盘',
     regenerate: '重新生成',

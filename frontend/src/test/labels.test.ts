@@ -19,7 +19,7 @@ describe('文案表本身', () => {
       (entry): entry is [string, Record<string, string>] => typeof entry[1] === 'object',
     );
 
-    expect(tables).toHaveLength(21);
+    expect(tables).toHaveLength(23);
     expect(tables.filter(([, table]) => Object.keys(table).length === 0)).toEqual([]);
   });
 });
