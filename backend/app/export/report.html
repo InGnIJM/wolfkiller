@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="WolfKiller game export">
+<title>__TITLE__</title>
+<style>
+:root{
+  --bg:#141417; --bg2:#1D0E13; --surface:#1D1D23; --surface2:#29151C;
+  --line:#3a2a31; --line2:#2b2b33;
+  --text:#F2E9DC; --dim:#B3A89A; --faint:#7D7468;
+  --crimson:#D04564; --crimson-deep:#A62E4B; --crimson-dark:#6B1F36;
+  --gold:#D4A853; --gold-lt:#E8C887;
+  --wolf:#E5484D; --witch:#B08BE0; --seer:#7FB4D9; --hunter:#D9A441;
+  --villager:#93B58C; --guard:#74ABA3; --knight:#8FA8D9; --beauty:#D96A9A;
+  --good:#7CB87C; --third:#C9A0DC;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:linear-gradient(180deg,var(--bg2),var(--bg) 400px) fixed;
+  background-color:var(--bg);
+  color:var(--text);
+  font:14px/1.75 "Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+}
+.wrap{max-width:960px;margin:0 auto;padding:0 20px 120px}
+a{color:var(--gold-lt);text-decoration:none}
+
+/* ── 头部 ── */
+header.top{
+  padding:34px 0 18px;border-bottom:1px solid var(--line);margin-bottom:18px;
+  display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;
+}
+.brand h1{
+  margin:0;font:700 26px/1.2 "Cinzel","Noto Serif SC",serif;letter-spacing:3px;
+  background:linear-gradient(180deg,#F7EFE2,#CAA96A);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.brand .sub{color:var(--faint);font-size:11px;letter-spacing:5px;margin-top:2px}
+.gamename{font-size:17px;font-weight:600;color:var(--text)}
+.meta{color:var(--dim);font-size:12.5px;margin-top:4px}
+.meta b{color:var(--gold-lt);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:99px;
+  border:1px solid var(--line);color:var(--dim);font-size:11.5px;letter-spacing:.5px;
+  background:rgba(255,255,255,.02);
+}
+.chip.win{border-color:var(--crimson-deep);color:#fff;background:linear-gradient(180deg,var(--crimson),var(--crimson-deep));font-weight:600}
+.chip.run{border-color:var(--gold);color:var(--gold-lt)}
+.spacer{flex:1}
+button.ui{
+  cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--dim);
+  border-radius:8px;padding:6px 14px;font-size:12.5px;letter-spacing:1px;
+}
+button.ui:hover{border-color:var(--crimson);color:var(--text)}
+button.ui.on{border-color:var(--gold);color:var(--gold-lt)}
+
+/* ── 轮次导航 ── */
+nav.rounds{
+  position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:4px;
+  padding:8px 0;margin-bottom:14px;
+  background:rgba(20,20,23,.92);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line2);
+}
+nav.rounds a{
+  padding:3px 11px;border-radius:6px;font-size:12px;color:var(--dim);
+  border:1px solid transparent;
+}
+nav.rounds a:hover{color:var(--gold-lt);border-color:var(--line)}
+
+/* ── 区块 ── */
+section{margin:0 0 26px}
+h2.sec{
+  font:600 15px/1 Cinzel,"Noto Serif SC",serif;letter-spacing:3px;color:var(--gold);
+  margin:0 0 12px;display:flex;align-items:center;gap:10px;
+}
+h2.sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+.card{
+  background:var(--surface);border:1px solid var(--line2);border-radius:10px;
+  padding:14px 16px;
+}
+
+/* ── 阵容表 ── */
+table.roster{width:100%;border-collapse:collapse;font-size:13px}
+.roster th{
+  text-align:left;color:var(--faint);font-weight:500;font-size:11px;letter-spacing:2px;
+  padding:6px 10px;border-bottom:1px solid var(--line);
+}
+.roster td{padding:7px 10px;border-bottom:1px solid var(--line2);vertical-align:middle}
+.roster tr.dead td{color:var(--faint)}
+.roster tr.dead .rl{opacity:.55}
+.seatno{display:inline-block;min-width:26px;font-weight:700;color:var(--gold-lt)}
+.rl{font-weight:600}
+.camp-pill{display:inline-block;padding:0 8px;border-radius:6px;font-size:11px;border:1px solid}
+.camp-good{color:var(--good);border-color:rgba(124,184,124,.4)}
+.camp-werewolf{color:var(--wolf);border-color:rgba(229,72,77,.4)}
+.camp-third_party{color:var(--third);border-color:rgba(201,160,220,.4)}
+.sheriff-dot{color:var(--gold);font-size:11px;margin-left:4px}
+.fate-alive{color:var(--good)}
+.fate-dead{color:var(--faint)}
+.modelcell{color:var(--faint);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── 复盘 ── */
+.rev-grid{display:grid;gap:12px}
+.rev-card{background:var(--surface);border:1px solid var(--line2);border-radius:10px;padding:12px 16px}
+.rev-card h4{margin:0 0 6px;font-size:12px;letter-spacing:2px;color:var(--gold);font-weight:600}
+.rev-card p{margin:0;color:var(--text)}
+.rev-mvp b{color:var(--gold-lt)}
+.rev-item{padding:8px 0;border-bottom:1px dashed var(--line2)}
+.rev-item:last-child{border-bottom:0}
+.rev-item .tt{font-weight:600}
+.rev-item .dd{color:var(--dim);font-size:13px;margin-top:2px}
+.rev-round{display:inline-block;min-width:0;padding:0 8px;margin-right:8px;border-radius:5px;background:var(--surface2);color:var(--gold-lt);font-size:11px}
+
+/* ── 统计 ── */
+dl.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 18px;margin:0}
+dl.stats div{background:var(--surface);border:1px solid var(--line2);border-radius:8px;padding:10px 14px}
+dl.stats dt{color:var(--faint);font-size:11px;letter-spacing:1px}
+dl.stats dd{margin:2px 0 0;font-size:16px;font-weight:700;color:var(--text)}
+dl.stats dd small{font-size:11px;color:var(--dim);font-weight:400}
+table.kinds{width:100%;border-collapse:collapse;margin-top:12px;font-size:12.5px}
+table.kinds td{padding:4px 10px;border-bottom:1px solid var(--line2);color:var(--dim)}
+table.kinds td:last-child{text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+
+/* ── 时间轴 ── */
+details.round{margin:0 0 14px}
+details.round>summary{
+  cursor:pointer;list-style:none;padding:9px 14px;border-radius:8px;
+  background:var(--surface2);border:1px solid var(--line);
+  font:600 14px/1.4 "Noto Serif SC",serif;letter-spacing:2px;color:var(--gold-lt);
+  display:flex;align-items:center;gap:8px;
+}
+details.round>summary::-webkit-details-marker{display:none}
+details.round>summary::before{content:"▸";color:var(--crimson);transition:transform .15s}
+details.round[open]>summary::before{transform:rotate(90deg)}
+details.round>summary:hover{border-color:var(--crimson-deep)}
+.rbody{border-left:2px solid var(--line);margin:6px 0 6px 18px;padding:6px 0 2px 16px}
+
+.seg{
+  margin:14px 0 8px;font-size:11px;letter-spacing:3px;color:var(--faint);
+  display:flex;align-items:center;gap:10px;
+}
+.seg::before,.seg::after{content:"";flex:1;height:1px;background:var(--line2)}
+
+.ev{display:flex;gap:10px;padding:5px 8px;border-radius:6px;align-items:baseline}
+.ev:hover{background:rgba(255,255,255,.025)}
+.ev .who{flex:0 0 auto;min-width:76px;font-weight:600;font-size:12.5px}
+.ev .bd{flex:1;min-width:0;color:var(--text);word-break:break-word}
+.ev .tag{flex:0 0 auto;font-size:10.5px;color:var(--faint);border:1px solid var(--line2);border-radius:5px;padding:0 6px;letter-spacing:1px}
+.ev.death .bd{color:var(--wolf);font-weight:600}
+.ev.sys .bd{color:var(--faint);font-size:12.5px}
+.ev.quote .bd{color:var(--dim)}
+.ev.quote .bd::before{content:"“";color:var(--faint)}
+.ev.quote .bd::after{content:"”";color:var(--faint)}
+.ev.god .who{color:var(--witch)}
+.ev.wolf .who{color:var(--wolf)}
+.ev.wolf .bd{color:#e8b9bc}
+.ev.vote .bd{color:var(--dim)}
+.ev.hl{background:rgba(208,69,100,.07);border-left:2px solid var(--crimson)}
+.sub-line{margin-top:2px;padding-left:0;color:var(--faint);font-size:12px}
+.sub-line .k{color:var(--dim)}
+.deg{color:var(--hunter);font-size:10.5px;border:1px solid rgba(217,164,65,.4);border-radius:5px;padding:0 6px;margin-left:6px;letter-spacing:1px}
+
+.narr{
+  margin:8px 0;padding:10px 14px;border-radius:8px;text-align:center;
+  background:linear-gradient(180deg,rgba(41,21,28,.6),rgba(29,29,35,.6));
+  border:1px solid var(--line);color:var(--dim);font-style:italic;
+}
+.narr .nt{display:block;color:var(--gold);font-style:normal;font-size:12px;letter-spacing:2px;margin-bottom:2px}
+.comm{
+  margin:10px 0;padding:12px 16px;border-radius:10px;
+  border:1px solid rgba(212,168,83,.35);background:rgba(212,168,83,.06);
+}
+.comm .cb{font-size:10.5px;letter-spacing:2px;color:var(--gold);border:1px solid rgba(212,168,83,.4);border-radius:5px;padding:0 8px;margin-right:8px}
+.comm .ct{font-weight:700;color:var(--gold-lt);margin:6px 0 3px}
+.comm .cx{color:var(--dim);font-size:13px}
+
+.finale{
+  margin:20px 0;padding:20px;border-radius:12px;text-align:center;
+  border:1px solid var(--crimson-deep);
+  background:linear-gradient(180deg,rgba(107,31,54,.35),rgba(29,21,28,.5));
+}
+.finale .fw{font:700 20px/1.3 "Noto Serif SC",serif;color:var(--gold-lt);letter-spacing:3px}
+.finale .fr{color:var(--dim);margin-top:6px;font-size:13px}
+.finale .fl{color:var(--faint);margin-top:4px;font-size:12px}
+
+details.fold{margin:4px 0}
+details.fold>summary{cursor:pointer;color:var(--faint);font-size:12px;letter-spacing:1px;padding:3px 8px}
+details.fold>summary:hover{color:var(--dim)}
+
+footer{margin-top:50px;padding-top:16px;border-top:1px solid var(--line2);color:var(--faint);font-size:11.5px;text-align:center;letter-spacing:1px}
+.to-top{position:fixed;right:22px;bottom:22px}
+
+@media (max-width:640px){
+  .ev{flex-wrap:wrap;gap:2px 10px}
+  .ev .who{min-width:0}
+}
+</style>
+</head>
+<body>
+<script id="export-data" type="application/json">__DATA__</script>
+<div class="wrap">
+  <header class="top" id="top"></header>
+  <nav class="rounds" id="nav"></nav>
+  <main id="app"></main>
+  <footer id="foot"></footer>
+</div>
+<button class="ui to-top" id="toTop" hidden>↑</button>
+<script>
+(function(){
+"use strict";
+var data = JSON.parse(document.getElementById('export-data').textContent);
+var LANG = 'zh';
+var players = {};
+(data.players||[]).forEach(function(p){ players[p.seat] = p; });
+
+function L(k){ var v = data.labels[LANG][k]; return v===undefined ? k : v; }
+function F(k,n){ return L(k).replace('{n}', n); }
+function el(tag, cls, text){ var e=document.createElement(tag); if(cls)e.className=cls; if(text!==undefined&&text!==null)e.textContent=String(text); return e; }
+function seatName(n){ return F('ui.seat', n); }
+function seatRole(n){ var p=players[n]; return p ? seatName(n)+'·'+roleName(p.role) : seatName(n); }
+function roleName(id){ var v=data.labels[LANG]['role.'+id]; return v===undefined ? (id||L('ui.unknown_role')) : v; }
+function campName(c){ return L('camp.'+c); }
+function deathName(c){ var v=data.labels[LANG]['death.'+c]; return v===undefined ? c : v; }
+function evName(t){ var v=data.labels[LANG]['ev.'+t]; return v===undefined ? t : v; }
+function joinSeats(list, fn){ var out=[]; (list||[]).forEach(function(s){ out.push(fn?fn(s):seatName(s)); }); return out.join('、'); }
+
+var NIGHT_TYPES = {night_action:1,night_thought:1,wolf_chat_message:1,wolf_vote:1,
+  witch_thought:1,seer_thought:1,dance_pool:1,mask_granted:1,wraith_illusion:1,
+  fragrance_bond:1,awakened_witch_assist_pick:1,awakened_witch_assist_chat:1,
+  awakened_witch_assist_vote:1,awakened_witch_poison_result:1};
+var ELECTION_TYPES = {sheriff_run:1,sheriff_withdraw:1,sheriff_vote:1,sheriff_elected:1};
+var SKIP_TYPES = {execution_state:1, speaking:1};
+var PHASE_SEG = {night:'night',sheriff_election:'election',dawn:'day',last_words:'day',
+  speech:'day',vote_casting:'day',vote_resolution:'day',game_over:'finale',
+  waiting:'meta',role_deal:'meta',error:'finale'};
+var SEG_LABEL = {night:'sec.night',election:'sec.election',day:'sec.day',finale:'sec.finale'};
+
+function segOf(ev){
+  if (NIGHT_TYPES[ev.event_type]) return 'night';
+  if (ELECTION_TYPES[ev.event_type]) return 'election';
+  if (ev.event_type==='winner') return 'finale';
+  if (ev.event_type==='phase') return PHASE_SEG[ev.payload.phase]||null;
+  if (ev.event_type==='game_initialized'||ev.event_type==='narration') return null;
+  return 'day';
+}
+
+/* ── 事件行渲染 ── */
+function who(n, role){ return el('span','who', role? seatRole(n) : seatName(n)); }
+function row(cls, whoEl, bdText){
+  var d=el('div','ev'+(cls?' '+cls:''));
+  if(whoEl)d.appendChild(whoEl);
+  var b=el('div','bd'); if(bdText!==undefined&&bdText!==null)b.textContent=bdText;
+  d.appendChild(b); return d;
+}
+function sub(d, key, value){
+  var s=el('div','sub-line');
+  s.appendChild(el('span','k',key+' '));
+  s.appendChild(document.createTextNode(value));
+  d.querySelector('.bd').appendChild(s); return d;
+}
+function degTag(p){ if(p&&p.degraded===true)return ' · '+L('ui.degraded'); return ''; }
+
+var RENDER = {
+  game_initialized:function(ev){
+    var g=data.game||{};var n=(data.players||[]).length;
+    return row('sys',null,evName('game_initialized')+' · '+n+' '+L('ui.players'));
+  },
+  narration:function(ev){
+    var d=el('div','narr');
+    if(ev.payload.title)d.appendChild(el('span','nt',ev.payload.title));
+    d.appendChild(document.createTextNode(ev.payload.text||''));
+    return d;
+  },
+  commentary:function(ev){
+    var p=ev.payload||{};
+    var d=el('div','comm');
+    var head=el('div');
+    head.appendChild(el('span','cb',L('beat.'+p.beat)));
+    if(p.title)head.appendChild(el('span','ct',p.title));
+    d.appendChild(head);
+    d.appendChild(el('div','cx',p.text||''));
+    return d;
+  },
+  speech:function(ev){
+    var p=ev.payload;
+    return row('quote',who(p.player_seat,true),p.text);
+  },
+  vote:function(ev){
+    var p=ev.payload;
+    return row('vote',who(p.voter_seat),
+      (p.target_seat==null?L('ui.abstain'):L('ui.to')+' '+seatRole(p.target_seat)));
+  },
+  vote_result:function(ev){
+    var p=ev.payload;var d=row('hl',null,
+      p.exiled_seat==null?L('ui.no_exile'):L('ui.exiled')+' '+seatRole(p.exiled_seat));
+    var parts=[];
+    if(p.counts&&typeof p.counts==='object'){
+      parts.push(L('ui.vote_counts')+' '+Object.keys(p.counts).map(function(k){return seatName(Number(k))+':'+p.counts[k];}).join(' '));
+    }
+    if(p.weighted_counts&&typeof p.weighted_counts==='object'){
+      parts.push(L('ui.weighted')+' '+Object.keys(p.weighted_counts).map(function(k){return seatName(Number(k))+':'+p.weighted_counts[k];}).join(' '));
+    }
+    if(parts.length)sub(d,'',parts.join(' · '));
+    return d;
+  },
+  technical_abstain:function(ev){
+    var p=ev.payload;
+    return row('sys',who(p.voter_seat),evName('technical_abstain')+' ('+ (p.failure_code||'') +')');
+  },
+  vote_rewound:function(ev){
+    return row('sys',who(ev.payload.seat),evName('vote_rewound'));
+  },
+  death:function(ev){
+    var p=ev.payload;
+    return row('death',el('span','who','☠'),
+      seatRole(p.player_seat)+' — '+deathName(p.cause));
+  },
+  night_action:function(ev){
+    var p=ev.payload;
+    var label=L('action.'+(p.action_type||''));
+    var actor=p.seat!=null?seatRole(p.seat):null;
+    var txt=(actor?actor+' ':'')+label+' '+(p.target_seat!=null?L('ui.to')+' '+seatName(p.target_seat):'');
+    var d=row('god',null,txt+degTag(p));
+    if(p.intended_seat!=null&&p.intended_seat!==p.target_seat)
+      sub(d,L('ui.intended'),seatName(p.intended_seat));
+    if(p.result)sub(d,'',L('check.'+p.result));
+    if(p.vote_counts&&typeof p.vote_counts==='object')
+      sub(d,L('ui.vote_counts'),Object.keys(p.vote_counts).map(function(k){return seatRole(Number(k))+':'+p.vote_counts[k];}).join(' '));
+    return d;
+  },
+  night_thought:function(ev){
+    var p=ev.payload;
+    var d=row('god',who(p.seat),L('thought.'+(p.action_type||''))+
+      (p.target_seat!=null?' '+L('ui.to')+' '+seatName(p.target_seat):'')+degTag(p));
+    if(p.reasoning)sub(d,L('ui.thoughts'),p.reasoning);
+    return d;
+  },
+  wolf_chat_message:function(ev){
+    var p=ev.payload;
+    var d=row('wolf quote',who(p.seat),p.text);
+    if(p.day_plan)sub(d,L('ui.day_plan'),p.day_plan);
+    return d;
+  },
+  wolf_vote:function(ev){
+    var p=ev.payload;
+    var d=row('wolf',who(p.seat),
+      (p.target_seat==null?L('ui.abstain'):L('ui.to')+' '+seatName(p.target_seat))+degTag(p));
+    if(p.reasoning)sub(d,L('ui.reasoning'),p.reasoning);
+    return d;
+  },
+  witch_thought:function(ev){
+    return row('god quote',who(ev.payload.seat),ev.payload.text);
+  },
+  seer_thought:function(ev){
+    return row('god quote',who(ev.payload.seat),ev.payload.text);
+  },
+  exile_cancelled:function(ev){
+    return row('hl',null,seatRole(ev.payload.target_seat)+' '+evName('exile_cancelled'));
+  },
+  self_explode:function(ev){
+    var p=ev.payload;
+    return row('hl',who(p.seat),evName('self_explode')+' '+L('ui.to')+' '+seatRole(p.target_seat));
+  },
+  crimson_explode:function(ev){
+    var p=ev.payload;
+    return row('hl',who(p.seat),evName('crimson_explode')+' · '+joinSeats(p.silenced_seats));
+  },
+  knight_duel:function(ev){
+    var p=ev.payload;
+    return row('hl',who(p.seat),evName('knight_duel')+' '+L('ui.to')+' '+seatRole(p.target_seat)+' · '+campName(p.camp));
+  },
+  wolf_beauty_charm:function(ev){
+    var p=ev.payload;
+    return row('',who(p.seat),evName('wolf_beauty_charm')+' '+(p.target_seat!=null?L('ui.to')+' '+seatName(p.target_seat):''));
+  },
+  wraith_illusion:function(ev){
+    var p=ev.payload;
+    return row('',who(p.seat),evName('wraith_illusion')+' '+(p.target_seat!=null?L('ui.to')+' '+seatName(p.target_seat):''));
+  },
+  fragrance_bond:function(ev){
+    var p=ev.payload;
+    return row('',who(p.seat),evName('fragrance_bond')+' · '+joinSeats(p.target_seats));
+  },
+  wolf_beauty_revenge:function(ev){
+    var p=ev.payload;
+    return row('death',who(p.seat),evName('wolf_beauty_revenge')+' '+L('ui.to')+' '+seatRole(p.target_seat)+'（'+deathName(p.cause)+'）');
+  },
+  dance_pool:function(ev){
+    var p=ev.payload;
+    return row('',who(p.seat),evName('dance_pool')+' · '+joinSeats(p.pool_seats));
+  },
+  mask_granted:function(ev){
+    var p=ev.payload;
+    return row('',who(p.seat),evName('mask_granted')+' '+L('ui.to')+' '+seatName(p.target_seat)+'（'+(p.in_pool?L('ui.in_pool'):L('ui.out_pool'))+'）');
+  },
+  awakened_witch_assist_pick:function(ev){
+    var p=ev.payload;
+    return row('god',null,evName('awakened_witch_assist_pick')+' '+L('ui.to')+' '+seatName(p.target_seat)+' · '+joinSeats(p.assistant_seats));
+  },
+  awakened_witch_assist_chat:function(ev){
+    var p=ev.payload;
+    return row('god quote',who(p.seat),p.text);
+  },
+  awakened_witch_assist_vote:function(ev){
+    var p=ev.payload;
+    var d=row('god',who(p.seat),L('vote.'+p.vote)+(p.target_seat!=null?' '+L('ui.to')+' '+seatName(p.target_seat):''));
+    if(p.reasoning)sub(d,L('ui.reasoning'),p.reasoning);
+    return d;
+  },
+  awakened_witch_poison_result:function(ev){
+    var p=ev.payload;
+    return row('god',null,evName('awakened_witch_poison_result')+' '+L('ui.to')+' '+seatName(p.target_seat)+' · '+L('result.'+p.result));
+  },
+  player_status:function(ev){
+    var p=ev.payload;
+    return row('sys',who(p.player_seat),evName('player_status')+'：'+L('status.'+p.status));
+  },
+  player_revealed:function(ev){
+    var p=ev.payload;
+    return row('hl',who(p.seat_number),roleName(p.role)+' · '+campName(p.camp));
+  },
+  sheriff_elected:function(ev){
+    var p=ev.payload;
+    return row('hl',null,p.seat==null?evName('sheriff_elected')+' · '+L('ui.no_exile'):seatRole(p.seat)+' '+evName('sheriff_elected')+'（'+p.reason+'）');
+  },
+  sheriff_badge:function(ev){
+    var p=ev.payload;
+    var txt=p.to_seat==null?seatRole(p.from_seat)+' '+evName('sheriff_badge')+'（撕徽）'
+      :seatRole(p.from_seat)+' '+evName('sheriff_badge')+' '+L('ui.to')+' '+seatRole(p.to_seat);
+    var d=row('sys',null,txt);
+    if(p.reasoning)sub(d,L('ui.reasoning'),p.reasoning);
+    return d;
+  },
+  sheriff_run:function(ev){
+    var p=ev.payload;
+    return row('sys',who(p.seat),L('choice.'+p.choice));
+  },
+  sheriff_withdraw:function(ev){
+    var p=ev.payload;
+    return row('sys',who(p.seat),L('choice.'+p.choice));
+  },
+  sheriff_vote:function(ev){
+    var p=ev.payload;
+    return row('vote',who(p.voter_seat),
+      (p.target_seat==null?L('ui.abstain'):L('ui.to')+' '+seatRole(p.target_seat))+' · '+L('choice.'+p.kind));
+  },
+  sheriff_side:function(ev){
+    var p=ev.payload;
+    return row('sys',who(p.seat),evName('sheriff_side')+' '+L('side.'+p.side));
+  },
+  winner:function(ev){
+    var p=ev.payload;
+    var d=el('div','finale');
+    d.appendChild(el('div','fw',L('winner.'+p.winning_camp)));
+    if(p.reason)d.appendChild(el('div','fr',L('win.'+p.reason)));
+    if(p.winners&&p.winners.length)
+      d.appendChild(el('div','fl',L('ui.winners')+'：'+joinSeats(p.winners,function(s){return seatRole(s);})));
+    return d;
+  }
+};
+
+function fallbackRow(ev){
+  var p=ev.payload||{};
+  var txt='';
+  try{txt=JSON.stringify(p);}catch(e){txt='';}
+  if(txt.length>160)txt=txt.slice(0,160)+'…';
+  return row('sys',null,evName(ev.event_type)+' '+txt);
+}
+
+/* ── 头 / 阵容 / 复盘 / 统计 ── */
+function renderHeader(){
+  var h=document.getElementById('top');h.textContent='';
+  var g=data.game||{};
+  var brand=el('div','brand');
+  brand.appendChild(el('h1',null,'WOLF KILLER'));
+  brand.appendChild(el('div','sub',L('ui.subtitle')));
+  h.appendChild(brand);
+  var info=el('div');
+  info.appendChild(el('div','gamename',(g.name||'')+'  #'+String(g.game_id||'').slice(0,8)));
+  var meta=el('div','meta');
+  var bits=[];
+  if(g.created_at)bits.push(String(g.created_at).slice(0,10));
+  if(g.finished_at)bits.push('→ '+String(g.finished_at).slice(0,10));
+  bits.push(L('ui.exported_at')+' '+String(data.generated_at||'').slice(0,10));
+  meta.textContent=bits.join('  ');
+  info.appendChild(meta);
+  var chips=el('div','chips');
+  chips.appendChild(el('span','chip',(data.players||[]).length+' '+L('ui.players')));
+  if(g.round_number!=null)chips.appendChild(el('span','chip',g.round_number+' '+L('ui.rounds')));
+  var w=g.winner;
+  if(w&&w.winning_camp)chips.appendChild(el('span','chip win',L('winner.'+w.winning_camp)));
+  else if(g.execution_status)chips.appendChild(el('span','chip run',L('exec.'+g.execution_status)));
+  var cfg=g.config||{};
+  chips.appendChild(el('span','chip',cfg.enable_sheriff?L('cfg.sheriff_on'):L('cfg.sheriff_off')));
+  if(cfg.reveal_on_death!==undefined)chips.appendChild(el('span','chip',cfg.reveal_on_death?L('cfg.reveal_on'):L('cfg.reveal_off')));
+  if(cfg.victory)chips.appendChild(el('span','chip',L('cfg.victory_'+cfg.victory)));
+  if(cfg.witch_self_save)chips.appendChild(el('span','chip',L('cfg.witch_'+cfg.witch_self_save)));
+  info.appendChild(chips);
+  if(!(w&&w.winning_camp))info.appendChild(el('div','meta',L('ui.in_progress')));
+  h.appendChild(info);
+  var sp=el('div','spacer');h.appendChild(sp);
+  var langBtn=el('button','ui',LANG==='zh'?'EN':'中');
+  langBtn.onclick=function(){LANG=(LANG==='zh'?'en':'zh');document.documentElement.lang=LANG==='zh'?'zh':'en';renderAll();};
+  h.appendChild(langBtn);
+}
+
+function renderRoster(){
+  var sec=el('section');
+  sec.appendChild(el('h2','sec',L('sec.roster')));
+  var card=el('div','card');
+  var tb=el('table','roster');
+  var tr=el('tr');
+  ['ui.seat_short','ui.role','ui.camp','ui.model','ui.fate'].forEach(function(k){
+    tr.appendChild(el('th',null,k==='ui.seat_short'?'#':L(k)));
+  });
+  tb.appendChild(tr);
+  (data.players||[]).forEach(function(p){
+    var r=el('tr',p.is_alive?'':'dead');
+    var c0=el('td');
+    c0.appendChild(el('span','seatno',p.seat));
+    if(p.is_sheriff)c0.appendChild(el('span','sheriff-dot','★'+L('ui.sheriff')));
+    r.appendChild(c0);
+    var c1=el('td');c1.appendChild(el('span','rl',roleName(p.role)));r.appendChild(c1);
+    var c2=el('td');
+    if(p.camp)c2.appendChild(el('span','camp-pill camp-'+p.camp,campName(p.camp)));
+    r.appendChild(c2);
+    r.appendChild(el('td','modelcell',p.model||''));
+    var c4=el('td');
+    if(p.is_alive)c4.appendChild(el('span','fate-alive',L('ui.alive')));
+    else if(p.death&&p.death.cause)
+      c4.appendChild(el('span','fate-dead',L('ui.dead')+' · '+deathName(p.death.cause)+(p.death.round!=null?' · '+F('sec.round',p.death.round):'')));
+    else c4.appendChild(el('span','fate-dead',L('ui.dead')));
+    r.appendChild(c4);
+    tb.appendChild(r);
+  });
+  card.appendChild(tb);sec.appendChild(card);
+  return sec;
+}
+
+function renderReview(){
+  var rv=data.review;
+  if(!rv||!rv.review)return null;
+  var r=rv.review;
+  var sec=el('section');
+  sec.appendChild(el('h2','sec',L('sec.review')));
+  var grid=el('div','rev-grid');
+  if(r.overview){
+    var c=el('div','rev-card');c.appendChild(el('h4',null,L('rev.overview')));
+    c.appendChild(el('p',null,r.overview));grid.appendChild(c);
+  }
+  if(r.mvp&&r.mvp.seat!=null){
+    var c=el('div','rev-card');c.appendChild(el('h4',null,L('rev.mvp')));
+    var p=el('p','rev-mvp');
+    p.appendChild(el('b',null,seatRole(r.mvp.seat)));
+    p.appendChild(document.createTextNode(' — '+(r.mvp.reason||'')));
+    c.appendChild(p);grid.appendChild(c);
+  }
+  if(r.turning_points&&r.turning_points.length){
+    var c=el('div','rev-card');c.appendChild(el('h4',null,L('rev.turning_points')));
+    r.turning_points.forEach(function(tp){
+      var it=el('div','rev-item');
+      if(tp.round!=null)it.appendChild(el('span','rev-round',F('rev.round',tp.round)));
+      it.appendChild(el('span','tt',tp.title||''));
+      it.appendChild(el('div','dd',tp.detail||''));
+      c.appendChild(it);
+    });
+    grid.appendChild(c);
+  }
+  if(r.mistakes&&r.mistakes.length){
+    var c=el('div','rev-card');c.appendChild(el('h4',null,L('rev.mistakes')));
+    r.mistakes.forEach(function(ms){
+      var it=el('div','rev-item');
+      if(ms.seat!=null)it.appendChild(el('span','rev-round',seatRole(ms.seat)));
+      it.appendChild(el('span','tt',ms.title||''));
+      it.appendChild(el('div','dd',ms.detail||''));
+      c.appendChild(it);
+    });
+    grid.appendChild(c);
+  }
+  sec.appendChild(grid);
+  return sec;
+}
+
+function renderStats(){
+  var st=data.stats;
+  if(!st||!st.llm)return null;
+  var llm=st.llm;
+  var sec=el('section');
+  sec.appendChild(el('h2','sec',L('sec.stats')));
+  var det=el('details','card fold');
+  det.appendChild(el('summary',null,L('stat.calls')+' '+llm.calls+' · '+L('stat.tokens')+' '+(llm.tokens&&llm.tokens.total!=null?llm.tokens.total:'-')));
+  var body=el('div');body.style.paddingTop='10px';
+  var dl=el('dl','stats');
+  function cell(k,v,suf){var d=el('div');d.appendChild(el('dt',null,L(k)));var dd=el('dd',null,v);if(suf)dd.appendChild(el('small',null,' '+suf));d.appendChild(dd);dl.appendChild(d);}
+  var tk=llm.tokens||{};
+  cell('stat.calls',llm.calls);
+  cell('stat.tokens',(tk.total!=null?tk.total:'-'),(tk.prompt!=null||tk.completion!=null)?('in '+tk.prompt+' / out '+tk.completion):null);
+  cell('stat.errors',llm.errors);
+  cell('stat.fallbacks',llm.fallbacks);
+  cell('stat.retried',llm.retried);
+  if(st.degraded_actions!=null)cell('stat.degraded',st.degraded_actions);
+  if(st.model_errors!=null)cell('stat.model_errors',st.model_errors);
+  var em=llm.elapsed_ms||{};
+  cell('stat.latency',[em.p50,em.p95,em.p99].map(function(x){return x==null?'-':x;}).join(' / '),L('stat.ms'));
+  body.appendChild(dl);
+  if(llm.calls_by_kind&&Object.keys(llm.calls_by_kind).length){
+    var tb=el('table','kinds');
+    Object.keys(llm.calls_by_kind).forEach(function(k){
+      var r=el('tr');r.appendChild(el('td',null,k));r.appendChild(el('td',null,llm.calls_by_kind[k]));tb.appendChild(r);
+    });
+    body.appendChild(tb);
+  }
+  det.appendChild(body);sec.appendChild(det);
+  return sec;
+}
+
+/* ── 时间轴 ── */
+function renderTimeline(){
+  var sec=el('section');
+  sec.appendChild(el('h2','sec',L('sec.timeline')));
+  var rounds=[];
+  var cur=null,curRound=-1,seg='meta';
+  var events=data.events||[];
+  function openRound(n){
+    var det=el('details','round');det.open=true;det.id='round-'+n;
+    var sm=el('summary',null,n===0?L('sec.round0'):F('sec.round',n));
+    det.appendChild(sm);
+    var body=el('div','rbody');det.appendChild(body);
+    sec.appendChild(det);
+    rounds.push({n:n,el:det});
+    cur=body;curRound=n;seg='meta';
+  }
+  function emitSeg(s){
+    var key=SEG_LABEL[s];if(!key)return;
+    cur.appendChild(el('div','seg',L(key)));
+  }
+  events.forEach(function(ev){
+    if(!ev||SKIP_TYPES[ev.event_type])return;
+    var p=ev.payload||{};
+    var n=(typeof p.round_number==='number')?p.round_number:Math.max(curRound,0);
+    if(cur===null||n!==curRound)openRound(n);
+    if(ev.event_type==='phase'){
+      var s=PHASE_SEG[p.phase];
+      if(s&&s!==seg){seg=s;emitSeg(s);}
+      return;
+    }
+    var sg=segOf(ev);
+    if(sg&&sg!==seg){seg=sg;emitSeg(sg);}
+    var fn=RENDER[ev.event_type]||fallbackRow;
+    cur.appendChild(fn(ev));
+  });
+  if(cur===null){
+    var body=el('div','card');body.textContent='—';sec.appendChild(body);
+  }
+  // 轮次导航
+  var nav=document.getElementById('nav');nav.textContent='';
+  rounds.forEach(function(r){
+    var a=el('a',null,r.n===0?L('sec.round0'):F('sec.round',r.n));
+    a.href='#round-'+r.n;nav.appendChild(a);
+  });
+  var ctrl=el('span','spacer');nav.appendChild(ctrl);
+  var ex=el('button','ui',L('ui.expand_all'));
+  ex.onclick=function(){document.querySelectorAll('details.round').forEach(function(d){d.open=true;});};
+  var cl=el('button','ui',L('ui.collapse_all'));
+  cl.onclick=function(){document.querySelectorAll('details.round').forEach(function(d){d.open=false;});};
+  nav.appendChild(ex);nav.appendChild(cl);
+  return sec;
+}
+
+function renderAll(){
+  var app=document.getElementById('app');app.textContent='';
+  renderHeader();
+  app.appendChild(renderRoster());
+  var rv=renderReview();if(rv)app.appendChild(rv);
+  var st=renderStats();if(st)app.appendChild(st);
+  app.appendChild(renderTimeline());
+  var f=document.getElementById('foot');f.textContent='';
+  f.textContent='Wolf Killer · '+String(data.schema||'')+' · '+String((data.game||{}).game_id||'');
+}
+
+var toTop=document.getElementById('toTop');
+toTop.onclick=function(){window.scrollTo({top:0,behavior:'smooth'});};
+window.addEventListener('scroll',function(){toTop.hidden=window.scrollY<600;});
+
+renderAll();
+})();
+</script>
+</body>
+</html>
