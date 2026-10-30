@@ -20,6 +20,7 @@ from app.agents.llm_client import (
     extract_usage,
     merge_usage,
 )
+from app.agents.failure_taxonomy import normalize_failure_code
 from app.agents.output_parser import (
     OutputParser,
     StrictCapabilityError,
@@ -72,7 +73,7 @@ def _provider_failure_code(error: Exception) -> str:
     ``provider_connection_error`` here and ``model_invocation_error`` on the
     night path, so one outage read as two unrelated faults.
     """
-    return classify_provider_error(error)
+    return normalize_failure_code(error)
 
 _VOTE_CONTRACT = PipelineActionContract(
     contract_id="exile_vote",
@@ -155,10 +156,7 @@ def _speech_failure_codes(error: BaseException) -> tuple[str, str | None]:
         return "request_timeout", "local_deadline"
     if isinstance(error, TIMEOUT_ERRORS):
         return "request_timeout", "provider_timeout"
-    code = getattr(error, "code", None)
-    if isinstance(code, str) and code:
-        return code, None
-    return classify_provider_error(error), None
+    return normalize_failure_code(error), None
 
 
 def _capture_messages(capture, messages, *, tool_schema=None, tool_name=None) -> None:
@@ -1077,6 +1075,17 @@ class BaseRole:
                 pass
             else:
                 self._action_tool_content_salvaged = True
+                # The provider answered in content instead of calling the tool.
+                # Salvaging saves this ballot a round-trip, but the provider is
+                # still not honouring the action tool: remember it, so the rest
+                # of this seat's game starts from the JSON channel (the doc's
+                # "learn once" contract). Without this, every later ballot pays
+                # the same discovery cost.
+                note_unsupported = getattr(
+                    self.llm_client, "note_action_tools_unsupported", None,
+                )
+                if callable(note_unsupported):
+                    note_unsupported()
                 return salvaged
             # The provider ignored the action tool. Degrade to JSON instead
             # of retrying the same unsupported native-tool path.

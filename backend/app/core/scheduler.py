@@ -48,16 +48,27 @@ class PipelinePaused(RuntimeError): pass
 
 
 class DecisionPaused(PipelinePaused):
-    """A one-shot contract's model budget ran out — pause, do not forfeit.
+    """A recoverable stop the game can resume from the same checkpoint.
 
     ``exhausted_bucket`` sends ``per_game_limit == 1`` contracts (hunter's gun,
     wolf king's claw, idiot's flip, crimson envoy's explode) here instead of
     degrading them. A degraded one-shot forfeits the card silently: the game
-    plays on and the seat never gets its shot. This is a *separate* subclass so
-    the watcher can tell it apart from a genuine ``PipelinePaused`` (rule
-    execution failure, stale revision, …) — those stay fatal, because a pause
-    would hide a real defect behind a resumable state.
+    plays on and the seat never gets its shot. The provider-health guard uses
+    the same exception for a systemic outage; the watcher only needs to know
+    that this is a pause, and ``code``/``detail`` explain why.
+
+    This is a *separate* subclass from ``PipelinePaused`` so the watcher can
+    tell it apart from a genuine rule/durability defect — those stay fatal,
+    because a pause would hide a real defect behind a resumable state.
     """
+
+    def __init__(
+        self, message: str, *, code: str = "decision_budget_exhausted",
+        detail: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.detail = dict(detail or {})
 
 
 def _execution_lock(state: GameState) -> RLock:

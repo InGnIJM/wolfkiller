@@ -288,16 +288,26 @@ class OutputParser:
                 "action type is not permitted by contract",
                 code="action_type_not_permitted",
             )
-        if (
-            command.action_type in contract.actions_requiring_target
-            and command.target_seat is None
-        ):
+        requires_target = command.action_type in contract.actions_requiring_target
+        if requires_target and command.target_seat is None:
             raise ToolCallError("action requires a target", code="target_required")
-        if (
-            command.action_type not in contract.actions_requiring_target
-            and command.target_seat is not None
-        ):
-            raise ToolCallError("action must not include a target", code="target_forbidden")
+        # Models routinely send a redundant ``target_seat`` for actions the
+        # contract says take no target (a ``pass`` with a seat, an ``explode``
+        # with a passenger). The contract is the authority; the extra field is
+        # semantically inert. Drop it at the model boundary instead of failing
+        # a legal decision and paying a whole repair round-trip. The
+        # ``ActionValidator`` keeps ``target_forbidden`` as the last gate for
+        # commands built by any other caller.
+        updates: dict[str, object] = {}
+        if command.target_seat is not None and not requires_target:
+            updates["target_seat"] = None
+        if updates:
+            logger.warning(
+                "Dropping extraneous target field(s) %s for action_type=%s "
+                "contract=%s",
+                sorted(updates), command.action_type, contract.contract_id,
+            )
+            command = command.model_copy(update=updates)
 
         max_reasoning_length = schema["properties"]["reasoning"].get("maxLength")
         if (
