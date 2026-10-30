@@ -160,10 +160,10 @@ export const BACKDROP = {
 
 const DARK_TOKENS: ModeTokens = {
   canvas: {
-    bg: '#0B0A0F',
-    bgElevated: '#120E18',
-    surface: '#171221',
-    surfaceRaised: '#1D1729',
+    bg: '#1D0E13',
+    bgElevated: '#29151C',
+    surface: '#141417',
+    surfaceRaised: '#1D1D23',
   },
   hairline: {
     strong: 'rgba(212, 168, 83, 0.22)',
@@ -175,9 +175,9 @@ const DARK_TOKENS: ModeTokens = {
     faint: '#7D7468',
   },
   bloodMoon: {
-    crimson: '#C9566B',
-    crimsonDeep: '#A8374A',
-    crimsonDark: '#6E2236',
+    crimson: '#D04564',
+    crimsonDeep: '#A62E4B',
+    crimsonDark: '#6B1F36',
     gold: '#D4A853',
     goldLight: '#E8C887',
     goldDark: '#A87F33',
@@ -198,17 +198,17 @@ const DARK_TOKENS: ModeTokens = {
   backdrop: {
     dim: 0.55,
     saturate: 0.8,
-    scrimTop: 'rgba(11, 10, 15, 0.25)',
-    scrimBottom: 'rgba(11, 10, 15, 0.7)',
-    vignette: 'radial-gradient(ellipse at center, transparent 40%, rgba(11, 10, 15, 0.72) 100%)',
-    textPlate: 'rgba(23, 18, 33, 0.72)',
-    cardScrim: 'linear-gradient(transparent, rgba(11, 10, 15, 0.85))',
+    scrimTop: 'rgba(26, 10, 15, 0.25)',
+    scrimBottom: 'rgba(26, 10, 15, 0.7)',
+    vignette: 'radial-gradient(ellipse at center, transparent 40%, rgba(26, 10, 15, 0.72) 100%)',
+    textPlate: 'rgba(14, 14, 18, 0.72)',
+    cardScrim: 'linear-gradient(transparent, rgba(0, 0, 0, 0.85))',
   },
   plate: {
-    strong: 'rgba(23, 18, 33, 0.82)',
-    soft: 'rgba(23, 18, 33, 0.6)',
+    strong: 'rgba(16, 16, 20, 0.82)',
+    soft: 'rgba(16, 16, 20, 0.6)',
   },
-  appBar: 'rgba(23, 18, 33, 0.88)',
+  appBar: 'rgba(0, 0, 0, 1)',
   scrim: { soft: 'rgba(0, 0, 0, 0.25)' },
   inkWash: 'rgba(242, 233, 220, 0.03)',
   shadow: {
@@ -217,12 +217,12 @@ const DARK_TOKENS: ModeTokens = {
     soft: 'rgba(0, 0, 0, 0.35)',
   },
   bodyGradient: [
-    'radial-gradient(1100px 520px at 50% -8%, rgba(168,55,74,0.24), transparent 62%)',
+    'radial-gradient(1100px 520px at 50% -8%, rgba(166,46,75,0.30), transparent 62%)',
     'radial-gradient(900px 700px at 50% 118%, rgba(212,168,83,0.11), transparent 60%)',
-    'linear-gradient(180deg, #120E18, #0B0A0F 42%)',
+    'linear-gradient(180deg, #29151C, #1D0E13 42%)',
   ].join(', '),
-  selection: 'rgba(201, 86, 107, 0.35)',
-  onAccent: '#171221',
+  selection: 'rgba(208, 69, 100, 0.35)',
+  onAccent: '#1B0F13',
   titleGradient: 'linear-gradient(180deg, #F7EFE2, #CAA96A)',
   action: {
     hover: 'rgba(212, 168, 83, 0.09)',

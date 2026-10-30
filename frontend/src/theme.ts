@@ -110,7 +110,7 @@ export function createAppTheme(mode: ThemeMode): Theme {
           },
           contained: {
             boxShadow: 'none',
-            '&:hover': { boxShadow: `0 6px 22px ${dark ? 'rgba(168,55,74,0.35)' : 'rgba(176,40,56,0.3)'}` },
+            '&:hover': { boxShadow: `0 6px 22px ${dark ? 'rgba(166,46,75,0.35)' : 'rgba(176,40,56,0.3)'}` },
           },
           outlined: {
             borderColor: t.hairline.strong,

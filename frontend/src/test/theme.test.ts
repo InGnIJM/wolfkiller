@@ -17,10 +17,10 @@ const SHARED_FAMILY_ART = new Map([
 
 describe('血月剧场主题令牌', () => {
   it('使用血月剧场画布色与酒红金双色主轴', () => {
-    expect(theme.palette.background.default).toBe('#0B0A0F');
-    expect(theme.palette.background.paper).toBe('#171221');
-    expect(theme.palette.primary.main).toBe('#A8374A');
-    expect(theme.palette.primary.light).toBe('#C9566B');
+    expect(theme.palette.background.default).toBe('#1D0E13');
+    expect(theme.palette.background.paper).toBe('#141417');
+    expect(theme.palette.primary.main).toBe('#A62E4B');
+    expect(theme.palette.primary.light).toBe('#D04564');
     expect(theme.palette.secondary.main).toBe('#D4A853');
   });
 
@@ -132,11 +132,11 @@ describe('血月剧场素材令牌', () => {
     expect(backdrop.dim).toBeGreaterThanOrEqual(0.5);
     expect(backdrop.dim).toBeLessThanOrEqual(0.62);
     expect(backdrop.saturate).toBe(0.8);
-    expect(backdrop.scrimTop).toBe('rgba(11, 10, 15, 0.25)');
-    expect(backdrop.scrimBottom).toBe('rgba(11, 10, 15, 0.7)');
+    expect(backdrop.scrimTop).toBe('rgba(26, 10, 15, 0.25)');
+    expect(backdrop.scrimBottom).toBe('rgba(26, 10, 15, 0.7)');
     expect(backdrop.vignette).toContain('transparent 40%');
-    expect(backdrop.textPlate).toBe('rgba(23, 18, 33, 0.72)');
-    expect(backdrop.cardScrim).toBe('linear-gradient(transparent, rgba(11, 10, 15, 0.85))');
+    expect(backdrop.textPlate).toBe('rgba(14, 14, 18, 0.72)');
+    expect(backdrop.cardScrim).toBe('linear-gradient(transparent, rgba(0, 0, 0, 0.85))');
     expect(BACKDROP.fadeMs).toBe(300);
   });
 
