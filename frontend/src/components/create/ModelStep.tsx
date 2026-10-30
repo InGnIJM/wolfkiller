@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Box, Button, Chip, FormControlLabel, IconButton, MenuItem, Select, Stack, Switch, TextField, Typography,
@@ -13,7 +15,6 @@ import {
   parseAssignmentCount,
 } from './assignmentQuantity';
 
-const ENV_DEFAULT_NAME = '环境默认 (.env)';
 
 interface Props {
   totalPlayers: number;
@@ -45,11 +46,12 @@ const STEP_BUTTON_SX = {
   fontWeight: 600,
 } as const;
 
-function stepLabel(name: string, configId: string | null, delta: number): string {
+function stepLabel(name: string, configId: string | null, delta: number, t: TFunction): string {
   const amount = Math.abs(delta);
-  const verb = delta < 0 ? '减少' : '增加';
-  if (configId === null) return `将环境默认模型${verb} ${amount} 人`;
-  return `将 ${name} ${verb} ${amount} 人`;
+  const verb = t(delta < 0 ? 'create.decreaseVerb' : 'create.increaseVerb');
+  return configId === null
+    ? t('create.adjustEnv', { verb, amount })
+    : t('create.adjustModel', { name, verb, amount });
 }
 
 interface QuantityControlsProps {
@@ -77,6 +79,7 @@ function AssignmentQuantityControls({
   increaseOneLabel,
   onChange,
 }: QuantityControlsProps) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState(String(count));
   const focusedRef = useRef(false);
 
@@ -120,7 +123,7 @@ function AssignmentQuantityControls({
           type="button"
           size="small"
           variant="outlined"
-          aria-label={stepLabel(name, configId, delta)}
+          aria-label={stepLabel(name, configId, delta, t)}
           disabled={decreaseDisabled}
           onClick={() => applyDelta(delta)}
           sx={STEP_BUTTON_SX}
@@ -156,7 +159,7 @@ function AssignmentQuantityControls({
           htmlInput: {
             inputMode: 'numeric',
             pattern: '[0-9]*',
-            'aria-label': `${name} 人数输入`,
+            'aria-label': t('create.seatCountInput', { name }),
           },
         }}
         sx={{
@@ -183,7 +186,7 @@ function AssignmentQuantityControls({
           type="button"
           size="small"
           variant="outlined"
-          aria-label={stepLabel(name, configId, delta)}
+          aria-label={stepLabel(name, configId, delta, t)}
           disabled={increaseDisabled}
           onClick={() => applyDelta(delta)}
           sx={STEP_BUTTON_SX}
@@ -205,6 +208,7 @@ export default function ModelStep({
   onCommentaryConfigIdChange,
   disabled = false,
 }: Props) {
+  const { t } = useTranslation();
   const {
     configs, loading, error, loadError, load, create,
   } = useModelConfigStore();
@@ -234,30 +238,30 @@ export default function ModelStep({
       name: config.name,
       detail: `${config.model_id} · ${config.base_url}`,
       invalidReason: config.key_invalid
-        ? '密钥失效，请先更新配置，或将人数减为 0'
+        ? t('create.keyInvalid')
         : loadError
-          ? '无法确认此配置仍然可用，请改用环境默认模型或稍后重试'
+          ? t('create.configUncertain')
           : null,
     }));
     const orphanRows = assignments
       .filter((entry) => entry.config_id !== null && !configById.has(entry.config_id))
       .map((entry) => ({
         configId: entry.config_id,
-        name: `已删除配置 ${entry.config_id}`,
-        detail: '此配置已不在模型列表中',
-        invalidReason: '配置已删除或不可用，请将人数减为 0',
+        name: t('create.deletedConfigName', { id: entry.config_id }),
+        detail: t('create.deletedConfigDetail'),
+        invalidReason: t('create.deletedConfigReason'),
       }));
     return [
       {
         configId: null,
-        name: ENV_DEFAULT_NAME,
-        detail: '使用服务端环境变量中的默认模型',
+        name: t('create.envDefaultName'),
+        detail: t('create.envDefaultDetail'),
         invalidReason: null,
       },
       ...storedRows,
       ...orphanRows,
     ];
-  }, [assignments, configById, configs, loadError]);
+  }, [assignments, configById, configs, loadError, t]);
 
   const assignedTotal = assignments.reduce(
     (sum, entry) => sum + Math.max(0, entry.count),
@@ -290,10 +294,10 @@ export default function ModelStep({
   return (
     <Box>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        为 {totalPlayers} 位玩家分配模型
+        {t('create.assignTitle', { count: totalPlayers })}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        按人数随机落座；同一座位在整局中始终使用同一个模型。
+        {t('create.assignHint')}
       </Typography>
 
       <Box
@@ -314,7 +318,7 @@ export default function ModelStep({
         }}
       >
         <Typography variant="body1" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-          已分配 {assignedTotal} / 总人数 {totalPlayers}
+          {t('create.assignedProgress', { assigned: assignedTotal, total: totalPlayers })}
         </Typography>
         <Chip
           size="small"
@@ -322,22 +326,22 @@ export default function ModelStep({
           variant="outlined"
           label={
             difference === 0
-              ? '分配完成'
+              ? t('create.assignDone')
               : difference > 0
-                ? `还需分配 ${difference} 人`
-                : `已超出 ${Math.abs(difference)} 人`
+                ? t('create.assignRemaining', { count: difference })
+                : t('create.assignOver', { count: Math.abs(difference) })
           }
         />
       </Box>
 
       {loading && (
         <Typography role="status" variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          正在加载已存模型配置…
+          {t('create.loadingModels')}
         </Typography>
       )}
       {error && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          {error}；仍可将全部玩家分配给环境默认模型。
+          {error}. {t('create.modelsErrorSuffix')}
         </Alert>
       )}
 
@@ -346,18 +350,18 @@ export default function ModelStep({
           const count = countFor(assignments, row.configId);
           const invalid = Boolean(row.invalidReason);
           const decreaseLabel = row.configId === null
-            ? '减少环境默认模型人数'
-            : `减少 ${row.name} 人数`;
+            ? t('create.decreaseEnv')
+            : t('create.decreaseModel', { name: row.name });
           const increaseLabel = row.configId === null
-            ? '增加环境默认模型人数'
-            : `增加 ${row.name} 人数`;
+            ? t('create.increaseEnv')
+            : t('create.increaseModel', { name: row.name });
           const isPendingFocus = row.configId !== null && row.configId === focusConfigId;
           return (
             <Box
               key={row.configId ?? 'environment-default'}
               ref={isPendingFocus ? focusRowRef : undefined}
               role="group"
-              aria-label={`${row.name} 人数分配`}
+              aria-label={t('create.assignInput', { name: row.name })}
               tabIndex={-1}
               sx={{
                 display: 'grid',
@@ -385,7 +389,7 @@ export default function ModelStep({
                   sx={{ alignItems: 'center', flexWrap: 'wrap' }}
                 >
                   <Typography variant="body1">{row.name}</Typography>
-                  {invalid && <Chip size="small" color="warning" label="不可用" />}
+                  {invalid && <Chip size="small" color="warning" label={t('create.unavailable')} />}
                 </Stack>
                 <Typography
                   variant="body2"
@@ -430,7 +434,7 @@ export default function ModelStep({
             justifyContent: 'flex-start',
           }}
         >
-          当场新建模型配置
+          {t('create.createConfigInline')}
         </Button>
 
         {onCommentaryEnabledChange && (
@@ -461,10 +465,10 @@ export default function ModelStep({
                       onChange={(e) => onCommentaryEnabledChange(e.target.checked)}
                     />
                   )}
-                  label="开启上帝视角实时解说"
+                  label={t('create.commentaryToggle')}
                 />
                 <Typography variant="body2" color="text.secondary">
-                  每轮黎明与入夜自动生成一段全知视角解说（也用于赛后复盘模型选择）。
+                  {t('create.commentaryHint')}
                 </Typography>
               </Box>
               {commentaryEnabled && (
@@ -473,14 +477,14 @@ export default function ModelStep({
                   disabled={disabled}
                   value={commentaryConfigId ?? ''}
                   displayEmpty
-                  inputProps={{ 'aria-label': '解说与复盘模型' }}
+                  inputProps={{ 'aria-label': t('create.commentaryModelAria') }}
                   onChange={(e) => {
                     const val = e.target.value;
                     onCommentaryConfigIdChange?.(val === '' ? null : val);
                   }}
                   sx={{ minWidth: 220 }}
                 >
-                  <MenuItem value="">默认模型</MenuItem>
+                  <MenuItem value="">{t('create.defaultModel')}</MenuItem>
                   {configs
                     .filter((cfg) => !cfg.key_invalid)
                     .map((cfg) => (

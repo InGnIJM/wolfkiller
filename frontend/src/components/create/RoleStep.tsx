@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box, Button, Checkbox, FormControlLabel, Skeleton, Stack, Typography,
@@ -37,6 +38,7 @@ export default function RoleStep({
   enableSheriff, onEnableSheriffChange,
   witchSelfSave, onWitchSelfSaveChange, victory, onVictoryChange,
 }: Props) {
+  const { t } = useTranslation();
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
   const [constraints, setConstraints] = useState<FieldConstraints | null>(null);
@@ -181,7 +183,7 @@ export default function RoleStep({
         onClick={() => setPickerOpen((open) => !open)}
         sx={{ display: { xs: 'inline-flex', md: 'none' }, alignSelf: 'flex-start', m: 1.5, mb: 0 }}
       >
-        选择板子
+        {t('create.selectBoard')}
       </Button>
       <Box
         sx={{
@@ -212,7 +214,7 @@ export default function RoleStep({
             <Box sx={{ minWidth: 0 }}>
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                 <Typography variant="h6" sx={{ lineHeight: 1.3 }}>
-                  {isCustom ? '自定义阵容' : (basePreset?.name ?? '选择板子')}
+                  {isCustom ? t('create.customRoster') : (basePreset?.name ?? t('create.selectBoard'))}
                 </Typography>
                 {isCustom && basePreset && (
                   <Box
@@ -222,7 +224,7 @@ export default function RoleStep({
                       border: `1px dashed ${HAIRLINE.strong}`, color: INK.dim,
                     }}
                   >
-                    基于 {basePreset.name}
+                    {t('create.basedOn', { name: basePreset.name })}
                   </Box>
                 )}
                 {isCustom && basePreset && (
@@ -232,7 +234,7 @@ export default function RoleStep({
                     sx={{ color: BLOOD_MOON.gold, textTransform: 'none', minWidth: 0 }}
                     onClick={() => applyPreset(basePreset)}
                   >
-                    重置为原板子
+                    {t('create.resetBoard')}
                   </Button>
                 )}
               </Stack>
@@ -249,30 +251,30 @@ export default function RoleStep({
               onClick={() => setAddOpen(true)}
               sx={{ flexShrink: 0, borderColor: HAIRLINE.strong, color: BLOOD_MOON.gold }}
             >
-              添加角色
+              {t('create.addRole')}
             </Button>
           </Stack>
 
           <Stack direction="row" spacing={1} sx={{ mt: 1.25, flexWrap: 'wrap', gap: 0.75 }}>
             <Stat
-              label="共" value={total} suffix="人"
+              label={t('create.statTotal')} value={total} suffix={t('create.statTotalSuffix')}
               tone={overLimit ? 'warn' : 'plain'}
               testId="roster-total"
             />
-            <Stat label="狼" value={wolfCount} tone="wolf" />
-            <Stat label="好人" value={goodCount} />
-            {thirdCount > 0 && <Stat label="第三方" value={thirdCount} />}
-            <Stat label="警长" text={enableSheriff ? '开' : '关'} />
-            <Stat label="女巫自救" text={witchSelfSave === 'never' ? '禁止' : '仅首夜'} />
-            <Stat label="胜利" text={victory === 'city' ? '屠城' : '屠边'} />
+            <Stat label={t('create.statWolf')} value={wolfCount} tone="wolf" />
+            <Stat label={t('create.statGood')} value={goodCount} />
+            {thirdCount > 0 && <Stat label={t('create.statThird')} value={thirdCount} />}
+            <Stat label={t('create.statSheriff')} text={t(enableSheriff ? 'create.statOn' : 'create.statOff')} />
+            <Stat label={t('create.statWitchSave')} text={t(witchSelfSave === 'never' ? 'create.witchNever' : 'create.witchFirstNight')} />
+            <Stat label={t('create.statVictory')} text={t(victory === 'city' ? 'create.victoryCity' : 'create.victoryEdge')} />
             {overLimit && (
               <Typography variant="caption" sx={{ color: BLOOD_MOON.crimson, alignSelf: 'center' }}>
-                超出 {total - (constraints?.max_players ?? total)} 人
+                {t('create.overBy', { count: total - (constraints?.max_players ?? total) })}
               </Typography>
             )}
             {underLimit && constraints && (
               <Typography variant="caption" sx={{ color: INK.faint, alignSelf: 'center' }}>
-                还差 {constraints.min_players - total} 人
+                {t('create.shortBy', { count: constraints.min_players - total })}
               </Typography>
             )}
           </Stack>
@@ -288,7 +290,7 @@ export default function RoleStep({
           )}
           {!loading && activeRoles.length === 0 && (
             <Typography variant="body2" sx={{ color: INK.dim }}>
-              还没有任何角色。点右上角「添加角色」开始配置阵容。
+              {t('create.emptyRoster')}
             </Typography>
           )}
           <Stack spacing={1}>
@@ -313,11 +315,11 @@ export default function RoleStep({
                   onChange={(event) => onRevealOnDeathChange(event.target.checked)}
                 />
               )}
-              label="明牌局：玩家出局时立即公开身份"
+              label={t('create.revealLabel')}
               slotProps={{ typography: { variant: 'body2' } }}
             />
             <Typography variant="caption" sx={{ display: 'block', color: INK.faint, ml: 4 }}>
-              开启后，夜晚死亡、放逐、猎人开枪带走的玩家都会当场亮明身份。
+              {t('create.revealHint')}
             </Typography>
             <FormControlLabel
               control={(
@@ -326,21 +328,21 @@ export default function RoleStep({
                   onChange={(event) => onEnableSheriffChange(event.target.checked)}
                 />
               )}
-              label="警长：竞选、1.5 票、警徽流"
+              label={t('create.sheriffLabel')}
               slotProps={{ typography: { variant: 'body2' } }}
             />
             <Typography variant="caption" sx={{ display: 'block', color: INK.faint, ml: 4 }}>
-              九人、十人预设默认关闭；十二人预设建议开启。
+              {t('create.sheriffHint')}
             </Typography>
             <Typography variant="caption" sx={{ display: 'block', color: INK.faint, mt: 1 }}>
-              胜利方式：{victory === 'city'
-                ? '屠城。好人全灭则狼人胜，狼人全灭则好人胜；场上还有第三方时另外两方都不能赢。'
-                : '屠边。神职全灭、平民全灭，或狼人数大于好人数，则狼人胜。'}
+              {t('create.victoryLabel', {
+                desc: t(victory === 'city' ? 'create.victoryCityDesc' : 'create.victoryEdgeDesc'),
+              })}
             </Typography>
             <Typography variant="caption" sx={{ display: 'block', color: INK.faint, mt: 1 }}>
-              女巫自救：{witchSelfSave === 'never'
-                ? '本板子全程禁止自救（网易官方赛制口径，随预设自动设定）。'
-                : '仅首夜可自救（假面官方口径，随预设自动设定）。'}
+              {t('create.witchLabel', {
+                desc: t(witchSelfSave === 'never' ? 'create.witchNeverDesc' : 'create.witchFirstNightDesc'),
+              })}
             </Typography>
           </Box>
         </Box>

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Box, Collapse, IconButton, InputAdornment, Stack, TextField, Typography,
@@ -29,6 +30,7 @@ function isOfficial(preset: GamePreset): boolean {
 export default function PresetList({
   presets, roles, selectedPresetId, onSelect,
 }: Props) {
+  const { t } = useTranslation();
   const [rawQuery, setRawQuery] = useState('');
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
@@ -85,11 +87,11 @@ export default function PresetList({
         <TextField
           value={rawQuery}
           onChange={(event) => setRawQuery(event.target.value)}
-          placeholder="搜索板子 / 角色名…"
+          placeholder={t('create.searchPreset')}
           size="small"
           fullWidth
           slotProps={{
-            htmlInput: { 'aria-label': '搜索板子' },
+            htmlInput: { 'aria-label': t('create.searchPresetAria') },
             input: {
               startAdornment: (
                 <InputAdornment position="start">
@@ -100,7 +102,7 @@ export default function PresetList({
                 <InputAdornment position="end">
                   <IconButton
                     size="small"
-                    aria-label="清空搜索"
+                    aria-label={t('create.clearSearch')}
                     onClick={() => setRawQuery('')}
                   >
                     <CloseIcon sx={{ fontSize: 16 }} />
@@ -126,10 +128,10 @@ export default function PresetList({
         {groups.length === 0 && (
           <Box sx={{ px: 2, py: 3 }}>
             <Typography variant="body2" sx={{ color: INK.dim }}>
-              没有匹配的板子
+              {t('create.noPresetMatch')}
             </Typography>
             <Typography variant="caption" sx={{ color: INK.faint, display: 'block', mt: 0.5 }}>
-              试试「狼王」或「摄梦」，或清空搜索
+              {t('create.tryPresetKeywords')}
             </Typography>
           </Box>
         )}
@@ -162,7 +164,7 @@ export default function PresetList({
                 <Typography variant="caption" sx={{
                   color: BLOOD_MOON.gold, fontWeight: 600, letterSpacing: '0.08em',
                 }}>
-                  {size} 人局
+                  {t('create.playersBoard', { size })}
                 </Typography>
                 <Typography variant="caption" sx={{
                   color: INK.faint, fontVariantNumeric: 'tabular-nums',
@@ -200,6 +202,7 @@ function PresetItem({
   selected: boolean;
   onSelect: (preset: GamePreset) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Box
       component="button"
@@ -239,7 +242,7 @@ function PresetItem({
               borderRadius: 0.5,
             }}
           >
-            官方
+            {t('create.official')}
           </Box>
         )}
       </Stack>
