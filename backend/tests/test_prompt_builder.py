@@ -496,8 +496,9 @@ class TestPromptBuilderHelpers:
         builder = PromptBuilder()
         block = builder._identity_block(1, {
             "facts": {"actor_identity": {"role_id": "unknown-role", "camp_id": "good"}},
-        })
+        }, make_state())
         assert "unknown-role" in block and "good" in block
+        assert "你的风格：" in block
 
     def test_speaking_progress_for_outsider_and_empty_order(self):
         state = make_state()
