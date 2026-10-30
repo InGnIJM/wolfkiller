@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import pytest
+
 from app.agents.llm_client import LLMClient, LLMClientConfig
 from app.models.contracts import ActionContract
 from app.models.game import GamePhase
@@ -58,3 +60,32 @@ def test_vote_tool_is_forced_under_cast_vote_name():
     tool = chat.return_value.bind_tools.call_args.args[0][0]
     assert tool["function"]["name"] == "cast_vote"
     assert chat.return_value.bind_tools.call_args.kwargs["tool_choice"] == "cast_vote"
+
+
+@pytest.mark.asyncio
+async def test_dedicated_client_aclose_leaves_the_shared_pool_alive():
+    """Closing a one-shot client must not kill a sibling's live connections.
+
+    Commentary/review/probe clients share the seat's (base_url, timeout) pool
+    key; if their aclose() reached that shared pool, every cached seat model
+    fails instantly with "client has been closed" (the 2026-10-30 game).
+    """
+    config = LLMClientConfig(
+        base_url="https://api.deepseek.com/v1",
+        api_key="test-key",
+        model_id="test-model",
+        temperature=0,
+        max_tokens=128,
+        strict_base_url="https://api.deepseek.com/beta",
+        action_timeout_seconds=90,
+        action_retry_timeout_seconds=120,
+    )
+    seat = LLMClient(config=config)
+    seat_http = seat.get_model().root_client._client
+    one_shot = LLMClient(config=config, dedicated_http_clients=True)
+    one_shot.get_model()
+    try:
+        await one_shot.aclose()
+        assert seat_http.is_closed is False
+    finally:
+        await seat.aclose()

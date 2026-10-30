@@ -2,6 +2,9 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
+import pytest
+
 from app.agents.providers.base import CallPurpose
 from app.agents.providers.openai_compatible import OpenAICompatibleTransport
 from app.agents.providers.registry import ProviderRegistry
@@ -90,6 +93,56 @@ def test_strict_action_keeps_base_url_without_strict_endpoint_capability():
     with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
         OpenAICompatibleTransport().build(cfg, profile, CallPurpose.ACTION_STRICT)
     assert chat.call_args.kwargs["base_url"] == cfg.base_url
+
+
+def test_dedicated_build_passes_an_unhashable_timeout_for_a_private_pool():
+    """A dedicated model must stay off the shared per-(base_url, timeout) pool.
+
+    The SDK bypasses its process-wide httpx cache when ``timeout`` is
+    unhashable, so an ``httpx.Timeout`` instance is what keeps aclose() from
+    killing a sibling LLMClient's live connections.
+    """
+    cfg = config()
+    profile = ProviderRegistry().resolve("openrouter", cfg.base_url, cfg.model_id)
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        OpenAICompatibleTransport().build(
+            cfg, profile, CallPurpose.TEXT, dedicated_http_clients=True,
+        )
+    timeout = chat.call_args.kwargs["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    with pytest.raises(TypeError):
+        hash(timeout)
+
+
+def test_shared_build_still_passes_a_plain_float_timeout():
+    cfg = config()
+    profile = ProviderRegistry().resolve("openrouter", cfg.base_url, cfg.model_id)
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        OpenAICompatibleTransport().build(
+            cfg, profile, CallPurpose.TEXT, dedicated_http_clients=False,
+        )
+    assert chat.call_args.kwargs["timeout"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_dedicated_models_get_separate_httpx_clients():
+    cfg = config()
+    profile = ProviderRegistry().resolve("openrouter", cfg.base_url, cfg.model_id)
+    transport = OpenAICompatibleTransport()
+    first = transport.build(
+        cfg, profile, CallPurpose.TEXT, dedicated_http_clients=True,
+    )
+    second = transport.build(
+        cfg, profile, CallPurpose.TEXT, dedicated_http_clients=True,
+    )
+    try:
+        assert first.root_client._client is not second.root_client._client
+        assert first.root_async_client._client is not second.root_async_client._client
+    finally:
+        first.root_client.close()
+        second.root_client.close()
+        await first.root_async_client.close()
+        await second.root_async_client.close()
 
 
 def test_discard_shared_http_clients_drops_langchain_httpx_cache():

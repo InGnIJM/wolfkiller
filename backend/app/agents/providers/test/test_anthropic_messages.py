@@ -181,3 +181,41 @@ def test_discard_shared_http_clients_drops_langchain_httpx_cache():
         base_url="https://relay.example", timeout=90.0,
     ) is not async_client
     AnthropicMessagesTransport.discard_shared_http_clients()
+
+
+def test_dedicated_build_uses_private_anthropic_http_clients():
+    """A dedicated model must not sit on the shared per-(base_url, timeout) pool."""
+    import asyncio
+
+    from langchain_anthropic._client_utils import (
+        _get_default_async_httpx_client, _get_default_httpx_client,
+    )
+
+    model = AnthropicMessagesTransport().build(
+        config(), profile(), CallPurpose.TEXT, dedicated_http_clients=True,
+    )
+    try:
+        shared = _get_default_httpx_client(
+            base_url="https://api.anthropic.com", timeout=90.0,
+        )
+        shared_async = _get_default_async_httpx_client(
+            base_url="https://api.anthropic.com", timeout=90.0,
+        )
+        assert model._client._client is not shared
+        assert model._async_client._client is not shared_async
+        assert model._client._client.is_closed is False
+        assert model._async_client._client.is_closed is False
+    finally:
+        model._client.close()
+        asyncio.run(model._async_client.close())
+        AnthropicMessagesTransport.discard_shared_http_clients()
+
+
+def test_dedicated_build_skips_injection_for_a_non_anthropic_model():
+    sentinel = SimpleNamespace()
+    result = AnthropicMessagesTransport().build(
+        config(), profile(), CallPurpose.TEXT,
+        chat_model_factory=lambda **kwargs: sentinel,
+        dedicated_http_clients=True,
+    )
+    assert result is sentinel
