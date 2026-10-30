@@ -93,7 +93,7 @@ def stopped_client(monkeypatch):
     from app.core.game_engine import GameEngine
 
     class FakeClient:
-        def __init__(self, *, config) -> None:
+        def __init__(self, *, config, dedicated_http_clients: bool = False) -> None:
             self.config = config
 
         async def aclose(self) -> None:

@@ -307,7 +307,7 @@ def fake_provider(monkeypatch):
         instances = []
         payload = {"action_type": "pass", "target_seat": None, "reasoning": "test"}
 
-        def __init__(self, *, config):
+        def __init__(self, *, config, dedicated_http_clients: bool = False):
             self.config = config
             self.model_name = "fake-model"
             self.provider_profile = SimpleNamespace(profile_id="custom-openai")
