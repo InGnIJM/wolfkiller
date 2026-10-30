@@ -21,6 +21,7 @@ import CenterDisplay from './CenterDisplay';
 import HistoryPanel from './HistoryPanel';
 import WinOverlay from './WinOverlay';
 import ActivityCard from './ActivityCard';
+import ReviewPanel from './ReviewPanel';
 import PageBackground from '../shared/PageBackground';
 import { BACKDROP } from '../../theme/tokens';
 
@@ -111,6 +112,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
     initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
     loadAudienceSnapshot, loadAudienceHistory, mergeAudienceEvents, reset,
     syncMode, streamError, executionStatus, recoverable, recoveryBlockCode,
+    pauseInfo,
   } = useGameStore();
 
   const [loading, setLoading] = useState(true);
@@ -118,6 +120,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
   const [actionPending, setActionPending] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<{ code: string } | null>(null);
   const [controlErrorMsg, setControlErrorMsg] = useState<string | null>(null);
+  const [showReview, setShowReview] = useState(false);
 
   const [syncRevision, setSyncRevision] = useState(0);
   const resync = useCallback(() => setSyncRevision((revision) => revision + 1), []);
@@ -324,7 +327,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
               size="small"
               variant="outlined"
               disabled={actionPending || !recoverable}
-              title={recoveryTooltip}
+              title={pauseInfo?.reason ?? recoveryTooltip}
               onClick={() => void handleRecover({ force: false })}
               startIcon={<RestartAltIcon fontSize="small" />}
             >
@@ -430,6 +433,16 @@ export default function GameBoard({ onBack, gameId }: Props) {
           >
             {showHistory ? '隐藏记录' : '历史记录'}
           </Button>
+          {(winResult !== null || phase === 'game_over') && (
+            <Button
+              size="small"
+              variant={showReview ? 'contained' : 'outlined'}
+              onClick={() => setShowReview(true)}
+              disableElevation
+            >
+              赛后复盘
+            </Button>
+          )}
           <Button size="small" onClick={onBack} variant="outlined">
             返回
           </Button>
@@ -460,6 +473,12 @@ export default function GameBoard({ onBack, gameId }: Props) {
       {showWinOverlay && winResult && (
         <WinOverlay winResult={winResult} revealOnDeath={revealOnDeath} />
       )}
+
+      <ReviewPanel
+        gameId={gameId}
+        open={showReview}
+        onClose={() => setShowReview(false)}
+      />
 
       <Dialog open={confirmTarget !== null} onClose={dismissConfirm}>
         <DialogTitle>角色声明已变更</DialogTitle>
