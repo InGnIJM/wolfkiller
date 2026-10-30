@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,8 +18,26 @@ def _plain(value: object) -> object:
 class GameLogger:
     """Writes structured operation logs and conversation logs to disk as JSONL."""
 
-    def __init__(self, data_dir: str = "data"):
+    def __init__(
+        self, data_dir: str = "data", *,
+        on_llm_call: Callable[[dict], None] | None = None,
+    ):
         self.data_dir = data_dir
+        #: Optional observer for ``llm_calls`` rows. The provider-health guard
+        #: subscribes here because every model path (night, pipeline, speech,
+        #: vote) already funnels its telemetry through this one method. The hook
+        #: must never be able to fail a game, so its exceptions are swallowed
+        #: and logged.
+        self._on_llm_call = on_llm_call
+        #: A closed logger belongs to a deleted game: an in-flight model call
+        #: may finish after ``shutil.rmtree`` and would otherwise recreate the
+        #: directory with a stray ``llm_calls.log``. ``close`` is idempotent; a
+        #: fresh engine always gets a fresh logger.
+        self._closed = False
+
+    def close(self) -> None:
+        """Stop accepting writes for a deleted game (idempotent)."""
+        self._closed = True
 
     def _ensure_dir(self, game_id: str) -> str:
         path = os.path.join(self.data_dir, "games", game_id)
@@ -27,6 +45,8 @@ class GameLogger:
         return path
 
     def _write_line(self, game_id: str, filename: str, record: dict) -> None:
+        if self._closed:
+            return
         dir_path = self._ensure_dir(game_id)
         filepath = os.path.join(dir_path, filename)
         with open(filepath, "a", encoding="utf-8") as f:
@@ -55,9 +75,10 @@ class GameLogger:
                            data={"new_phase": phase})
 
     def log_deaths(
-        self, game_id: str, round_num: int, deaths: list[dict],
+        self, game_id: str, round_num: int, deaths: list[dict], *,
+        phase: str = "dawn",
     ) -> None:
-        self.log_operation(game_id, "night_deaths", round_num, "dawn",
+        self.log_operation(game_id, "night_deaths", round_num, phase,
                            data={"deaths": deaths})
 
     def log_audience_action(
@@ -207,6 +228,14 @@ class GameLogger:
             "data": data,
         }
         self._write_line(game_id, "llm_calls.log", record)
+        if self._on_llm_call is not None:
+            try:
+                self._on_llm_call(record)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "llm_call observer failed for game=%s", game_id,
+                )
 
     def log_vote_queue_telemetry(
         self, game_id: str, round_num: int, seat: int, *,

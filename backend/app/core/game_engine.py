@@ -257,6 +257,7 @@ class GameEngine:
         director: object | None = None,
         checkpoint_hook=None,
         fault_injector=None,
+        health_guard=None,
     ):
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
@@ -265,7 +266,13 @@ class GameEngine:
         self.event_bus = event_bus or EventBus()
         self.roles = roles or {}
         self.memory_service = memory_service
-        self.game_logger = GameLogger(data_dir=data_dir)
+        self._health_guard = health_guard
+        self.game_logger = GameLogger(
+            data_dir=data_dir,
+            on_llm_call=(
+                None if health_guard is None else health_guard.record_telemetry
+            ),
+        )
         self.conversation_log = ConversationLog(logger=self.game_logger, game_id=self.game_id)
         self.state = GameState(game_id=self.game_id, config=self.config)
         self._vote_service = VoteService(self.state)
@@ -432,6 +439,18 @@ class GameEngine:
 
     def resume(self) -> None:
         self._paused = False
+
+    def _guard_turn(self, seat: int) -> None:
+        """Stop before a model call when the provider is systemically down.
+
+        Runs at the engine's turn boundaries, above the broad ``except
+        Exception`` handlers in the night/speech/vote directors. Raising inside
+        those handlers would be swallowed and turn a dead provider into a
+        template speech or a technical abstention.
+        """
+        guard = self._health_guard
+        if guard is not None:
+            guard.check(seat)
 
     # =================================================================
     # Role Assignment
@@ -667,6 +686,7 @@ class GameEngine:
             history = tuple(
                 f"{record.speaker_seat}号：{record.content}" for record in records
             )
+            self._guard_turn(seat)
             await self.announce_actor(seat)
             text = await asyncio.to_thread(
                 self._director.assist_discussion_turn,
@@ -804,6 +824,7 @@ class GameEngine:
                 while len(history) < max_turns:
                     seat = wolves[len(history) % len(wolves)]
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    self._guard_turn(seat)
                     await self.announce_actor(seat)
                     result = await asyncio.to_thread(
                         director.wolf_discussion_turn, state, seat, tuple(history), briefing,
@@ -852,6 +873,7 @@ class GameEngine:
                 votes = list(pending.wolf_votes)
                 for seat in remaining:
                     briefing = build_briefing(self.conversation_log, seat, self.state.round_number)
+                    self._guard_turn(seat)
                     await self.announce_actor(seat)
                     result = await asyncio.to_thread(
                         director.wolf_vote_turn, state, seat, discussion, tuple(votes), briefing,
@@ -1421,6 +1443,7 @@ class GameEngine:
             for seat in pending_seats:
                 player = self.state.players[seat]
                 wolf = player.camp == Camp.WEREWOLF
+                self._guard_turn(seat)
                 choice = await asyncio.to_thread(
                     director.campaign_turn, self.state, seat, wolf=wolf,
                 )
@@ -1454,6 +1477,7 @@ class GameEngine:
                 if speech_text:
                     await self._publish_public_speech(
                         seat, player.role, speech_text, "sheriff_election",
+                        log=True,
                     )
                 await self._durable_checkpoint(
                     f"sheriff_campaign:{self.state.round_number}:{seat}"
@@ -1466,6 +1490,7 @@ class GameEngine:
                 if player is None or not self._still_on_the_table(seat):
                     continue
                 wolf = player.camp == Camp.WEREWOLF
+                self._guard_turn(seat)
                 choice = await asyncio.to_thread(
                     director.withdraw_turn, self.state, seat, wolf=wolf,
                 )
@@ -1505,6 +1530,7 @@ class GameEngine:
             if speech_text:
                 await self._publish_public_speech(
                     seat, player.role, speech_text, "sheriff_election",
+                    log=True,
                 )
             await self._durable_checkpoint(
                 f"sheriff_pk:{self.state.round_number}:{seat}"
@@ -1528,6 +1554,7 @@ class GameEngine:
             if player is None or not self._still_on_the_table(seat):
                 continue
             wolf = player.camp == Camp.WEREWOLF
+            self._guard_turn(seat)
             choice = await asyncio.to_thread(
                 director.vote_turn, self.state, seat, tuple(sorted(legal)), wolf=wolf,
             )
@@ -1639,6 +1666,7 @@ class GameEngine:
         # summary's ``(seat, cause, round)`` de-duplication absorbs the replay.
         self.game_logger.log_deaths(
             self.game_id, self.state.round_number, [death.to_dict()],
+            phase="sheriff_election",
         )
         await self._durable_checkpoint(
             f"sheriff_explode:{self.state.round_number}:{seat}"
@@ -1664,6 +1692,7 @@ class GameEngine:
         if dead_sheriff is None:
             return
         targets = badge_targets(self.state, dead_sheriff)
+        self._guard_turn(dead_sheriff)
         action, target, reasoning = await asyncio.to_thread(
             self._sheriff_director.badge_turn, self.state, dead_sheriff, targets,
         )
@@ -1698,6 +1727,7 @@ class GameEngine:
         assert sheriff_seat is not None
         deaths = night_death_seats(self.state)
         sides = speech_sides(len(deaths))
+        self._guard_turn(sheriff_seat)
         side = await asyncio.to_thread(
             self._sheriff_director.side_turn, self.state, sheriff_seat, sides,
         )
@@ -2632,19 +2662,31 @@ class GameEngine:
         return await self._run_pipeline_point(point, slot=slot)
 
     def _reaction_seeded_seats(self) -> set[int]:
-        """Seats whose death already seeded a finished ``DAWN_REACTION`` window.
+        """Seats whose death already seeded a finished response window.
 
         The death ledger alone cannot tell a night-death window from a death a
         reaction window produced: both are ordinary ``DeathReport`` rows. The
         journal is the durable record of which seats were seeded, so a chain
         like "a death reaction killed the claw holder" can ask for exactly the
         deaths nobody has reacted to yet.
+
+        Two points open death windows, and they spell the seat differently: a
+        ``DAWN_REACTION`` commit is a synthetic ``PLAYER_DIED`` with
+        ``target_seat``, while the night's own windows run inside
+        ``NIGHT_COMMIT`` over the settlement batch, whose events use ``seat``.
+        Reading only ``DAWN_REACTION``/``target_seat`` made every night death
+        look unseeded at the next exile, so the wave below re-opened reactors
+        that had already fired — the Dream Weaver's revenge then aimed at the
+        dreamer it had killed hours earlier, which the write boundary rejects
+        and a pure react cannot survive.
         """
         seeded: set[int] = set()
         for key, checkpoint in point_journal(self.state).entries():
             if key.round_number != self.state.round_number:
                 continue
-            if key.point is not SchedulePoint.DAWN_REACTION:
+            if key.point not in (
+                SchedulePoint.DAWN_REACTION, SchedulePoint.NIGHT_COMMIT,
+            ):
                 continue
             for event in checkpoint.events:
                 if not isinstance(event, Mapping):
@@ -2655,6 +2697,8 @@ class GameEngine:
                 if not isinstance(payload, Mapping):
                     continue
                 seat = payload.get("target_seat")
+                if type(seat) is not int:
+                    seat = payload.get("seat")
                 if type(seat) is int:
                     seeded.add(seat)
         return seeded
@@ -2827,8 +2871,11 @@ class GameEngine:
         for death in deaths:
             await self.event_bus.publish(BusEvent.PLAYER_DIED, game_id=self.game_id, death=death)
             self._reveal_on_death(death.player_seat)
-        self.game_logger.log_deaths(self.game_id, self.state.round_number,
-                                    [death.to_dict() for death in deaths])
+        self.game_logger.log_deaths(
+            self.game_id, self.state.round_number,
+            [death.to_dict() for death in deaths],
+            phase=self.state.phase.value,
+        )
 
     async def _settle_and_publish(self) -> tuple[DeathReport, ...]:
         """Settle reaction damage immediately (it must never linger into the
@@ -2978,6 +3025,7 @@ class GameEngine:
         if role is None:
             logger.warning(f"No role found for seat {seat} during speak() — skipping")
             return None
+        self._guard_turn(seat)
         # Announce before the model call. The speech text is published only
         # after this returns, which is too late for the seat that is talking.
         self.state.current_speaker = seat
@@ -3059,6 +3107,7 @@ class GameEngine:
         player = self.state.players.get(seat)
         if role is None or player is None:
             return None
+        self._guard_turn(seat)
         if self._active_vote_window_id is None:
             window = self._vote_service.open_window(
                 timeout_seconds=float(self._vote_phase_timeout_seconds),
