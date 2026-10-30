@@ -140,6 +140,9 @@ def resolve_dream_weaver_action(
 
 def dream_weaver_revenge_applicable(context: ActionContext) -> bool:
     target = last_target(context, LAST_DREAMED_KEY)
+    alive = context.facts.get("alive_seats", ())
+    if type(alive) is not tuple:
+        return False
     return (
         context.source_event_id is not None
         and context.trigger_event is not None
@@ -148,6 +151,11 @@ def dream_weaver_revenge_applicable(context: ActionContext) -> bool:
         and target is not None
         and target > 0
         and target != context.actor_seat
+        # A dreamer already gone (it died earlier in the same batch, or this
+        # window is a replay from the journal) takes nobody with it. The write
+        # boundary only accepts living targets, and a pure react has no
+        # fallback, so submitting to a dead seat used to kill the whole game.
+        and target in alive
     )
 
 

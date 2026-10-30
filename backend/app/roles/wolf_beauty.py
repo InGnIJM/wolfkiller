@@ -146,13 +146,21 @@ def resolve_wolf_beauty_action(
 def wolf_beauty_revenge_applicable(context: ActionContext) -> bool:
     """True when this seat is Wolf Beauty and it charmed somebody this night."""
     trigger = context.trigger_event
+    charmed = last_target(context, LAST_CHARMED_KEY)
+    alive = context.facts.get("alive_seats", ())
+    if type(alive) is not tuple:
+        return False
     return (
         context.source_event_id is not None
         and trigger is not None
         and trigger.get("target_seat") == context.actor_seat
         and context.trigger_reason in _REVENGE_REASONS
         and not context.actor_alive
-        and last_target(context, LAST_CHARMED_KEY) is not None
+        and charmed is not None
+        # The charmed seat may already be gone (it died at night before this
+        # verdict). A dead target cannot follow anyone out, and the write
+        # boundary rejects it; a pure react has no fallback to catch that.
+        and charmed in alive
     )
 
 
@@ -164,9 +172,8 @@ def react_wolf_beauty_revenge(context: ActionContext) -> tuple[GameEffect, ...]:
     """
     if not wolf_beauty_revenge_applicable(context):
         return ()
+    # ``applicable`` already guarantees a remembered, still-living charmed seat.
     charmed = last_target(context, LAST_CHARMED_KEY)
-    if charmed is None or charmed <= 0:
-        return ()
     common = {
         "expected_revision": context.revision,
         "source_event_id": context.source_event_id,

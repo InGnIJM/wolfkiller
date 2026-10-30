@@ -255,6 +255,21 @@ def test_revenge_stays_silent_on_a_daytime_exit() -> None:
         context(last_dreamed=2, bound=True, reason="exile")) == ()
 
 
+def test_revenge_skips_a_dreamer_that_is_already_gone() -> None:
+    """A dreamer killed earlier in the same batch takes nobody with it.
+
+    The write boundary only accepts living targets and a pure react has no
+    fallback, so aiming at the dead dreamer used to crash the whole game — the
+    114efe7f failure, where the exile wave re-opened this very window.
+    """
+    gone = context(last_dreamed=3, alive=(1, 2), bound=True)
+    assert dream_weaver_revenge_applicable(gone) is False
+    assert react_dream_weaver_revenge(gone) == ()
+    # A malformed fact set is treated as "nobody is on the table".
+    assert dream_weaver_revenge_applicable(
+        context(last_dreamed=2, alive=3, bound=True)) is False
+
+
 def test_resolver_accepts_the_react_batch() -> None:
     effects = ActionResolver().react_effects(
         context(last_dreamed=2, bound=True), DREAM_WEAVER_SPEC,
