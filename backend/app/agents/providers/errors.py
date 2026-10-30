@@ -32,11 +32,24 @@ SERVER_ERRORS: tuple[type[Exception], ...] = (
     anthropic.ServiceUnavailableError,
 )
 
+class ProviderDeadlineTimeout(TimeoutError):
+    """The whole streamed call exceeded its wall-clock budget.
+
+    ``ChatOpenAI``'s ``timeout`` is an httpx per-request/read timeout: a model
+    that keeps trickling chunks can stay inside it forever while the total call
+    grows without bound. The client raises this once the configured action
+    budget is exhausted so the retry/fallback ladder sees a normal provider
+    timeout. The class name contains ``Timeout`` on purpose:
+    :func:`classify_provider_error` classifies timeouts by class name.
+    """
+
+
 # Timeouts subclass connection errors in both SDKs; catch TIMEOUT_ERRORS
 # first when the two must be told apart.
 TIMEOUT_ERRORS: tuple[type[Exception], ...] = (
     openai.APITimeoutError,
     anthropic.APITimeoutError,
+    ProviderDeadlineTimeout,
 )
 
 CONNECTION_ERRORS: tuple[type[Exception], ...] = (
@@ -108,6 +121,54 @@ def is_refused_error(error: BaseException) -> bool:
     return status_code_of(error) in REFUSED_STATUS_CODES
 
 
+#: Terminal provider failures. Retrying cannot fix them; the game should pause
+#: (live) or fail (benchmark) so an operator can repair the configuration.
+FAILURE_AUTH = "provider_auth_error"
+FAILURE_QUOTA = "provider_quota_exhausted"
+FAILURE_MODEL_NOT_FOUND = "provider_model_not_found"
+FAILURE_CONTEXT_TOO_LARGE = "provider_context_too_large"
+FAILURE_REGION_BLOCKED = "provider_region_blocked"
+
+#: Message fragments the gateway/upstream puts in the error body when the
+#: failure is deterministic. Status codes alone cannot distinguish a bad tool
+#: schema (400) from a region restriction (400) or a context overflow (400).
+_REGION_HINTS = (
+    "location is not supported",
+    "unsupported location",
+    "not available in your region",
+    "unsupported region",
+    "region is not supported",
+    "country not supported",
+    "unsupported country",
+)
+_QUOTA_HINTS = (
+    "insufficient_quota",
+    "exceeded your current quota",
+    "billing hard limit",
+    "payment required",
+    "no credit",
+    "credit balance is too low",
+)
+_CONTEXT_HINTS = (
+    "context length",
+    "context_length_exceeded",
+    "maximum context",
+    "prompt is too long",
+    "input is too long",
+    "too many tokens",
+    "reduce the length",
+)
+
+
+def _mentions(error: BaseException, hints: tuple[str, ...]) -> bool:
+    """Whether any link's text carries one of ``hints`` (case-insensitive)."""
+    for link in error_chain(error):
+        text = str(link).lower()
+        if any(hint in text for hint in hints):
+            return True
+    return False
+
+
 def classify_provider_error(error: BaseException) -> str:
     """One canonical failure code for a provider error, shared by every path.
 
@@ -120,19 +181,47 @@ def classify_provider_error(error: BaseException) -> str:
     ``RATE_LIMIT_ERRORS`` branch: both SDKs build that class from a 429 response,
     so the status check above always decides first. The remaining ``isinstance``
     buckets only fill in what no status can tell us.
+
+    A few statuses are semantically overloaded. The message/body is consulted
+    only for those: 400/403 can be a region restriction, a context overflow or a
+    bad request shape, and a 429 may be a rate limit or an exhausted quota. The
+    deterministic variants get their own terminal code so the game-level abort
+    policy can fast-trip on them instead of waiting for a threshold.
     """
     for link in error_chain(error):
         if "timeout" in type(link).__name__.lower():
             return "provider_timeout"
     status_code = status_code_of(error)
     if status_code == 429:
+        if _mentions(error, _QUOTA_HINTS):
+            return FAILURE_QUOTA
         return "provider_rate_limit"
     if status_code in REFUSED_STATUS_CODES:
         return FAILURE_REFUSED
+    if status_code == 504:
+        return "provider_timeout"
+    if status_code in (401, 403):
+        if _mentions(error, _REGION_HINTS):
+            return FAILURE_REGION_BLOCKED
+        return FAILURE_AUTH
+    if status_code == 402:
+        return FAILURE_QUOTA
+    if status_code == 404:
+        return FAILURE_MODEL_NOT_FOUND
+    if status_code == 408:
+        return "provider_timeout"
+    if status_code == 413:
+        return FAILURE_CONTEXT_TOO_LARGE
+    if status_code in (400, 422):
+        if _mentions(error, _REGION_HINTS):
+            return FAILURE_REGION_BLOCKED
+        if _mentions(error, _CONTEXT_HINTS):
+            return FAILURE_CONTEXT_TOO_LARGE
+        return "provider_bad_request"
     if isinstance(error, SERVER_ERRORS):
         return "provider_server_error"
     if isinstance(error, CONNECTION_ERRORS):
         return "provider_connection_error"
-    if status_code in (400, 422):
-        return "provider_bad_request"
+    if status_code is not None and 500 <= status_code < 600:
+        return "provider_server_error"
     return "model_invocation_error"

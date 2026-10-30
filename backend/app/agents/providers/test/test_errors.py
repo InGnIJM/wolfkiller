@@ -97,8 +97,8 @@ def test_auth_and_unrelated_errors_are_never_swallowed(error):
 class _BareStatusError(Exception):
     """A gateway error that is not one of the SDK classes but still has a status."""
 
-    def __init__(self, status_code: int) -> None:
-        super().__init__(f"status {status_code}")
+    def __init__(self, status_code: int, message: str | None = None) -> None:
+        super().__init__(message or f"status {status_code}")
         self.status_code = status_code
 
 
@@ -231,7 +231,31 @@ def _nested(outer, inner):
         (_BareStatusError(503), "provider_unavailable"),
         (_BareStatusError(400), "provider_bad_request"),
         (_BareStatusError(422), "provider_bad_request"),
-        (_BareStatusError(502), "model_invocation_error"),
+        (_BareStatusError(500), "provider_server_error"),
+        (_BareStatusError(502), "provider_server_error"),
+        (_BareStatusError(504), "provider_timeout"),
+        (_BareStatusError(401), "provider_auth_error"),
+        (_BareStatusError(403), "provider_auth_error"),
+        (_BareStatusError(402), "provider_quota_exhausted"),
+        (_BareStatusError(404), "provider_model_not_found"),
+        (_BareStatusError(408), "provider_timeout"),
+        (_BareStatusError(413), "provider_context_too_large"),
+        (
+            _BareStatusError(400, "User location is not supported for the API use."),
+            "provider_region_blocked",
+        ),
+        (
+            _BareStatusError(403, "This model is not available in your region."),
+            "provider_region_blocked",
+        ),
+        (
+            _BareStatusError(400, "maximum context length exceeded"),
+            "provider_context_too_large",
+        ),
+        (
+            _BareStatusError(429, "insufficient_quota: billing hard limit reached"),
+            "provider_quota_exhausted",
+        ),
         (RuntimeError("plain"), "model_invocation_error"),
     ],
 )
