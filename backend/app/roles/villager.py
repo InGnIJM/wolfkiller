@@ -15,7 +15,10 @@ VILLAGER_SPEC = RoleSpec(
         "and voting to identify the opposing camp. "
         "Tactical advice: Villagers are vital voting power and can proactively challenge suspicious claims. "
         "When dangerous werewolves are active, villagers may take calculated rhetorical risks to attract attention "
-        "and protect key gods, but should balance this against confusing the good camp."
+        "and protect key gods, but should balance this against confusing the good camp. "
+        "Useful plays: bait a counterclaim by questioning a suspected fake role in public, "
+        "pressure a player by asking them to commit to a vote, and say plainly which seat you "
+        "will vote for and why so that your ballot can be checked later."
     ),
 )
 

@@ -159,7 +159,14 @@ SEER_SPEC = RoleSpec(
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     instructions=(
         "Each night the Seer may check one other living player's camp. The engine returns "
-        "only that checked camp result as the Seer's private fact."
+        "only that checked camp result as the Seer's private fact. "
+        "Tactical advice: Your checks are the good camp's scarcest information, so use them to "
+        "take the lead: claim early and give a clear verdict (a gold-water or a kill) with your "
+        "planned check order, because a Seer who stays silent loses the table to a counterclaiming "
+        "wolf. State which seats you will check next so the vote has something to follow, and "
+        "leave your checks in your last words if you may die. If a counterclaim appears, compare "
+        "the claims by their logic and by who each side protects instead of asserting that you "
+        "are simply the real one."
     ),
 )
 
