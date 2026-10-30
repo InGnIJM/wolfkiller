@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Box, Button, Typography } from '@mui/material';
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function BatchActionBar({ selectedCount, onMove, onDelete, onClear }: Props) {
+  const { t } = useTranslation();
   if (selectedCount === 0) return null;
   return (
     <Box
@@ -27,10 +29,10 @@ export default function BatchActionBar({ selectedCount, onMove, onDelete, onClea
         borderRadius: 2,
       }}
     >
-      <Typography variant="body2" sx={{ mr: 'auto' }}>已选 {selectedCount} 局</Typography>
-      <Button size="small" onClick={onMove}>批量移动</Button>
-      <Button size="small" color="error" onClick={onDelete}>批量删除</Button>
-      <Button size="small" onClick={onClear}>取消选择</Button>
+      <Typography variant="body2" sx={{ mr: 'auto' }}>{t('lobby.selectedCount', { count: selectedCount })}</Typography>
+      <Button size="small" onClick={onMove}>{t('lobby.batchMove')}</Button>
+      <Button size="small" color="error" onClick={onDelete}>{t('lobby.batchDelete')}</Button>
+      <Button size="small" onClick={onClear}>{t('lobby.clearSelection')}</Button>
     </Box>
   );
 }

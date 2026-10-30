@@ -165,6 +165,12 @@ export const zh = {
     selectAll: '全选',
     folders: '文件夹',
     allGames: '全部',
+    folderName: '文件夹名称',
+    create: '创建',
+    newFolder: '新建文件夹',
+    selectedCount: '已选 {{count}} 局',
+    batchMove: '批量移动',
+    clearSelection: '取消选择',
   },
   errors: {
     invalidAudienceSeq: '收到无效的观众事件序号，已停止应用该事件。',

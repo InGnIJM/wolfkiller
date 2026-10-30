@@ -163,6 +163,12 @@ export const en: typeof zh = {
     selectAll: 'Select all',
     folders: 'Folders',
     allGames: 'All',
+    folderName: 'Folder name',
+    create: 'Create',
+    newFolder: 'New folder',
+    selectedCount: '{{count}} selected',
+    batchMove: 'Move selected',
+    clearSelection: 'Clear selection',
   },
   errors: {
     invalidAudienceSeq: 'Received an invalid audience event sequence number; the event was not applied.',

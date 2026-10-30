@@ -14,7 +14,8 @@ import {
   deleteGame, GameControlError, listFolders, listGames, renameGame,
 } from '../../api/client';
 import type { GameFolder, GameListItem } from '../../store/types';
-import { PHASE_LABELS } from '../../labels';
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 
 interface Props {
   onJoinGame: (gameId: string) => void;
@@ -30,6 +31,8 @@ function matchesFolder(game: GameListItem, filter: FolderFilter): boolean {
 }
 
 export default function GameList({ onJoinGame, onCreateClick }: Props) {
+  const { t } = useTranslation();
+  const L = useLabels();
   const [games, setGames] = useState<GameListItem[]>([]);
   const [folders, setFolders] = useState<GameFolder[]>([]);
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('all');
@@ -156,7 +159,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
     if (renameTarget === null) return;
     const name = renameValue.trim();
     if (!name) {
-      setRenameError('名称不能为空');
+      setRenameError(t('lobby.nameRequired'));
       return;
     }
     try {
@@ -185,7 +188,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
   const submitCreateFolder = async () => {
     const name = folderDraft.trim();
     if (!name) {
-      setFolderError('名称不能为空');
+      setFolderError(t('lobby.nameRequired'));
       return;
     }
     try {
@@ -277,13 +280,13 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
             variant="caption"
             sx={{ display: 'block', mb: 0.3, fontWeight: 600, fontSize: '0.65rem', letterSpacing: 5, color: 'secondary.dark' }}
           >
-            WOLF KILLER · 血月剧场
+            {t('lobby.titleLine')}
           </Typography>
           <Typography variant="h4" sx={{ fontWeight: 400, fontSize: '2rem', letterSpacing: '-0.5px' }}>
-            狼人杀
+            {t('lobby.subtitle')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            选择一个对局加入，或创建新游戏
+            {t('lobby.subtitleHint')}
           </Typography>
         </Box>
         <Button
@@ -292,7 +295,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           onClick={onCreateClick}
           disableElevation
         >
-          创建游戏
+          {t('lobby.createGame')}
         </Button>
       </Box>
 
@@ -326,10 +329,10 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           borderRadius: 2,
         }}>
           <Typography variant="h6" color="text.disabled" sx={{ fontWeight: 400, mb: 1 }}>
-            暂无对局
+            {t('lobby.emptyGames')}
           </Typography>
           <Typography variant="body2" color="text.disabled">
-            点击「创建游戏」开始一局新的狼人杀
+            {t('lobby.emptyGamesHint')}
           </Typography>
         </Box>
       )}
@@ -340,7 +343,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
             key={g.game_id}
             gameId={g.game_id}
             name={g.name}
-            phase={PHASE_LABELS[g.phase] || g.phase}
+            phase={L.PHASE_LABELS[g.phase] || g.phase}
             roundNumber={g.round_number}
             playerCount={g.player_count}
             aliveCount={g.alive_count}
@@ -383,12 +386,12 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       />
 
       <Dialog open={renameTarget !== null} onClose={() => setRenameTarget(null)}>
-        <DialogTitle>重命名对局</DialogTitle>
+        <DialogTitle>{t('lobby.renameTitle')}</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             margin="dense"
-            label="对局名称"
+            label={t('lobby.gameName')}
             fullWidth
             value={renameValue}
             onChange={(event) => setRenameValue(event.target.value)}
@@ -396,71 +399,70 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           {renameError && <Alert severity="error" sx={{ mt: 1 }}>{renameError}</Alert>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRenameTarget(null)}>取消</Button>
-          <Button onClick={() => void submitRename()}>确定</Button>
+          <Button onClick={() => setRenameTarget(null)}>{t('common.cancel')}</Button>
+          <Button onClick={() => void submitRename()}>{t('common.confirm')}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
-        <DialogTitle>删除对局</DialogTitle>
+        <DialogTitle>{t('lobby.deleteTitle')}</DialogTitle>
         <DialogContent>
           <Typography>
-            确定删除「{deleteTarget?.name}」？此操作不可恢复。
+            {t('lobby.deleteConfirm', { name: deleteTarget?.name })}
           </Typography>
           {inProgress && (
             <Typography color="warning.main" sx={{ mt: 1 }}>
-              对局正在进行，删除将立即中断。
+              {t('lobby.deleteRunningHint')}
             </Typography>
           )}
           {deleteError && <Alert severity="error" sx={{ mt: 1 }}>{deleteError}</Alert>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)}>取消</Button>
-          <Button color="error" onClick={() => void submitDelete()}>删除</Button>
+          <Button onClick={() => setDeleteTarget(null)}>{t('common.cancel')}</Button>
+          <Button color="error" onClick={() => void submitDelete()}>{t('common.delete')}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={batchDeleteOpen} onClose={() => setBatchDeleteOpen(false)}>
-        <DialogTitle>批量删除对局</DialogTitle>
+        <DialogTitle>{t('lobby.batchDeleteTitle')}</DialogTitle>
         <DialogContent>
-          <Typography>确定删除已选的 {selectedIds.length} 局？此操作不可恢复。</Typography>
+          <Typography>{t('lobby.batchDeleteConfirm', { count: selectedIds.length })}</Typography>
           {batchDeleteError && <Alert severity="error" sx={{ mt: 1 }}>{batchDeleteError}</Alert>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBatchDeleteOpen(false)}>取消</Button>
-          <Button color="error" onClick={() => void submitBatchDelete()}>删除</Button>
+          <Button onClick={() => setBatchDeleteOpen(false)}>{t('common.cancel')}</Button>
+          <Button color="error" onClick={() => void submitBatchDelete()}>{t('common.delete')}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={confirmTarget !== null} onClose={() => setConfirmTarget(null)}>
-        <DialogTitle>角色声明已变更</DialogTitle>
+        <DialogTitle>{t('game.roleDriftTitle')}</DialogTitle>
         <DialogContent>
           <Typography>
-            这局是在旧的角色声明下中断的，直接续跑会按当前代码继续。
-            已经结算的行动与资源不会被重放，新声明的资源也不会补发。
+            {t('game.roleDriftBody')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            原因代码：{confirmTarget?.code}
+            {t('game.reasonCode', { code: confirmTarget?.code })}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmTarget(null)}>取消</Button>
-          <Button onClick={() => void submitConfirm()}>继续对局</Button>
+          <Button onClick={() => setConfirmTarget(null)}>{t('common.cancel')}</Button>
+          <Button onClick={() => void submitConfirm()}>{t('game.continueGame')}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={moveIds.length > 0} onClose={() => setMoveIds([])}>
-        <DialogTitle>移动到文件夹</DialogTitle>
+        <DialogTitle>{t('lobby.moveTitle')}</DialogTitle>
         <DialogContent>
           <TextField
             select
             fullWidth
             margin="dense"
-            label="文件夹"
+            label={t('lobby.folder')}
             value={moveFolderId}
             onChange={(event) => setMoveFolderId(event.target.value)}
           >
-            <MenuItem value="">未分类</MenuItem>
+            <MenuItem value="">{t('lobby.uncategorized')}</MenuItem>
             {folders.map((folder) => (
               <MenuItem key={folder.folder_id} value={folder.folder_id}>{folder.name}</MenuItem>
             ))}
@@ -468,8 +470,8 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           {moveError && <Alert severity="error" sx={{ mt: 1 }}>{moveError}</Alert>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setMoveIds([])}>取消</Button>
-          <Button onClick={() => void submitMove()}>确定</Button>
+          <Button onClick={() => setMoveIds([])}>{t('common.cancel')}</Button>
+          <Button onClick={() => void submitMove()}>{t('common.confirm')}</Button>
         </DialogActions>
       </Dialog>
     </Container>

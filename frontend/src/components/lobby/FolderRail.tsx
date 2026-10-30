@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Box, Button, Chip, Stack, TextField } from '@mui/material';
 import type { GameFolder } from '../../store/types';
 
@@ -19,16 +20,17 @@ export default function FolderRail({
   folders, filter, creating, draftName, onFilter, onStartCreate,
   onDraftName, onCreate, onCancelCreate,
 }: Props) {
+  const { t } = useTranslation();
   return (
     <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mb: 2, alignItems: 'center' }}>
       <Chip
-        label="全部"
+        label={t('lobby.allGames')}
         color={filter === 'all' ? 'primary' : 'default'}
         variant={filter === 'all' ? 'filled' : 'outlined'}
         onClick={() => onFilter('all')}
       />
       <Chip
-        label="未分类"
+        label={t('lobby.uncategorized')}
         color={filter === 'unfiled' ? 'primary' : 'default'}
         variant={filter === 'unfiled' ? 'filled' : 'outlined'}
         onClick={() => onFilter('unfiled')}
@@ -46,15 +48,15 @@ export default function FolderRail({
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
           <TextField
             size="small"
-            label="文件夹名称"
+            label={t('lobby.folderName')}
             value={draftName}
             onChange={(event) => onDraftName(event.target.value)}
           />
-          <Button size="small" onClick={onCreate}>创建</Button>
-          <Button size="small" onClick={onCancelCreate}>取消</Button>
+          <Button size="small" onClick={onCreate}>{t('lobby.create')}</Button>
+          <Button size="small" onClick={onCancelCreate}>{t('common.cancel')}</Button>
         </Box>
       ) : (
-        <Button size="small" onClick={onStartCreate}>新建文件夹</Button>
+        <Button size="small" onClick={onStartCreate}>{t('lobby.newFolder')}</Button>
       )}
     </Stack>
   );
