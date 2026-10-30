@@ -153,6 +153,8 @@ export const en: typeof zh = {
     evUnknown: 'unknown',
     evExplodeInElection: 'election self-destruct',
     evRoleFallback: 'role',
+    evSpeechPlain: 'Seat {{seat}} spoke',
+    hpThinkingSuffix: 'thinking',
     evSpeaking: 'Seat {{seat}} is speaking',
     evLastWords: 'Seat {{seat}} last words',
     evCampaign: 'Seat {{seat}} campaign speech',

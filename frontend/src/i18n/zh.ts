@@ -155,6 +155,8 @@ export const zh = {
     evUnknown: '未明',
     evExplodeInElection: '竞选自爆',
     evRoleFallback: '角色',
+    evSpeechPlain: '{{seat}}号发言',
+    hpThinkingSuffix: '思考',
     evSpeaking: '{{seat}}号正在发言',
     evLastWords: '{{seat}}号遗言',
     evCampaign: '{{seat}}号竞选发言',

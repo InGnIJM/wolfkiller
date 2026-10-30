@@ -4,6 +4,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useGameStore } from '../../store/gameStore';
 import { fetchGameMemories } from '../../api/client';
 import type { PlayerMemory, PublicReplayEvent } from '../../store/types';
+import i18n from '../../i18n';
+import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
 import type { LabelsModule } from '../../i18n/useLabels';
 import { BLOOD_MOON, INK, INK_WASH, ROLE_COLORS } from '../../theme/tokens';
@@ -62,7 +64,7 @@ function isNightEvent(event: PublicReplayEvent): boolean {
 
 function dayLabel(event: PublicReplayEvent): string {
   const round = (event.payload as { round_number?: number }).round_number;
-  return `第${round ?? '?'}${isNightEvent(event) ? '夜' : '天'}`;
+  return i18n.t(isNightEvent(event) ? 'game.hpNightUnit' : 'game.hpDayUnit', { round: round ?? '?' });
 }
 
 function buildDayGroups(events: { event: PublicReplayEvent; index: number }[]) {
@@ -77,8 +79,10 @@ function buildDayGroups(events: { event: PublicReplayEvent; index: number }[]) {
 }
 
 function formatKnowledgeValue(key: string, value: unknown): string {
+  const joiner = i18n.t('game.listJoin');
+  const seatText = (seat: unknown) => i18n.t('game.seatNumber', { seat });
   if (key === 'teammates' && Array.isArray(value)) {
-    return value.length ? value.map((seat) => `${seat}号`).join('、') : '无';
+    return value.length ? value.map(seatText).join(joiner) : i18n.t('game.hpNone');
   }
   if (key === 'check_results' && Array.isArray(value)) {
     return value.length
@@ -86,15 +90,17 @@ function formatKnowledgeValue(key: string, value: unknown): string {
           const record = item as Record<string, unknown>;
           const target = record.target_seat ?? record.target;
           const camp = record.camp ?? record.result;
-          const campLabel = camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp === 'third_party' ? '第三方' : String(camp);
-          return `${target}号→${campLabel}`;
-        }).join('、')
-      : '无';
+          const campLabel = camp === 'werewolf' ? i18n.t('game.campWerewolf')
+            : camp === 'good' ? i18n.t('game.campGood')
+              : camp === 'third_party' ? i18n.t('game.campThird') : String(camp);
+          return `${seatText(target)}→${campLabel}`;
+        }).join(joiner)
+      : i18n.t('game.hpNone');
   }
   if (key === 'last_wolf_kill_target' && typeof value === 'number') {
-    return `${value}号`;
+    return seatText(value);
   }
-  if (typeof value === 'boolean') return value ? '可用' : '已用';
+  if (typeof value === 'boolean') return value ? i18n.t('game.hpUsable') : i18n.t('game.hpUsed');
   return String(value);
 }
 
@@ -106,29 +112,32 @@ function formatActionHistoryItem(item: Record<string, unknown>, L: LabelsModule)
     const actionType = record.action_type ?? '?';
     const label = L.MEMORY_ACTION_LABELS[String(actionType)] ?? String(actionType);
     const targetSeat = record.target_seat;
-    const target = targetSeat !== null && targetSeat !== undefined ? ` → ${targetSeat}号` : '';
-    return `行动 ${round}轮：${label}${target}`;
+    const target = targetSeat !== null && targetSeat !== undefined ? ` → ${i18n.t('game.seatNumber', { seat: targetSeat })}` : '';
+    return i18n.t('game.hpAction', { round, label, target });
   }
   if (item.type === 'speech') {
-    return `发言 ${round}轮：${item.text ?? ''}`;
+    return i18n.t('game.hpSpeech', { round, text: item.text ?? '' });
   }
   if (item.type === 'vote') {
     const vote = item.vote;
     const targetSeat = vote !== null && typeof vote === 'object' ? (vote as Record<string, unknown>).target_seat : undefined;
-    const target = targetSeat !== null && targetSeat !== undefined ? `${targetSeat}号` : '弃权';
-    return `投票 ${round}轮：${target}`;
+    const target = targetSeat !== null && targetSeat !== undefined
+      ? i18n.t('game.seatNumber', { seat: targetSeat })
+      : i18n.t('game.abstain');
+    return i18n.t('game.hpVote', { round, target });
   }
-  return `行动 ${round}轮：${item.phase ?? '?'}`;
+  return i18n.t('game.hpActionPhase', { round, phase: item.phase ?? '?' });
 }
 
 function formatWitnessedEvent(item: Record<string, unknown>, L: LabelsModule): string {
   const round = item.round ?? '?';
   const eventType = item.event ?? item.type ?? '?';
   const label = L.MEMORY_EVENT_LABELS[String(eventType)] ?? String(eventType);
-  return `见证 ${round}轮：${label}`;
+  return i18n.t('game.hpWitness', { round, label });
 }
 
 function MemoryCard({ memory }: { memory: PlayerMemory }) {
+  const { t } = useTranslation();
   const L = useLabels();
   const knowledgeEntries = Object.entries(memory.private_knowledge);
   return (
@@ -143,24 +152,24 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
       }}
     >
       <Typography variant="caption" sx={{ fontWeight: 600 }}>
-        {memory.seat_number}号 · {L.roleName(memory.role) ?? memory.role}
+        {t('game.seatNumber', { seat: memory.seat_number })} · {L.roleName(memory.role) ?? memory.role}
         {' · '}
         <Typography component="span" variant="caption" color={memory.is_alive ? 'success.light' : 'text.disabled'}>
-          {memory.is_alive ? '存活' : '出局'}
+          {t(memory.is_alive ? 'game.alive' : 'game.dead')}
         </Typography>
       </Typography>
       {knowledgeEntries.length > 0 && (
         <Box sx={{ mt: 0.4 }}>
           {knowledgeEntries.map(([key, value]) => (
             <Typography key={key} variant="caption" color="info.light" sx={{ display: 'block', fontSize: '0.7rem' }}>
-              {L.KNOWLEDGE_LABELS[key] ?? key}：{formatKnowledgeValue(key, value)}
+              {L.KNOWLEDGE_LABELS[key] ?? key}: {formatKnowledgeValue(key, value)}
             </Typography>
           ))}
         </Box>
       )}
       {memory.action_history.length === 0 ? (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.4, fontSize: '0.7rem' }}>
-          行动记录：无
+          {t('game.hpNoActions')}
         </Typography>
       ) : (
         memory.action_history.map((item, index) => (
@@ -176,7 +185,7 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
       )}
       {memory.witnessed_events.length === 0 ? (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.4, fontSize: '0.7rem' }}>
-          见证记录：无
+          {t('game.hpNoWitness')}
         </Typography>
       ) : (
         memory.witnessed_events.map((item, index) => (
@@ -201,6 +210,7 @@ function EventCard({
   event: PublicReplayEvent;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const L = useLabels();
   const players = useGameStore((s) => s.players);
   const timeline = useGameStore((s) => s.timeline);
@@ -210,7 +220,7 @@ function EventCard({
     case 'speaking':
       content = (
         <Typography variant="caption" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号正在发言 · 第{event.payload.round_number}轮
+          {t('game.evSpeaking', { seat: event.payload.seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
@@ -219,10 +229,10 @@ function EventCard({
         <>
           <Typography variant="caption" sx={{ fontWeight: 500 }}>
             {event.payload.phase === 'last_words'
-              ? `${event.payload.player_seat}号遗言`
+              ? t('game.evLastWords', { seat: event.payload.player_seat })
               : event.payload.phase === 'sheriff_election'
-                ? `${event.payload.player_seat}号竞选发言`
-                : `${event.payload.player_seat}号发言`} · 第{event.payload.round_number}轮
+                ? t('game.evCampaign', { seat: event.payload.player_seat })
+                : t('game.evSpeechPlain', { seat: event.payload.player_seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.text}
@@ -233,53 +243,53 @@ function EventCard({
     case 'vote':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {event.payload.voter_seat}号 → {event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`} · 第{event.payload.round_number}轮
+          {t('game.evVoteFor', { seat: event.payload.voter_seat, target: event.payload.target_seat === null ? t('game.abstain') : t('game.seatNumber', { seat: event.payload.target_seat }) })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'vote_result':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          投票结果 · 第{event.payload.round_number}轮 · {event.payload.exiled_seat === null
+          {t('game.acVoteResult', { round: event.payload.round_number })} · {event.payload.exiled_seat === null
             ? (L.voteRoundWasRewound(event.payload.round_number, timeline)
               ? L.VOTE_REWOUND_RESULT
-              : '平票')
-            : `${event.payload.exiled_seat}号被放逐`}
+              : t('game.evTie'))
+            : t('game.evExiled', { seat: event.payload.exiled_seat })}
         </Typography>
       );
       break;
     case 'vote_rewound':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号发动逆转时空，放逐投票作废 · 第{event.payload.round_number}轮
+          {t('game.reportRewind', { seat: event.payload.seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'technical_abstain':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.voter_seat}号 系统代投弃权 · 第{event.payload.round_number}轮
+          {t('game.evSysAbstain', { seat: event.payload.voter_seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'exile_cancelled':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {event.payload.target_seat}号翻牌免于出局，失去投票权 · 第{event.payload.round_number}轮
+          {t('game.evFlip', { seat: event.payload.target_seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'knight_duel':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号骑士翻牌决斗{event.payload.target_seat}号 · 第{event.payload.round_number}轮
+          {t('game.acDuelTitle', { seat: event.payload.seat, target: event.payload.target_seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'fragrance_bond':
       content = (
         <Typography variant="caption" sx={{ color: 'secondary.main', fontWeight: 500 }}>
-          {`${event.payload.seat}号缠绕${event.payload.target_seats.join('、')}号 · 第${event.payload.round_number}轮`}
+          {t('game.evEntangle', { seat: event.payload.seat, targets: event.payload.target_seats.join(t('game.listJoin')) })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
@@ -287,8 +297,8 @@ function EventCard({
       content = (
         <Typography variant="caption" sx={{ color: 'secondary.main', fontWeight: 500 }}>
           {event.payload.target_seat == null
-            ? `${event.payload.seat}号发动挽歌幻象 · 第${event.payload.round_number}轮 · 目标未记录`
-            : `${event.payload.seat}号以${event.payload.target_seat}号为替身 · 第${event.payload.round_number}轮`}
+            ? `${t('game.evIllusionStart', { seat: event.payload.seat })} · ${t('game.acRoundTargetMissing', { round: event.payload.round_number })}`
+            : `${t('game.evIllusion', { seat: event.payload.seat, target: event.payload.target_seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
@@ -296,43 +306,43 @@ function EventCard({
       content = (
         <Typography variant="caption" sx={{ color: 'secondary.main', fontWeight: 500 }}>
           {event.payload.target_seat == null
-            ? `${event.payload.seat}号发动魅惑 · 第${event.payload.round_number}轮 · 目标未记录`
-            : `${event.payload.seat}号魅惑${event.payload.target_seat}号 · 第${event.payload.round_number}轮`}
+            ? `${t('game.evCharmStart', { seat: event.payload.seat })} · ${t('game.acRoundTargetMissing', { round: event.payload.round_number })}`
+            : `${t('game.evCharm', { seat: event.payload.seat, target: event.payload.target_seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
     case 'wolf_beauty_revenge':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号出局，{event.payload.target_seat}号殉情 · 第{event.payload.round_number}轮
+          {t('game.evRevenge', { seat: event.payload.seat, target: event.payload.target_seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'self_explode':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号自爆带走{event.payload.target_seat}号，本日发言与投票取消 · 第{event.payload.round_number}轮
+          {t('game.acExplodeSub', { round: event.payload.round_number })} · {t('game.evExplode', { seat: event.payload.seat, target: event.payload.target_seat })}
         </Typography>
       );
       break;
     case 'dance_pool':
       content = (
         <Typography variant="caption" color="primary.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号起舞，邀请 {event.payload.pool_seats.join('、')}号共舞，人数少的一方当夜出局 · 第{event.payload.round_number}轮
+          {t('game.acDanceTitle', { seat: event.payload.seat, seats: event.payload.pool_seats.join(t('game.listJoin')) })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'mask_granted':
       content = (
         <Typography variant="caption" color="primary.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号给 {event.payload.target_seat}号戴上面具（目标{event.payload.in_pool ? '正在' : '不在'}舞池中，本次阵营比较被翻转） · 第{event.payload.round_number}轮
+          {t('game.evMask', { seat: event.payload.seat, target: event.payload.target_seat, inPool: t(event.payload.in_pool ? 'game.evInPool' : 'game.evNotInPool') })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'awakened_witch_assist_pick':
       content = (
         <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
-          毒药目标 {event.payload.target_seat}号，协助者：{event.payload.assistant_seats.map((seat) => `${seat}号`).join('、')} · 第{event.payload.round_number}轮
+          {t('game.evPoisonTarget', { target: event.payload.target_seat, assistants: event.payload.assistant_seats.map((seat) => t('game.seatNumber', { seat })).join(t('game.listJoin')) })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
@@ -340,7 +350,7 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
-            {event.payload.seat}号协助者密谈（毒药目标 {event.payload.target_seat}号） · 第{event.payload.round_number}轮
+            {t('game.evAssistChat', { seat: event.payload.seat, brief: t('game.evPoisonTarget', { target: event.payload.target_seat, assistants: '' }) })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.text}
@@ -352,10 +362,10 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
-            {event.payload.seat}号协助者{L.awakenedWitchVoteLabel(event.payload.vote)}（毒药目标 {event.payload.target_seat}号） · 第{event.payload.round_number}轮
+            {t('game.evAssistVote', { seat: event.payload.seat, vote: L.awakenedWitchVoteLabel(event.payload.vote), target: event.payload.target_seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
-            {event.payload.reasoning || '（无理由）'}
+            {event.payload.reasoning || t('game.acNoReason')}
           </Typography>
         </>
       );
@@ -363,14 +373,14 @@ function EventCard({
     case 'awakened_witch_poison_result':
       content = (
         <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
-          {event.payload.target_seat}号毒药{L.awakenedWitchPoisonResultLabel(event.payload.result)} · 第{event.payload.round_number}轮
+          {t('game.acPoisonResultTitle', { target: event.payload.target_seat, result: L.awakenedWitchPoisonResultLabel(event.payload.result) })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'crimson_explode':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号自爆，当晚好人技能被封印（{event.payload.silenced_seats.join('、') || '无人'}），本日发言与投票取消 · 第{event.payload.round_number}轮
+          {t('game.acSilenceTitle', { seat: event.payload.seat })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
@@ -378,8 +388,8 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.seat == null
-            ? `警长竞选结束，警徽流失 · 第${event.payload.round_number}轮`
-            : `${event.payload.seat}号当选警长 · 第${event.payload.round_number}轮`}
+            ? `${t('game.evSheriffLost')} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`
+            : `${t('game.evSheriffElected', { seat: event.payload.seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
@@ -387,9 +397,9 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.to_seat == null
-            ? `${event.payload.from_seat}号撕毁警徽 · 第${event.payload.round_number}轮`
-            : `${event.payload.from_seat}号将警徽移交给${event.payload.to_seat}号 · 第${event.payload.round_number}轮`}
-          {event.payload.reasoning ? `（警长思考：${event.payload.reasoning}）` : ''}
+            ? `${t('game.evBadgeTear', { seat: event.payload.from_seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`
+            : `${t('game.evBadgePass', { from: event.payload.from_seat, to: event.payload.to_seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
+          {event.payload.reasoning ? t('game.acSheriffThought', { detail: event.payload.reasoning }) : ''}
         </Typography>
       );
       break;
@@ -397,8 +407,8 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.choice === 'run'
-            ? `${event.payload.seat}号上警 · 第${event.payload.round_number}轮`
-            : `${event.payload.seat}号过 · 第${event.payload.round_number}轮`}
+            ? `${t('game.evRun', { seat: event.payload.seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`
+            : `${t('game.evPassSeat', { seat: event.payload.seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
@@ -406,24 +416,24 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.choice === 'withdraw'
-            ? `${event.payload.seat}号退水 · 第${event.payload.round_number}轮`
-            : `${event.payload.seat}号留下 · 第${event.payload.round_number}轮`}
+            ? `${t('game.evWithdraw', { seat: event.payload.seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`
+            : `${t('game.evStay', { seat: event.payload.seat })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
     case 'sheriff_vote':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {`${event.payload.voter_seat}号${event.payload.kind === 'pk' ? 'PK票' : ''} → ${
-            event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`
-          } · 第${event.payload.round_number}轮`}
+          {`${t('game.seatNumber', { seat: event.payload.voter_seat })}${event.payload.kind === 'pk' ? t('game.acPkBallot') : ''} → ${
+            event.payload.target_seat === null ? t('game.abstain') : t('game.seatNumber', { seat: event.payload.target_seat })
+          } · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
     case 'sheriff_side':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {`${event.payload.seat}号选择${L.SHERIFF_SIDE_LABELS[event.payload.side] ?? event.payload.side}发言 · 第${event.payload.round_number}轮`}
+          {`${t('game.evSheriffSide', { seat: event.payload.seat, side: L.SHERIFF_SIDE_LABELS[event.payload.side] ?? event.payload.side })} · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
@@ -435,7 +445,7 @@ function EventCard({
             targetSeat: event.payload.target_seat,
             intendedSeat: event.payload.intended_seat,
             roleName: L.roleLabelForSeat(event.payload.seat, players),
-          })} · 第{event.payload.round_number}轮
+          })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
@@ -466,9 +476,9 @@ function EventCard({
     case 'wolf_chat_message':
       content = (
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
-          {event.payload.seat}号：{event.payload.text}
+          {t('game.seatNumber', { seat: event.payload.seat })}：{event.payload.text}
           {event.payload.day_plan
-            ? `（次日计划：${event.payload.day_plan}）`
+            ? t('game.acDayPlan', { plan: event.payload.day_plan })
             : ''}
         </Typography>
       );
@@ -476,17 +486,17 @@ function EventCard({
     case 'wolf_vote':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {event.payload.seat}号 → {event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`}
-          （{event.payload.degraded ? `${L.DEGRADED_ACTION_LABEL}：` : ''}{event.payload.reasoning}）
+          {t('game.seatNumber', { seat: event.payload.seat })} → {event.payload.target_seat === null ? t('game.abstain') : t('game.seatNumber', { seat: event.payload.target_seat })}
+          （{event.payload.degraded ? `${L.DEGRADED_ACTION_LABEL}: ` : ''}{event.payload.reasoning}）
         </Typography>
       );
       break;
     case 'player_status':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {`${event.payload.player_seat}号 ${
+          {`${t('game.seatNumber', { seat: event.payload.player_seat })} ${
             L.PLAYER_STATUS_LABELS[event.payload.status] ?? event.payload.status
-          } · 第${event.payload.round_number}轮`}
+          } · ${t('game.acRoundOnly', { round: event.payload.round_number })}`}
         </Typography>
       );
       break;
@@ -495,7 +505,7 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {event.payload.seat}号{L.THOUGHT_ROLE_NAMES[event.event_type]}思考
+            {t('game.seatNumber', { seat: event.payload.seat })}{L.THOUGHT_ROLE_NAMES[event.event_type]}{t('game.hpThinkingSuffix')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.text}
@@ -511,13 +521,13 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {degraded ? `${L.DEGRADED_ACTION_LABEL} · ${seat}号` : `${seat}号${who}思考`}
+            {degraded ? `${L.DEGRADED_ACTION_LABEL} · ${t('game.seatNumber', { seat })}` : `${t('game.seatNumber', { seat })}${who}${t('game.hpThinkingSuffix')}`}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {/* 代行动作没有「目标/不行动」可言，正文只留中性说明。 */}
             {degraded
               ? reasoning
-              : target_seat === null ? `不行动：${reasoning}` : `目标${target_seat}号：${reasoning}`}
+              : target_seat === null ? t('game.acNoAction', { reason: reasoning }) : t('game.acTarget', { target: target_seat, reason: reasoning })}
           </Typography>
         </>
       );
@@ -526,21 +536,21 @@ function EventCard({
     case 'death':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.player_seat}号出局 · {L.DEATH_CAUSE_LABELS[event.payload.cause]} · 第{event.payload.round_number}轮
+          {t('game.evDeath', { seat: event.payload.player_seat, cause: L.DEATH_CAUSE_LABELS[event.payload.cause] })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'phase':
       content = (
         <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
-          阶段变更：{event.payload.phase} · 第{event.payload.round_number}轮
+          {t('game.hpPhaseChange', { phase: event.payload.phase })} · {t('game.acRoundOnly', { round: event.payload.round_number })}
         </Typography>
       );
       break;
     case 'winner':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          游戏结束
+          {t('game.hpGameEnd')}
         </Typography>
       );
       break;
@@ -629,6 +639,7 @@ function EventCard({
 }
 
 export default function HistoryPanel({ onClose }: Props) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState(0);
   const [memories, setMemories] = useState<PlayerMemory[] | null>(null);
   const [memoriesError, setMemoriesError] = useState<string | null>(null);
@@ -678,7 +689,7 @@ export default function HistoryPanel({ onClose }: Props) {
         if (!cancelled) setMemories(result.memories);
       })
       .catch(() => {
-        if (!cancelled) setMemoriesError('记忆数据加载失败');
+        if (!cancelled) setMemoriesError(t('game.memoryLoadFailed'));
       });
     return () => { cancelled = true; };
   }, [tab, gameId]);
@@ -699,18 +710,18 @@ export default function HistoryPanel({ onClose }: Props) {
   return (
     <Box sx={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', overflow: 'hidden' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', px: 2, py: 1.2, borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Typography variant="body1" sx={{ fontWeight: 500 }}>历史记录</Typography>
-        <IconButton aria-label="关闭历史记录" onClick={onClose} size="small"><CloseIcon fontSize="small" /></IconButton>
+        <Typography variant="body1" sx={{ fontWeight: 500 }}>{t('game.hpTitle')}</Typography>
+        <IconButton aria-label={t('game.hpClose')} onClick={onClose} size="small"><CloseIcon fontSize="small" /></IconButton>
       </Box>
 
       <Tabs value={tab} onChange={handleTabChange} variant="scrollable" scrollButtons={false} sx={{ borderBottom: '1px solid', borderColor: 'divider', minHeight: 40, '& .MuiTab-root': { minHeight: 40, py: 0.5 } }}>
-        <Tab label={`全部 ${indexedEvents.length}`} />
-        <Tab label={`发言 ${speeches.length}`} />
-        <Tab label={`投票 ${votes.length}`} />
-        <Tab label={`死亡 ${deaths.length}`} />
-        <Tab label={`夜晚 ${nightActions.length}`} />
-        <Tab label={`思考 ${thoughts.length}`} />
-        <Tab label="记忆" />
+        <Tab label={t('game.hpTabAll', { count: indexedEvents.length })} />
+        <Tab label={t('game.hpTabSpeech', { count: speeches.length })} />
+        <Tab label={t('game.hpTabVote', { count: votes.length })} />
+        <Tab label={t('game.hpTabDeath', { count: deaths.length })} />
+        <Tab label={t('game.hpTabNight', { count: nightActions.length })} />
+        <Tab label={t('game.hpTabThought', { count: thoughts.length })} />
+        <Tab label={t('game.hpTabMemory')} />
       </Tabs>
 
       <Box sx={{ flex: 1, overflowY: 'auto', px: 1.2, py: 1 }}>
@@ -723,12 +734,12 @@ export default function HistoryPanel({ onClose }: Props) {
             )}
             {memories === null && memoriesError === null && (
               <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 4 }}>
-                加载记忆数据中…
+                {t('game.hpLoadingMemory')}
               </Typography>
             )}
             {memories !== null && memories.length === 0 && (
               <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 4 }}>
-                暂无记忆数据
+                {t('game.hpNoMemory')}
               </Typography>
             )}
             {memories !== null && memories.map((memory) => (
@@ -759,7 +770,7 @@ export default function HistoryPanel({ onClose }: Props) {
             )}
             {currentEvents.length === 0 && (
               <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 4 }}>
-                暂无记录
+                {t('game.hpNoRecords')}
               </Typography>
             )}
           </>
