@@ -413,3 +413,84 @@ async def test_aclose_does_not_poison_the_next_openai_http_client():
         await second.aclose()
         _cached_sync_httpx_client.cache_clear()
         _cached_async_httpx_client.cache_clear()
+
+
+class _SlowStream:
+    def stream(self, messages):
+        import time
+        time.sleep(0.02)
+        from langchain_core.messages import AIMessage
+        yield AIMessage(content="slow")
+
+
+class _SlowInvoke:
+    def invoke(self, messages):
+        import time
+        time.sleep(0.02)
+        from langchain_core.messages import AIMessage
+        return AIMessage(content="slow")
+
+
+class _SlowAsyncStream:
+    async def astream(self, messages):
+        import asyncio
+        await asyncio.sleep(0.02)
+        from langchain_core.messages import AIMessage
+        yield AIMessage(content="slow")
+
+
+class _SlowAsyncInvoke:
+    async def ainvoke(self, messages):
+        import asyncio
+        await asyncio.sleep(0.02)
+        from langchain_core.messages import AIMessage
+        return AIMessage(content="slow")
+
+
+def test_complete_enforces_a_total_wall_clock_timeout_on_streaming():
+    from app.agents.llm_client import ProviderDeadlineTimeout
+
+    with pytest.raises(ProviderDeadlineTimeout):
+        LLMClient._complete(_SlowStream(), [], timeout=0.001)
+
+
+def test_complete_enforces_a_total_wall_clock_timeout_on_invoke():
+    from app.agents.llm_client import ProviderDeadlineTimeout
+
+    with pytest.raises(ProviderDeadlineTimeout):
+        LLMClient._complete(_SlowInvoke(), [], timeout=0.001)
+
+
+def test_complete_without_a_timeout_still_returns_the_answer():
+    assert LLMClient._complete(_SlowStream(), []).content == "slow"
+
+
+@pytest.mark.asyncio
+async def test_acomplete_enforces_a_total_wall_clock_timeout_on_streaming():
+    from app.agents.llm_client import ProviderDeadlineTimeout
+
+    with pytest.raises(ProviderDeadlineTimeout):
+        await LLMClient._acomplete(_SlowAsyncStream(), [], timeout=0.001)
+
+
+@pytest.mark.asyncio
+async def test_acomplete_enforces_a_total_wall_clock_timeout_on_ainvoke():
+    from app.agents.llm_client import ProviderDeadlineTimeout
+
+    with pytest.raises(ProviderDeadlineTimeout):
+        await LLMClient._acomplete(_SlowAsyncInvoke(), [], timeout=0.001)
+
+
+def test_action_wall_clock_timeout_matches_the_action_call_budget():
+    from types import SimpleNamespace
+
+    assert LLMClient._action_wall_clock_timeout(
+        SimpleNamespace(
+            action_timeout_seconds=90.0, action_retry_timeout_seconds=120.0,
+        )
+    ) == 125.0
+    assert LLMClient._action_wall_clock_timeout(
+        SimpleNamespace(
+            action_timeout_seconds=90.0, action_retry_timeout_seconds=60.0,
+        )
+    ) == 95.0
