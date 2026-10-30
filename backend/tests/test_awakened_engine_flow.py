@@ -401,6 +401,36 @@ def test_provider_short_circuits_the_assist_tally() -> None:
     )
 
 
+def test_durable_provider_never_writes_a_request_for_the_assist_tally() -> None:
+    """The deterministic tally must bypass the durable ledger too.
+
+    The non-durable provider already synthesised the command, but with a
+    ``ModelInvocationService`` attached the tally still created a 0ms request
+    and attempt with unknown usage. ``invoke_sync`` must not be reached.
+    """
+    service = GameService(WSManager(), EventBus())
+    service._model_invocations = MagicMock()
+    snapshot = builtin_registry.freeze()
+    director = NightDirector(snapshot, lambda messages: None)
+    provider = service._command_provider(
+        snapshot, PromptRenderer(), lambda seat: MagicMock(), director,
+    )
+    contract = next(
+        contract for contract in snapshot.require(AWAKENED_WITCH_SPEC.role_id).contracts
+        if contract.contract_id == "awakened_witch_assist_tally"
+    )
+    request = IssuedActionRequest(
+        1, AWAKENED_WITCH_SPEC.role_id, contract, 0, 1, "night", "w", "k",
+    )
+
+    command = provider(request, SimpleNamespace(game_id="g"), 0)
+
+    assert command == ActionCommand(
+        action_type="resolve", target_seat=None, reasoning="",
+    )
+    service._model_invocations.invoke_sync.assert_not_called()
+
+
 def test_assistant_prompt_uses_the_registered_display_name() -> None:
     state = _game()
     snapshot = builtin_registry.freeze()

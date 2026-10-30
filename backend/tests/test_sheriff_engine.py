@@ -228,6 +228,7 @@ async def test_an_election_explode_is_logged_as_a_death_batch(tmp_path) -> None:
     assert [row["data"]["deaths"] for row in batches] == [
         [{"player_seat": 1, "cause": "self_explode", "round_number": 1}],
     ]
+    assert [row["phase"] for row in batches] == ["sheriff_election"]
 
     summary = build_game_summary(str(tmp_path), "sheriff-engine")
     assert summary["rounds"]["1"]["deaths"] == [
@@ -644,6 +645,40 @@ async def test_campaign_and_pk_speeches_are_public_and_do_not_block_day_speech()
     assert [kind for _, kind in spoken] == ["day_speech"] * 4
     day = [record for record in engine.state.speeches if record.phase == "speech"]
     assert {record.player_seat for record in day} == {1, 2, 3, 4}
+
+
+@pytest.mark.asyncio
+async def test_campaign_speeches_are_written_to_game_log(tmp_path) -> None:
+    """Campaign speeches must be in the public event log, not only conversation.
+
+    The summary's ``llm.calls_by_kind.speech`` counted them (4 rows in the
+    2026-10-27 game) while ``rounds.*.speeches`` and ``game.log`` did not; the
+    missing ``log=True`` made the replay and the two benchmarks disagree.
+    """
+    engine = _engine(data_dir=str(tmp_path))
+    engine._sheriff_director = ScriptedSheriff(
+        campaign=["pass", "run", "run", "pass"],
+        withdraw=["stay", "stay"],
+        votes=[2, 3, 2, 2],
+    )
+    engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
+
+    await engine._execute_sheriff_election()
+
+    rows = [
+        json.loads(line)
+        for line in (
+            tmp_path / "games" / "sheriff-engine" / "game.log"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    speaks = [
+        row for row in rows
+        if row["operation"] == "speak" and row["phase"] == "sheriff_election"
+    ]
+    assert [row["seat"] for row in speaks] == [2, 3, 2, 3]
+
+    summary = build_game_summary(str(tmp_path), "sheriff-engine")
+    assert [row["seat"] for row in summary["rounds"]["1"]["speeches"]] == [2, 3, 2, 3]
 
 
 @pytest.mark.asyncio

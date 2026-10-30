@@ -43,8 +43,10 @@ def _isolated_data(tmp_path, monkeypatch):
     """Keep the default GameLogger out of the live ``data/games`` directory."""
     original = game_engine_module.GameLogger
 
-    def isolated(data_dir="data"):
-        return original(data_dir=data_dir if data_dir != "data" else str(tmp_path))
+    def isolated(data_dir="data", **kwargs):
+        return original(
+            data_dir=data_dir if data_dir != "data" else str(tmp_path), **kwargs,
+        )
 
     monkeypatch.setattr(game_engine_module, "GameLogger", isolated)
 
@@ -253,6 +255,71 @@ async def test_a_journaled_window_does_not_hide_an_unseeded_death():
     assert [(d.player_seat, d.cause) for d in settled] == [(3, "wolf_king_shot")]
     assert [(d.player_seat, d.cause) for d in engine.state.death_history] == [
         (1, "exile"), (2, "hunter_shot"), (3, "wolf_king_shot"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_night_deaths_are_not_reseeded_at_the_exile():
+    """The crash shape from game 114efe7f.
+
+    The Dream Weaver died at night and its revenge already killed the dreamer
+    inside ``NIGHT_COMMIT``.  The exile wave used to treat both night deaths as
+    unseeded (the journal spells them with ``seat``, inside ``NIGHT_COMMIT``),
+    re-opened the revenge, and the hook aimed at the dead dreamer — a fatal
+    ``ValueError`` at the write boundary with no fallback for a pure react.
+    """
+    calls = []
+
+    def provider(request, context, attempt):
+        calls.append(request.contract.contract_id)
+        raise AssertionError("nothing should be asked")
+
+    engine = _engine(
+        "night-seeded", provider, round_number=3,
+        players={
+            1: PlayerState(1, "wolf-killer-time-wolf", "werewolf", is_alive=False),
+            3: PlayerState(3, "wolf-killer-admirer", "good"),
+            4: PlayerState(4, "wolf-killer-cupid", "third_party", is_alive=False),
+            8: PlayerState(8, "wolf-killer-dream-weaver", "good", is_alive=False),
+            9: PlayerState(9, "wolf-killer-idiot", "good"),
+        },
+    )
+    engine.state._pipeline_runtime = _Runtime(
+        private_data={8: {"last_dreamed": {"round": 3, "seat": 4}}},
+    )
+    engine.state.death_history.extend([
+        DeathReport(8, "wolf_kill", 3),
+        DeathReport(4, "dream_death", 3),
+        DeathReport(1, "exile", 3),
+    ])
+    night_events = tuple(
+        {
+            "event_type": "PLAYER_DIED",
+            "payload": {"seat": seat, "cause": cause, "round_number": 3},
+            "visibility": ("PUBLIC",),
+        }
+        for seat, cause in ((8, "wolf_kill"), (4, "dream_death"))
+    )
+    key = PointKey(
+        "night-seeded", 3, "night", SchedulePoint.NIGHT_COMMIT, "d" * 64,
+    )
+    point_journal(engine.state).put(key, PointCheckpoint(
+        (), (), (CommitResult("night", (), 12, (), "saved"),),
+        night_events, (), (), WorkCursor("done", 0, 0),
+        {"state_digest": "saved"}, work_count=1,
+    ))
+
+    settled = await engine._run_exile_reaction(1)
+
+    assert settled == ()
+    assert calls == []
+    assert engine.state._pipeline_runtime.pending_damage == ()
+    phases = [journal_key.phase for journal_key, _ in point_journal(engine.state).entries()]
+    assert "vote_resolution#exile_react-4.8" not in phases
+    assert engine.state.death_history == [
+        DeathReport(8, "wolf_kill", 3),
+        DeathReport(4, "dream_death", 3),
+        DeathReport(1, "exile", 3),
     ]
 
 
