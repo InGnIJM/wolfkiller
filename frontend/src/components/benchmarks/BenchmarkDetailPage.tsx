@@ -243,7 +243,7 @@ export default function BenchmarkDetailPage() {
         </Box>
         {rows.length === 0 ? <Alert severity="info">{t('benchmark.perfEmpty')}</Alert> : (
           <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table sx={{ minWidth: 640 }} aria-label={t('benchmark.perfTitle')}>
+            <Table sx={{ minWidth: 640 }} aria-label={t('benchmark.perfTableAria')}>
               <TableHead><TableRow><TableCell>{t('benchmark.colModel')}</TableCell><TableCell>{t('benchmark.colDimension')}</TableCell><TableCell>{t('benchmark.colGroup')}</TableCell><TableCell sortDirection={sort === 'samples' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'samples' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('samples')}>{t('benchmark.colSamples')}</Button></TableCell><TableCell sortDirection={sort === 'value' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'value' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('value')}>{t('benchmark.colWinRate')}</Button></TableCell></TableRow></TableHead>
               <TableBody>{rows.map((row) => <TableRow key={row.id}><TableCell>{row.model}</TableCell><TableCell>{t(row.dimension === 'role' ? 'benchmark.dimRole' : 'benchmark.dimCamp')}</TableCell><TableCell>{row.group}</TableCell><TableCell>{row.samples}</TableCell><TableCell>{rate(row.value)}</TableCell></TableRow>)}</TableBody>
             </Table>
@@ -265,7 +265,7 @@ export default function BenchmarkDetailPage() {
           <Alert severity="info">{t('benchmark.decisionEmpty')}</Alert>
         ) : (
           <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table sx={{ minWidth: 520 }} aria-label={t('benchmark.decisionTitle')}>
+            <Table sx={{ minWidth: 520 }} aria-label={t('benchmark.decisionTableAria')}>
               <TableHead>
                 <TableRow><TableCell>{t('benchmark.colMetric')}</TableCell><TableCell>{t('benchmark.colValue')}</TableCell><TableCell>{t('benchmark.colSample')}</TableCell></TableRow>
               </TableHead>

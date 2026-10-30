@@ -612,6 +612,8 @@ export const en: typeof zh = {
     metricLatency: 'Call latency p95',
     metricRounds: 'Avg rounds',
     metricInterruption: 'Interruption rate',
+    perfTableAria: 'Model performance table',
+    decisionTableAria: 'Decision quality table',
     perfTitle: 'Model performance',
     perfDesc1: 'Win rates by model, role, or camp; sample size and value shown together.',
     perfDesc2: 'Each row is a seat-sample slice of "model x role/camp": seats, boards, and camps are assigned randomly — this is not a model A/B comparison and cannot rank models.',

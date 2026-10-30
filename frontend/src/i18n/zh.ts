@@ -614,6 +614,8 @@ export const zh = {
     metricLatency: '调用延迟 p95',
     metricRounds: '平均轮次',
     metricInterruption: '中断率',
+    perfTableAria: '模型表现表',
+    decisionTableAria: '决策质量表',
     perfTitle: '模型表现',
     perfDesc1: '胜率按模型、角色或阵营查看；样本量与数值同时展示。',
     perfDesc2: '每行是「模型 × 角色/阵营」切片里的座位样本：座位、板型与阵营开局随机分配，这不是模型 A/B 对比，不能据此判断模型强弱。',
