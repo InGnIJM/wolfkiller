@@ -493,3 +493,7 @@ export function benchmarkExportUrl(
 ): string {
   return `${getApiBase()}/api/benchmarks/${runId}/export?format=${format}`;
 }
+
+export function gameExportUrl(gameId: string): string {
+  return `${getApiBase()}/api/games/${gameId}/export?format=html`;
+}

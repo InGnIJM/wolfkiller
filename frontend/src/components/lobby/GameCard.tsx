@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card, CardActionArea, Checkbox, Typography, Chip, Box, IconButton, Menu, MenuItem, Button } from '@mui/material';
 import GroupsIcon from '@mui/icons-material/Groups';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import DownloadIcon from '@mui/icons-material/Download';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
@@ -9,6 +10,7 @@ import type { ExecutionStatus, GamePhase, WinningCamp } from '../../store/types'
 import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
 import type { LabelsModule } from '../../i18n/useLabels';
+import { gameExportUrl } from '../../api/client';
 import { HAIRLINE } from '../../theme/tokens';
 
 interface Props {
@@ -49,7 +51,7 @@ function winnerMeta(winner: string, L: LabelsModule): { label: string; color: 's
 }
 
 export default function GameCard({
-  name, phase, roundNumber, playerCount, aliveCount, winner, onClick, onRename, onDelete,
+  gameId, name, phase, roundNumber, playerCount, aliveCount, winner, onClick, onRename, onDelete,
   executionStatus, recoverable = false, recoveryBlockCode, controlBusy = false,
   onPause, onResume, onRecover, onMove, selected = false, onToggleSelect,
 }: Props) {
@@ -186,6 +188,14 @@ export default function GameCard({
             {onMove && (
               <MenuItem onClick={() => { setMenuEl(null); onMove(); }}>{t('lobby.moveToFolder')}</MenuItem>
             )}
+            {/* attachment 响应头让浏览器直接下载，不离开当前页 */}
+            <MenuItem
+              component="a"
+              href={gameExportUrl(gameId)}
+              onClick={() => setMenuEl(null)}
+            >
+              <DownloadIcon fontSize="small" sx={{ mr: 1 }} />{t('common.exportReplay')}
+            </MenuItem>
             <MenuItem onClick={() => { setMenuEl(null); onDelete(); }}>{t('lobby.delete')}</MenuItem>
           </Menu>
         </Box>

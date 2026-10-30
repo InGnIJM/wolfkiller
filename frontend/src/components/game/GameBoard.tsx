@@ -5,11 +5,12 @@ import {
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import DownloadIcon from '@mui/icons-material/Download';
 import { useGameStore } from '../../store/gameStore';
 import {
   AudienceApiError, fetchAudienceEvents, fetchAudienceSnapshot,
   fetchGameLogs, fetchGameDetail, GameNotFoundError,
-  controlGame, GameControlError,
+  controlGame, GameControlError, gameExportUrl,
 } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
 import type { PublicReplayEvent } from '../../store/types';
@@ -445,6 +446,15 @@ export default function GameBoard({ onBack, gameId }: Props) {
               {t('game.postGameReview')}
             </Button>
           )}
+          <Button
+            size="small"
+            variant="outlined"
+            component="a"
+            href={gameExportUrl(gameId)}
+            startIcon={<DownloadIcon />}
+          >
+            {t('common.exportReplay')}
+          </Button>
           <Button size="small" onClick={onBack} variant="outlined">
             {t('common.back')}
           </Button>
