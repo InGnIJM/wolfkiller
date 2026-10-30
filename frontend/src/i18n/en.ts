@@ -15,6 +15,7 @@ export const en: typeof zh = {
     back: 'Back',
     loading: 'Loading',
     unknown: 'Unknown',
+    exportReplay: 'Export replay',
     seatNumber: 'Seat {{seat}}',
     enabled: 'On',
     disabled: 'Off',

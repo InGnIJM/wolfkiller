@@ -17,6 +17,7 @@ export const zh = {
     back: '返回',
     loading: '正在加载',
     unknown: '未知',
+    exportReplay: '导出复盘',
     seatNumber: '{{seat}}号',
     enabled: '开',
     disabled: '关',

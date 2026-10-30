@@ -48,6 +48,7 @@ vi.mock('../../../api/client', () => ({
       this.confirmationRequired = confirmationRequired;
     }
   },
+  gameExportUrl: vi.fn((gameId: string) => `https://api.test/games/${gameId}/export`),
 }));
 
 vi.mock('../../../api/websocket', () => ({
@@ -152,6 +153,20 @@ describe('GameBoard public replay', () => {
     expect(connect).toHaveBeenCalledTimes(2);
     expect(useGameStore.getState().audienceCursor).toBe(0);
     expect(useGameStore.getState().modelSnapshot).toEqual(detail.model_snapshot);
+  });
+
+  it('offers a replay export download pointing at the export endpoint', async () => {
+    vi.mocked(fetchGameDetail).mockResolvedValueOnce({
+      ...detail,
+      phase: 'night',
+      win_result: null,
+    });
+    vi.mocked(fetchGameLogs).mockResolvedValueOnce({ game_id: 'game-1', events: [] });
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    await screen.findByTestId('seat-map');
+    const link = screen.getByRole('link', { name: '导出复盘' });
+    expect(link).toHaveAttribute('href', 'https://api.test/games/game-1/export');
   });
 
   it('treats a public detail without model_snapshot as unknown seat models', async () => {
