@@ -1,7 +1,8 @@
 import { Dialog, DialogTitle, DialogContent, DialogActions, Typography, Box, Button } from '@mui/material';
 import type { WinResult, WinningCamp } from '../../store/types';
 import { useGameStore } from '../../store/gameStore';
-import { WINNING_CAMP_LABELS, WIN_REASON_LABELS } from '../../labels';
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 import { CARD_BACK, HAIRLINE } from '../../theme/tokens';
 
 interface Props {
@@ -17,6 +18,8 @@ const CAMP_ACCENT: Record<WinningCamp, string> = {
 };
 
 export default function WinOverlay({ winResult, revealOnDeath }: Props) {
+  const { t } = useTranslation();
+  const L = useLabels();
   const { dismissWinOverlay, seekTo, play } = useGameStore();
 
   const handleReplay = () => {
@@ -43,7 +46,7 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
           />
         </Box>
         <Typography component="span" variant="h6" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 8 }}>
-          游 戏 结 束
+          {t('game.gameOver')}
         </Typography>
       </DialogTitle>
       <DialogContent>
@@ -62,33 +65,33 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
                 : '0 0 30px rgba(212,168,83,0.3)',
             }}
           >
-            {WINNING_CAMP_LABELS[winResult.winning_camp] || winResult.winning_camp}获胜
+            {t('game.campWins', { camp: L.WINNING_CAMP_LABELS[winResult.winning_camp] || winResult.winning_camp })}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {WIN_REASON_LABELS[winResult.reason] || winResult.reason}
+            {L.WIN_REASON_LABELS[winResult.reason] || winResult.reason}
           </Typography>
           {winResult.winners != null && winResult.winners.length > 0 && (
             // 孤独少女这类「胜负跟随别人」的牌会让胜者不等于整个阵营，所以按座位
             // 点名（阵营标题仍是结算阵营，两者可以不一致）。
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-              {`获胜座位：${winResult.winners.join('、')} 号`}
+              {t('game.winnerSeats', { seats: winResult.winners.join('、') })}
             </Typography>
           )}
         </Box>
         <Box sx={{ borderRadius: 3, px: 2, py: 1.5, bgcolor: 'action.hover' }}>
           <Typography variant="body2" color="text.secondary" align="center">
             {revealOnDeath
-              ? '身份公开：玩家出局时会向场上公开身份。'
-              : '身份不公开：玩家出局时不会向场上公开身份。'}
+              ? t('game.revealOn')
+              : t('game.revealOff')}
           </Typography>
         </Box>
       </DialogContent>
       <DialogActions sx={{ justifyContent: 'center', pb: 3, gap: 1.5 }}>
         <Button variant="outlined" onClick={handleReplay}>
-          从头播放
+          {t('game.replayFromStart')}
         </Button>
         <Button variant="contained" onClick={dismissWinOverlay} disableElevation>
-          查看对局
+          {t('game.viewGame')}
         </Button>
       </DialogActions>
     </Dialog>

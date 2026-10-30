@@ -1,3 +1,4 @@
+import i18n from '../i18n';
 import type {
   AudienceEventPage, AudienceSnapshot, AutoReviewSetting, BatchDeleteResult, BatchMoveResult, BenchmarkCreateInput, BenchmarkItem,
   BenchmarkItemsPage, BenchmarkReport, BenchmarkRun, BenchmarkRunList,
@@ -73,10 +74,10 @@ async function throwDeleteError(res: Response, fallback: string): Promise<never>
     const body = await res.json() as { detail?: { code?: string } | string };
     const detail = body.detail;
     if (typeof detail === 'object' && detail?.code === 'game_referenced_by_benchmark') {
-      throw new Error('这是评测对局，请到评测页删除');
+      throw new Error(i18n.t('errors.benchmarkGameDelete'));
     }
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('这是评测')) throw error;
+    if (error instanceof Error && error.message.startsWith(i18n.t('errors.benchmarkGameDelete').slice(0, 4))) throw error;
   }
   throw new Error(`${fallback}: ${res.status}`);
 }
@@ -169,7 +170,7 @@ export async function batchDeleteBenchmarkGames(
 
 export class GameNotFoundError extends Error {
   constructor() {
-    super('对局不存在或已失效');
+    super(i18n.t('errors.gameNotFound'));
     this.name = 'GameNotFoundError';
   }
 }

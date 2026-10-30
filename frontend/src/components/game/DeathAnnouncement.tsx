@@ -16,6 +16,7 @@ import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
 import type { DeathRecord } from '../../store/types';
 import RolePortrait from '../shared/RolePortrait';
+import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
 import { BACKDROP, BLOOD_MOON, HAIRLINE, ROLE_COLORS } from '../../theme/tokens';
 
@@ -38,6 +39,7 @@ const CAUSE_ICONS: Record<string, SvgIconComponent> = {
 };
 
 export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
+  const { t } = useTranslation();
   const L = useLabels();
   const latest = deaths[deaths.length - 1];
   if (!latest) return null;
@@ -47,7 +49,7 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
   const roleLabel = L.roleName(revealedRole) ?? revealedRole ?? null;
 
   return (
-    <Dialog open maxWidth="xs" fullWidth aria-label="死亡公告">
+    <Dialog open maxWidth="xs" fullWidth aria-label={t('game.deathAnnouncement')}>
       <DialogContent sx={{ textAlign: 'center', py: 4, px: 3 }}>
         <Box
           aria-hidden="true"
@@ -78,15 +80,15 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
           <Icon sx={{ fontSize: 30 }} />
         </Box>
         <Typography variant="h5" gutterBottom sx={{ fontWeight: 900, letterSpacing: 3 }}>
-          {latest.player_seat}号玩家出局
+          {t('game.playerOut', { seat: latest.player_seat })}
         </Typography>
         {roleLabel && (
           <Typography variant="body1" sx={{ fontWeight: 700, color: BLOOD_MOON.gold }}>
-            身份：{roleLabel}
+            {t('game.revealedRole', { role: roleLabel })}
           </Typography>
         )}
         <Typography variant="body1" color="text.secondary">
-          {causeLabel} · 第{latest.round_number}轮
+          {t('game.deathRound', { cause: causeLabel, round: latest.round_number })}
         </Typography>
       </DialogContent>
     </Dialog>
