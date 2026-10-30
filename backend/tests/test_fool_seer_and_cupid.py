@@ -97,7 +97,13 @@ def test_a_mixed_pair_is_a_third_party_and_blocks_both_sides() -> None:
     assert result.reason == "all_others_dead"
 
 
-def test_the_last_third_party_seats_win_and_a_crush_follows_them() -> None:
+def test_the_last_third_party_seats_win_and_a_crush_follows_the_victory() -> None:
+    """The Admirer is not a third party for the headcount — only its victory is.
+
+    Official ruling: it always counts as a villager, so the third party has not
+    won while the admirer still lives; once it dies the third party is alone and
+    the admirer shares that win posthumously.
+    """
     state = _state(
         (1, "wolf-killer-cupid", "third_party"),
         (2, "wolf-killer-werewolf", "werewolf"),
@@ -107,16 +113,17 @@ def test_the_last_third_party_seats_win_and_a_crush_follows_them() -> None:
     _put(state, 1, LOVER_PAIR_KEY, [2, 3])
     _put(state, 5, CRUSH_KEY, {"seat": 2})
     state.players[1].is_alive = False
-    for seat in (1,):
-        state.players[seat].is_alive = False
+    # The admirer stays on its own side, so it still blocks the third party.
+    assert seat_allegiances(state)[5] == "good"
+    assert RuleEngine().check_win(state) is None
     # Kill everyone who is not third party. 4 does not exist. 5 follows 2.
-    assert seat_allegiances(state)[5] == "third_party"
+    state.players[5].is_alive = False
     result = RuleEngine().check_win(state)
     assert result is not None
     assert result.winning_camp == "third_party"
     assert result.reason == "all_others_dead"
     assert result.winners is not None
-    assert 5 in result.winners and 2 in result.winners
+    assert 5 in result.winners and 2 in result.winners and 1 in result.winners
 
 
 def test_same_camp_links_move_the_linker_and_city_waits_for_an_empty_side() -> None:
@@ -160,8 +167,56 @@ def test_a_crush_cycle_stops_on_the_seat_it_was_about_to_repeat() -> None:
     state = _state((1, "wolf-killer-admirer", "good"), (2, "wolf-killer-werewolf", "werewolf"))
     _put(state, 1, CRUSH_KEY, {"seat": 2})
     _put(state, 2, CRUSH_KEY, {"seat": 1})
-    assert seat_allegiances(state)[1] == "werewolf"
+    # The counted sides never move for a crush; the victory walk is cycle-safe.
+    assert seat_allegiances(state) == {1: "good", 2: "werewolf"}
+    assert winner_seats(state, "werewolf") == (1,)
+    assert winner_seats(state, "good") == (2,)
+
+
+def test_an_admirer_following_a_dead_wolf_does_not_keep_the_board_alive() -> None:
+    """The 114efe7f shape: the last real wolf is exiled, the admirer's crush was
+    that wolf.  Officially the admirer is a villager, so "all wolves out" ends
+    the game for the good side and only the admirer itself loses."""
+    state = _state(
+        (3, "wolf-killer-admirer", "good"),
+        (7, "wolf-killer-wolf-witch", "werewolf"),
+        (9, "wolf-killer-idiot", "good"),
+        victory="city",
+    )
+    _put(state, 3, CRUSH_KEY, {"seat": 7})
+    state.players[7].is_alive = False
+    assert seat_allegiances(state)[3] == "good"
+    result = RuleEngine().check_win(state)
+    assert result is not None
+    assert result.winning_camp == "good"
+    assert result.reason == "all_wolves_dead"
+    # The admirer shares the crush's side, which lost: it is not among them.
+    assert result.winners is not None
+    assert 9 in result.winners and 3 not in result.winners
+
+
+def test_an_admirer_following_a_wolf_is_not_counted_as_a_living_wolf() -> None:
+    """Counting it as a wolf made a 1-wolf board outnumber the good side."""
+    state = _state(
+        (1, "wolf-killer-werewolf", "werewolf"),
+        (2, "wolf-killer-admirer", "good"),
+        (3, "wolf-killer-seer", "good"),
+    )
+    _put(state, 2, CRUSH_KEY, {"seat": 1})
     assert seat_allegiances(state)[2] == "good"
+    assert RuleEngine().check_win(state) is None
+
+
+def test_a_check_reads_an_admirer_as_good_even_when_it_follows_a_wolf() -> None:
+    """Official Q&A: a seer checking the admirer always sees a good seat."""
+    state = _state(
+        (1, "wolf-killer-seer", "good"),
+        (2, "wolf-killer-admirer", "good"),
+        (3, "wolf-killer-werewolf", "werewolf"),
+    )
+    _put(state, 2, CRUSH_KEY, {"seat": 3})
+    row = ContextProjector()._selected_target_row(state, 2, frozenset({"camp_label"}))
+    assert row is not None and row["camp_label"] == "good"
 
 
 def test_malformed_private_slots_do_not_move_anyone() -> None:

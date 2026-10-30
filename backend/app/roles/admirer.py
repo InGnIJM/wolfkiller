@@ -130,11 +130,15 @@ ADMIRER_SPEC = RoleSpec(
     visibility_namespaces=frozenset({"PUBLIC", "ACTOR"}),
     max_count=1,
     instructions=(
-        "You count as a villager until your crush's side moves. On the first night you "
-        "choose one other living player. You may also pass. You learn nothing about "
-        "them, and they learn nothing about you. Your victory follows the crush's "
-        "current side: if a link has pulled the crush into the third party, you are in "
-        "that third party too. If you pass, you stay a villager."
+        "You always count as a villager: a seer reads you as good, and the wolves "
+        "must kill you too to win by 屠民. On the first night you choose one other "
+        "living player as your crush. You may also pass. You learn nothing about "
+        "them, and they learn nothing about you. Only your *victory* follows the "
+        "crush's side: you win if that side wins (a link that pulled the crush into "
+        "the third party means you win with the third party), and you lose if it "
+        "loses — whether the crush itself died or not makes no difference. Your "
+        "camps, votes and the living counts never move. If you pass, you stay a "
+        "villager with the ordinary good victory."
     ),
 )
 
