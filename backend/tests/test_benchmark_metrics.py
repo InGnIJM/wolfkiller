@@ -513,6 +513,31 @@ def _native_metric_facts() -> dict:
     }
 
 
+def test_native_metric_reliability_exposes_rule_rejections() -> None:
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    facts = _native_metric_facts()
+    first = _summary_g1()
+    first["rounds"]["1"]["rejected_actions"] = 2
+    second = _summary_g2()
+    second["rounds"]["1"]["rejected_actions"] = 1
+
+    report = BenchmarkMetrics.compute(**facts, summaries=[first, second])
+
+    reliability = report["summary"]["reliability"]
+    assert reliability["rule_rejected"] == 3
+    assert reliability["games"] == 2
+    assert reliability["per_game"] == 1.5
+    assert reliability["per_request"] == 0.75
+    assert reliability["samples"] == {"games": 2, "requests": 4}
+
+    empty = BenchmarkMetrics.compute(**facts, summaries=())
+    assert empty["summary"]["reliability"] == {
+        "rule_rejected": 0, "games": 0, "per_game": None,
+        "per_request": 0.0, "samples": {"games": 0, "requests": 4},
+    }
+
+
 def test_native_metrics_carry_decision_quality_when_summaries_are_given() -> None:
     from app.services.benchmark_metrics import BenchmarkMetrics
 
@@ -560,7 +585,7 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
     facts = _native_metric_facts()
     report = BenchmarkMetrics.compute(**facts)
 
-    assert report["metric_version"] == "v4"
+    assert report["metric_version"] == "v5"
     assert len(report["input_digest"]) == 64
     summary = report["summary"]
     assert summary["games"] == {
@@ -1167,4 +1192,28 @@ def test_board_coverage_tolerates_junk_summaries() -> None:
     }}]) == {
         "boards": [{"role_counts": {"wolf-killer-villager": 1}, "games": 1}],
         "seer_present": False,
+    }
+
+
+def test_rule_rejection_metrics_ignore_malformed_summary_shapes() -> None:
+    from app.services.benchmark_metrics import _rule_rejection_metrics
+
+    result = _rule_rejection_metrics(
+        [
+            None,
+            {"rounds": []},
+            {"rounds": {}},
+            {"rounds": {"1": []}},
+            {"rounds": {"1": {"rejected_actions": True}}},
+            {"rounds": {"1": {"rejected_actions": 2}}},
+        ],
+        4,
+    )
+
+    assert result == {
+        "rule_rejected": 2,
+        "games": 4,
+        "per_game": 0.5,
+        "per_request": 0.5,
+        "samples": {"games": 4, "requests": 4},
     }

@@ -40,7 +40,7 @@ from app.benchmark.metrics import (
 #: v4 splits the vote metrics by ballot (exile / sheriff), reports the new roles'
 #: check hit rates, and stops printing a bootstrap sample count for runs that
 #: were never resampled.
-METRIC_VERSION = "v4"
+METRIC_VERSION = "v5"
 _BOOTSTRAP_SEED = 1729
 _BOOTSTRAP_SAMPLES = 2000
 _CONFIDENCE = 0.95
@@ -83,6 +83,7 @@ class BenchmarkMetrics:
             "summaries": _canonical_rows(summaries, "summaries"),
         }
         payload = _canonical_json(facts)
+        requests = _request_metrics(facts["model_requests"])
         return {
             "metric_version": METRIC_VERSION,
             "input_digest": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
@@ -95,7 +96,14 @@ class BenchmarkMetrics:
                 # Which boards produced the pooled numbers, and whether the
                 # run could answer the seer questions at all.
                 "coverage": compute_board_coverage(facts["summaries"]),
-                "requests": _request_metrics(facts["model_requests"]),
+                # A provider-level successful request can still carry an answer
+                # the rules rejected. The request status stays ``consumed``
+                # (correct for provider reliability); this block exposes the
+                # rule-rejection layer the summary already records per round.
+                "reliability": _rule_rejection_metrics(
+                    facts["summaries"], requests["total"],
+                ),
+                "requests": requests,
                 "attempts": _attempt_metrics(facts["model_attempts"]),
                 "model_performance": _model_performance(
                     facts["games"], facts["items"],
@@ -356,6 +364,40 @@ def _is_fallback(request: Mapping[str, Any], category: str) -> bool:
         or source == "system_fallback"
         or action == "technical_abstain"
     )
+
+
+def _rule_rejection_metrics(
+    summaries: Sequence[Mapping[str, Any]], requests_total: int,
+) -> dict[str, Any]:
+    """Expose scheduler rule rejections recorded in each game's summary.
+
+    ``summary.rounds.*.rejected_actions`` is filled by ``game_summary`` from
+    the scheduler's ``action_rejected`` telemetry. The model request itself is
+    ``consumed`` (the provider answered); only the rules rejected the answer,
+    so this is deliberately separate from ``requests.failure_rate``.
+    """
+    rejected = 0
+    games = 0
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            continue
+        rounds = summary.get("rounds")
+        if not isinstance(rounds, Mapping):
+            continue
+        games += 1
+        for bucket in rounds.values():
+            if not isinstance(bucket, Mapping):
+                continue
+            value = bucket.get("rejected_actions")
+            if type(value) is int and value > 0:
+                rejected += value
+    return {
+        "rule_rejected": rejected,
+        "games": games,
+        "per_game": _rate(rejected, games),
+        "per_request": _rate(rejected, requests_total),
+        "samples": {"games": games, "requests": requests_total},
+    }
 
 
 def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
