@@ -36,6 +36,8 @@ from app.agents.retry import (
     delay_for,
     retry_plan,
 )
+from app.agents.failure_taxonomy import normalize_failure_code
+from app.agents.model_health import AbortPolicy, HealthEvent, resolve_abort_policy
 from app.agents.providers.registry import ProviderRegistry
 from app.stores.app_settings_store import get_app_settings_store
 from app.stores.model_config_store import get_model_config_store
@@ -63,6 +65,9 @@ from app.core.role_runtime import (
 )
 from app.agents.invocation import (
     CALL_KIND_PIPELINE, FailureBucket, exhausted_bucket,
+)
+from app.core.model_health_guard import (
+    CIRCUIT_OPEN_CODE, ModelHealthGuard, ProviderOutageFailed, ProviderOutagePaused,
 )
 from app.core.scheduler import DecisionPaused, Scheduler
 from app.core.sheriff_flow import ballot_weight
@@ -201,10 +206,7 @@ def _model_failure_code(error: Exception) -> str:
     detail is the difference between a gateway that answered nothing and a
     model that answered the wrong shape.
     """
-    code = getattr(error, "code", None)
-    if type(code) is str and code:
-        return code
-    return classify_provider_error(error)
+    return normalize_failure_code(error)
 
 
 def _pipeline_command(payload: object, contract) -> PipelineActionCommand:
@@ -333,12 +335,30 @@ def _summed_usage(usages: "list[object]"):
     return merged
 
 
+def _night_call_meta(state, tool_name: str) -> tuple[str, str]:
+    """Return ``(call_kind, phase)`` for one night-director model call.
+
+    The phase comes from the live game state, not from the schedule point: the
+    sheriff election, the badge hand-off and the speech-side decision all run
+    through the same ``night_invoke`` closure but in ``sheriff_election`` /
+    ``vote_resolution`` / ``speech``. Unknown/empty phase falls back to
+    ``night`` so telemetry never breaks the game.
+    """
+    raw_phase = getattr(state, "phase", None) if state is not None else None
+    phase = getattr(raw_phase, "value", raw_phase)
+    if not isinstance(phase, str) or not phase:
+        phase = "night"
+    call_kind = "action" if tool_name.startswith("sheriff_") else "night"
+    return call_kind, phase
+
+
 def _log_llm_telemetry(
     game_logger, game_id: str, round_number: int, seat: int, *,
     tool_name: str, model_id: Optional[str], prompt_chars: int,
     elapsed_ms: int = 0, usage=None, attempts: int = 1,
     parse_result: str, failure_code: Optional[str] = None,
     call_kind: str = "night", transport: str = "night_json",
+    phase: str = "night",
 ) -> None:
     """Write one model-call record; telemetry must never break the game flow.
 
@@ -350,7 +370,7 @@ def _log_llm_telemetry(
     """
     try:
         game_logger.log_llm_call(
-            game_id, round_number, "night", seat,
+            game_id, round_number, phase, seat,
             call_kind=call_kind, contract_id=tool_name, transport=transport,
             attempt=attempts, model_id=model_id, prompt_chars=prompt_chars,
             elapsed_ms=elapsed_ms,
@@ -814,6 +834,7 @@ class GameService:
         memory_service=None,
         data_dir: str = "data",
         repository: GameRepository | None = None,
+        abort_policy: AbortPolicy | None = None,
     ):
         self.ws_manager = ws_manager
         self.event_bus = event_bus
@@ -843,6 +864,12 @@ class GameService:
         # automatically, so without this bound a permanently broken provider
         # would pause the same point forever instead of degrading it.
         self._paused_points: set[tuple[str, str]] = set()
+        #: Provider-health guards, one per live game. The engine calls
+        #: ``check(seat)`` at its turn boundaries; the guard is fed by the
+        #: ``llm_calls`` telemetry observer. Runtime-only: a resumed game gets a
+        #: fresh guard, so a fixed provider is not judged by pre-restart samples.
+        self._health_guards: dict[str, ModelHealthGuard] = {}
+        self._abort_policy = abort_policy or resolve_abort_policy()
         # Runtime-only, like the other per-game maps here: capture handles must
         # never reach a checkpoint, because the orchestration codec matches field
         # sets exactly and any extra field stops old games from resuming.
@@ -943,18 +970,25 @@ class GameService:
                 "execution_status": "completed" if completed else "running",
                 "recoverable": False, "recovery_block_code": "legacy_archive",
                 "interruption_count": 0, "benchmark_run_id": None,
+                "pause_code": None, "pause_reason": None, "pause_detail": None,
             }
         record = self.repository.get_game(game_id)
         if record is None:
             raise KeyError(game_id)
         status = str(record["execution_status"])
         block = record["recovery_block_code"]
+        pause_code = record.get("pause_code")
         return {
             "execution_status": status,
             "recoverable": status in _RECOVERABLE_STATUSES,
             "recovery_block_code": block,
             "interruption_count": int(record["interruption_count"]),
             "benchmark_run_id": record["benchmark_run_id"],
+            "pause_code": pause_code if isinstance(pause_code, str) else None,
+            "pause_reason": self._pause_reason(
+                pause_code if isinstance(pause_code, str) else None,
+            ),
+            "pause_detail": record.get("pause_detail") or None,
         }
 
     def _note_recovery_warning(self, game_id: str, code: str) -> None:
@@ -1221,7 +1255,14 @@ class GameService:
             self._clock_state.setdefault(game_id, {
                 "active_elapsed_ms": 0, "remaining_window_ms": None,
             })["running_since"] = time.monotonic()
+            guard = self._health_guards.get(game_id)
+            if guard is not None:
+                # A manual resume is the operator's assertion that the provider
+                # was fixed; clear the samples so the first post-fix call is not
+                # judged by pre-fix failures.
+                guard.reset()
             engine.resume()
+            self._broadcast_resume(game_id)
             self._start_clock_heartbeat(game_id)
             return self.get_execution_info(game_id)
         if status == "paused":
@@ -1320,6 +1361,7 @@ class GameService:
             game_id, expected=expected_statuses, target="running",
             increment_generation=True,
         )
+        self._broadcast_resume(game_id)
         self._write_recovery_audit(
             engine, state, verdict, force=force, from_status=status,
             execution_generation=int(updated["execution_generation"]),
@@ -1485,6 +1527,8 @@ class GameService:
         victory: str = DEFAULT_VICTORY,
         model_assignments: Optional[list[dict]] = None,
         *,
+        commentary_enabled: bool = False,
+        commentary_config_id: str | None = None,
         game_id_override: str | None = None,
         source: str = "native",
         benchmark_run_id: str | None = None,
@@ -1568,11 +1612,22 @@ class GameService:
         frozen_model_runtime = _freeze_model_runtime(
             seat_configs, model_snapshot,
         )
+        if commentary_config_id is not None:
+            env_cfg = replace(env_default_client_config(), provider_profile="auto")
+            _saved_client_config(commentary_config_id, env_cfg)
+        commentary_meta = {
+            "enabled": bool(commentary_enabled),
+            "commentary_config_id": commentary_config_id,
+        }
         clients_by_seat: dict[int, LLMClient] = {}
         self._llm_clients[game_id] = clients_by_seat
         try:
             for seat, client_config in sorted(seat_configs.items()):
-                clients_by_seat[seat] = LLMClient(config=client_config)
+                # Seats share LangChain's httpx pool otherwise: closing them
+                # at game end would kill a sibling game's live connections.
+                clients_by_seat[seat] = LLMClient(
+                    config=client_config, dedicated_http_clients=True,
+                )
         except BaseException:
             await self._close_game_clients(game_id)
             raise
@@ -1583,6 +1638,9 @@ class GameService:
             except KeyError:
                 raise ValueError(f"unknown model seat: {seat}") from None
 
+        health_guard = self._make_health_guard(
+            game_id, clients_by_seat, benchmark=benchmark_run_id is not None,
+        )
         try:
             prompt_builder = PromptBuilder()
             role_options = {}
@@ -1603,6 +1661,8 @@ class GameService:
                 prompt_chars = sum(
                     len(str(message.get("content") or "")) for message in messages
                 )
+                meta_state = engine_ref.state if engine_ref is not None else None
+                call_kind, phase = _night_call_meta(meta_state, tool_name)
                 try:
                     result = None
                     if self._model_invocations is None:
@@ -1653,8 +1713,8 @@ class GameService:
                                 request_id=(
                                     f"night:{round_number}:{tool_name}:{seat}:{digest[:16]}"
                                 ),
-                                call_kind="night", round_number=round_number,
-                                phase="night", seat=seat, contract_id=tool_name,
+                                call_kind=call_kind, round_number=round_number,
+                                phase=phase, seat=seat, contract_id=tool_name,
                                 transport="night_json", attempt=1,
                                 model_id=self._client_identity(llm_client)[1],
                                 # The only digest that covers the messages, which
@@ -1679,7 +1739,7 @@ class GameService:
                             engine_ref.game_logger.log_model_error(
                                 game_id,
                                 engine_ref.state.round_number,
-                                "night",
+                                phase,
                                 seat,
                                 contract_id=tool_name,
                                 schedule_point=schedule_point,
@@ -1698,7 +1758,8 @@ class GameService:
                             model_id=getattr(llm_client, "model_name", None),
                             prompt_chars=prompt_chars,
                             parse_result="error",
-                            failure_code=type(error).__name__,
+                            failure_code=normalize_failure_code(error),
+                            call_kind=call_kind, phase=phase,
                         )
                     raise
                 if engine_ref is not None:
@@ -1712,6 +1773,7 @@ class GameService:
                         usage=(result.usage if result is not None else None),
                         attempts=(result.attempts if result is not None else 1),
                         parse_result="ok",
+                        call_kind=call_kind, phase=phase,
                     )
                 return json.dumps(dict(payload), ensure_ascii=False)
 
@@ -1736,7 +1798,9 @@ class GameService:
                 data_dir=self.data_dir,
                 pipeline_scheduler=scheduler,
                 director=director,
+                health_guard=health_guard,
             )
+            self._attach_health_sink(game_id, health_guard, engine)
             engine_ref = engine
             if runtime_rng is not None:
                 engine._rng = runtime_rng
@@ -1791,6 +1855,7 @@ class GameService:
                         "enable_sheriff": config.enable_sheriff,
                         "witch_self_save": config.witch_self_save,
                         "victory": config.victory,
+                        "commentary": commentary_meta,
                         "model_runtime_version": 1,
                         "model_runtime": frozen_model_runtime,
                         "prompt_digest": _prompt_digest(),
@@ -1826,6 +1891,7 @@ class GameService:
                 self._start_clock_heartbeat(game_id)
         except BaseException:
             self._tasks.pop(game_id, None)
+            self._health_guards.pop(game_id, None)
             self._engines.pop(game_id, None)
             self._games.pop(game_id, None)
             self._model_snapshots.pop(game_id, None)
@@ -2471,6 +2537,75 @@ class GameService:
             model if isinstance(model, str) and model else "unknown",
         )
 
+    def _make_health_guard(
+        self, game_id: str, clients: Mapping[int, object], *, benchmark: bool,
+    ) -> ModelHealthGuard:
+        """Build the per-game guard from the frozen per-seat clients.
+
+        A benchmark game uses ``fail`` instead of ``pause``: the benchmark
+        executor auto-resumes paused games, so a provider outage expressed as a
+        pause would loop until the game timeout. A live game pauses and lets an
+        operator fix the provider, then resume from the same checkpoint.
+        """
+        policy = (
+            self._abort_policy.for_benchmark() if benchmark else self._abort_policy
+        )
+        seat_keys = {
+            seat: getattr(client, "provider_key", f"unknown|seat:{seat}")
+            for seat, client in clients.items()
+        }
+        guard = ModelHealthGuard(
+            policy=policy, seat_keys=seat_keys, mode=policy.mode,
+        )
+        self._health_guards[game_id] = guard
+        return guard
+
+    def _attach_health_sink(
+        self, game_id: str, guard: ModelHealthGuard, engine: GameEngine,
+    ) -> None:
+        """Write provider state transitions to the game log (god view only)."""
+        def sink(event: HealthEvent) -> None:
+            try:
+                phase = getattr(engine.state.phase, "value", engine.state.phase)
+                engine.game_logger.log_operation(
+                    game_id, "provider_health", engine.state.round_number,
+                    phase if isinstance(phase, str) else "unknown",
+                    data=event.detail(),
+                )
+            except Exception:
+                logger.debug("provider_health audit write failed", exc_info=True)
+        guard.set_event_sink(sink)
+
+    @staticmethod
+    def _pause_reason(code: str | None) -> str | None:
+        if code is None:
+            return None
+        return {
+            CIRCUIT_OPEN_CODE: "模型通道连续失败，已自动暂停",
+            "one_shot_budget_exhausted": "一次性技能模型预算耗尽，已暂停",
+            "manual": "手动暂停",
+        }.get(code, f"已暂停（{code}）")
+
+    def _broadcast_pause(
+        self, game_id: str, code: str | None, detail: Mapping[str, object] | None,
+    ) -> None:
+        """Best-effort live hint; the durable row is the source of truth."""
+        try:
+            asyncio.create_task(self.ws_manager.broadcast(
+                game_id, "paused_state", paused=True, code=code,
+                reason=self._pause_reason(code),
+            ))
+        except Exception:
+            logger.debug("paused_state broadcast failed", exc_info=True)
+
+    def _broadcast_resume(self, game_id: str) -> None:
+        try:
+            asyncio.create_task(self.ws_manager.broadcast(
+                game_id, "paused_state", paused=False,
+            ))
+        except Exception:
+            logger.debug("paused_state resume broadcast failed", exc_info=True)
+
     async def _wait_model_consumption_allowed(self, game_id: str) -> None:
         if self.repository is None:
             return
@@ -2693,7 +2828,9 @@ class GameService:
         clients: dict[int, LLMClient] = {}
         try:
             for seat, client_config in sorted(seat_configs.items()):
-                clients[seat] = LLMClient(config=client_config)
+                clients[seat] = LLMClient(
+                    config=client_config, dedicated_http_clients=True,
+                )
         except BaseException:
             # LLMClient construction is synchronous, so close any partially
             # created transports on the caller's event loop before surfacing.
@@ -2712,6 +2849,10 @@ class GameService:
             except KeyError:
                 raise ValueError("checkpoint_corrupt") from None
 
+        health_guard = self._make_health_guard(
+            state.game_id, clients,
+            benchmark=record.get("benchmark_run_id") is not None,
+        )
         prompt_builder = PromptBuilder()
         roles = {}
         for seat, player in sorted(state.players.items()):
@@ -2735,6 +2876,7 @@ class GameService:
 
         def night_invoke(messages, tool_name, schema, seat):
             client = client_provider(seat)
+            call_kind, phase = _night_call_meta(state, tool_name)
             frozen_request = {
                 "kind": "night_json", "round_number": state.round_number,
                 "tool_name": tool_name, "seat": seat,
@@ -2779,8 +2921,8 @@ class GameService:
                     request_id=(
                         f"night:{state.round_number}:{tool_name}:{seat}:{digest[:16]}"
                     ),
-                    call_kind="night", round_number=state.round_number,
-                    phase="night", seat=seat, contract_id=tool_name,
+                    call_kind=call_kind, round_number=state.round_number,
+                    phase=phase, seat=seat, contract_id=tool_name,
                     transport="night_json", attempt=1,
                     model_id=self._client_identity(client)[1],
                     request_digest=digest, sink=sink,
@@ -2801,6 +2943,7 @@ class GameService:
                     usage=(turn.usage if turn is not None else None),
                     attempts=(turn.attempts if turn is not None else 1),
                     parse_result="ok",
+                    call_kind=call_kind, phase=phase,
                 )
             return json.dumps(dict(payload), ensure_ascii=False)
 
@@ -2816,7 +2959,9 @@ class GameService:
             event_bus=self.event_bus, roles=roles,
             memory_service=self.memory_service, data_dir=self.data_dir,
             pipeline_scheduler=scheduler, director=director,
+            health_guard=health_guard,
         )
+        self._attach_health_sink(state.game_id, health_guard, engine)
         engine_box["engine"] = engine
         for role in roles.values():
             role._rng = engine._rng
@@ -2838,6 +2983,7 @@ class GameService:
             error = done.exception()
             state = self._games.get(game_id)
             if error is None:
+                self._health_guards.pop(game_id, None)
                 if (
                     self.repository is not None and state is not None
                     and state.phase is GamePhase.GAME_OVER
@@ -2849,28 +2995,49 @@ class GameService:
                     except (KeyError, InvalidExecutionTransition):
                         logger.debug("Recovered game was already finalized", exc_info=True)
                 return
+            if isinstance(error, ProviderOutageFailed):
+                # Benchmark games fail-fast: the executor would auto-resume a
+                # pause and loop on the same dead provider. The phase is left
+                # untouched — this is an operational outage, not rule corruption.
+                logger.error(
+                    "Game failed on a provider outage: %s (%s)", game_id, error.code,
+                )
+                self._health_guards.pop(game_id, None)
+                if self.repository is not None:
+                    try:
+                        self.repository.transition_execution(
+                            game_id, expected=("running", "paused"), target="failed",
+                            recovery_block_code=error.code,
+                        )
+                    except (KeyError, InvalidExecutionTransition):
+                        logger.debug("Provider-outage failure already finalized", exc_info=True)
+                return
             if isinstance(error, DecisionPaused):
-                # A one-shot contract ran out of model budget. The point is
-                # re-run after a resume, so the game keeps its phase and becomes
-                # `paused` — marking it `failed` (or `ERROR`) would end the game
-                # and forfeit the card the pause exists to protect. The ledger
-                # stored this request as `unknown`, which the resumed dispatch
-                # (generation bumped by the recover) may re-dispatch once.
+                # Recoverable pause: a one-shot contract ran out of model budget,
+                # or the provider circuit opened. The point is re-run after a
+                # resume, so the game keeps its phase and becomes `paused` —
+                # marking it `failed` (or `ERROR`) would end the game and forfeit
+                # the card/position the pause exists to protect.
+                code = getattr(error, "code", "decision_budget_exhausted")
+                detail = dict(getattr(error, "detail", {}) or {})
                 logger.warning(
-                    "Game paused on an exhausted one-shot contract: %s", game_id,
+                    "Game paused: %s code=%s", game_id, code,
                 )
                 if self.repository is not None:
                     try:
                         self.repository.transition_execution(
                             game_id, expected=("running", "paused"), target="paused",
+                            pause_code=code, pause_detail=detail,
                         )
                     except (KeyError, InvalidExecutionTransition):
                         logger.debug("Recovered game pause already finalized", exc_info=True)
+                self._broadcast_pause(game_id, code, detail)
                 return
             logger.error(
                 "Recovered game engine crashed for %s", game_id,
                 exc_info=(type(error), error, error.__traceback__),
             )
+            self._health_guards.pop(game_id, None)
             if state is not None:
                 state.phase = GamePhase.ERROR
             if self.repository is not None:
@@ -2980,7 +3147,12 @@ class GameService:
         self._paused_points.add(key)
         raise DecisionPaused(
             "one-shot contract exhausted its model budget at "
-            f"{getattr(contract, 'contract_id', '?')}"
+            f"{getattr(contract, 'contract_id', '?')}",
+            code="one_shot_budget_exhausted",
+            detail={
+                "contract_id": getattr(contract, "contract_id", None),
+                "point": point_key,
+            },
         )
 
     def _pack_ballot_point(self, request, context) -> bool:
@@ -3090,10 +3262,17 @@ class GameService:
                 prompt_sink.record(
                     messages, tool_name=request.contract.resolved_tool_name,
                 )
+            guard = self._health_guards.get(context.game_id)
+            if guard is not None:
+                # Above the ``try`` on purpose: a paused provider must reach the
+                # engine task, not be swallowed as a per-action fallback.
+                guard.check(request.actor_seat)
             try:
                 llm_client = client_provider(request.actor_seat)
             except Exception as error:
                 # A client that cannot even be built has no request to re-ask.
+                if guard is not None:
+                    guard.record_client_failure(request.actor_seat, error)
                 failure = error
             else:
                 active_messages = messages
@@ -3166,6 +3345,9 @@ class GameService:
                 command = None
             telemetry_logger = getattr(engine, "game_logger", None)
             if telemetry_logger is not None:
+                pipeline_phase = getattr(context.phase, "value", context.phase)
+                if not isinstance(pipeline_phase, str) or not pipeline_phase:
+                    pipeline_phase = "night"
                 # The pipeline's own calls used to leave no telemetry row at all:
                 # the summary reads ``llm_calls.log`` and nothing else, so every
                 # skill action (a guard, a check, a save, a duel, a verdict) was
@@ -3189,6 +3371,7 @@ class GameService:
                         None if failure is None else _model_failure_code(failure)
                     ),
                     call_kind="action", transport="action_tool",
+                    phase=pipeline_phase,
                 )
             if command is None or command.action_type not in request.contract.action_types:
                 # Provider failure, unusable answer, or an action type outside the
@@ -3211,6 +3394,12 @@ class GameService:
             return provider
 
         def durable_provider(request, context, attempt):
+            if request.contract.contract_id == "awakened_witch_assist_tally":
+                # The tally is a deterministic engine resolution, not a model
+                # decision. The provider already synthesises the command; it
+                # must bypass the durable ledger too, or the "no model request"
+                # contract gets a 0ms request/attempt with unknown usage.
+                return provider(request, context, attempt)
             if self._pack_ballot_point(request, context):
                 return provider(request, context, attempt)
             engine_context = self._durable_contexts.get(context.game_id)
@@ -3485,7 +3674,12 @@ class GameService:
         game_dir = os.path.join(self.data_dir, "games", game_id)
         if os.path.exists(game_dir):
             shutil.rmtree(game_dir)
+        if engine is not None:
+            close_logger = getattr(getattr(engine, "game_logger", None), "close", None)
+            if callable(close_logger):
+                close_logger()
         self._games.pop(game_id, None)
+        self._health_guards.pop(game_id, None)
         self._engines.pop(game_id, None)
         self._tasks.pop(game_id, None)
         self._model_snapshots.pop(game_id, None)

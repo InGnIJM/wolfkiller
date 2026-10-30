@@ -346,7 +346,7 @@ class TestGameService:
         ]
         monkeypatch.setattr(
             service_module, "LLMClient",
-            lambda model=None, temperature=None, config=None: fake_llm,
+            lambda model=None, temperature=None, config=None, dedicated_http_clients=False: fake_llm,
         )
 
         game_id = await service.create_game(num_werewolves=1, num_villagers=3)
@@ -379,7 +379,7 @@ class TestGameService:
         )
         monkeypatch.setattr(
             service_module, "LLMClient",
-            lambda model=None, temperature=None, config=None: fake_llm,
+            lambda model=None, temperature=None, config=None, dedicated_http_clients=False: fake_llm,
         )
 
         game_id = await service.create_game(num_werewolves=1, num_villagers=3)
@@ -425,7 +425,7 @@ class TestGameService:
         ]
         monkeypatch.setattr(
             service_module, "LLMClient",
-            lambda model=None, temperature=None, config=None: fake_llm,
+            lambda model=None, temperature=None, config=None, dedicated_http_clients=False: fake_llm,
         )
 
         game_id = await service.create_game(num_werewolves=1, num_villagers=3)
@@ -495,7 +495,7 @@ class TestGameService:
         )
         monkeypatch.setattr(
             service_module, "LLMClient",
-            lambda model=None, temperature=None, config=None: fake_llm,
+            lambda model=None, temperature=None, config=None, dedicated_http_clients=False: fake_llm,
         )
 
         game_id = await service.create_game(num_werewolves=1, num_villagers=3)
@@ -1810,6 +1810,7 @@ class TestDeleteGame:
         await service.delete_game("game-1")
 
         engine.stop.assert_awaited_once()
+        engine.game_logger.close.assert_called_once()
         assert task.cancelled() or task.done()
         assert not game_dir.exists()
         assert "game-1" not in service._engines
@@ -2299,12 +2300,24 @@ class TestCommandProvider:
         ]
         assert len(rows) == 1
         data = rows[0]["data"]
+        assert rows[0]["phase"] == "night"
         assert data["call_kind"] == "action"
         assert data["contract_id"] == request.contract.contract_id
         assert data["parse_result"] == "ok"
         assert data.get("failure_code") is None
         assert data["total_tokens"] == 15 and data["model_id"] == "probe-model"
         assert data["retried"] is False
+
+        # A daytime skill action must carry the live phase, not a hard-coded
+        # ``night`` from the shared telemetry helper.
+        context.phase = "speech"
+        provider(request, context, 1)
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "games" / "g" / "llm_calls.log")
+            .read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        assert rows[-1]["phase"] == "speech"
 
     def test_provider_records_a_failed_llm_call_row(self, tmp_path):
         """失败也要留痕：summary 的 llm.errors / retried 靠这一行。"""
@@ -3201,7 +3214,7 @@ class TestModelAssignmentIntegration:
         class FakeClient:
             instances = []
 
-            def __init__(self, *, config):
+            def __init__(self, *, config, dedicated_http_clients: bool = False):
                 self.config = config
                 self.model_name = config.model_id
                 self.provider_profile = SimpleNamespace(profile_id="custom-openai")
@@ -3330,7 +3343,7 @@ class TestModelAssignmentIntegration:
         shared_client = SharedClient()
         construction_count = 0
 
-        def failing_client_factory(*, config):
+        def failing_client_factory(*, config, dedicated_http_clients=False):
             nonlocal construction_count
             construction_count += 1
             if construction_count == 3:
@@ -3504,7 +3517,7 @@ class TestModelAssignmentIntegration:
             pass
 
         class FakeClient:
-            def __init__(self, *, config):
+            def __init__(self, *, config, dedicated_http_clients: bool = False):
                 pass
 
             def invoke_json(self, messages, **kwargs):
@@ -3584,7 +3597,7 @@ class TestModelAssignmentIntegration:
         import app.services.game_service as service_module
 
         class FakeClient:
-            def __init__(self, *, config):
+            def __init__(self, *, config, dedicated_http_clients: bool = False):
                 self.close_count = 0
 
             async def aclose(self):
@@ -3675,3 +3688,25 @@ def test_pipeline_command_coerces_a_text_target_list_only_for_multi_target_contr
         _pipeline_command(
             {"action_type": "kill", "target_seat": "3", "reasoning": "x"}, single,
         )
+
+
+class TestDeleteGameWithoutLogger:
+    @pytest.mark.asyncio
+    async def test_delete_handles_an_engine_whose_logger_has_no_close(self, tmp_path):
+        service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+        game_dir = tmp_path / "games" / "game-1"
+        game_dir.mkdir(parents=True)
+        (game_dir / "game.log").write_text("{}\n", encoding="utf-8")
+        service._games["game-1"] = MagicMock(phase=GamePhase.NIGHT)
+        service._manifest.add_game(
+            "game-1", {"role_counts": {"wolf-killer-villager": 3}}, name="待删",
+        )
+        engine = MagicMock()
+        engine.stop = AsyncMock()
+        engine.game_logger = object()  # no ``close`` attribute
+        service._engines["game-1"] = engine
+
+        await service.delete_game("game-1")
+
+        assert not game_dir.exists()
+        assert "game-1" not in service._engines
