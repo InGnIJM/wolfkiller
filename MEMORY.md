@@ -802,3 +802,16 @@
   `normalized_result["command"]` 里，外层读 `action_type` 永远为空，只认 `status=failed` 时
   分子低估约 43 倍（实测 67 vs 2886）。修的时候**不要动全局 `_result`**（speech 的
   `{"text": …}` 与夜间流水线顶层命令的语义会跟着变），加一个票专用的读取器。
+- Trigger: one-shot LLM clients (commentary, review, /api/models/test probe,
+  or a finished game's seats) call aclose() while another game's calls are
+  live; every cached sibling model then fails instantly with
+  `APIConnectionError: Cannot send a request, as the client has been closed`
+  and the engine degrades to 系统代行 (seen in game 5a467430, 2026-10-30:
+  the night commentary's aclose killed the wolves' night_json pool).
+  Action: LangChain shares one httpx client process-wide per
+  (base_url, timeout); any client that can close mid-flight must be built
+  with dedicated_http_clients=True. OpenAI transports pass an unhashable
+  httpx.Timeout so the SDK skips its pool cache; the Anthropic transport
+  pre-seeds model.__dict__ _client/_async_client with private SDK clients.
+  discard_shared_http_clients() only protects models built later — it does
+  not resurrect models already cached in LLMClient._built_models.
