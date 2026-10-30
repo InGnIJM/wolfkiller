@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -101,10 +102,10 @@ export default function CreateGameWizard() {
         fontWeight: 400, mb: 2, display: 'inline-block',
         bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
         px: 1.5, py: 0.5, borderRadius: 2,
-      }}>创建游戏</Typography>
+      }}>{t('create.title')}</Typography>
       <Stepper activeStep={step} sx={{ mb: 4 }}>
-        <Step><StepLabel>人数身份配置</StepLabel></Step>
-        <Step><StepLabel>Agent 模型配置</StepLabel></Step>
+        <Step><StepLabel>{t('create.stepRoles')}</StepLabel></Step>
+        <Step><StepLabel>{t('create.stepModels')}</StepLabel></Step>
       </Stepper>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -140,7 +141,7 @@ export default function CreateGameWizard() {
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
         <Button color="inherit" disabled={step === 0 || creating} onClick={() => setStep(0)}>
-          上一步
+          {t('create.prevStep')}
         </Button>
         {step === 0 ? (
           <Button
@@ -149,7 +150,7 @@ export default function CreateGameWizard() {
             disabled={!roleValid}
             onClick={handleNext}
           >
-            下一步
+            {t('create.nextStep')}
           </Button>
         ) : (
           <Button
@@ -159,7 +160,7 @@ export default function CreateGameWizard() {
             aria-busy={creating}
             onClick={() => void handleCreate()}
           >
-            {creating ? '创建中…' : '创建游戏'}
+            {creating ? t('create.creating') : t('create.createGame')}
           </Button>
         )}
       </Box>

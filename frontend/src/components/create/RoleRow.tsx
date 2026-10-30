@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Box, Chip, IconButton, Stack, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
@@ -61,7 +62,7 @@ export default function RoleRow({
                   bgcolor: BLOOD_MOON.gold, color: CANVAS.bg, fontWeight: 700,
                 }}
               >
-                新增
+                {t('create.roleAdded')}
               </Box>
             )}
           </Stack>
@@ -85,7 +86,7 @@ export default function RoleRow({
           />
           <IconButton
             size="small"
-            aria-label={`减少${role.name_zh}`}
+            aria-label={t('create.decrease', { name: role.name_zh })}
             disabled={!canDecrement}
             onClick={() => onChange(-1)}
           >
@@ -101,7 +102,7 @@ export default function RoleRow({
           </Typography>
           <IconButton
             size="small"
-            aria-label={`增加${role.name_zh}`}
+            aria-label={t('create.increase', { name: role.name_zh })}
             disabled={!canIncrement}
             onClick={() => onChange(1)}
           >
