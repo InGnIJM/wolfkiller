@@ -134,7 +134,7 @@ def test_a_pass_only_contract_renders_without_naming_actions():
 
     assert rule.endswith(
         "Send ``target_seat``: null for every action; a seat number there is "
-        "rejected by the engine."
+        "ignored by the engine."
     )
     assert "(including" not in rule
     assert "RANDOM_HINT" not in _rule_retry_hint(contract)

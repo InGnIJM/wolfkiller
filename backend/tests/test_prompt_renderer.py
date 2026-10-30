@@ -38,7 +38,7 @@ def test_renderer_includes_anti_anchoring_target_rule() -> None:
     assert "RANDOM_HINT" in rendered
     assert "Fill the target field exactly as the contract requires" in rendered
     assert "ACTION TARGET RULE: the action(s) ``act`` need exactly one" in rendered
-    assert "``target_seat``: null; a seat there is rejected by the engine" in rendered
+    assert "``target_seat``: null; a redundant seat there is ignored by the engine" in rendered
     assert "one entry of ``target_seats`` for a multi-target" in rendered
     assert "alive_seats" in rendered
     assert "target whitelist" not in rendered.lower()
@@ -76,7 +76,7 @@ def test_no_target_contract_renders_the_null_target_rule() -> None:
 
     assert "no action in this contract takes a target" in rule
     assert "``target_seat``: null for every action (including ``explode``)" in rule
-    assert "a seat number there is rejected by the engine" in rule
+    assert "a seat number there is ignored by the engine" in rule
     assert "only valid for ``pass``" not in rule
 
 

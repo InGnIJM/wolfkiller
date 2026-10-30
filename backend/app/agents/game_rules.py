@@ -46,12 +46,13 @@ def _quoted(names: Iterable[str]) -> str:
 def target_selection_rule_for(contract: ActionContract) -> str:
     """Return the base rule plus the clause implied by ``contract``'s actions.
 
-    The engine rejects a seat on an action that takes no target
-    (``target_forbidden``), so the generic text must not imply that every
-    non-pass action names one: the Awakened Wolf King's ``explode`` and the
-    Order Prince's ``rewind`` take no passenger at all. Deriving the clause
-    from the frozen contract (never from a role name) is what lets a new role
-    reuse the rule without editing this module.
+    The validator rejects a seat on an action that takes no target
+    (``target_forbidden``), and the parser normalises a redundant seat away at
+    the model boundary, so the generic text must not imply that every non-pass
+    action names one: the Awakened Wolf King's ``explode`` and the Order
+    Prince's ``rewind`` take no passenger at all. Deriving the clause from the
+    frozen contract (never from a role name) is what lets a new role reuse the
+    rule without editing this module.
     """
     if type(contract) is not ActionContract:
         raise TypeError("contract must be an exact ActionContract")
@@ -73,14 +74,14 @@ def target_selection_rule_for(contract: ActionContract) -> str:
             )
         clause += (
             "; every action that takes no target must send ``target_seat``: null, "
-            "and a seat there is rejected by the engine."
+            "and a redundant seat there is ignored by the engine."
         )
     elif required:
         clause = (
             f"ACTION TARGET RULE: the action(s) {_quoted(required)} need exactly one "
             "target: put the chosen legal live seat in ``target_seat``. Every other "
             "action, including ``pass``, takes no target and must send "
-            "``target_seat``: null; a seat there is rejected by the engine."
+            "``target_seat``: null; a redundant seat there is ignored by the engine."
         )
     else:
         named = sorted(
@@ -91,7 +92,7 @@ def target_selection_rule_for(contract: ActionContract) -> str:
         clause = (
             "ACTION TARGET RULE: no action in this contract takes a target. Send "
             f"``target_seat``: null for every action{label}; a seat number there is "
-            "rejected by the engine."
+            "ignored by the engine."
         )
     return TARGET_SELECTION_RULE + " " + clause
 
