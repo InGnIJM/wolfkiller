@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 T = TypeVar("T")
 _FOLDER_NAME_MAX = 50
 
@@ -69,6 +69,15 @@ def _decode(value: str | None, default: T) -> Any | T:
     return json.loads(value)
 
 
+def _ensure_column(
+    connection: sqlite3.Connection, table: str, column: str, declaration: str,
+) -> None:
+    """Add one column to a pre-v4 database; a no-op on a fresh schema."""
+    names = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in names:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
 def _percentile(sorted_values: list[int], fraction: float) -> int:
     """Nearest-rank percentile over an already sorted, non-empty sample."""
     index = min(int(len(sorted_values) * fraction), len(sorted_values) - 1)
@@ -80,7 +89,7 @@ def _references_model_config(value: object, config_id: str) -> bool:
         for key, item in value.items():
             if key in {
                 "config_id", "model_config_id", "baseline_config_id",
-                "candidate_config_id",
+                "candidate_config_id", "commentary_config_id",
             } and item == config_id:
                 return True
             if _references_model_config(item, config_id):
@@ -107,6 +116,9 @@ CREATE TABLE IF NOT EXISTS games (
     storage_revision INTEGER NOT NULL DEFAULT 0 CHECK(storage_revision >= 0),
     execution_generation INTEGER NOT NULL DEFAULT 1 CHECK(execution_generation >= 0),
     recovery_block_code TEXT,
+    pause_code TEXT,
+    pause_detail_json TEXT,
+    paused_at TEXT,
     interruption_count INTEGER NOT NULL DEFAULT 0 CHECK(interruption_count >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -394,6 +406,14 @@ class GameRepository:
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (3, _now()),
                 )
+            if current < 4:
+                _ensure_column(connection, "games", "pause_code", "TEXT")
+                _ensure_column(connection, "games", "pause_detail_json", "TEXT")
+                _ensure_column(connection, "games", "paused_at", "TEXT")
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (4, _now()),
+                )
 
     def _write(self, function: Callable[..., T], *args: object) -> T:
         if self._closed:
@@ -497,6 +517,9 @@ class GameRepository:
         result = dict(row)
         result["config"] = _decode(result.pop("config_json"), {})
         result["model_snapshot"] = _decode(result.pop("model_snapshot_json"), [])
+        result["pause_detail"] = _decode(
+            result.pop("pause_detail_json", None), {},
+        )
         return result
 
     def get_game(self, game_id: str, *, include_deleted: bool = False) -> dict[str, object] | None:
@@ -559,7 +582,8 @@ class GameRepository:
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT benchmark_run_id,deleted_at FROM games WHERE game_id=?",
+                "SELECT benchmark_run_id,deleted_at,execution_status "
+                "FROM games WHERE game_id=?",
                 (game_id,),
             ).fetchone()
             if row is None or row["deleted_at"] is not None:
@@ -567,9 +591,17 @@ class GameRepository:
             if row["benchmark_run_id"] is not None:
                 raise GameReferencedByBenchmark(str(row["benchmark_run_id"]))
             now = _now()
+            # A deleted game must not keep reporting itself as running/paused:
+            # the lobby hides it, but recovery and "running games" counters read
+            # execution_status directly. Completed/failed/interrupted games keep
+            # their outcome; only an active game becomes cancelled.
+            status = row["execution_status"]
+            if status in ("running", "paused"):
+                status = "cancelled"
             connection.execute(
-                "UPDATE games SET deleted_at=?,updated_at=? WHERE game_id=?",
-                (now, now, game_id),
+                "UPDATE games SET deleted_at=?,updated_at=?,execution_status=? "
+                "WHERE game_id=?",
+                (now, now, status, game_id),
             )
             self._purge_game_payload(connection, game_id)
             connection.commit()
@@ -698,6 +730,8 @@ class GameRepository:
         self, game_id: str, *, expected: tuple[str, ...], target: str,
         increment_generation: bool = False,
         recovery_block_code: str | None = None,
+        pause_code: str | None = None,
+        pause_detail: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         if type(expected) is not tuple or not expected or any(
             type(item) is not str or not item for item in expected
@@ -707,12 +741,13 @@ class GameRepository:
             raise ValueError("target must be a non-empty string")
         return self._write(
             self._transition_execution, game_id, expected, target,
-            increment_generation, recovery_block_code,
+            increment_generation, recovery_block_code, pause_code, pause_detail,
         )
 
     def _transition_execution(
         self, game_id: str, expected: tuple[str, ...], target: str,
         increment_generation: bool, recovery_block_code: str | None,
+        pause_code: str | None, pause_detail: Mapping[str, object] | None,
     ) -> dict[str, object]:
         connection = self._connect()
         try:
@@ -733,10 +768,25 @@ class GameRepository:
                 )
             generation = int(row["execution_generation"]) + int(increment_generation)
             interruptions = int(row["interruption_count"]) + int(target == "interrupted")
+            now = _now()
+            if target == "paused":
+                stored_pause_code = pause_code or "manual"
+                stored_pause_detail = (
+                    None if pause_detail is None else _json(dict(pause_detail))
+                )
+                paused_at = now
+            else:
+                stored_pause_code = None
+                stored_pause_detail = None
+                paused_at = None
             connection.execute(
                 "UPDATE games SET execution_status=?,execution_generation=?,"
-                "recovery_block_code=?,interruption_count=?,updated_at=? WHERE game_id=?",
-                (target, generation, recovery_block_code, interruptions, _now(), game_id),
+                "recovery_block_code=?,pause_code=?,pause_detail_json=?,paused_at=?,"
+                "interruption_count=?,updated_at=? WHERE game_id=?",
+                (
+                    target, generation, recovery_block_code, stored_pause_code,
+                    stored_pause_detail, paused_at, interruptions, now, game_id,
+                ),
             )
             updated = connection.execute(
                 "SELECT * FROM games WHERE game_id=?", (game_id,),
@@ -1164,6 +1214,88 @@ class GameRepository:
             "high_watermark": high,
             "has_more": next_seq < high,
         }
+
+    def append_audience_events(
+        self,
+        game_id: str,
+        events: Iterable[Mapping[str, object]],
+        *,
+        step_key: str = "commentary",
+    ) -> list[int]:
+        """Append side-channel audience events outside ``commit_step``.
+
+        ``commit_step`` remains the only writer for domain checkpoints and
+        engine projections; this entry point is reserved for audience-only
+        side-channels (god-view commentary) and shares the single-threaded
+        writer so sequence numbers interleave cleanly with engine commits.
+        """
+        if type(step_key) is not str or not step_key:
+            raise ValueError("step_key must be a non-empty string")
+        normalized = [self._normalize_event(item) for item in events]
+        return self._write(
+            self._append_audience_events, game_id, normalized, step_key,
+        )
+
+    async def append_audience_events_async(
+        self,
+        game_id: str,
+        events: Iterable[Mapping[str, object]],
+        *,
+        step_key: str = "commentary",
+    ) -> list[int]:
+        if type(step_key) is not str or not step_key:
+            raise ValueError("step_key must be a non-empty string")
+        normalized = [self._normalize_event(item) for item in events]
+        return await self.awrite(
+            self._append_audience_events, game_id, normalized, step_key,
+        )
+
+    def _append_audience_events(
+        self,
+        game_id: str,
+        audience: list[tuple[str, str, str, int, str]],
+        step_key: str,
+    ) -> list[int]:
+        if not audience:
+            return []
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            game = connection.execute(
+                "SELECT 1 FROM games WHERE game_id=? AND deleted_at IS NULL",
+                (game_id,),
+            ).fetchone()
+            if game is None:
+                raise KeyError(game_id)
+            audience_base = int(connection.execute(
+                "SELECT COALESCE(MAX(seq),0) FROM audience_events WHERE game_id=?",
+                (game_id,),
+            ).fetchone()[0])
+            seqs: list[int] = []
+            offset = 0
+            for event_id, event_type, payload, version, timestamp in audience:
+                existing = connection.execute(
+                    "SELECT seq FROM audience_events WHERE game_id=? AND event_id=?",
+                    (game_id, event_id),
+                ).fetchone()
+                if existing is not None:
+                    seqs.append(int(existing["seq"]))
+                    continue
+                offset += 1
+                seq = audience_base + offset
+                connection.execute(
+                    "INSERT INTO audience_events VALUES (?,?,?,?,?,?,?,?)",
+                    (game_id, seq, event_id, step_key,
+                     event_type, payload, version, timestamp),
+                )
+                seqs.append(seq)
+            connection.commit()
+            return seqs
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def prepare_model_request(
         self, *, game_id: str, request_id: str, actor_seat: int,

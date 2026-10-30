@@ -71,13 +71,13 @@ def test_repository_startup_runs_v3_death_backfill(tmp_path) -> None:
             json.dumps({"seat": 9, "cause": "wolf_kill", "round_number": 2}), 1, "now",
         ),
     )
-    connection.execute("DELETE FROM schema_migrations WHERE version = 3")
+    connection.execute("DELETE FROM schema_migrations WHERE version >= 3")
     connection.commit()
     connection.close()
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 3
+        assert repository.schema_version() == 4
     finally:
         repository.close()
 

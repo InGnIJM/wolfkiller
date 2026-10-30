@@ -29,7 +29,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
         assert repository.database_path == tmp_path / "wolfkiller.sqlite3"
-        assert repository.schema_version() == 3
+        assert repository.schema_version() == 4
         pragmas = repository.pragmas()
         assert pragmas == {
             "journal_mode": "wal",
@@ -443,3 +443,226 @@ async def test_commit_step_async_matches_sync_and_yields_to_event_loop(tmp_path)
         assert repository.load_checkpoint("game-1")["storage_revision"] == 1
     finally:
         repository.close()
+
+
+def test_mark_game_deleted_cancels_an_active_game(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        repository.mark_game_deleted("game-1")
+        row = repository.get_game("game-1", include_deleted=True)
+        assert row is not None
+        assert row["execution_status"] == "cancelled"
+    finally:
+        repository.close()
+
+
+def test_mark_game_deleted_keeps_a_completed_outcome(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        repository.transition_execution(
+            "game-1", expected=("running",), target="completed",
+        )
+        repository.mark_game_deleted("game-1")
+        row = repository.get_game("game-1", include_deleted=True)
+        assert row is not None
+        assert row["execution_status"] == "completed"
+    finally:
+        repository.close()
+
+
+def test_transition_to_paused_persists_and_clears_the_reason(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        paused = repository.transition_execution(
+            "game-1", expected=("running",), target="paused",
+            pause_code="provider_circuit_open",
+            pause_detail={"rule": "provider_terminal", "seats": [1, 2]},
+        )
+        assert paused["execution_status"] == "paused"
+        assert paused["pause_code"] == "provider_circuit_open"
+        assert paused["pause_detail"]["rule"] == "provider_terminal"
+        assert paused["paused_at"] is not None
+
+        resumed = repository.transition_execution(
+            "game-1", expected=("paused",), target="running",
+            increment_generation=True,
+        )
+        assert resumed["pause_code"] is None
+        assert resumed["pause_detail"] == {}
+        assert resumed["paused_at"] is None
+    finally:
+        repository.close()
+
+
+def test_a_manual_pause_gets_a_reason_by_default(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        paused = repository.transition_execution(
+            "game-1", expected=("running",), target="paused",
+        )
+        assert paused["pause_code"] == "manual"
+        assert paused["pause_detail"] == {}
+    finally:
+        repository.close()
+
+
+def test_v3_database_gains_the_pause_columns(tmp_path) -> None:
+    """Opening an old fact database must migrate, not refuse to start."""
+    path = tmp_path / "wolfkiller.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+        INSERT INTO schema_migrations(version, applied_at) VALUES (1, 'x');
+        INSERT INTO schema_migrations(version, applied_at) VALUES (2, 'x');
+        INSERT INTO schema_migrations(version, applied_at) VALUES (3, 'x');
+        CREATE TABLE games (
+            game_id TEXT PRIMARY KEY, name TEXT NOT NULL, config_json TEXT NOT NULL,
+            model_snapshot_json TEXT NOT NULL, execution_status TEXT NOT NULL,
+            source TEXT NOT NULL, benchmark_run_id TEXT,
+            storage_revision INTEGER NOT NULL DEFAULT 0,
+            execution_generation INTEGER NOT NULL DEFAULT 1,
+            recovery_block_code TEXT,
+            interruption_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
+        );
+        INSERT INTO games(
+            game_id, name, config_json, model_snapshot_json, execution_status,
+            source, created_at, updated_at
+        ) VALUES ('old', 'old', '{}', '[]', 'running', 'native', 'x', 'x');
+    """)
+    connection.commit()
+    connection.close()
+
+    repository = GameRepository(tmp_path)
+    try:
+        assert repository.schema_version() == 4
+        row = repository.get_game("old")
+        assert row["pause_code"] is None
+        assert row["pause_detail"] == {}
+        assert row["paused_at"] is None
+    finally:
+        repository.close()
+
+
+def test_append_audience_events_interleaves_with_commit_step_and_validates(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        assert repository.append_audience_events("game-1", []) == []
+        repository.commit_step(
+            game_id="game-1", expected_storage_revision=0,
+            execution_generation=1, step_key="step-1",
+            input_digest="i-1", result_digest="r-1",
+            checkpoint={"checkpoint_version": 1},
+            domain_events=[],
+            audience_events=[{
+                "event_id": "event-1", "event_type": "phase",
+                "payload": {"phase": "dawn", "round_number": 1}, "schema_version": 1,
+            }],
+            audience_state={"phase": "dawn"},
+        )
+        seqs = repository.append_audience_events(
+            "game-1",
+            [{
+                "event_id": "commentary:1:night",
+                "event_type": "commentary",
+                "payload": {
+                    "round_number": 1, "beat": "night",
+                    "title": "第1夜解说", "text": "平安夜。",
+                },
+                "schema_version": 1,
+            }],
+        )
+        assert seqs == [2]
+        # Duplicate event_id is idempotent and returns existing seq without raising
+        dup_seqs = repository.append_audience_events(
+            "game-1",
+            [{
+                "event_id": "commentary:1:night",
+                "event_type": "commentary",
+                "payload": {
+                    "round_number": 1, "beat": "night",
+                    "title": "第1夜解说", "text": "平安夜。",
+                },
+                "schema_version": 1,
+            }],
+        )
+        assert dup_seqs == [2]
+        # Next commit_step continues from MAX(seq)=2
+        receipt = repository.commit_step(
+            game_id="game-1", expected_storage_revision=1,
+            execution_generation=1, step_key="step-2",
+            input_digest="i-2", result_digest="r-2",
+            checkpoint={"checkpoint_version": 1},
+            domain_events=[],
+            audience_events=[{
+                "event_id": "event-2", "event_type": "speech",
+                "payload": {"player_seat": 1, "text": "hi", "round_number": 1, "phase": "speech"},
+                "schema_version": 1,
+            }],
+            audience_state={"phase": "speech"},
+        )
+        assert receipt["first_seq"] == 3
+        assert receipt["last_seq"] == 3
+        page = repository.get_audience_events("game-1", after_seq=0, limit=10)
+        assert [row["seq"] for row in page["events"]] == [1, 2, 3]
+        assert page["events"][1]["event_type"] == "commentary"
+
+        with pytest.raises(KeyError):
+            repository.append_audience_events("missing-game", [{
+                "event_id": "c-1", "event_type": "commentary", "payload": {},
+            }])
+        with pytest.raises(ValueError, match="step_key"):
+            repository.append_audience_events(
+                "game-1",
+                [{"event_id": "c-2", "event_type": "commentary", "payload": {}}],
+                step_key="",
+            )
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_append_audience_events_async_persists_rows(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        seqs = await repository.append_audience_events_async(
+            "game-1",
+            [{
+                "event_id": "commentary:1:day",
+                "event_type": "commentary",
+                "payload": {"round_number": 1, "beat": "day", "title": "t", "text": "x"},
+            }],
+        )
+        assert seqs == [1]
+        with pytest.raises(ValueError, match="step_key"):
+            await repository.append_audience_events_async(
+                "game-1",
+                [{"event_id": "c-x", "event_type": "commentary", "payload": {}}],
+                step_key="",
+            )
+    finally:
+        repository.close()
+
+
+def test_model_config_references_includes_commentary_config_id(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        repository.create_game(
+            game_id="game-comm",
+            name="comm",
+            config={"commentary": {"enabled": True, "commentary_config_id": "cfg-comm"}},
+            execution_status="running",
+            source="native",
+            model_snapshot=[],
+        )
+        refs = repository.model_config_references("cfg-comm")
+        assert refs["game_ids"] == ["game-comm"]
+    finally:
+        repository.close()
+
