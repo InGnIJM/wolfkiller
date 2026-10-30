@@ -1,9 +1,11 @@
 import { Box, Typography, keyframes } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
 import type { GamePhase, PublicReplayEvent } from '../../store/types';
+import i18n from '../../i18n';
+import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
 import type { LabelsModule } from '../../i18n/useLabels';
-import type { PublicPlayerState } from '../../store/types';
+import type { PublicPlayerState, WinningCamp } from '../../store/types';
 import { BACKDROP, BLOOD_MOON, PLATE, ROLE_COLORS, TITLE_GRADIENT } from '../../theme/tokens';
 
 const fadeIn = keyframes`
@@ -12,10 +14,7 @@ const fadeIn = keyframes`
 `;
 
 function campLabel(camp: string, L: LabelsModule): string {
-  if (camp === 'werewolf') return L.roleName('wolf-killer-werewolf') ?? camp;
-  if (camp === 'good') return L.WINNER_LABELS.good.replace(/胜$/, '');
-  if (camp === 'third_party') return L.WINNING_CAMP_LABELS.third_party;
-  return camp;
+  return camp in L.WINNING_CAMP_LABELS ? L.WINNING_CAMP_LABELS[camp as WinningCamp] : camp;
 }
 
 function deathCauseLabel(
@@ -26,12 +25,12 @@ function deathCauseLabel(
   L: LabelsModule,
 ): string {
   if (event.payload.cause !== 'self_explode') {
-    return L.DEATH_CAUSE_LABELS[event.payload.cause] ?? '未明';
+    return L.DEATH_CAUSE_LABELS[event.payload.cause] ?? i18n.t('game.evUnknown');
   }
-  if (phase === 'sheriff_election') return '竞选自爆';
+  if (phase === 'sheriff_election') return i18n.t('game.evExplodeInElection');
   const nearby = [events[index - 1], events[index + 1]];
   if (nearby.some((item) => item?.event_type === 'sheriff_elected' && item.payload.reason === 'explode')) {
-    return '竞选自爆';
+    return i18n.t('game.evExplodeInElection');
   }
   return L.DEATH_CAUSE_LABELS.self_explode;
 }
@@ -100,47 +99,48 @@ function buildReport(phase: string, events: PublicReplayEvent[], L: LabelsModule
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.event_type === 'death') {
-      return `${e.payload.player_seat}号在夜色中出局，死因：${deathCauseLabel(e, phase, events, i, L)}`;
+      return i18n.t('game.reportDeath', { seat: e.payload.player_seat, cause: deathCauseLabel(e, phase, events, i, L) });
     }
     if (e.event_type === 'vote_result') {
       if (e.payload.exiled_seat === null) {
         return L.voteRoundWasRewound(e.payload.round_number, events)
           ? L.VOTE_REWOUND_RESULT
-          : '公投平票，无人被放逐';
+          : i18n.t('game.reportTie');
       }
-      return `${e.payload.exiled_seat}号被公投放逐，尘土落定`;
+      return i18n.t('game.reportExiled', { seat: e.payload.exiled_seat });
     }
     if (e.event_type === 'vote_rewound') {
-      return `${e.payload.seat}号发动逆转时空，放逐投票作废`;
+      return i18n.t('game.reportRewind', { seat: e.payload.seat });
     }
     if (e.event_type === 'sheriff_elected') {
       return e.payload.seat == null
-        ? '警长竞选结束，警徽流失'
-        : `${e.payload.seat}号当选警长`;
+        ? i18n.t('game.evSheriffLost')
+        : i18n.t('game.evSheriffElected', { seat: e.payload.seat });
     }
     if (e.event_type === 'sheriff_badge') {
       return e.payload.to_seat == null
-        ? `${e.payload.from_seat}号撕毁警徽`
-        : `${e.payload.from_seat}号将警徽移交给${e.payload.to_seat}号`;
+        ? i18n.t('game.evBadgeTear', { seat: e.payload.from_seat })
+        : i18n.t('game.evBadgePass', { from: e.payload.from_seat, to: e.payload.to_seat });
     }
     if (e.event_type === 'sheriff_run') {
       return e.payload.choice === 'run'
-        ? `${e.payload.seat}号上警竞选`
-        : `${e.payload.seat}号选择不上警`;
+        ? i18n.t('game.reportRun', { seat: e.payload.seat })
+        : i18n.t('game.reportPass', { seat: e.payload.seat });
     }
     if (e.event_type === 'night_action' && e.payload.action_type === 'werewolf_kill') {
-      return `狼人的刀锋昨夜指向 ${e.payload.target_seat}号`;
+      return i18n.t('game.reportWolfKill', { target: e.payload.target_seat });
     }
   }
-  if (phase === 'night' || phase === 'dawn') return '长夜未尽，狼人已在暗中谋划……';
-  if (phase === 'sheriff_election') return '警长竞选进行中……';
-  if (phase === 'speech') return '众人各执一词，真伪难辨……';
-  if (phase === 'vote_casting' || phase === 'vote_resolution') return '公投在即，人心浮动……';
-  return '村中灯火未熄，只待天明';
+  if (phase === 'night' || phase === 'dawn') return i18n.t('game.reportNight');
+  if (phase === 'sheriff_election') return i18n.t('game.reportElection');
+  if (phase === 'speech') return i18n.t('game.reportSpeech');
+  if (phase === 'vote_casting' || phase === 'vote_resolution') return i18n.t('game.reportVote');
+  return i18n.t('game.reportDefault');
 }
 
 // 中央阶段页：英文眉标 + 第X天金字 + 阶段名 + 战报 + 存活与余狼情报
 function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: number }) {
+  const { t } = useTranslation();
   const L = useLabels();
   const players = useGameStore((s) => s.players);
   const timeline = useGameStore((s) => s.timeline);
@@ -158,7 +158,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   let phaseLabel = L.CENTER_PHASE_LABELS[phase as GamePhase] || phase;
   if (phase === 'night') {
     const role = nightRole(currentEntry, players, L);
-    if (role) phaseLabel = `黑夜 · ${role}`;
+    if (role) phaseLabel = t('game.nightRolePrefix', { role });
   }
 
   return (
@@ -189,7 +189,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
           textShadow: '0 18px 50px rgba(212,168,83,0.22)',
         }}
       >
-        第{upperDay(roundNumber)}天
+        {t('game.dayTitle', { day: i18n.language.startsWith('zh') ? upperDay(roundNumber) : ordinalEn(roundNumber) })}
       </Typography>
       <Typography
         sx={{
@@ -232,7 +232,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
             mb: 0.1,
           }}
         >
-          战报
+          {t('game.reportTitle')}
         </Typography>
         <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.8, fontSize: 'clamp(9px, 1.3cqh, 11.2px)' }}>
           {report}
@@ -247,7 +247,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
           color: 'text.disabled',
         }}
       >
-        存活 {alive}/{total} · 余狼 {wolvesRemain}
+        {t('game.aliveLine', { alive, total, wolves: wolvesRemain })}
       </Typography>
     </Box>
   );
@@ -265,6 +265,7 @@ function EventSummary({
   events: PublicReplayEvent[];
   index: number;
 }) {
+  const { t } = useTranslation();
   const L = useLabels();
   const players = useGameStore((s) => s.players);
   let text: string;
@@ -272,21 +273,21 @@ function EventSummary({
 
   switch (entry.event_type) {
     case 'speaking':
-      text = `${entry.payload.seat}号正在发言`;
+      text = t('game.evSpeaking', { seat: entry.payload.seat });
       tone = BLOOD_MOON.crimson;
       break;
     case 'speech':
       text = entry.payload.phase === 'last_words'
-        ? `${entry.payload.player_seat}号遗言`
+        ? t('game.evLastWords', { seat: entry.payload.player_seat })
         : entry.payload.phase === 'sheriff_election'
-          ? `${entry.payload.player_seat}号竞选发言`
-          : `${entry.payload.player_seat}号正在发言`;
+          ? t('game.evCampaign', { seat: entry.payload.player_seat })
+          : t('game.evSpeaking', { seat: entry.payload.player_seat });
       break;
     case 'witch_thought':
     case 'seer_thought': {
       // 旧档事件类型本身就是「谁在想」，新档要看 payload.action_type，分开查表才能收窄键。
-      const who = L.THOUGHT_ROLE_NAMES[entry.event_type] ?? '角色';
-      text = `${who}思考中`;
+      const who = L.THOUGHT_ROLE_NAMES[entry.event_type] ?? t('game.evRoleFallback');
+      text = t('game.evThinking', { who });
       tone = ROLE_COLORS.witch.color;
       break;
     }
@@ -296,22 +297,22 @@ function EventSummary({
         roleName: L.roleLabelForSeat(entry.payload.seat, players),
       });
       text = entry.payload.degraded
-        ? `${entry.payload.seat}号${L.DEGRADED_ACTION_LABEL}`
-        : `${entry.payload.seat}号${who}思考中`;
+        ? t('game.evSysAct', { seat: entry.payload.seat, label: L.DEGRADED_ACTION_LABEL })
+        : t('game.evThinking', { who: `${t('game.seatNumber', { seat: entry.payload.seat })}${who}` });
       tone = ROLE_COLORS.witch.color;
       break;
     }
     case 'wolf_chat_message':
-      text = '狼群密谋中';
+      text = t('game.evWolfChat');
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'wolf_vote':
       // 狼票走狼队频道的粉色，与白天投票/警票的金色摘要区分昼夜
       text = entry.payload.degraded
-        ? `${entry.payload.seat}号${L.DEGRADED_ACTION_LABEL}`
+        ? t('game.evSysAct', { seat: entry.payload.seat, label: L.DEGRADED_ACTION_LABEL })
         : entry.payload.target_seat === null
-          ? `${entry.payload.seat}号弃票`
-          : `${entry.payload.seat}号票给 ${entry.payload.target_seat}号`;
+          ? t('game.evAbstain', { seat: entry.payload.seat })
+          : t('game.evVoted', { seat: entry.payload.seat, target: entry.payload.target_seat });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'night_action':
@@ -324,131 +325,132 @@ function EventSummary({
       tone = ROLE_COLORS.seer.color;
       break;
     case 'death':
-      text = `${entry.payload.player_seat}号 ${deathCauseLabel(entry, phase, events, index, L)}`;
+      text = t('game.evDeath', { seat: entry.payload.player_seat, cause: deathCauseLabel(entry, phase, events, index, L) });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'vote':
       text = entry.payload.target_seat === null
-        ? `${entry.payload.voter_seat}号弃权`
-        : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`;
+        ? t('game.evVoteAbstain', { seat: entry.payload.voter_seat })
+        : t('game.evVoteFor', { seat: entry.payload.voter_seat, target: entry.payload.target_seat });
       break;
     case 'vote_result':
       text = entry.payload.exiled_seat === null
         ? (L.voteRoundWasRewound(entry.payload.round_number, events)
           ? L.VOTE_REWOUND_RESULT
-          : '平票，无人被放逐')
-        : `${entry.payload.exiled_seat}号被放逐`;
+          : t('game.evTie'))
+        : t('game.evExiled', { seat: entry.payload.exiled_seat });
       break;
     case 'vote_rewound':
-      text = `${entry.payload.seat}号发动逆转时空，放逐投票作废`;
+      text = t('game.reportRewind', { seat: entry.payload.seat });
       break;
     case 'technical_abstain':
-      text = `${entry.payload.voter_seat}号 系统代投弃权`;
+      text = t('game.evSysAbstain', { seat: entry.payload.voter_seat });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'player_status':
       // 结算给一个座位留下的标记：中毒/中枪但被延迟结算，或延迟死亡本身。
-      text = `${entry.payload.player_seat}号 ${
-        L.PLAYER_STATUS_LABELS[entry.payload.status] ?? entry.payload.status
-      }`;
+      text = t('game.evDeath', {
+        seat: entry.payload.player_seat,
+        cause: L.PLAYER_STATUS_LABELS[entry.payload.status] ?? entry.payload.status,
+      });
       tone = BLOOD_MOON.goldLight;
       break;
     case 'exile_cancelled':
-      text = `${entry.payload.target_seat}号翻牌免于出局`;
+      text = t('game.evFlip', { seat: entry.payload.target_seat });
       break;
     case 'knight_duel':
-      text = `${entry.payload.seat}号决斗${entry.payload.target_seat}号（${campLabel(entry.payload.camp, L)}）`;
+      text = t('game.evDuel', { seat: entry.payload.seat, target: entry.payload.target_seat, camp: campLabel(entry.payload.camp, L) });
       tone = BLOOD_MOON.crimson;
       break;
     case 'wolf_beauty_charm':
       // God view: name the charmed seat when the event carries it (archives
       // recorded before the field existed do not).
       text = entry.payload.target_seat == null
-        ? `${entry.payload.seat}号发动魅惑`
-        : `${entry.payload.seat}号魅惑${entry.payload.target_seat}号`;
+        ? t('game.evCharmStart', { seat: entry.payload.seat })
+        : t('game.evCharm', { seat: entry.payload.seat, target: entry.payload.target_seat });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'fragrance_bond':
       // God view: the bound players are never told, and the pair is the whole
       // point of the beat.
-      text = `${entry.payload.seat}号缠绕${entry.payload.target_seats.join('、')}号`;
+      text = t('game.evEntangle', { seat: entry.payload.seat, targets: entry.payload.target_seats.join(t('game.listJoin')) });
       tone = ROLE_COLORS.witch.color;
       break;
     case 'wraith_illusion':
       // God view: name the stand-in when the event carries it (archives
       // recorded before the field existed do not).
       text = entry.payload.target_seat == null
-        ? `${entry.payload.seat}号发动挽歌幻象`
-        : `${entry.payload.seat}号以${entry.payload.target_seat}号为替身`;
+        ? t('game.evIllusionStart', { seat: entry.payload.seat })
+        : t('game.evIllusion', { seat: entry.payload.seat, target: entry.payload.target_seat });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'wolf_beauty_revenge':
-      text = `${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`;
+      text = t('game.evRevenge', { seat: entry.payload.seat, target: entry.payload.target_seat });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'self_explode':
-      text = `${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`;
+      text = t('game.evExplode', { seat: entry.payload.seat, target: entry.payload.target_seat });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'dance_pool':
-      text = `${entry.payload.seat}号起舞，舞池：${entry.payload.pool_seats.join('、')}号`;
+      text = t('game.evDance', { seat: entry.payload.seat, seats: entry.payload.pool_seats.join(t('game.listJoin')) });
       tone = ROLE_COLORS.witch.color;
       break;
     case 'mask_granted':
-      text = `${entry.payload.seat}号给${entry.payload.target_seat}号戴面具（${entry.payload.in_pool ? '在' : '不在'}舞池）`;
+      text = t('game.evMask', { seat: entry.payload.seat, target: entry.payload.target_seat, inPool: t(entry.payload.in_pool ? 'game.evInPool' : 'game.evNotInPool') });
       tone = ROLE_COLORS.witch.color;
       break;
     case 'awakened_witch_assist_pick':
-      text = `毒药目标 ${entry.payload.target_seat}号 · 协助者 ${entry.payload.assistant_seats.join('、')}号`;
+      text = t('game.evPoisonTarget', { target: entry.payload.target_seat, assistants: entry.payload.assistant_seats.join(t('game.listJoin')) });
       tone = ROLE_COLORS.witch.color;
       break;
     case 'awakened_witch_assist_chat': {
       const brief = entry.payload.text.length > 18
         ? `…${entry.payload.text.slice(-18)}`
         : entry.payload.text;
-      text = `${entry.payload.seat}号协助者密谈：${brief}`;
+      text = t('game.evAssistChat', { seat: entry.payload.seat, brief });
       tone = ROLE_COLORS.witch.color;
       break;
     }
     case 'awakened_witch_assist_vote':
-      text = `${entry.payload.seat}号表态${L.awakenedWitchVoteLabel(entry.payload.vote)}（毒药目标 ${entry.payload.target_seat}号）`;
+      text = t('game.evAssistVote', { seat: entry.payload.seat, vote: L.awakenedWitchVoteLabel(entry.payload.vote), target: entry.payload.target_seat });
       tone = ROLE_COLORS.witch.color;
       break;
     case 'awakened_witch_poison_result':
-      text = `${entry.payload.target_seat}号毒药${L.awakenedWitchPoisonResultLabel(entry.payload.result)}`;
+      text = t('game.evPoisonResult', { target: entry.payload.target_seat, result: L.awakenedWitchPoisonResultLabel(entry.payload.result) });
       tone = ROLE_COLORS.witch.color;
       break;
     case 'crimson_explode':
-      text = `${entry.payload.seat}号自爆，封印${entry.payload.silenced_seats.length}个好人技能`;
+      text = t('game.evSilence', { seat: entry.payload.seat, count: entry.payload.silenced_seats.length });
       tone = ROLE_COLORS.werewolf.color;
       break;
     case 'sheriff_elected':
       text = entry.payload.seat == null
-        ? '警长竞选结束，警徽流失'
-        : `${entry.payload.seat}号当选警长`;
+        ? t('game.evSheriffLost')
+        : t('game.evSheriffElected', { seat: entry.payload.seat });
       break;
     case 'sheriff_badge':
       text = entry.payload.to_seat == null
-        ? `${entry.payload.from_seat}号撕毁警徽`
-        : `${entry.payload.from_seat}号将警徽移交给${entry.payload.to_seat}号`;
+        ? t('game.evBadgeTear', { seat: entry.payload.from_seat })
+        : t('game.evBadgePass', { from: entry.payload.from_seat, to: entry.payload.to_seat });
       break;
     case 'sheriff_run':
       text = entry.payload.choice === 'run'
-        ? `${entry.payload.seat}号上警`
-        : `${entry.payload.seat}号过`;
+        ? t('game.evRun', { seat: entry.payload.seat })
+        : t('game.evPassSeat', { seat: entry.payload.seat });
       break;
     case 'sheriff_withdraw':
       text = entry.payload.choice === 'withdraw'
-        ? `${entry.payload.seat}号退水`
-        : `${entry.payload.seat}号留下`;
+        ? t('game.evWithdraw', { seat: entry.payload.seat })
+        : t('game.evStay', { seat: entry.payload.seat });
       break;
     case 'sheriff_vote':
       text = entry.payload.target_seat == null
-        ? `${entry.payload.voter_seat}号弃权`
-        : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`;
+        ? t('game.evVoteAbstain', { seat: entry.payload.voter_seat })
+        : t('game.evVoteFor', { seat: entry.payload.voter_seat, target: entry.payload.target_seat });
       break;
     case 'sheriff_side':
-      text = `${entry.payload.seat}号选择${L.SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side}发言`;
+      text = t('game.evSheriffSide', { seat: entry.payload.seat, side: L.SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side });
       break;
     case 'narration':
       text = entry.payload.title;
@@ -458,7 +460,7 @@ function EventSummary({
       tone = ROLE_COLORS.guard.color;
       break;
     case 'winner':
-      text = `${L.WINNING_CAMP_LABELS[entry.payload.winning_camp] ?? entry.payload.winning_camp}获胜`;
+      text = t('game.evWin', { camp: L.WINNING_CAMP_LABELS[entry.payload.winning_camp] ?? entry.payload.winning_camp });
       tone = ROLE_COLORS.werewolf.color;
       break;
     default:
@@ -505,6 +507,7 @@ function EventSummary({
 const LIVE_LINE_CHARS = 40;
 
 function LiveSpeechLine({ seat }: { seat: number }) {
+  const { t } = useTranslation();
   const streaming = useGameStore((s) => s.streamingSpeech);
   const isFollowingLive = useGameStore((s) => s.isFollowingLive);
   if (!isFollowingLive || streaming === null || streaming.seat !== seat) return null;
@@ -512,7 +515,7 @@ function LiveSpeechLine({ seat }: { seat: number }) {
   if (!text && !thinking) return null;
   const body = text || thinking;
   const tail = body.length > LIVE_LINE_CHARS ? `…${body.slice(-LIVE_LINE_CHARS)}` : body;
-  const line = text ? tail : `思考中：${tail}`;
+  const line = text ? tail : t('game.evThinkingPrefix', { text: tail });
   return (
     <Typography
       data-testid="center-live-speech"
@@ -532,6 +535,7 @@ function LiveSpeechLine({ seat }: { seat: number }) {
 }
 
 export default function CenterDisplay() {
+  const { t } = useTranslation();
   const { phase, roundNumber, timeline, timelineIndex, isPaused, pauseInfo } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
@@ -541,10 +545,10 @@ export default function CenterDisplay() {
     return (
       <Box sx={{ textAlign: 'center', py: 2, bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2 }}>
         <Typography variant="subtitle1" color="text.secondary">
-          {pauseInfo?.reason ?? '游戏已暂停'}
+          {pauseInfo?.reason ?? t('game.paused')}
         </Typography>
         <Typography variant="caption" color="text.disabled" sx={{ mt: 0.5, display: 'block' }}>
-          {pauseInfo?.code ? `原因：${pauseInfo.code}` : '点击播放按钮继续'}
+          {pauseInfo?.code ? t('game.pauseReason', { code: pauseInfo.code }) : t('game.pauseHint')}
         </Typography>
       </Box>
     );
