@@ -456,3 +456,35 @@ class TestNightTelemetry:
         )
 
         assert any("llm telemetry" in message for message in caplog.messages)
+
+
+class TestCallMetadata:
+    def test_unknown_night_tool_is_still_a_night_call(self):
+        from app.services.game_service import _night_call_meta
+
+        assert _night_call_meta(None, "werewolf_kill") == ("night", "night")
+        assert _night_call_meta(
+            make_state(phase=GamePhase.SHERIFF_ELECTION), "sheriff_campaign",
+        ) == ("action", "sheriff_election")
+        assert _night_call_meta(
+            type("State", (), {"phase": "vote_resolution"})(), "sheriff_badge",
+        ) == ("action", "vote_resolution")
+        assert _night_call_meta(
+            type("State", (), {"phase": ""})(), "test_night",
+        ) == ("night", "night")
+
+    def test_log_llm_telemetry_uses_the_supplied_phase(self, tmp_path: Path):
+        logger = GameLogger(data_dir=str(tmp_path))
+
+        _log_llm_telemetry(
+            logger, "g1", 2, 3,
+            tool_name="awakened_wolf_king_explode",
+            model_id="m", prompt_chars=100,
+            parse_result="ok", call_kind="action",
+            transport="action_tool", phase="speech",
+        )
+
+        records = read_llm_calls(tmp_path, "g1")
+        assert len(records) == 1
+        assert records[0]["phase"] == "speech"
+        assert records[0]["data"]["call_kind"] == "action"

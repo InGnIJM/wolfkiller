@@ -418,3 +418,19 @@ def test_the_new_roles_decision_rows_carry_what_a_hit_rate_needs(tmp_path: Path)
          "in_pool": True},
         {"event": "PURE_WHITE_REASONING", "seat": 5, "target_seat": 6, "result": None},
     ]
+
+
+def test_tool_content_fallbacks_are_counted_separately_from_speech_fallbacks() -> None:
+    from app.services.game_summary import _llm_aggregate
+
+    result = _llm_aggregate([{
+        "data": {
+            "call_kind": "action",
+            "parse_result": "strict_content_fallback",
+            "failure_code": None,
+        },
+    }])
+
+    assert result["tool_content_fallbacks"] == 1
+    assert result["fallbacks"] == 0
+    assert result["errors"] == 0

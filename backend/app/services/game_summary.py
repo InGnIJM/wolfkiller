@@ -275,6 +275,7 @@ def _llm_aggregate(records: list[dict]) -> dict:
     by_kind: dict[str, int] = {}
     errors = 0
     fallbacks = 0
+    tool_content_fallbacks = 0
     retried = 0
 
     for record in records:
@@ -303,11 +304,17 @@ def _llm_aggregate(records: list[dict]) -> dict:
             errors += 1
         elif parse_result in ("fallback", "parse_failed"):
             fallbacks += 1
+        elif parse_result == "strict_content_fallback":
+            # A salvaged content answer is not a failure (it was accepted and
+            # carried no failure_code), but it is a provider-tool capability
+            # signal worth seeing next to the speech fallback count.
+            tool_content_fallbacks += 1
 
     return {
         "calls": len(records),
         "errors": errors,
         "fallbacks": fallbacks,
+        "tool_content_fallbacks": tool_content_fallbacks,
         "retried": retried,
         "tokens": tokens,
         "elapsed_ms": {
