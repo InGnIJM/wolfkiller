@@ -1,8 +1,8 @@
 import type {
-  AudienceEventPage, AudienceSnapshot, BatchDeleteResult, BatchMoveResult, BenchmarkCreateInput, BenchmarkItem,
+  AudienceEventPage, AudienceSnapshot, AutoReviewSetting, BatchDeleteResult, BatchMoveResult, BenchmarkCreateInput, BenchmarkItem,
   BenchmarkItemsPage, BenchmarkReport, BenchmarkRun, BenchmarkRunList,
   FieldConstraints, GameFolder, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
-  ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
+  GameReviewStatus, ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
   ModelTestResult, PromptCaptureSetting, ProviderProfileId, PublicGameState, RoleCatalogItem,
   VictoryPolicy, WitchSelfSavePolicy,
 } from '../store/types';
@@ -22,6 +22,8 @@ export async function createGame(config?: {
   witch_self_save?: WitchSelfSavePolicy;
   victory?: VictoryPolicy;
   model_assignments?: ModelAssignment[];
+  commentary_enabled?: boolean;
+  commentary_config_id?: string | null;
 }): Promise<{ game_id: string; model_snapshot?: ModelSnapshotEntry[] }> {
   const res = await fetch(`${getApiBase()}/api/games`, {
     method: 'POST',
@@ -195,6 +197,25 @@ export async function fetchGameMemories(gameId: string): Promise<GameMemories> {
   return res.json();
 }
 
+export async function fetchGameReview(gameId: string): Promise<GameReviewStatus> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/review`);
+  if (!res.ok) throwHttpError(res, 'Fetch game review failed');
+  return res.json();
+}
+
+export async function generateGameReview(
+  gameId: string,
+  options: { force?: boolean } = {},
+): Promise<GameReviewStatus> {
+  const res = await fetch(`${getApiBase()}/api/games/${gameId}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force: Boolean(options.force) }),
+  });
+  if (!res.ok) throwHttpError(res, 'Generate game review failed');
+  return res.json();
+}
+
 export class AudienceApiError extends Error {
   readonly status: number;
 
@@ -334,6 +355,24 @@ export async function updatePromptCaptureSetting(
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) throw new Error(`Update prompt capture setting failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAutoReviewSetting(): Promise<AutoReviewSetting> {
+  const res = await fetch(`${getApiBase()}/api/settings/auto-review`);
+  if (!res.ok) throw new Error(`Fetch auto review setting failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateAutoReviewSetting(
+  enabled: boolean | null,
+): Promise<AutoReviewSetting> {
+  const res = await fetch(`${getApiBase()}/api/settings/auto-review`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`Update auto review setting failed: ${res.status}`);
   return res.json();
 }
 

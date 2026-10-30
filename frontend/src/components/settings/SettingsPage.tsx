@@ -50,7 +50,9 @@ const CAPTURE_NOTE: ReadonlyArray<{ lead: string; body: string }> = [
 ];
 
 export default function SettingsPage() {
-  const { setting, loading, error, load, setEnabled } = useAppSettingsStore();
+  const {
+    setting, autoReviewSetting, loading, error, load, setEnabled, setAutoReviewEnabled,
+  } = useAppSettingsStore();
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +73,12 @@ export default function SettingsPage() {
     const next = await setEnabled(null);
     if (!next) return;
     setFeedback(`已恢复为跟随环境变量 PROMPT_CAPTURE_ENABLED（当前：${next.enabled ? '开' : '关'}）。`);
+  };
+
+  const handleAutoReviewToggle = async (enabled: boolean) => {
+    const next = await setAutoReviewEnabled(enabled);
+    if (!next) return;
+    setFeedback(enabled ? '已开启赛后自动复盘。' : '已关闭赛后自动复盘（仍可在对局页手动触发）。');
   };
 
   return (
@@ -138,6 +146,32 @@ export default function SettingsPage() {
               恢复为跟随环境变量
             </Button>
           )}
+        </Box>
+      )}
+
+      {!loading && autoReviewSetting && (
+        <Box sx={{
+          mt: 3,
+          bgcolor: 'background.paper',
+          border: '1px solid', borderColor: 'divider',
+          borderRadius: 2, p: 2.5,
+        }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+            赛后自动复盘（上帝视角）
+          </Typography>
+          <FormControlLabel
+            sx={{ mt: 1.5, ml: 0 }}
+            control={(
+              <Switch
+                checked={autoReviewSetting.enabled}
+                onChange={(event) => { void handleAutoReviewToggle(event.target.checked); }}
+              />
+            )}
+            label="对局结束后自动生成赛后复盘"
+          />
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            普通对局结束后自动进行两阶段上帝视角复盘并写入 review.json（评测对局默认跳过自动生成，可在对局页手动点「赛后复盘」生成）。
+          </Typography>
         </Box>
       )}
 
