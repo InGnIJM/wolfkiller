@@ -37,8 +37,10 @@ def _isolated_data(tmp_path, monkeypatch):
     tests never contend on the shared data/games directory."""
     original = game_engine_module.GameLogger
 
-    def isolated(data_dir="data"):
-        return original(data_dir=data_dir if data_dir != "data" else str(tmp_path))
+    def isolated(data_dir="data", **kwargs):
+        return original(
+            data_dir=data_dir if data_dir != "data" else str(tmp_path), **kwargs,
+        )
 
     monkeypatch.setattr(game_engine_module, "GameLogger", isolated)
 
@@ -1219,6 +1221,20 @@ async def test_a_delayed_death_that_ends_the_game_stops_the_day(tmp_path) -> Non
     assert engine.sm.get_state() is GamePhase.GAME_OVER
     assert engine.state.win_result is not None
     engine._publish_deaths.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_day_reaction_death_batch_keeps_its_real_phase(tmp_path) -> None:
+    """A daytime death must not be logged as a dawn/night batch."""
+    engine = GameEngine("day-death-phase", data_dir=str(tmp_path))
+    engine.state.phase = GamePhase.SPEECH
+    engine.sm.set_state(GamePhase.SPEECH)
+    engine.game_logger.log_deaths = MagicMock()
+
+    await engine._publish_deaths((DeathReport(2, "hunter_shot", 1),))
+
+    engine.game_logger.log_deaths.assert_called_once()
+    assert engine.game_logger.log_deaths.call_args.kwargs["phase"] == "speech"
 
 
 @pytest.mark.asyncio

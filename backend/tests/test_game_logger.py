@@ -58,3 +58,49 @@ def test_model_error_keeps_structured_sanitized_cause_chain(tmp_path):
     )
     record = json.loads(_read_last_line(tmp_path / "games" / "g" / "game.log"))
     assert record["data"]["cause_chain"] == causes
+
+
+def test_log_deaths_can_record_a_non_dawn_phase(tmp_path):
+    logger = GameLogger(data_dir=str(tmp_path))
+
+    logger.log_deaths(
+        "g1", 2, [{"player_seat": 3, "cause": "hunter_shot"}],
+        phase="vote_resolution",
+    )
+
+    record = json.loads(
+        (tmp_path / "games" / "g1" / "game.log").read_text(encoding="utf-8").strip()
+    )
+    assert record["operation"] == "night_deaths"
+    assert record["phase"] == "vote_resolution"
+
+
+def test_close_is_idempotent_and_stops_writes(tmp_path):
+    import shutil
+
+    logger = GameLogger(data_dir=str(tmp_path))
+    logger.log_phase_change("g1", "night", 1)
+    path = tmp_path / "games" / "g1" / "game.log"
+    before = path.read_text(encoding="utf-8")
+
+    logger.close()
+    logger.close()
+    logger.log_phase_change("g1", "dawn", 1)
+    assert path.read_text(encoding="utf-8") == before
+
+    shutil.rmtree(tmp_path / "games" / "g1")
+    logger.log_phase_change("g1", "speech", 1)
+    assert not (tmp_path / "games" / "g1").exists()
+
+
+def test_an_llm_call_observer_failure_never_breaks_the_log(tmp_path) -> None:
+    from app.core.game_logger import GameLogger
+
+    def boom(_record) -> None:
+        raise RuntimeError("observer down")
+
+    logger = GameLogger(data_dir=str(tmp_path), on_llm_call=boom)
+    logger.log_llm_call(
+        "game", 1, "night", 1, call_kind="night", parse_result="ok",
+    )
+    assert (tmp_path / "games" / "game" / "llm_calls.log").exists()
