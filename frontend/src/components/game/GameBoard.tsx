@@ -13,7 +13,8 @@ import {
 } from '../../api/client';
 import { useWebSocket } from '../../api/websocket';
 import type { PublicReplayEvent } from '../../store/types';
-import { EXECUTION_LABELS } from '../../labels';
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 import { recoveryBlockLabel } from '../lobby/recoveryLabels';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
@@ -114,6 +115,8 @@ export default function GameBoard({ onBack, gameId }: Props) {
     syncMode, streamError, executionStatus, recoverable, recoveryBlockCode,
     pauseInfo,
   } = useGameStore();
+  const { t } = useTranslation();
+  const L = useLabels();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -140,7 +143,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
       if (err instanceof GameControlError && err.confirmationRequired) {
         setConfirmTarget({ code: err.code });
       } else {
-        setControlErrorMsg(err instanceof Error ? err.message : '恢复对局失败');
+        setControlErrorMsg(err instanceof Error ? err.message : t('game.recoverFailed'));
       }
     } finally {
       setActionPending(false);
@@ -290,7 +293,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
   }
 
   const recoveryTooltip = !recoverable
-    ? (recoveryBlockLabel(recoveryBlockCode) ?? '此对局无法恢复')
+    ? (recoveryBlockLabel(recoveryBlockCode) ?? t('game.recoverImpossible'))
     : undefined;
   const blockReason = recoveryBlockLabel(recoveryBlockCode);
 
@@ -300,7 +303,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
       bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
     }}>
       <CircularProgress size={28} />
-      <Typography variant="body2" color="text.secondary">加载对局记录中…</Typography>
+      <Typography variant="body2" color="text.secondary">{t('game.loadingGame')}</Typography>
     </Box>
   ) : error ? (
     <Box sx={{
@@ -308,7 +311,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
       bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)',
     }}>
       <Typography variant="body2" color="error">{error}</Typography>
-      <Button onClick={onBack} variant="outlined" size="small">返回</Button>
+      <Button onClick={onBack} variant="outlined" size="small">{t('game.back')}</Button>
     </Box>
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -331,11 +334,11 @@ export default function GameBoard({ onBack, gameId }: Props) {
               onClick={() => void handleRecover({ force: false })}
               startIcon={<RestartAltIcon fontSize="small" />}
             >
-              恢复对局
+              {t('game.recoverGame')}
             </Button>
           }
         >
-          对局执行已中断。
+          {t('game.interruptedTitle')}
         </Alert>
       )}
       {executionStatus === 'recovery_blocked' && (
@@ -351,11 +354,11 @@ export default function GameBoard({ onBack, gameId }: Props) {
               onClick={() => void handleRecover({ force: false })}
               startIcon={<RestartAltIcon fontSize="small" />}
             >
-              重试恢复
+              {t('game.retryRecover')}
             </Button>
           }
         >
-          对局恢复受阻{blockReason ? `（${blockReason}）` : ''}。
+          {t('game.recoverBlocked', { reason: blockReason ? `（${blockReason}）` : '' })}
         </Alert>
       )}
       {executionStatus === 'failed' && (
@@ -371,11 +374,11 @@ export default function GameBoard({ onBack, gameId }: Props) {
               onClick={() => void handleRecover({ force: false })}
               startIcon={<RestartAltIcon fontSize="small" />}
             >
-              重试恢复
+              {t('game.retryRecover')}
             </Button>
           }
         >
-          对局执行失败。
+          {t('game.failedTitle')}
         </Alert>
       )}
       <TimelineController />
@@ -390,7 +393,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
         backdropFilter: 'blur(12px)',
       }}>
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.6 }}>
-          <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>存活</Typography>
+          <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>{t('game.aliveStat')}</Typography>
           <Typography sx={{ color: 'secondary.main', fontWeight: 800, fontSize: '0.9rem', lineHeight: 1 }}>{aliveCount}</Typography>
           <Typography variant="caption" color="text.disabled">/ {totalPlayers}</Typography>
         </Box>
@@ -405,7 +408,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
         <Box sx={{ ml: 'auto', display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           {executionStatus && (
             <Chip
-              label={`执行：${EXECUTION_LABELS[executionStatus]}`}
+              label={t('game.executionStatus', { status: L.EXECUTION_LABELS[executionStatus] })}
               size="small"
               color={
                 executionStatus === 'failed' || executionStatus === 'recovery_blocked'
@@ -420,7 +423,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
           )}
           <Chip
             icon={<VisibilityIcon sx={{ fontSize: 14 }} />}
-            label="上帝视角"
+            label={t('game.godView')}
             size="small"
             variant="outlined"
             sx={{ '& .MuiChip-label': { letterSpacing: 1 } }}
@@ -431,7 +434,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
             onClick={toggleHistory}
             disableElevation
           >
-            {showHistory ? '隐藏记录' : '历史记录'}
+            {t(showHistory ? 'game.hideHistory' : 'game.showHistory')}
           </Button>
           {(winResult !== null || phase === 'game_over') && (
             <Button
@@ -440,7 +443,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
               onClick={() => setShowReview(true)}
               disableElevation
             >
-              赛后复盘
+              {t('game.postGameReview')}
             </Button>
           )}
           <Button size="small" onClick={onBack} variant="outlined">
@@ -481,25 +484,24 @@ export default function GameBoard({ onBack, gameId }: Props) {
       />
 
       <Dialog open={confirmTarget !== null} onClose={dismissConfirm}>
-        <DialogTitle>角色声明已变更</DialogTitle>
+        <DialogTitle>{t('game.roleDriftTitle')}</DialogTitle>
         <DialogContent>
           <Typography>
-            这局是在旧的角色声明下中断的，直接续跑会按当前代码继续。
-            已经结算的行动与资源不会被重放，新声明的资源也不会补发。
+            {t('game.roleDriftBody')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            原因代码：{confirmTarget?.code}
+            {t('game.reasonCode', { code: confirmTarget?.code })}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={dismissConfirm}>取消</Button>
+          <Button onClick={dismissConfirm}>{t('common.cancel')}</Button>
           <Button
             variant="contained"
             color="warning"
             disabled={actionPending}
             onClick={() => void handleRecover({ force: true })}
           >
-            继续对局
+            {t('game.continueGame')}
           </Button>
         </DialogActions>
       </Dialog>
