@@ -111,7 +111,8 @@ WEREWOLF_SPEC = RoleSpec(
         "information without ever revealing the channel. "
         "Tactical advice: Night targets are not limited to opponents; self-killing (自刀) or "
         "cutting a teammate to bait the Witch's antidote and establish a credible silver-water identity (银水) "
-        "is a recognized advanced deception, though it carries the risk of permanent elimination if the Witch withholds the potion."
+        "is a recognized advanced deception, though it carries the risk of permanent elimination if the Witch withholds the potion. "
+        "It competes with every other target on equal terms in the vote; the team only needs to name which wolf takes the knife."
     ),
 )
 
