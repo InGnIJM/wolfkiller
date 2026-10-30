@@ -7,7 +7,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
 
-import { WINNING_CAMP_LABELS } from '../../labels';
+import { useLabels } from '../../i18n/useLabels';
+import type { LabelsModule } from '../../i18n/useLabels';
 import type { RoleCatalogItem, WinningCamp } from '../../store/types';
 import { BLOOD_MOON, CANVAS, HAIRLINE, INK, SHADOW } from '../../theme/tokens';
 import RoleIcon from '../shared/RoleIcon';
@@ -21,10 +22,21 @@ interface Props {
   groups: readonly { camp: string; roles: RoleCatalogItem[] }[];
 }
 
-function campLabel(camp: string): string {
-  return camp in WINNING_CAMP_LABELS
-    ? WINNING_CAMP_LABELS[camp as WinningCamp]
+function campLabel(camp: string, L: LabelsModule): string {
+  return camp in L.WINNING_CAMP_LABELS
+    ? L.WINNING_CAMP_LABELS[camp as WinningCamp]
     : camp;
+}
+
+/** 按当前语言取目录展示字段；后端字段缺省时回落中文，保证旧档/未部署后端不空白。 */
+function useLocaleCatalog() {
+  const { i18n } = useTranslation();
+  const en = i18n.language.toLowerCase().startsWith('en');
+  return {
+    name: (role: RoleCatalogItem, L: LabelsModule) => (en ? (role.name_en ?? L.roleName(role.role_id) ?? role.name_zh) : role.name_zh),
+    description: (role: RoleCatalogItem) => (en ? (role.description_en ?? role.description) : role.description),
+    rules: (role: RoleCatalogItem) => (en ? (role.rules_en ?? role.rules ?? []) : (role.rules ?? [])),
+  };
 }
 
 function RuleList({ items }: { items: readonly string[] }) {
@@ -45,6 +57,8 @@ function RuleList({ items }: { items: readonly string[] }) {
  */
 export default function RoleBrowser({ groups }: Props) {
   const { t } = useTranslation();
+  const L = useLabels();
+  const catalog = useLocaleCatalog();
   const [rawQuery, setRawQuery] = useState('');
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -62,13 +76,16 @@ export default function RoleBrowser({ groups }: Props) {
       .map((group) => ({
         camp: group.camp,
         roles: group.roles.filter((role) => (
-          role.name_zh.toLowerCase().includes(needle)
+          catalog.name(role, L).toLowerCase().includes(needle)
+          || role.name_zh.toLowerCase().includes(needle)
+          || catalog.description(role).toLowerCase().includes(needle)
           || role.description.toLowerCase().includes(needle)
+          || catalog.rules(role).some((rule) => rule.toLowerCase().includes(needle))
           || (role.rules ?? []).some((rule) => rule.toLowerCase().includes(needle))
         )),
       }))
       .filter((group) => group.roles.length > 0);
-  }, [groups, query]);
+  }, [groups, query, catalog, L]);
 
   const flat = useMemo(() => filtered.flatMap((group) => group.roles), [filtered]);
   // 选中的角色被搜索过滤掉时，回落到当前列表的第一个，避免右侧停在一个看不见的角色上。
@@ -160,7 +177,7 @@ export default function RoleBrowser({ groups }: Props) {
                   <Typography variant="caption" sx={{
                     color: BLOOD_MOON.gold, fontWeight: 600, letterSpacing: '0.08em',
                   }}>
-                    {campLabel(group.camp)}
+                    {campLabel(group.camp, L)}
                   </Typography>
                   <Typography variant="caption" sx={{
                     color: INK.faint, fontVariantNumeric: 'tabular-nums',
@@ -178,7 +195,7 @@ export default function RoleBrowser({ groups }: Props) {
                           component="button"
                           type="button"
                           aria-pressed={on}
-                          aria-label={role.name_zh}
+                          aria-label={catalog.name(role, L)}
                           onClick={() => setSelectedId(role.role_id)}
                           sx={{
                             display: 'flex', alignItems: 'center', gap: 1, width: '100%',
@@ -198,7 +215,7 @@ export default function RoleBrowser({ groups }: Props) {
                             variant="body2"
                             sx={{ color: on ? INK.primary : INK.dim, fontWeight: on ? 700 : 400 }}
                           >
-                            {role.name_zh}
+                            {catalog.name(role, L)}
                           </Typography>
                         </Box>
                       );
@@ -248,15 +265,15 @@ export default function RoleBrowser({ groups }: Props) {
                     variant="h6"
                     sx={{ color: roleMetaFor(selected.role_id)?.color ?? 'text.primary' }}
                   >
-                    {selected.name_zh}
+                    {catalog.name(selected, L)}
                   </Typography>
                 </Stack>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  {selected.description}
+                  {catalog.description(selected)}
                 </Typography>
                 <Box sx={{ mt: 1.5 }}>
-                  {(selected.rules ?? []).length > 0 ? (
-                    <RuleList items={selected.rules ?? []} />
+                  {catalog.rules(selected).length > 0 ? (
+                    <RuleList items={catalog.rules(selected)} />
                   ) : (
                     <Typography variant="body2" color="text.secondary">
                       {t('rules.noDetailRules')}

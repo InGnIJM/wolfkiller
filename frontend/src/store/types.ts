@@ -731,11 +731,15 @@ export interface RoleCatalogItem {
   role_id: string;
   display_name: string;
   name_zh: string;
+  /** 英文目录文案；旧响应或测试 mock 可能没有这些字段，前端回落中文字段。 */
+  name_en?: string;
   camp: string;
   icon: string;
   description: string;
+  description_en?: string;
   /** 玩家向的规则条目；旧响应或测试 mock 可能没有这个字段。 */
   rules?: string[];
+  rules_en?: string[];
   min_count: number;
   max_count: number | null;
   dependencies: string[];
@@ -748,7 +752,9 @@ export type WitchSelfSavePolicy = 'first_night_only' | 'never';
 export interface GamePreset {
   id: string;
   name: string;
+  name_en?: string;
   description: string;
+  description_en?: string;
   role_counts: Record<string, number>;
   enable_sheriff?: boolean;
   /** 女巫自救规则：假面板子首夜可自救，网易官方赛制板子全程禁止。 */

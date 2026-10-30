@@ -11,6 +11,7 @@ import { rankOf, ROLE_ORDER } from '../shared/roleMeta';
 import RolePortrait from '../shared/RolePortrait';
 import RoleBrowser from './RoleBrowser';
 import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 import { useRuleSections } from '../../i18n/useRuleSections';
 import type { RuleSection } from './ruleSections';
 
@@ -60,7 +61,9 @@ function Section({ title, intro, children }: {
 }
 
 export default function RulesPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const L = useLabels();
+  const en = i18n.language.toLowerCase().startsWith('en');
   const R = useRuleSections();
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
@@ -88,7 +91,12 @@ export default function RulesPage() {
   }, []);
 
   const selected = presets.find((preset) => preset.id === presetId) ?? presets[0] ?? null;
-  const nameOf = (roleId: string) => roles.find((role) => role.role_id === roleId)?.name_zh ?? roleId;
+  const nameOf = (roleId: string) => {
+    if (!en) return roles.find((role) => role.role_id === roleId)?.name_zh ?? roleId;
+    return L.roleName(roleId)
+      ?? roles.find((role) => role.role_id === roleId)?.name_en
+      ?? roleId;
+  };
   const composition = selected
     ? Object.entries(selected.role_counts)
       .filter(([, count]) => count > 0)
@@ -136,16 +144,16 @@ export default function RulesPage() {
                         px: 1.5, py: 0.75, lineHeight: 1.35, textAlign: 'left',
                       }}
                     >
-                      <Typography component="span" variant="subtitle2">{preset.name}</Typography>
+                      <Typography component="span" variant="subtitle2">{en ? (preset.name_en ?? preset.name) : preset.name}</Typography>
                       <Typography component="span" variant="caption" sx={{ opacity: 0.85 }}>
-                        {preset.description}
+                        {en ? (preset.description_en ?? preset.description) : preset.description}
                       </Typography>
                     </Button>
                   ))}
                 </Stack>
 
                 <Stack direction="row" sx={{ flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 2 }}>
-                  <Typography variant="subtitle1">{selected.name}</Typography>
+                  <Typography variant="subtitle1">{en ? (selected.name_en ?? selected.name) : selected.name}</Typography>
                   <Chip
                     size="small"
                     variant="outlined"
