@@ -192,12 +192,16 @@ async def test_pause_and_resume_live_runner_are_idempotent(tmp_path) -> None:
         execution_status="running", source="native", model_snapshot=[],
     )
     controls: list[str] = []
+    resets: list[int] = []
     engine = SimpleNamespace(
         pause=lambda: controls.append("pause"),
         resume=lambda: controls.append("resume"),
     )
     service._games["game-1"] = state
     service._engines["game-1"] = engine
+    service._health_guards["game-1"] = SimpleNamespace(
+        reset=lambda: resets.append(1),
+    )
     service._tasks["game-1"] = asyncio.create_task(asyncio.sleep(60))
     try:
         first = await service.pause_game("game-1")
@@ -208,6 +212,7 @@ async def test_pause_and_resume_live_runner_are_idempotent(tmp_path) -> None:
         assert second["execution_status"] == "paused"
         assert resumed["execution_status"] == "running"
         assert controls == ["pause", "resume"]
+        assert resets == [1]
         assert repository.get_game("game-1")["execution_generation"] == 1
     finally:
         service._tasks["game-1"].cancel()
@@ -245,7 +250,7 @@ async def test_manual_recovery_uses_checkpoint_without_new_game_reset(
     from app.core.game_engine import GameEngine
 
     class FakeClient:
-        def __init__(self, *, config) -> None:
+        def __init__(self, *, config, dedicated_http_clients: bool = False) -> None:
             self.config = config
 
         async def aclose(self) -> None:
@@ -316,7 +321,7 @@ async def test_concurrent_recovery_starts_one_engine_and_refuses_the_second(
     from app.core.game_engine import GameEngine
 
     class FakeClient:
-        def __init__(self, *, config) -> None:
+        def __init__(self, *, config, dedicated_http_clients: bool = False) -> None:
             self.config = config
 
         async def aclose(self) -> None:
@@ -386,7 +391,7 @@ async def test_concurrent_resume_shares_the_same_guard(tmp_path, monkeypatch) ->
     from app.core.game_engine import GameEngine
 
     class FakeClient:
-        def __init__(self, *, config) -> None:
+        def __init__(self, *, config, dedicated_http_clients: bool = False) -> None:
             self.config = config
 
         async def aclose(self) -> None:
@@ -1450,7 +1455,7 @@ def test_build_recovered_engine_maps_registry_client_and_role_failures(
         class PartialClient:
             count = 0
 
-            def __init__(self, *, config):
+            def __init__(self, *, config, dedicated_http_clients: bool = False):
                 type(self).count += 1
                 self.number = type(self).count
                 if self.number == 2:
@@ -1465,7 +1470,7 @@ def test_build_recovered_engine_maps_registry_client_and_role_failures(
         assert closed == [1]
 
         class Client:
-            def __init__(self, *, config):
+            def __init__(self, *, config, dedicated_http_clients: bool = False):
                 self.config = config
 
         monkeypatch.setattr(service_module, "LLMClient", Client)
@@ -1503,7 +1508,7 @@ def test_recovered_night_gateway_uses_durable_result_and_logs_telemetry(
         provider_profile = SimpleNamespace(profile_id="profile")
         model_name = "model"
 
-        def __init__(self, *, config):
+        def __init__(self, *, config, dedicated_http_clients: bool = False):
             self.config = config
 
         def invoke_json(self, messages, *, tool_name, schema):
@@ -1676,6 +1681,113 @@ async def test_a_pause_whose_transition_is_already_finalized_is_tolerated(
             await task
         await asyncio.sleep(0)
         assert repository.get_game("game")["execution_status"] == "running"
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_the_watcher_persists_a_provider_pause_reason(tmp_path) -> None:
+    """A provider outage is a recoverable pause with an operator-readable cause."""
+    from app.agents.model_health import HealthEvent
+    from app.core.model_health_guard import ProviderOutagePaused
+
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    event = HealthEvent(
+        provider_key="openai|https://model.test|model-a",
+        rule="provider_terminal",
+        failure_code="provider_auth_error",
+        seats=(1, 2),
+        contracts=("night_action",),
+        sample_count=2,
+        reopen_count=0,
+    )
+
+    async def crash() -> None:
+        raise ProviderOutagePaused(event)
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(ProviderOutagePaused):
+            await task
+        await asyncio.sleep(0)
+        row = repository.get_game("game")
+        assert row["execution_status"] == "paused"
+        assert row["pause_code"] == "provider_circuit_open"
+        assert row["pause_detail"]["rule"] == "provider_terminal"
+        assert row["pause_detail"]["seats"] == [1, 2]
+        assert row["paused_at"] is not None
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_the_watcher_fails_a_benchmark_game_on_a_provider_outage(tmp_path) -> None:
+    """A benchmark outage is terminal, not a pause the executor would auto-resume."""
+    from app.agents.model_health import HealthEvent
+    from app.core.model_health_guard import ProviderOutageFailed
+
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="benchmark", model_snapshot=[], benchmark_run_id="run",
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    event = HealthEvent(
+        provider_key="k", rule="provider_sustained",
+        failure_code="provider_server_error", seats=(1, 2, 3),
+        contracts=("night_action",), sample_count=5, reopen_count=0,
+    )
+
+    async def crash() -> None:
+        raise ProviderOutageFailed(event)
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(ProviderOutageFailed):
+            await task
+        await asyncio.sleep(0)
+        row = repository.get_game("game")
+        assert row["execution_status"] == "failed"
+        assert row["recovery_block_code"] == "provider_circuit_open"
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_the_execution_info_exposes_pause_fields(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="native", model_snapshot=[],
+    )
+    repository.transition_execution(
+        "game", expected=("running",), target="paused",
+        pause_code="provider_circuit_open",
+        pause_detail={"rule": "provider_terminal", "seats": [1, 2]},
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    try:
+        info = service.get_execution_info("game")
+        assert info["execution_status"] == "paused"
+        assert info["pause_code"] == "provider_circuit_open"
+        assert info["pause_reason"] == "模型通道连续失败，已自动暂停"
+        assert info["pause_detail"]["rule"] == "provider_terminal"
     finally:
         await service.aclose()
         repository.close()

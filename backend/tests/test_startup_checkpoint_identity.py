@@ -71,7 +71,7 @@ async def test_a_checkpoint_from_an_older_registry_is_registered_not_quarantined
     from app.core.game_engine import GameEngine
 
     class FakeClient:
-        def __init__(self, *, config) -> None:
+        def __init__(self, *, config, dedicated_http_clients: bool = False) -> None:
             self.config = config
 
         async def aclose(self) -> None:

@@ -274,7 +274,7 @@ def test_recovered_night_command_flush_respects_capture_and_replay(
         provider_profile = SimpleNamespace(profile_id="profile")
         model_name = "model"
 
-        def __init__(self, *, config):
+        def __init__(self, *, config, dedicated_http_clients: bool = False):
             self.config = config
 
         def invoke_json(self, messages, *, tool_name, schema):
@@ -357,7 +357,7 @@ async def test_a_created_game_flushes_the_night_chain(tmp_path, monkeypatch):
     fake_llm.invoke_json.return_value = SimpleNamespace(payload={"speak": False})
     monkeypatch.setattr(
         service_module, "LLMClient",
-        lambda model=None, temperature=None, config=None: fake_llm,
+        lambda model=None, temperature=None, config=None, dedicated_http_clients=False: fake_llm,
     )
     monkeypatch.setattr(service_module.GameEngine, "start", AsyncMock())
     try:
