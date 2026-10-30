@@ -73,6 +73,20 @@ def _runtime_seed(assignment: Mapping[str, object]) -> int:
     return value
 
 
+_SYSTEMIC_PAUSE_CODES = frozenset({
+    "provider_circuit_open", "no_progress",
+})
+
+
+def _is_systemic_pause(code: object) -> bool:
+    """A paused benchmark game that must not be auto-resumed."""
+    if not isinstance(code, str) or not code:
+        return False
+    if code in _SYSTEMIC_PAUSE_CODES:
+        return True
+    return code.startswith(("provider_", "quality_"))
+
+
 class BenchmarkGameExecutor:
     """Create or continue the game already owned by one schedule item."""
 
@@ -113,6 +127,12 @@ class BenchmarkGameExecutor:
             if status == "interrupted":
                 await self._game_service.recover_benchmark_game(game_id)
             elif status == "paused":
+                # A provider/quality pause is not a human break: resuming it
+                # would immediately re-trip and burn the game timeout. Benchmark
+                # games normally fail instead of pausing, so this is the safety
+                # net for a pause written by an older row or a manual pause path.
+                if _is_systemic_pause(record.get("pause_code")):
+                    return game_id, "failed", str(record.get("pause_code"))
                 await self._game_service.resume_benchmark_game(game_id)
             elif status == "completed":
                 return game_id, status, None

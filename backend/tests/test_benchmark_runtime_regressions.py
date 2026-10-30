@@ -124,7 +124,7 @@ async def test_real_executor_creates_game_with_frozen_plan_and_checkpoint(tmp_pa
     from app.services.benchmark_game_executor import BenchmarkGameExecutor
 
     class FakeClient:
-        def __init__(self, *, config):
+        def __init__(self, *, config, dedicated_http_clients: bool = False):
             self.config = config
 
         async def aclose(self):

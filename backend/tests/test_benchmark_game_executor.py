@@ -333,3 +333,60 @@ async def test_executor_clock_ignores_unknown_samples_and_control_delegates() ->
     assert timeout_call.kwargs == {"recovery_block_code": "benchmark_game_timeout"}
     assert manual_call.args == ("game",)
     assert manual_call.kwargs == {}
+
+
+from app.services.benchmark_game_executor import _is_systemic_pause
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("provider_circuit_open", True),
+        ("provider_auth_error", True),
+        ("quality_breakdown", True),
+        ("no_progress", True),
+        ("one_shot_budget_exhausted", False),
+        ("manual", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_systemic_pause_detection(code, expected):
+    assert _is_systemic_pause(code) is expected
+
+
+@pytest.mark.asyncio
+async def test_a_provider_paused_game_is_not_auto_resumed() -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.return_value = {
+        "execution_status": "paused", "pause_code": "provider_circuit_open",
+        "recovery_block_code": None,
+    }
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 1, "game_id": "game"})
+
+    assert result == ("game", "failed", "provider_circuit_open")
+    game_service.resume_benchmark_game.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_manual_pause_still_auto_resumes() -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.return_value = {
+        "execution_status": "paused", "pause_code": "manual",
+        "recovery_block_code": None,
+    }
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(return_value={"execution_status": "completed"})
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 1, "game_id": "game"})
+
+    assert result == ("game", "completed", None)
+    game_service.resume_benchmark_game.assert_awaited_once_with("game")
