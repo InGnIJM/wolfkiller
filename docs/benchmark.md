@@ -13,14 +13,14 @@
 | 评测层（仓库内 `backend/scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 JSON **自 v3 起含决策质量（当前 `v4`）**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 放行 `run_benchmark.py`、`purge_old_games.py`、`prompt_size_report.py` 与 `cleanup_stale_benchmarks.py`；`perf_benchmark.py` / `export_game_summary.py` **不在版本控制中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 JSON **自 v3 起含决策质量（当前 `v5`）**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）；`summary.reliability` 单独给出 Scheduler 规则拒绝的次数与分母（`rule_rejected` / `per_game` / `per_request` / `samples`），不要把 provider 成功但被规则拒绝的请求算成传输失败。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率；`summary.reliability` 目前只进 JSON 报告，尚未单独做详情页表格。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 放行 `run_benchmark.py`、`purge_old_games.py`、`prompt_size_report.py` 与 `cleanup_stale_benchmarks.py`；`perf_benchmark.py` / `export_game_summary.py` **不在版本控制中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
 新运行时在一个事务中把检查点、领域/公开事件、模型请求消费状态和派生任务写入 `data/wolfkiller.sqlite3`。以下兼容文件仍会写入 `data/games/<game_id>/`：
 
 - `game.log`：阶段切换、发言、投票、死亡、胜负，以及 `stage_telemetry`（`scope=phase` 相位耗时；`scope=hook` 调度器 slow_rule）
-- `llm_calls.log`：每次 LLM 调用一条记录，字段包括 `call_kind`（action / speech / speech_plain / night）、`contract_id`、`transport`、`attempt`、`model_id`、`prompt_chars`、`elapsed_ms`、`prompt_tokens` / `completion_tokens` / `total_tokens`、`retried`、`parse_result`、`failure_code`（+ 超时类的 `timeout_type`）。只记录元数据，不含 prompt 内容与模型输出。
+- `llm_calls.log`：每次 LLM 调用一条记录，字段包括 `phase`（真实游戏阶段，如 `night` / `sheriff_election` / `speech` / `vote_resolution`）、`call_kind`（action / speech / speech_plain / night；警长竞选、交徽、选发言方向走 director 但记为 `action`，狼队讨论/狼刀记为 `night`）、`contract_id`、`transport`、`attempt`、`model_id`、`prompt_chars`、`elapsed_ms`、`prompt_tokens` / `completion_tokens` / `total_tokens`、`retried`、`parse_result`、`failure_code`（+ 超时类的 `timeout_type`）。只记录元数据，不含 prompt 内容与模型输出。`game.log` 的竞选/PK `speak` 行现在也落盘，`summary.llm.calls_by_kind.speech` 与 `summary.rounds.*.speeches` 在无失败发言时对齐；`strict_content_fallback` 计入 `summary.llm.tool_content_fallbacks`，不计入失败。
   - **发言落兜底模板时同样带 `failure_code`**（`provider_unavailable` / `provider_timeout` / `request_timeout`+`timeout_type` / `speech_tool_not_called` / `speech_empty_text` / `speech_text_too_short` / `speech_wrong_function`）。这一格曾经是空的：真局里一局 275 条发言有 270 条是模板，而日志只写了 `fallback`，导致「上游没号了」和「模型不肯答」在事后完全无法区分。
   - `failure_code` 是**全路径统一词表**（`agents/providers/errors.py: classify_provider_error`）：`provider_timeout` / `provider_rate_limit` / **`provider_unavailable`（HTTP 503：容量、额度、上游账号池为空）** / `provider_server_error` / `provider_connection_error` / `provider_bad_request` / `model_invocation_error`。同一个 503 从前在白天投票路径叫 `provider_server_error`、在夜间路径与耐久账本里叫 `model_invocation_error`，一次故障读成两件不相干的事。
 - `summary.json`：对局结束（`game_over`）时由 `GameService` 调用 `build_and_write_summary()` 自动生成，含角色真值表、逐轮行动/发言/投票/死亡、LLM 聚合、引擎相位耗时汇总，以及对局级模型座位快照。仓库内没有补生成 CLI。
@@ -67,7 +67,7 @@ REST 资源为：`POST/GET /api/benchmarks`、`GET /api/benchmarks/{id}`、`DELE
 
 ## 指标定义
 
-API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 `v4`（v3 = 在 v2 基础上加入 `summary.decision` 决策质量段；**v4 = 票类指标按票种拆分、补新角色命中率、样本不足时不再报 `samples: 2000`、新增 `summary.coverage` 板型覆盖**；命中率与样本量都进 digest，所以对局的决策明细变化会重算报告）。口径变化必须 bump：报告缓存按 `(run_id, metric_version, input_digest)` 命中，不 bump 会继续返回旧形状；`request_report` 首次轮询还可能拿到上一次的旧版本报告，可用 `POST /api/benchmarks/{id}/report/rebuild` 强制重建。digest 对四张冻结事实表**加各局 summary**做规范 JSON 排序后计算，因此数据库行顺序、字典键顺序与 summary 传入顺序都不影响同一输入的报告；迟到的 token 用量写回会改变 digest 并生成新报告。
+API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 `v5`（v3 = 在 v2 基础上加入 `summary.decision` 决策质量段；**v4 = 票类指标按票种拆分、补新角色命中率、样本不足时不再报 `samples: 2000`、新增 `summary.coverage` 板型覆盖**；**v5 = 新增 `summary.reliability` 规则拒绝指标，`rejected_actions` 不再只存在于 `summary.json`**；命中率、规则拒绝与样本量都进 digest，所以对局的决策明细变化会重算报告）。口径变化必须 bump：报告缓存按 `(run_id, metric_version, input_digest)` 命中，不 bump 会继续返回旧形状；`request_report` 首次轮询还可能拿到上一次的旧版本报告，可用 `POST /api/benchmarks/{id}/report/rebuild` 强制重建。digest 对四张冻结事实表**加各局 summary**做规范 JSON 排序后计算，因此数据库行顺序、字典键顺序与 summary 传入顺序都不影响同一输入的报告；迟到的 token 用量写回会改变 digest 并生成新报告。
 
 ### 当前原生报告口径
 
