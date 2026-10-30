@@ -450,4 +450,18 @@ describe('CreateGameWizard step 2 and submission', () => {
     await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
     expect(navigateMock).not.toHaveBeenCalled();
   });
+
+  it('enables god-view commentary and forwards commentary_enabled + commentary_config_id', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('switch', { name: '开启上帝视角实时解说' }));
+    expect(screen.getByRole('combobox', { name: '解说与复盘模型' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        commentary_enabled: true,
+        commentary_config_id: null,
+      })),
+    );
+  });
 });

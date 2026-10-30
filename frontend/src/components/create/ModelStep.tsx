@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Box, Button, Chip, IconButton, Stack, TextField, Typography,
+  Alert, Box, Button, Chip, FormControlLabel, IconButton, MenuItem, Select, Stack, Switch, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
@@ -19,6 +19,10 @@ interface Props {
   totalPlayers: number;
   assignments: ModelAssignment[];
   onAssignmentsChange: (assignments: ModelAssignment[]) => void;
+  commentaryEnabled?: boolean;
+  onCommentaryEnabledChange?: (enabled: boolean) => void;
+  commentaryConfigId?: string | null;
+  onCommentaryConfigIdChange?: (configId: string | null) => void;
   disabled?: boolean;
 }
 
@@ -192,7 +196,14 @@ function AssignmentQuantityControls({
 }
 
 export default function ModelStep({
-  totalPlayers, assignments, onAssignmentsChange, disabled = false,
+  totalPlayers,
+  assignments,
+  onAssignmentsChange,
+  commentaryEnabled = false,
+  onCommentaryEnabledChange,
+  commentaryConfigId = null,
+  onCommentaryConfigIdChange,
+  disabled = false,
 }: Props) {
   const {
     configs, loading, error, loadError, load, create,
@@ -421,6 +432,67 @@ export default function ModelStep({
         >
           当场新建模型配置
         </Button>
+
+        {onCommentaryEnabledChange && (
+          <Box
+            sx={{
+              mt: 2,
+              p: 2,
+              borderRadius: 2,
+              border: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+            }}
+          >
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={2}
+              sx={{
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                justifyContent: 'space-between',
+              }}
+            >
+              <Box>
+                <FormControlLabel
+                  control={(
+                    <Switch
+                      checked={commentaryEnabled}
+                      disabled={disabled}
+                      onChange={(e) => onCommentaryEnabledChange(e.target.checked)}
+                    />
+                  )}
+                  label="开启上帝视角实时解说"
+                />
+                <Typography variant="body2" color="text.secondary">
+                  每轮黎明与入夜自动生成一段全知视角解说（也用于赛后复盘模型选择）。
+                </Typography>
+              </Box>
+              {commentaryEnabled && (
+                <Select
+                  size="small"
+                  disabled={disabled}
+                  value={commentaryConfigId ?? ''}
+                  displayEmpty
+                  inputProps={{ 'aria-label': '解说与复盘模型' }}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onCommentaryConfigIdChange?.(val === '' ? null : val);
+                  }}
+                  sx={{ minWidth: 220 }}
+                >
+                  <MenuItem value="">默认模型</MenuItem>
+                  {configs
+                    .filter((cfg) => !cfg.key_invalid)
+                    .map((cfg) => (
+                      <MenuItem key={cfg.id} value={cfg.id}>
+                        {cfg.name} ({cfg.model_id})
+                      </MenuItem>
+                    ))}
+                </Select>
+              )}
+            </Stack>
+          </Box>
+        )}
       </Stack>
 
       {dialogOpen && (

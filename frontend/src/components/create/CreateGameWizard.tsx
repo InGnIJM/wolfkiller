@@ -25,6 +25,8 @@ export default function CreateGameWizard() {
   const [enableSheriff, setEnableSheriff] = useState(false);
   const [witchSelfSave, setWitchSelfSave] = useState<WitchSelfSavePolicy>('first_night_only');
   const [victory, setVictory] = useState<VictoryPolicy>('edge');
+  const [commentaryEnabled, setCommentaryEnabled] = useState(false);
+  const [commentaryConfigId, setCommentaryConfigId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const modelConfigs = useModelConfigStore((state) => state.configs);
@@ -79,6 +81,12 @@ export default function CreateGameWizard() {
         witch_self_save: witchSelfSave,
         victory,
         model_assignments: modelAssignments.filter((assignment) => assignment.count > 0),
+        ...(commentaryEnabled || commentaryConfigId !== null
+          ? {
+              commentary_enabled: commentaryEnabled,
+              commentary_config_id: commentaryConfigId,
+            }
+          : {}),
       });
       navigate(`/game/${res.game_id}`);
     } catch (err) {
@@ -122,6 +130,10 @@ export default function CreateGameWizard() {
           totalPlayers={total}
           assignments={modelAssignments}
           onAssignmentsChange={setModelAssignments}
+          commentaryEnabled={commentaryEnabled}
+          onCommentaryEnabledChange={setCommentaryEnabled}
+          commentaryConfigId={commentaryConfigId}
+          onCommentaryConfigIdChange={setCommentaryConfigId}
           disabled={creating}
         />
       )}
