@@ -15,7 +15,6 @@ import { useWebSocket } from '../../api/websocket';
 import type { PublicReplayEvent } from '../../store/types';
 import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
-import { recoveryBlockLabel } from '../lobby/recoveryLabels';
 import TimelineController from './TimelineController';
 import SeatMap from './SeatMap';
 import CenterDisplay from './CenterDisplay';
@@ -293,9 +292,9 @@ export default function GameBoard({ onBack, gameId }: Props) {
   }
 
   const recoveryTooltip = !recoverable
-    ? (recoveryBlockLabel(recoveryBlockCode) ?? t('game.recoverImpossible'))
+    ? (L.recoveryBlockLabel(recoveryBlockCode) ?? t('game.recoverImpossible'))
     : undefined;
-  const blockReason = recoveryBlockLabel(recoveryBlockCode);
+  const blockReason = L.recoveryBlockLabel(recoveryBlockCode);
 
   const stage = loading ? (
     <Box sx={{

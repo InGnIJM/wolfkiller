@@ -29,7 +29,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : t('review.loadFailed'));
     }
-  }, [gameId]);
+  }, [gameId, t]);
 
   useEffect(() => {
     if (!open) return;

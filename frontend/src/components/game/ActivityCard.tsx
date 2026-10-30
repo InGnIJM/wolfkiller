@@ -232,15 +232,15 @@ function SpeechView({
 }) {
   const { t } = useTranslation();
   const kind = payload.phase === 'last_words'
-    ? '遗言'
+    ? t('game.acLastWords')
     : payload.phase === 'sheriff_election'
-      ? '竞选发言'
-      : '正在发言';
+      ? t('game.acCampaign')
+      : t('game.acSpeakingPlain');
   const metaKind = payload.phase === 'last_words'
-    ? '遗言'
+    ? t('game.acLastWords')
     : payload.phase === 'sheriff_election'
-      ? '竞选发言'
-      : '发言';
+      ? t('game.acCampaign')
+      : t('game.acSpeech');
   const tag = payload.phase === 'last_words'
     ? 'LAST WORDS'
     : payload.phase === 'sheriff_election'
@@ -691,8 +691,8 @@ export default function ActivityCard() {
             entry.payload.degraded
               ? entry.payload.reasoning || t('game.acNoReason')
               : entry.payload.target_seat === null
-                ? `不行动：${entry.payload.reasoning || t('game.acNoReason')}`
-                : `目标 ${entry.payload.target_seat}号：${entry.payload.reasoning || t('game.acNoReason')}`
+                ? t('game.acNoAction', { reason: entry.payload.reasoning || t('game.acNoReason') })
+                : t('game.acTarget', { target: entry.payload.target_seat, reason: entry.payload.reasoning || t('game.acNoReason') })
           }
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
@@ -718,8 +718,8 @@ export default function ActivityCard() {
             // 系统代投的狼票：正文只留占位理由，「弃票」会读成这匹狼自己弃权。
             ? entry.payload.reasoning || t('game.acNoReason')
             : entry.payload.target_seat === null
-              ? `弃票：${entry.payload.reasoning || t('game.acNoReason')}`
-              : `票 → ${entry.payload.target_seat}号：${entry.payload.reasoning || t('game.acNoReason')}`}
+              ? t('game.acAbstainReason', { reason: entry.payload.reasoning || t('game.acNoReason') })
+              : t('game.acVoteReason', { target: entry.payload.target_seat, reason: entry.payload.reasoning || t('game.acNoReason') })}
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}

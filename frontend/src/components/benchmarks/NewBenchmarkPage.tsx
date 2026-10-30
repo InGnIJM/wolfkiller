@@ -227,7 +227,7 @@ export default function NewBenchmarkPage() {
               <Select
                 multiple labelId="mixed-models-label" label={t('benchmark.fieldMixedModels')} value={modelIds}
                 onChange={(event) => setModelIds(typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value)}
-                renderValue={(selected) => selected.map((id) => modelById.get(id)?.name ?? id).join('、')}
+                renderValue={(selected) => selected.map((id) => modelById.get(id)?.name ?? id).join(t('game.listJoin'))}
               >
                 {configs.filter((item) => !item.key_invalid).map((item) => <MenuItem key={item.id} value={item.id}>{item.name} · {item.model_id}</MenuItem>)}
               </Select>
