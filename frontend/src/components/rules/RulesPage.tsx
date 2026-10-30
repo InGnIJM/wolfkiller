@@ -10,7 +10,8 @@ import { BACKDROP, HAIRLINE } from '../../theme/tokens';
 import { rankOf, ROLE_ORDER } from '../shared/roleMeta';
 import RolePortrait from '../shared/RolePortrait';
 import RoleBrowser from './RoleBrowser';
-import { RULES_SUBTITLE, RULE_SECTIONS } from './ruleSections';
+import { useTranslation } from 'react-i18next';
+import { useRuleSections } from '../../i18n/useRuleSections';
 import type { RuleSection } from './ruleSections';
 
 /** 阵营阅读顺序：狼人在前，未知阵营垫底（后端新增阵营也不会漏渲染）。 */
@@ -59,6 +60,8 @@ function Section({ title, intro, children }: {
 }
 
 export default function RulesPage() {
+  const { t } = useTranslation();
+  const R = useRuleSections();
   const [presets, setPresets] = useState<GamePreset[]>([]);
   const [roles, setRoles] = useState<RoleCatalogItem[]>([]);
   const [constraints, setConstraints] = useState<FieldConstraints | null>(null);
@@ -104,20 +107,20 @@ export default function RulesPage() {
         bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
       }}
     >
-      <Typography component="h1" variant="h4">规则介绍</Typography>
-      <Typography color="text.secondary" sx={{ mt: 0.5 }}>{RULES_SUBTITLE}</Typography>
+      <Typography component="h1" variant="h4">{t('rules.title')}</Typography>
+      <Typography color="text.secondary" sx={{ mt: 0.5 }}>{R.subtitle}</Typography>
 
       {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
       {loading && (
-        <Box role="status" aria-label="正在加载规则数据" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 3 }}>
+        <Box role="status" aria-label={t('rules.loadingAria')} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 3 }}>
           <CircularProgress size={20} />
-          <Typography color="text.secondary">正在读取板子与角色数据…</Typography>
+          <Typography color="text.secondary">{t('rules.loading')}</Typography>
         </Box>
       )}
 
       {!loading && (
         <>
-          <Section title="板子与对局配置" intro="标准场的角色构成与开关；创建对局时也可以自行调整人数与角色数量。">
+          <Section title={t('rules.boardsTitle')} intro={t('rules.boardsIntro')}>
             {selected ? (
               <Paper variant="outlined" sx={{ p: 2, borderColor: HAIRLINE.soft }}>
                 <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 1 }}>
@@ -147,9 +150,9 @@ export default function RulesPage() {
                     size="small"
                     variant="outlined"
                     color={selected.enable_sheriff ? 'secondary' : 'default'}
-                    label={selected.enable_sheriff ? '警长：开启' : '警长：关闭'}
+                    label={t(selected.enable_sheriff ? 'rules.sheriffOn' : 'rules.sheriffOff')}
                   />
-                  <Chip size="small" variant="outlined" label={`${total} 人局`} />
+                  <Chip size="small" variant="outlined" label={t('rules.playersBoard', { total })} />
                 </Stack>
 
                 <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 1, mt: 1.5 }}>
@@ -172,32 +175,34 @@ export default function RulesPage() {
 
                 {constraints && (
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-                    自定义板子支持 {constraints.min_players}–{constraints.max_players} 人，至少
-                    {' '}{constraints.min_werewolves} 名狼人、{constraints.min_good} 名好人。
+                    {t('rules.customConstraints', {
+                      min: constraints.min_players, max: constraints.max_players,
+                      wolves: constraints.min_werewolves, good: constraints.min_good,
+                    })}
                   </Typography>
                 )}
               </Paper>
             ) : (
               <Typography variant="body2" color="text.secondary">
-                {error ? '板子数据读取失败，下方通用规则不受影响。' : '暂时没有可展示的板子数据。'}
+                {t(error ? 'rules.boardsError' : 'rules.boardsEmpty')}
               </Typography>
             )}
           </Section>
 
           <Section
-            title="角色能力"
-            intro="角色与规则条目来自后端角色目录，新增角色会自动出现在这里。左侧索引、右侧详情。"
+            title={t('rules.rolesTitle')}
+            intro={t('rules.rolesIntro')}
           >
             {error && groups.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                角色数据读取失败，下方通用规则不受影响。
+                {t('rules.rolesError')}
               </Typography>
             ) : (
               <RoleBrowser groups={groups} />
             )}
           </Section>
 
-          {RULE_SECTIONS.map((section: RuleSection) => (
+          {R.sections.map((section: RuleSection) => (
             <Section key={section.id} title={section.title} intro={section.intro}>
               <RuleList items={section.items} ordered={section.ordered} />
             </Section>

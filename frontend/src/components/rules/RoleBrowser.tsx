@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Box, Collapse, IconButton, InputAdornment, Paper, Stack, TextField, Typography,
@@ -43,6 +44,7 @@ function RuleList({ items }: { items: readonly string[] }) {
  * 交互语言与创建向导的左栏一致：搜索防抖、按阵营折叠、条目整行可点。
  */
 export default function RoleBrowser({ groups }: Props) {
+  const { t } = useTranslation();
   const [rawQuery, setRawQuery] = useState('');
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -76,7 +78,7 @@ export default function RoleBrowser({ groups }: Props) {
   if (groups.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        暂时没有可展示的角色数据。
+        {t('rules.rolesEmpty')}
       </Typography>
     );
   }
@@ -94,11 +96,11 @@ export default function RoleBrowser({ groups }: Props) {
           <TextField
             value={rawQuery}
             onChange={(event) => setRawQuery(event.target.value)}
-            placeholder="搜索角色 / 规则…"
+            placeholder={t('rules.searchRoles')}
             size="small"
             fullWidth
             slotProps={{
-              htmlInput: { 'aria-label': '搜索角色规则' },
+              htmlInput: { 'aria-label': t('rules.searchRolesAria') },
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
@@ -109,7 +111,7 @@ export default function RoleBrowser({ groups }: Props) {
                   <InputAdornment position="end">
                     <IconButton
                       size="small"
-                      aria-label="清空角色搜索"
+                      aria-label={t('rules.clearRoleSearch')}
                       onClick={() => setRawQuery('')}
                     >
                       <CloseIcon sx={{ fontSize: 16 }} />
@@ -124,9 +126,9 @@ export default function RoleBrowser({ groups }: Props) {
         <Box sx={{ flex: 1, minHeight: 0, maxHeight: { md: 520 }, overflowY: 'auto', pb: 1 }}>
           {filtered.length === 0 && (
             <Box sx={{ px: 1.75, py: 2 }}>
-              <Typography variant="body2" sx={{ color: INK.dim }}>没有匹配的角色</Typography>
+              <Typography variant="body2" sx={{ color: INK.dim }}>{t('rules.noRoleMatch')}</Typography>
               <Typography variant="caption" sx={{ color: INK.faint, display: 'block', mt: 0.5 }}>
-                换个关键词，或清空搜索
+                {t('rules.tryRoleSearch')}
               </Typography>
             </Box>
           )}
@@ -212,7 +214,7 @@ export default function RoleBrowser({ groups }: Props) {
       <Box sx={{ flex: 1, minWidth: 0 }}>
         {selected === null ? (
           <Typography variant="body2" color="text.secondary">
-            左侧选一个角色查看它的规则。
+            {t('rules.pickRoleHint')}
           </Typography>
         ) : (
           <Paper
@@ -257,7 +259,7 @@ export default function RoleBrowser({ groups }: Props) {
                     <RuleList items={selected.rules ?? []} />
                   ) : (
                     <Typography variant="body2" color="text.secondary">
-                      这个角色还没有更详细的规则条目。
+                      {t('rules.noDetailRules')}
                     </Typography>
                   )}
                 </Box>
