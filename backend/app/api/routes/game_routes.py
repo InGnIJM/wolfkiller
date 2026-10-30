@@ -12,6 +12,7 @@ from app.api.schemas import (
     GameListResponse, GameListItem, GameDetailResponse, GameLogsResponse,
     GameMemoriesResponse, PlayerMemoryResponse, RenameGameRequest,
     AudienceEventPageResponse, AudienceSnapshotResponse, GameExecutionResponse,
+    GenerateReviewRequest, ReviewStatusResponse,
 )
 from app.models.game import Camp
 from app.persistence import recovery_compat
@@ -21,6 +22,7 @@ from app.services.audience_event_service import (
     AudienceGameNotFoundError,
 )
 from app.services.game_service import GameService
+from app.services.review_service import ReviewGameNotFoundError
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
@@ -116,6 +118,9 @@ _AUDIENCE_ACTION_SCHEMAS = {
     "AWAKENED_WITCH_POISON_RESULT": frozenset({
         "target_seat", "result", "round_number",
     }),
+    "COMMENTARY": frozenset({
+        "round_number", "beat", "title", "text",
+    }),
 }
 
 #: 引擎写进 game.log、但投影器**不**声明为公开的 audience_action 类型：它们只是引擎的
@@ -145,6 +150,7 @@ _AUDIENCE_ACTION_OPTIONAL = {
     "SEER_CHECK": frozenset({"seat", "intended_seat"}),
     "FOOL_SEER_CHECK": frozenset({"seat", "intended_seat"}),
     "GUARD_PROTECT": frozenset({"seat", "intended_seat"}),
+    "COMMENTARY": frozenset({"model_id", "generated_at", "status", "failure_code"}),
 }
 
 
@@ -259,6 +265,11 @@ def get_audience_service():
     return audience_event_service
 
 
+def get_review_service():
+    from app.main import review_service
+    return review_service
+
+
 def _execution_info(service: GameService, game_id: str, state) -> dict[str, object]:
     getter = getattr(service, "get_execution_info", None)
     if callable(getter):
@@ -271,6 +282,9 @@ def _execution_info(service: GameService, game_id: str, state) -> dict[str, obje
                 "execution_status": str(value.get("execution_status", "running")),
                 "recoverable": bool(value.get("recoverable", False)),
                 "recovery_block_code": value.get("recovery_block_code"),
+                "pause_code": value.get("pause_code"),
+                "pause_reason": value.get("pause_reason"),
+                "pause_detail": value.get("pause_detail"),
                 "interruption_count": int(value.get("interruption_count", 0)),
                 "benchmark_run_id": value.get("benchmark_run_id"),
             }
@@ -283,6 +297,9 @@ def _execution_info(service: GameService, game_id: str, state) -> dict[str, obje
         "execution_status": "completed" if completed else "running",
         "recoverable": False,
         "recovery_block_code": "legacy_archive",
+        "pause_code": None,
+        "pause_reason": None,
+        "pause_detail": None,
         "interruption_count": 0,
         "benchmark_run_id": None,
     }
@@ -296,6 +313,12 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
         if req.model_assignments is not None
         else None
     )
+    comm_kwargs: dict[str, Any] = {}
+    if req.commentary_enabled or req.commentary_config_id is not None:
+        comm_kwargs = {
+            "commentary_enabled": req.commentary_enabled,
+            "commentary_config_id": req.commentary_config_id,
+        }
     try:
         if req.role_counts is not None:
             game_id = await service.create_game(
@@ -304,6 +327,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 witch_self_save=req.witch_self_save,
                 victory=req.victory,
                 model_assignments=assignments,
+                **comm_kwargs,
             )
         else:
             game_id = await service.create_game(
@@ -317,6 +341,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 witch_self_save=req.witch_self_save,
                 victory=req.victory,
                 model_assignments=assignments,
+                **comm_kwargs,
             )
     except ValueError as error:
         raise HTTPException(400, str(error)) from None
@@ -529,6 +554,9 @@ async def _control_game(
         execution_status=str(result.get("execution_status", "running")),
         recoverable=bool(result.get("recoverable", False)),
         recovery_block_code=result.get("recovery_block_code"),
+        pause_code=result.get("pause_code"),
+        pause_reason=result.get("pause_reason"),
+        pause_detail=result.get("pause_detail"),
         interruption_count=int(result.get("interruption_count", 0)),
         benchmark_run_id=result.get("benchmark_run_id"),
     )
@@ -570,6 +598,9 @@ async def get_game_snapshot(game_id: str):
             "execution_status": exec_info["execution_status"],
             "recoverable": exec_info["recoverable"],
             "recovery_block_code": exec_info["recovery_block_code"],
+            "pause_code": exec_info.get("pause_code"),
+            "pause_reason": exec_info.get("pause_reason"),
+            "pause_detail": exec_info.get("pause_detail"),
             "model_snapshot": public_model_snapshot(
                 service.get_game_model_snapshot(game_id),
             ),
@@ -1019,6 +1050,36 @@ def _public_audience_action_event(record: dict[str, Any], round_number: int) -> 
         # 引擎的编排标记，不是「未知类型」：静默跳过，不计数（否则每次放逐的
         # EXILE_PENDING 会把丢弃计数刷成噪音）。
         return []
+    if event_type == "COMMENTARY":
+        if not _payload_matches(event_type, payload):
+            _drop_replay_row("audience_action", "malformed_payload", event_type)
+            return []
+        beat = payload.get("beat")
+        title = payload.get("title")
+        text = payload.get("text")
+        status = payload.get("status")
+        if (
+            beat not in {"night", "day", "final"}
+            or not isinstance(title, str) or not (1 <= len(title) <= 100)
+            or not isinstance(text, str) or not text
+            or (status is not None and status not in {"ok", "failed"})
+        ):
+            _drop_replay_row("audience_action", "invalid_commentary", event_type)
+            return []
+        comm_payload: dict[str, Any] = {
+            "round_number": round_number,
+            "beat": beat,
+            "title": title,
+            "text": text,
+        }
+        for opt_key in ("model_id", "generated_at", "status", "failure_code"):
+            val = payload.get(opt_key)
+            if val is not None:
+                if not isinstance(val, str):
+                    _drop_replay_row("audience_action", "invalid_commentary", event_type)
+                    return []
+                comm_payload[opt_key] = val
+        return [{"event_type": "commentary", "payload": comm_payload}]
     if event_type not in _AUDIENCE_ACTION_SCHEMAS:
         _drop_replay_row("audience_action", "unsupported_event_type", event_type)
         return []
@@ -1301,3 +1362,27 @@ async def get_game_memories(game_id: str):
             last_updated=raw.get("last_updated", ""),
         ))
     return GameMemoriesResponse(game_id=game_id, memories=memories)
+
+
+@router.get("/{game_id}/review", response_model=ReviewStatusResponse)
+async def get_game_review(game_id: str):
+    try:
+        payload = get_review_service().get_review(game_id)
+    except ReviewGameNotFoundError:
+        raise _error(404, "game_not_found", "Game not found") from None
+    return ReviewStatusResponse.model_validate(payload)
+
+
+@router.post("/{game_id}/review", response_model=ReviewStatusResponse)
+async def generate_game_review(
+    game_id: str,
+    req: GenerateReviewRequest = GenerateReviewRequest(),
+):
+    try:
+        payload = await get_review_service().request_review(
+            game_id, force=req.force,
+        )
+    except ReviewGameNotFoundError:
+        raise _error(404, "game_not_found", "Game not found") from None
+    return ReviewStatusResponse.model_validate(payload)
+

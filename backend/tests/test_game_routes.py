@@ -59,6 +59,9 @@ async def test_game_control_returns_execution_metadata(monkeypatch):
         "execution_status": "paused",
         "recoverable": True,
         "recovery_block_code": None,
+        "pause_code": None,
+        "pause_reason": None,
+        "pause_detail": None,
         "interruption_count": 2,
         "benchmark_run_id": None,
     })
@@ -72,6 +75,9 @@ async def test_game_control_returns_execution_metadata(monkeypatch):
         "execution_status": "paused",
         "recoverable": True,
         "recovery_block_code": None,
+        "pause_code": None,
+        "pause_reason": None,
+        "pause_detail": None,
         "interruption_count": 2,
         "benchmark_run_id": None,
     }
@@ -1277,6 +1283,10 @@ _OPTIONAL_KEY_SAMPLES: dict[str, object] = {
     "weighted_counts": {"2": 2},
     "seat": 3,
     "intended_seat": 4,
+    "model_id": "m-1",
+    "generated_at": "2026-08-12T12:34:56Z",
+    "status": "ok",
+    "failure_code": "provider_timeout",
 }
 
 #: `_public_operation_events` 只产出 `{event_type, payload}`，时间戳由
@@ -2594,3 +2604,133 @@ def test_awakened_witch_replay_rejects_malformed_payloads() -> None:
         assert game_routes._public_operation_events(record) == [], (
             event_type, payload,
         )
+
+
+def test_commentary_replay_and_dto_validation() -> None:
+    record = _replay_record(
+        "audience_action",
+        {
+            "event_type": "COMMENTARY",
+            "payload": {
+                "round_number": 1,
+                "beat": "night",
+                "title": "第1夜 · 夜话解说",
+                "text": "本夜预言家验出2号。",
+                "model_id": "m-1",
+                "generated_at": "2026-10-29T00:00:00Z",
+                "status": "ok",
+            },
+        },
+        phase="dawn",
+        round_number=1,
+    )
+    events = game_routes._public_operation_events(record)
+    assert len(events) == 1
+    assert events[0]["event_type"] == "commentary"
+    assert events[0]["payload"]["beat"] == "night"
+    assert events[0]["payload"]["status"] == "ok"
+
+    resp = GameLogsResponse(
+        game_id="g",
+        events=[{**events[0], "timestamp": "2026-10-29T00:00:00Z"}],
+    )
+    assert resp.events[0].event_type == "commentary"
+
+    for bad_payload in (
+        {"round_number": 1, "beat": "invalid", "title": "t", "text": "x"},
+        {"round_number": 1, "beat": "night", "title": "", "text": "x"},
+        {"round_number": 1, "beat": "night", "title": "t", "text": ""},
+        {"round_number": 1, "beat": "night", "title": "t", "text": "x", "status": "bad"},
+        {"round_number": 1, "beat": "night", "title": "t", "text": "x", "model_id": 123},
+        {"round_number": 1, "beat": "night", "title": "t", "text": "x", "extra": 1},
+    ):
+        bad_rec = _replay_record(
+            "audience_action",
+            {"event_type": "COMMENTARY", "payload": bad_payload},
+            phase="dawn",
+            round_number=1,
+        )
+        assert game_routes._public_operation_events(bad_rec) == []
+
+
+@pytest.mark.asyncio
+async def test_review_routes_get_post_and_404(monkeypatch) -> None:
+    from app.api.schemas import GenerateReviewRequest
+    from app.services.review_service import ReviewGameNotFoundError
+
+    rev_service = MagicMock()
+    rev_service.get_review.return_value = {
+        "game_id": "g-1",
+        "status": "ready",
+        "review": {
+            "overview": "综述",
+            "mvp": {"seat": 1, "role": "预言家", "reason": "准"},
+            "turning_points": [{"round": 1, "title": "t", "detail": "d"}],
+            "mistakes": [{"seat": 2, "title": "m", "detail": "d"}],
+            "camp_assessment": {"good": "g", "werewolf": "w"},
+            "closing": "c",
+            "round_digests": [{"round": 1, "digest": "r1"}],
+        },
+        "failure": None,
+        "generated_at": "2026-10-29T00:00:00Z",
+        "model_id": "m",
+    }
+    rev_service.request_review = AsyncMock(return_value={
+        "game_id": "g-1",
+        "status": "pending",
+        "review": None,
+        "failure": None,
+        "generated_at": None,
+        "model_id": None,
+    })
+    monkeypatch.setitem(sys.modules, "app.main", SimpleNamespace(review_service=rev_service))
+    assert game_routes.get_review_service() is rev_service
+
+    got = await game_routes.get_game_review("g-1")
+    assert got.status == "ready"
+    assert got.review is not None
+
+    posted = await game_routes.generate_game_review("g-1", GenerateReviewRequest(force=True))
+    assert posted.status == "pending"
+    rev_service.request_review.assert_awaited_once_with("g-1", force=True)
+
+    rev_service.get_review.side_effect = ReviewGameNotFoundError("missing")
+    with pytest.raises(HTTPException) as exc1:
+        await game_routes.get_game_review("missing")
+    assert exc1.value.status_code == 404
+
+    rev_service.request_review = AsyncMock(side_effect=ReviewGameNotFoundError("missing"))
+    with pytest.raises(HTTPException) as exc2:
+        await game_routes.generate_game_review("missing", GenerateReviewRequest())
+    assert exc2.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_game_with_commentary_options_forwards_only_when_set(monkeypatch) -> None:
+    counts = {"wolf-killer-werewolf": 1, "wolf-killer-villager": 3}
+    service = MagicMock()
+    service.create_game = AsyncMock(return_value="game-comm")
+    service.get_game_state.return_value = SimpleNamespace(
+        players={1: object(), 2: object(), 3: object(), 4: object()},
+        config=SimpleNamespace(role_counts=counts, reveal_on_death=False, enable_sheriff=False),
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    await game_routes.create_game(
+        CreateGameRequest(
+            role_counts=counts,
+            commentary_enabled=True,
+            commentary_config_id="cfg-1",
+        )
+    )
+    service.create_game.assert_awaited_once_with(
+        role_counts=counts,
+        reveal_on_death=False,
+        enable_sheriff=False,
+        witch_self_save="first_night_only",
+        victory="edge",
+        model_assignments=None,
+        commentary_enabled=True,
+        commentary_config_id="cfg-1",
+    )
+

@@ -18,6 +18,8 @@ class CreateGameRequest(BaseModel):
     witch_self_save: Literal["first_night_only", "never"] = "first_night_only"
     victory: Literal["edge", "city"] = "edge"
     model_assignments: Optional[list[ModelAssignment]] = None
+    commentary_enabled: bool = False
+    commentary_config_id: Optional[str] = None
 
     @model_validator(mode="after")
     def reject_mixed_role_count_formats(self):
@@ -51,6 +53,9 @@ class GameListItem(BaseModel):
     execution_status: str = "running"
     recoverable: bool = False
     recovery_block_code: Optional[str] = None
+    pause_code: Optional[str] = None
+    pause_reason: Optional[str] = None
+    pause_detail: Optional[dict[str, object]] = None
     interruption_count: int = 0
     benchmark_run_id: Optional[str] = None
     folder_id: Optional[str] = None
@@ -382,6 +387,17 @@ class PublicNarrationResponse(_PublicResponse):
     text: Annotated[str, Field(min_length=1, max_length=200)]
 
 
+class PublicCommentaryResponse(_PublicResponse):
+    round_number: NonNegativePublicInt
+    beat: Literal["night", "day", "final"]
+    title: Annotated[str, Field(min_length=1, max_length=100)]
+    text: Annotated[str, Field(min_length=1)]
+    model_id: Optional[str] = None
+    generated_at: Optional[str] = None
+    status: Optional[Literal["ok", "failed"]] = None
+    failure_code: Optional[str] = None
+
+
 class PublicWolfChatMessageResponse(_PublicResponse):
     round_number: NonNegativePublicInt
     seat: PositivePublicInt
@@ -616,6 +632,11 @@ class PublicNarrationReplayEvent(_PublicReplayEvent):
     payload: PublicNarrationResponse
 
 
+class PublicCommentaryReplayEvent(_PublicReplayEvent):
+    event_type: Literal["commentary"]
+    payload: PublicCommentaryResponse
+
+
 class PublicWolfChatMessageReplayEvent(_PublicReplayEvent):
     event_type: Literal["wolf_chat_message"]
     payload: PublicWolfChatMessageResponse
@@ -795,6 +816,7 @@ PublicReplayEvent = Annotated[
         PublicNightActionReplayEvent,
         PublicNightThoughtReplayEvent,
         PublicNarrationReplayEvent,
+        PublicCommentaryReplayEvent,
         PublicWolfChatMessageReplayEvent,
         PublicWolfVoteReplayEvent,
         PublicWitchThoughtReplayEvent,
@@ -820,6 +842,9 @@ class GameDetailResponse(_PublicResponse):
     execution_status: str = "running"
     recoverable: bool = False
     recovery_block_code: Optional[str] = None
+    pause_code: Optional[str] = None
+    pause_reason: Optional[str] = None
+    pause_detail: Optional[dict[str, object]] = None
     interruption_count: NonNegativePublicInt = 0
     benchmark_run_id: Optional[str] = None
     model_snapshot: list[ModelSnapshotEntry] = Field(default_factory=list)
@@ -862,6 +887,9 @@ class GameExecutionResponse(_PublicResponse):
     execution_status: str
     recoverable: bool
     recovery_block_code: Optional[str]
+    pause_code: Optional[str] = None
+    pause_reason: Optional[str] = None
+    pause_detail: Optional[dict[str, object]] = None
     interruption_count: NonNegativePublicInt
     benchmark_run_id: Optional[str]
 
@@ -895,3 +923,50 @@ class AudienceEventPageResponse(_PublicResponse):
 class WSMessage(BaseModel):
     type: str
     payload: dict = {}
+
+
+class ReviewMvpResponse(BaseModel):
+    seat: int
+    role: str
+    reason: str
+
+
+class ReviewTurningPointResponse(BaseModel):
+    round: int
+    title: str
+    detail: str
+
+
+class ReviewMistakeResponse(BaseModel):
+    seat: int
+    title: str
+    detail: str
+
+
+class ReviewRoundDigestResponse(BaseModel):
+    round: int
+    digest: str
+
+
+class GameReviewBodyResponse(BaseModel):
+    overview: str
+    mvp: Optional[ReviewMvpResponse] = None
+    turning_points: list[ReviewTurningPointResponse] = Field(default_factory=list)
+    mistakes: list[ReviewMistakeResponse] = Field(default_factory=list)
+    camp_assessment: dict[str, str] = Field(default_factory=dict)
+    closing: str = ""
+    round_digests: list[ReviewRoundDigestResponse] = Field(default_factory=list)
+
+
+class ReviewStatusResponse(BaseModel):
+    game_id: str
+    status: Literal["none", "pending", "ready", "failed"]
+    review: Optional[GameReviewBodyResponse] = None
+    failure: Optional[str] = None
+    generated_at: Optional[str] = None
+    model_id: Optional[str] = None
+
+
+class GenerateReviewRequest(BaseModel):
+    force: bool = False
+
