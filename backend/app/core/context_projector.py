@@ -299,9 +299,12 @@ class ContextProjector:
         # An inspection reads the identity a seat *shows*: a disguised seat answers
         # with the imitated role and camp, everything else with its own.
         disguise = disguised_identity(state, seat)
-        # An inspection reads the side a seat is on *now*. A link or a crush can
-        # move that without rewriting the stored camp; a disguise still wins,
-        # because the imitated identity is what the check is supposed to see.
+        # An inspection reads the side a seat is on *now*. A link can move that
+        # into the third party without rewriting the stored camp; a crush does
+        # not (an Admirer is read as its own camp — the official ruling is
+        # "a seer reads the admirer as good whatever it crushes"), and a
+        # disguise still wins because the imitated identity is what the check
+        # is supposed to see.
         if disguise is None:
             from app.core.win_attribution import seat_allegiances
             shown_camp = seat_allegiances(state).get(seat, target.camp)

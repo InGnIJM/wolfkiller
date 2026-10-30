@@ -23,8 +23,10 @@ class RuleEngine:
     matching on it silently drops any role whose name does not happen to contain
     a magic substring, and a dropped god can trigger an early wolf win.
 
-    Headcount uses allegiance, which equals the stored camp until a link or a
-    crush moves it. A living third-party allegiance blocks every other ending.
+    Headcount uses allegiance, which equals the stored camp until a *link*
+    moves it into the third party. A crush never moves it: an Admirer counts as
+    a villager and only shares the crush's victory (``winner_seats``). A living
+    third-party allegiance blocks every other ending.
     """
 
     def check_win(self, state: GameState) -> WinResult | None:

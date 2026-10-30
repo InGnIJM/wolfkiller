@@ -7,17 +7,23 @@ stored camp:
 * ``lover_pair`` on the seat that linked two players. Both lovers good, and the
   linker counts as good; both werewolves, and the linker counts as a werewolf;
   any other pair, and the linker plus both lovers are the third party.
-* ``crush`` on a seat that follows somebody. It takes that seat's allegiance
-  after the link is applied, so following a lover who was pulled into the third
-  party joins the third party too.
+
+A ``crush`` never moves the side a seat is counted on. The Admirer stays a
+villager: a seer reads it as good, and the wolves have to kill it to win by
+屠民. Only its *victory* follows the crush, so following a lover who was pulled
+into the third party wins with that third party. The official rulings say it
+three ways (admirer counts as a villager, a check reads it as good, and "all
+wolves out" ends the game even when the crush was a wolf), which is why the
+crush lives in ``winner_seats`` and not in ``seat_allegiances``.
 
 With neither slot written, allegiance is the stored camp and the public result
 stays what it has always been.
 
-The Lonely Girl is a different rule and stays one: her *victory* follows the
-player she worships, but the living counts do not. ``winner_seats`` returns
-``None`` when nothing in the game would put a seat on a side other than its
-own camp, so boards without these slots keep the historical shape.
+Two rules move only *victory*, never the living counts: the Lonely Girl follows
+the seat she worships, and the Admirer follows the seat it crushes on.
+``winner_seats`` returns ``None`` when nothing in the game would put a seat on a
+side other than its own camp, so boards without these slots keep the historical
+shape.
 """
 
 from __future__ import annotations
@@ -88,20 +94,30 @@ def crush_seat(state: GameState, seat: int) -> int | None:
     )
 
 
-def _follow_crush(state: GameState, seat: int, resolved: Mapping[int, str]) -> str:
-    """Walk ``crush`` links. A cycle stops on the last new seat."""
+def _victory_side(state: GameState, seat: int, allegiances: Mapping[int, str]) -> str:
+    """The side ``seat`` wins with: its own, or the end of its ``crush`` chain.
+
+    The crush redirects only where a seat's *victory* is counted. A cycle stops
+    on the last new seat, so a hand-written or replayed slot can never hang the
+    win check.
+    """
     seen: set[int] = set()
     current = seat
     while True:
         nxt = crush_seat(state, current)
         if nxt is None or nxt in seen:
-            return resolved[current]
+            return allegiances[current]
         seen.add(current)
         current = nxt
 
 
 def seat_allegiances(state: GameState) -> dict[int, str]:
-    """Each seat's side for the win check: ``good``, ``werewolf`` or ``third_party``."""
+    """Each seat's side for the win check: ``good``, ``werewolf`` or ``third_party``.
+
+    This is the *counted* side, so the crush is deliberately absent: an Admirer
+    stays a villager however its crush's side turns out. Only ``winner_seats``
+    redirects a victory.
+    """
     base = {
         seat: _camp_value(player.camp) for seat, player in state.players.items()
     }
@@ -120,25 +136,29 @@ def seat_allegiances(state: GameState) -> dict[int, str]:
             resolved[seat] = THIRD
             resolved[first] = THIRD
             resolved[second] = THIRD
-    return {
-        seat: _follow_crush(state, seat, resolved) for seat in state.players
-    }
+    return resolved
 
 
 def winner_seats(state: GameState, winning_camp: str) -> tuple[int, ...] | None:
     """Every seat that shares the win, or ``None`` when it is the plain camp.
 
-    A seat with no idol and no redirected allegiance wins with its own camp. A
-    seat that worships somebody wins with that seat's stored camp. A redirected
-    allegiance (a link or a crush) wins with the side it was moved to.
+    A seat wins with its own side unless a private slot moves only its victory:
+    an idol follows the worshipped seat's stored camp, and a crush walks the
+    chain to the side the crush wins with (a link may have moved that side into
+    the third party). The counted sides themselves never move for a crush.
     """
     idols = {seat: idol_seat(state, seat) for seat in state.players}
     allegiances = seat_allegiances(state)
+    crushes = {seat: crush_seat(state, seat) for seat in state.players}
     redirected = any(
         allegiances[seat] != _camp_value(player.camp)
         for seat, player in state.players.items()
     )
-    if not any(idol is not None for idol in idols.values()) and not redirected:
+    if (
+        not any(idol is not None for idol in idols.values())
+        and not any(crush is not None for crush in crushes.values())
+        and not redirected
+    ):
         return None
     winners = []
     for seat, player in sorted(state.players.items()):
@@ -146,7 +166,7 @@ def winner_seats(state: GameState, winning_camp: str) -> tuple[int, ...] | None:
         if idol is not None:
             side = _camp_value(state.players[idol].camp)
         else:
-            side = allegiances[seat]
+            side = _victory_side(state, seat, allegiances)
         if side == winning_camp:
             winners.append(seat)
     return tuple(winners)
