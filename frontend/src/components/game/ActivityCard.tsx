@@ -4,13 +4,11 @@ import { keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import type { PublicReplayEvent } from '../../store/types';
-import {
-  DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, SHERIFF_SIDE_LABELS, THOUGHT_LABELS,
-  VOTE_REWOUND_RESULT, awakenedWitchPoisonResultLabel, awakenedWitchVoteLabel,
-  thoughtActorName, voteRoundWasRewound,
-} from '../../labels';
+import type { PublicReplayEvent, WinningCamp } from '../../store/types';
+// 标签表与文案统一经 useLabels() 取（L.*），不再直接 import labels.ts
+import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
+import type { LabelsModule } from '../../i18n/useLabels';
 import { AVATAR_INK, AVATAR_PALETTE, BLOOD_MOON, ON_ACCENT, PLATE, ROLE_COLORS, SCRIM } from '../../theme/tokens';
 
 const livePulse = keyframes`
@@ -18,8 +16,8 @@ const livePulse = keyframes`
   50% { opacity: 1; transform: scale(1.15); }
 `;
 
-function campLabel(camp: string): string {
-  return camp === 'werewolf' ? '狼人' : camp === 'good' ? '好人' : camp === 'third_party' ? '第三方' : camp;
+function campLabel(camp: string, L: LabelsModule): string {
+  return camp in L.WINNING_CAMP_LABELS ? L.WINNING_CAMP_LABELS[camp as WinningCamp] : camp;
 }
 
 function formatDuration(sec: number): string {
@@ -87,7 +85,9 @@ function ActivityFrame({ tone, children }: CardProps) {
 // 正文出现后思考区折成一行，只留末尾这么多字
 const THINKING_SUMMARY_CHARS = 60;
 
-function StreamingSpeechBody({ text, thinking }: { text: string; thinking: string }) {
+function StreamingSpeechBody({
+text, thinking }: { text: string; thinking: string }) {
+  const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = bodyRef.current;
@@ -105,7 +105,7 @@ function StreamingSpeechBody({ text, thinking }: { text: string; thinking: strin
           noWrap
           sx={{ display: 'block', opacity: 0.8 }}
         >
-          思考：…{thinking.slice(-THINKING_SUMMARY_CHARS)}
+          {t('game.acThinkingSuffix', { text: thinking.slice(-THINKING_SUMMARY_CHARS) })}
         </Typography>
       ) : null}
       <Box
@@ -129,7 +129,7 @@ function StreamingSpeechBody({ text, thinking }: { text: string; thinking: strin
             color="text.secondary"
             sx={{ display: 'block', letterSpacing: 2, mb: 0.5 }}
           >
-            思考中
+            {t('game.acThinking')}
           </Typography>
         ) : null}
         <Typography
@@ -230,6 +230,7 @@ function SpeechView({
   timestamp: string;
   durationSec: number | null;
 }) {
+  const { t } = useTranslation();
   const kind = payload.phase === 'last_words'
     ? '遗言'
     : payload.phase === 'sheriff_election'
@@ -244,14 +245,14 @@ function SpeechView({
     ? 'LAST WORDS'
     : payload.phase === 'sheriff_election'
       ? 'CAMPAIGN'
-      : 'LIVE · 第' + String(payload.round_number) + '轮';
+      : t('game.acLiveRound', { round: payload.round_number });
   return (
     <ActivityFrame tone={BLOOD_MOON.crimson}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={payload.player_seat} />
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-            {payload.player_seat}号
+            {t('game.seatNumber', { seat: payload.player_seat })}
           </Typography>
           <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
             {kind}
@@ -289,6 +290,7 @@ function MetaRow({
   timestamp: string;
   durationSec: number | null;
 }) {
+  const { t } = useTranslation();
   return (
     <Box
       sx={{
@@ -305,9 +307,9 @@ function MetaRow({
         flexShrink: 0,
       }}
     >
-      <span>第{roundNumber}轮 · {kind}</span>
-      <span>时点 {formatClock(timestamp)}</span>
-      <span>耗时 {durationSec === null ? '--:--' : formatDuration(durationSec)}</span>
+      <span>{t('game.acRoundKind', { round: roundNumber, kind })}</span>
+      <span>{t('game.acTime', { time: formatClock(timestamp) })}</span>
+      <span>{t('game.acDuration', { duration: durationSec === null ? '--:--' : formatDuration(durationSec) })}</span>
       <span>tokens --</span>
     </Box>
   );
@@ -328,16 +330,17 @@ function ThoughtView({
   timestamp: string;
   durationSec: number | null;
 }) {
+  const { t } = useTranslation();
   return (
     <ActivityFrame tone={ROLE_COLORS.witch.color}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         {seat !== null ? <SeatAvatar seat={seat} /> : <Box sx={{ width: 40 }} />}
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-            {seat !== null ? `${seat}号` : ''}{label}
+            {seat !== null ? t('game.seatNumber', { seat }) : ''}{label}
           </Typography>
           <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, letterSpacing: 2, fontWeight: 600 }}>
-            内心思考
+            {t('game.acInnerThought')}
           </Typography>
         </Box>
         <LiveTag label="THINKING" />
@@ -368,9 +371,9 @@ function ChatView({
   timestamp,
   durationSec,
   dayPlan = '',
-  label = '狼群密谋',
+  label,
   tag = 'WOLF CHAT',
-  metaKind = '狼聊',
+  metaKind,
   tone = ROLE_COLORS.werewolf.color,
 }: {
   seat: number;
@@ -385,16 +388,19 @@ function ChatView({
   /** 卡片主色：狼队频道是粉色，觉醒女巫的协助者密谈走女巫紫。 */
   tone?: string;
 }) {
+  const { t } = useTranslation();
+  const resolvedLabel = label ?? t('game.acWolfChat');
+  const resolvedMetaKind = metaKind ?? t('game.acWolfChatKind');
   return (
     <ActivityFrame tone={tone}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={seat} />
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-            {seat}号
+            {t('game.seatNumber', { seat })}
           </Typography>
           <Typography variant="caption" sx={{ color: tone, letterSpacing: 2, fontWeight: 700 }}>
-            {label}
+            {resolvedLabel}
           </Typography>
         </Box>
         <LiveTag label={tag} />
@@ -419,13 +425,13 @@ function ChatView({
               letterSpacing: 0.5,
             }}
           >
-            次日计划：{dayPlan}
+            {t('game.acDayPlan', { plan: dayPlan })}
           </Typography>
         ) : null}
       </Typography>
       <MetaRow
         roundNumber={roundNumber}
-        kind={metaKind}
+        kind={resolvedMetaKind}
         timestamp={timestamp}
         durationSec={durationSec}
       />
@@ -433,7 +439,10 @@ function ChatView({
   );
 }
 
-function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'], { player_seat: number; cause: string; round_number: number }> }) {
+function DeathView({
+  payload }: { payload: Extract<PublicReplayEvent['payload'], { player_seat: number; cause: string; round_number: number }> }) {
+  const { t } = useTranslation();
+  const L = useLabels();
   const { timeline, timelineIndex, phase } = useGameStore.getState();
   const explodeLabel = payload.cause === 'self_explode' && (
     phase === 'sheriff_election'
@@ -441,8 +450,8 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
       (event) => event?.event_type === 'sheriff_elected' && event.payload.reason === 'explode',
     )
   )
-    ? '竞选自爆'
-    : (DEATH_CAUSE_LABELS[payload.cause] ?? payload.cause);
+    ? t('game.evExplodeInElection')
+    : (L.DEATH_CAUSE_LABELS[payload.cause] ?? payload.cause);
   return (
     <ActivityFrame tone={ROLE_COLORS.werewolf.color}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -464,10 +473,10 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
         </Box>
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: ROLE_COLORS.werewolf.color }}>
-            {payload.player_seat}号玩家出局
+            {t('game.playerOut', { seat: payload.player_seat })}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-            {explodeLabel} · 第{payload.round_number}轮
+            {explodeLabel} · {t('game.acRoundOnly', { round: payload.round_number })}
           </Typography>
         </Box>
         <LiveTag label="DEATH" />
@@ -476,12 +485,15 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
   );
 }
 
-function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['payload'], { exiled_seat: number | null }> }) {
+function VoteResultView({
+  payload }: { payload: Extract<PublicReplayEvent['payload'], { exiled_seat: number | null }> }) {
+  const { t } = useTranslation();
+  const L = useLabels();
   const timeline = useGameStore((s) => s.timeline);
-  const rewound = voteRoundWasRewound(payload.round_number, timeline);
+  const rewound = L.voteRoundWasRewound(payload.round_number, timeline);
   const exiled = payload.exiled_seat === null
-    ? (rewound ? VOTE_REWOUND_RESULT : '平票，无人被放逐')
-    : `${payload.exiled_seat}号被放逐`;
+    ? (rewound ? L.VOTE_REWOUND_RESULT : t('game.evTie'))
+    : t('game.evExiled', { seat: payload.exiled_seat });
   return (
     <ActivityFrame tone={BLOOD_MOON.gold}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -501,14 +513,14 @@ function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['paylo
             fontWeight: 800,
           }}
         >
-          票
+          {t('game.acBallot')}
         </Box>
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: BLOOD_MOON.goldLight }}>
             {exiled}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-            投票结果 · 第{payload.round_number}轮
+            {t('game.acVoteResult', { round: payload.round_number })}
           </Typography>
         </Box>
         <LiveTag label="VOTE RESULT" />
@@ -534,6 +546,7 @@ function DayVerdictView({
   /** 补充说明（目前只有警长的交/撕徽理由），没有就不占位。 */
   detail?: string | null;
 }) {
+  const { t } = useTranslation();
   return (
     <ActivityFrame tone={tone}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -555,7 +568,7 @@ function DayVerdictView({
               fontWeight: 800,
             }}
           >
-            警
+            {t('game.acSheriffBadge')}
           </Box>
         )}
         <Box>
@@ -571,7 +584,7 @@ function DayVerdictView({
               color="text.secondary"
               sx={{ display: 'block', mt: 0.5, lineHeight: 1.4 }}
             >
-              警长思考：{detail}
+              {t('game.acSheriffThought', { detail })}
             </Typography>
           ) : null}
         </Box>
@@ -582,6 +595,7 @@ function DayVerdictView({
 }
 
 export default function ActivityCard() {
+  const { t } = useTranslation();
   const { timeline, timelineIndex, streamingSpeech, isFollowingLive, players } = useGameStore();
   const L = useLabels();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
@@ -616,10 +630,10 @@ export default function ActivityCard() {
                   <SeatAvatar seat={entry.payload.seat} />
                   <Box>
                     <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-                      {entry.payload.seat}号
+                      {t('game.seatNumber', { seat: entry.payload.seat })}
                     </Typography>
                     <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
-                      正在发言
+                      {t('game.acSpeakingPlain')}
                     </Typography>
                   </Box>
                 </Box>
@@ -637,10 +651,10 @@ export default function ActivityCard() {
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
               <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-                {entry.payload.seat}号
+                {t('game.seatNumber', { seat: entry.payload.seat })}
               </Typography>
               <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
-                正在发言
+                {t('game.acSpeakingPlain')}
               </Typography>
             </Box>
             <LiveTag label="LIVE" />
@@ -654,7 +668,7 @@ export default function ActivityCard() {
     case 'seer_thought':
       return (
         <ThoughtView
-          label={THOUGHT_LABELS[entry.event_type] ?? '思考'}
+          label={L.THOUGHT_LABELS[entry.event_type] ?? t('game.acThinking')}
           seat={entry.payload.seat}
           text={entry.payload.text}
           roundNumber={entry.payload.round_number}
@@ -668,17 +682,17 @@ export default function ActivityCard() {
       return (
         <ThoughtView
           label={entry.payload.degraded
-            ? DEGRADED_ACTION_LABEL
-            : `${thoughtActorName(entry.payload.action_type, {
+            ? L.DEGRADED_ACTION_LABEL
+            : `${L.thoughtActorName(entry.payload.action_type, {
               roleName: L.roleLabelForSeat(entry.payload.seat, players),
-            })}思考`}
+            })}${t('game.hpThinkingSuffix')}`}
           seat={entry.payload.seat}
           text={
             entry.payload.degraded
-              ? entry.payload.reasoning || '（无理由）'
+              ? entry.payload.reasoning || t('game.acNoReason')
               : entry.payload.target_seat === null
-                ? `不行动：${entry.payload.reasoning || '（无理由）'}`
-                : `目标 ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`
+                ? `不行动：${entry.payload.reasoning || t('game.acNoReason')}`
+                : `目标 ${entry.payload.target_seat}号：${entry.payload.reasoning || t('game.acNoReason')}`
           }
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
@@ -702,16 +716,16 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           text={entry.payload.degraded
             // 系统代投的狼票：正文只留占位理由，「弃票」会读成这匹狼自己弃权。
-            ? entry.payload.reasoning || '（无理由）'
+            ? entry.payload.reasoning || t('game.acNoReason')
             : entry.payload.target_seat === null
-              ? `弃票：${entry.payload.reasoning || '（无理由）'}`
-              : `票 → ${entry.payload.target_seat}号：${entry.payload.reasoning || '（无理由）'}`}
+              ? `弃票：${entry.payload.reasoning || t('game.acNoReason')}`
+              : `票 → ${entry.payload.target_seat}号：${entry.payload.reasoning || t('game.acNoReason')}`}
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}
-          label={entry.payload.degraded ? DEGRADED_ACTION_LABEL : '狼群投票'}
+          label={entry.payload.degraded ? L.DEGRADED_ACTION_LABEL : t('game.acWolfVote')}
           tag="WOLF VOTE"
-          metaKind="狼票"
+          metaKind={t('game.acWolfBallot')}
         />
       );
     case 'death':
@@ -722,8 +736,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={`${entry.payload.seat}号发动逆转时空`}
-          subtitle={`放逐投票作废，重新投票 · 第${entry.payload.round_number}轮`}
+          title={t('game.acRewindTitle', { seat: entry.payload.seat })}
+          subtitle={t('game.acRewindSub', { round: entry.payload.round_number })}
           tone={BLOOD_MOON.goldLight}
           tag="REWIND"
         />
@@ -732,8 +746,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.target_seat}
-          title={`${entry.payload.target_seat}号翻牌免于出局`}
-          subtitle={`失去投票权，之后不再能被放逐 · 第${entry.payload.round_number}轮`}
+          title={t('game.acFlipTitle', { seat: entry.payload.target_seat })}
+          subtitle={t('game.acFlipSub', { round: entry.payload.round_number })}
           tone={BLOOD_MOON.goldLight}
           tag="FLIPPED"
         />
@@ -742,8 +756,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.target_seat}
-          title={`${entry.payload.seat}号骑士翻牌决斗${entry.payload.target_seat}号`}
-          subtitle={`${campLabel(entry.payload.camp)} · 第${entry.payload.round_number}轮`}
+          title={t('game.acDuelTitle', { seat: entry.payload.seat, target: entry.payload.target_seat })}
+          subtitle={t('game.acDuelSub', { camp: campLabel(entry.payload.camp, L), round: entry.payload.round_number })}
           tone={BLOOD_MOON.crimson}
           tag="DUEL"
         />
@@ -759,13 +773,13 @@ export default function ActivityCard() {
             <Box>
               <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
                 {charmed == null
-                  ? `${entry.payload.seat}号发动魅惑`
-                  : `${entry.payload.seat}号魅惑${charmed}号`}
+                  ? t('game.evCharmStart', { seat: entry.payload.seat })
+                  : t('game.evCharm', { seat: entry.payload.seat, target: charmed })}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
                 {charmed == null
-                  ? `第${entry.payload.round_number}轮 · 目标未记录`
-                  : `第${entry.payload.round_number}轮`}
+                  ? t('game.acRoundTargetMissing', { round: entry.payload.round_number })
+                  : t('game.acRoundOnly', { round: entry.payload.round_number })}
               </Typography>
             </Box>
           </Box>
@@ -779,10 +793,10 @@ export default function ActivityCard() {
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
               <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
-                {`${entry.payload.seat}号缠绕${entry.payload.target_seats.join('、')}号`}
+                {t('game.evEntangle', { seat: entry.payload.seat, targets: entry.payload.target_seats.join(t('game.listJoin')) })}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-                {`第${entry.payload.round_number}轮 · 一方出局另一方随之出局`}
+                {t('game.acEntangleSub', { round: entry.payload.round_number })}
               </Typography>
             </Box>
           </Box>
@@ -799,13 +813,13 @@ export default function ActivityCard() {
             <Box>
               <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
                 {standIn == null
-                  ? `${entry.payload.seat}号发动挽歌幻象`
-                  : `${entry.payload.seat}号以${standIn}号为替身`}
+                  ? t('game.evIllusionStart', { seat: entry.payload.seat })
+                  : t('game.evIllusion', { seat: entry.payload.seat, target: standIn })}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
                 {standIn == null
-                  ? `第${entry.payload.round_number}轮 · 目标未记录`
-                  : `第${entry.payload.round_number}轮`}
+                  ? t('game.acRoundTargetMissing', { round: entry.payload.round_number })
+                  : t('game.acRoundOnly', { round: entry.payload.round_number })}
               </Typography>
             </Box>
           </Box>
@@ -816,8 +830,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.target_seat}
-          title={`${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`}
-          subtitle={`${DEATH_CAUSE_LABELS[entry.payload.cause] ?? entry.payload.cause} · 第${entry.payload.round_number}轮`}
+          title={t('game.evRevenge', { seat: entry.payload.seat, target: entry.payload.target_seat })}
+          subtitle={t('game.acRevengeSub', { cause: L.DEATH_CAUSE_LABELS[entry.payload.cause] ?? entry.payload.cause, round: entry.payload.round_number })}
           tone={ROLE_COLORS.werewolf.color}
           tag="REVENGE"
         />
@@ -826,8 +840,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={`${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`}
-          subtitle={`本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
+          title={t('game.evExplode', { seat: entry.payload.seat, target: entry.payload.target_seat })}
+          subtitle={t('game.acExplodeSub', { round: entry.payload.round_number })}
           tone={ROLE_COLORS.werewolf.color}
           tag="SELF EXPLODE"
         />
@@ -836,8 +850,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={`${entry.payload.seat}号起舞：${entry.payload.pool_seats.join('、')}号共舞`}
-          subtitle={`人数少的一方当夜出局 · 第${entry.payload.round_number}轮`}
+          title={t('game.acDanceTitle', { seat: entry.payload.seat, seats: entry.payload.pool_seats.join(t('game.listJoin')) })}
+          subtitle={t('game.acDanceSub', { round: entry.payload.round_number })}
           tone={ROLE_COLORS.witch.color}
           tag="DANCE POOL"
         />
@@ -846,8 +860,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={`${entry.payload.seat}号给 ${entry.payload.target_seat}号戴上面具`}
-          subtitle={`目标${entry.payload.in_pool ? '在' : '不在'}舞池中，本次阵营比较被翻转 · 第${entry.payload.round_number}轮`}
+          title={t('game.acMaskTitle', { seat: entry.payload.seat, target: entry.payload.target_seat })}
+          subtitle={t('game.acMaskSub', { inPool: t(entry.payload.in_pool ? 'game.evInPool' : 'game.evNotInPool'), round: entry.payload.round_number })}
           tone={ROLE_COLORS.witch.color}
           tag="MASK"
         />
@@ -856,8 +870,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.target_seat}
-          title={`毒药目标：${entry.payload.target_seat}号`}
-          subtitle={`协助者：${entry.payload.assistant_seats.map((seat) => `${seat}号`).join('、')} · 第${entry.payload.round_number}轮`}
+          title={t('game.acPoisonTitle', { target: entry.payload.target_seat })}
+          subtitle={t('game.acPoisonSub', { assistants: entry.payload.assistant_seats.map((seat) => t('game.seatNumber', { seat })).join(t('game.listJoin')), round: entry.payload.round_number })}
           tone={ROLE_COLORS.witch.color}
           tag="POISON PICK"
         />
@@ -870,9 +884,9 @@ export default function ActivityCard() {
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}
-          label="协助者密谈"
+          label={t('game.acAssistChat')}
           tag="ASSIST CHAT"
-          metaKind="密谈"
+          metaKind={t('game.acSecretTalk')}
           tone={ROLE_COLORS.witch.color}
         />
       );
@@ -880,13 +894,13 @@ export default function ActivityCard() {
       return (
         <ChatView
           seat={entry.payload.seat}
-          text={`${awakenedWitchVoteLabel(entry.payload.vote)} · 毒药目标 ${entry.payload.target_seat}号\n理由：${entry.payload.reasoning || '（无理由）'}`}
+          text={`${L.awakenedWitchVoteLabel(entry.payload.vote)} · 毒药目标 ${entry.payload.target_seat}号\n理由：${entry.payload.reasoning || t('game.acNoReason')}`}
           roundNumber={entry.payload.round_number}
           timestamp={entry.timestamp}
           durationSec={durationSec}
-          label="协助者表态"
+          label={t('game.acAssistVote')}
           tag="ASSIST VOTE"
-          metaKind="表态"
+          metaKind={t('game.acVoteLabel')}
           tone={ROLE_COLORS.witch.color}
         />
       );
@@ -894,8 +908,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.target_seat}
-          title={`${entry.payload.target_seat}号毒药${awakenedWitchPoisonResultLabel(entry.payload.result)}`}
-          subtitle={`协助者表决结果 · 第${entry.payload.round_number}轮`}
+          title={t('game.acPoisonResultTitle', { target: entry.payload.target_seat, result: L.awakenedWitchPoisonResultLabel(entry.payload.result) })}
+          subtitle={t('game.acPoisonResultSub', { round: entry.payload.round_number })}
           tone={ROLE_COLORS.witch.color}
           tag="POISON RESULT"
         />
@@ -904,8 +918,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={`${entry.payload.seat}号自爆，封印当晚好人技能`}
-          subtitle={`被封印：${entry.payload.silenced_seats.join('、') || '无人'} · 本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
+          title={t('game.acSilenceTitle', { seat: entry.payload.seat })}
+          subtitle={t('game.acSilenceSub', { seats: entry.payload.silenced_seats.join(t('game.listJoin')) || t('game.acNoOne'), round: entry.payload.round_number })}
           tone={ROLE_COLORS.werewolf.color}
           tag="CRIMSON EXPLODE"
         />
@@ -914,8 +928,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={entry.payload.seat == null ? '警长竞选结束，警徽流失' : `${entry.payload.seat}号当选警长`}
-          subtitle={`第${entry.payload.round_number}轮`}
+          title={entry.payload.seat == null ? t('game.evSheriffLost') : t('game.evSheriffElected', { seat: entry.payload.seat })}
+          subtitle={t('game.acRoundOnly', { round: entry.payload.round_number })}
           tone={BLOOD_MOON.goldLight}
           tag="SHERIFF"
         />
@@ -925,9 +939,9 @@ export default function ActivityCard() {
         <DayVerdictView
           seat={entry.payload.to_seat ?? entry.payload.from_seat}
           title={entry.payload.to_seat == null
-            ? `${entry.payload.from_seat}号撕毁警徽`
-            : `${entry.payload.from_seat}号将警徽移交给${entry.payload.to_seat}号`}
-          subtitle={`第${entry.payload.round_number}轮`}
+            ? t('game.evBadgeTear', { seat: entry.payload.from_seat })
+            : t('game.evBadgePass', { from: entry.payload.from_seat, to: entry.payload.to_seat })}
+          subtitle={t('game.acRoundOnly', { round: entry.payload.round_number })}
           tone={BLOOD_MOON.goldLight}
           tag="BADGE"
           detail={entry.payload.reasoning ?? null}
@@ -937,8 +951,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={entry.payload.choice === 'run' ? `${entry.payload.seat}号上警` : `${entry.payload.seat}号过`}
-          subtitle={`警长竞选 · 第${entry.payload.round_number}轮`}
+          title={t(entry.payload.choice === 'run' ? 'game.evRun' : 'game.evPassSeat', { seat: entry.payload.seat })}
+          subtitle={`${t('game.acElection')} · ${t('game.acRoundOnly', { round: entry.payload.round_number })}`}
           tone={BLOOD_MOON.goldLight}
           tag="RUN"
         />
@@ -947,8 +961,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={entry.payload.choice === 'withdraw' ? `${entry.payload.seat}号退水` : `${entry.payload.seat}号留下`}
-          subtitle={`警长竞选 · 第${entry.payload.round_number}轮`}
+          title={t(entry.payload.choice === 'withdraw' ? 'game.evWithdraw' : 'game.evStay', { seat: entry.payload.seat })}
+          subtitle={`${t('game.acElection')} · ${t('game.acRoundOnly', { round: entry.payload.round_number })}`}
           tone={BLOOD_MOON.goldLight}
           tag="WITHDRAW"
         />
@@ -958,9 +972,9 @@ export default function ActivityCard() {
         <DayVerdictView
           seat={entry.payload.voter_seat}
           title={entry.payload.target_seat == null
-            ? `${entry.payload.voter_seat}号弃权`
-            : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`}
-          subtitle={`${entry.payload.kind === 'pk' ? 'PK票' : '警票'} · 第${entry.payload.round_number}轮`}
+            ? t('game.evVoteAbstain', { seat: entry.payload.voter_seat })
+            : t('game.evVoteFor', { seat: entry.payload.voter_seat, target: entry.payload.target_seat })}
+          subtitle={`${t(entry.payload.kind === 'pk' ? 'game.acPkBallot' : 'game.acSheriffBallot')} · ${t('game.acRoundOnly', { round: entry.payload.round_number })}`}
           tone={BLOOD_MOON.goldLight}
           tag={entry.payload.kind === 'pk' ? 'PK VOTE' : 'SHERIFF VOTE'}
         />
@@ -969,8 +983,8 @@ export default function ActivityCard() {
       return (
         <DayVerdictView
           seat={entry.payload.seat}
-          title={`${entry.payload.seat}号选择${SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side}发言`}
-          subtitle={`第${entry.payload.round_number}轮`}
+          title={t('game.evSheriffSide', { seat: entry.payload.seat, side: L.SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side })}
+          subtitle={t('game.acRoundOnly', { round: entry.payload.round_number })}
           tone={BLOOD_MOON.goldLight}
           tag="SIDE"
         />
@@ -984,7 +998,7 @@ export default function ActivityCard() {
                 {entry.payload.title}
               </Typography>
               <Typography variant="caption" sx={{ color: ROLE_COLORS.guard.color, letterSpacing: 2, fontWeight: 600 }}>
-                上帝视角解说
+                {t('game.acCommentary')}
               </Typography>
             </Box>
             <LiveTag label="COMMENTARY" />
@@ -1002,7 +1016,7 @@ export default function ActivityCard() {
           </Typography>
           <MetaRow
             roundNumber={entry.payload.round_number}
-            kind="解说"
+            kind={t('game.acCommentaryKind')}
             timestamp={entry.timestamp}
             durationSec={durationSec}
           />

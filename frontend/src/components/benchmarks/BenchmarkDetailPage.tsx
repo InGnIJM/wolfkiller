@@ -153,7 +153,7 @@ export default function BenchmarkDetailPage() {
       const leftValue = sort === 'samples' ? left.samples : left.value ?? -1;
       const rightValue = sort === 'samples' ? right.samples : right.value ?? -1;
       return (leftValue - rightValue) * (descending ? -1 : 1);
-    }), [descending, dimension, report, sort]);
+    }), [descending, dimension, report, sort, t]);
   const deletableIds = items
     .map((item) => item.game_id)
     .filter((gameId): gameId is string => Boolean(gameId));

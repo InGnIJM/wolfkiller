@@ -692,7 +692,7 @@ export default function HistoryPanel({ onClose }: Props) {
         if (!cancelled) setMemoriesError(t('game.memoryLoadFailed'));
       });
     return () => { cancelled = true; };
-  }, [tab, gameId]);
+  }, [tab, gameId, t]);
 
   const handleTabChange = (_: React.SyntheticEvent, value: number) => {
     if (value === 6) {
