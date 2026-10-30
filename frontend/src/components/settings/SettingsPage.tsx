@@ -160,7 +160,7 @@ export default function SettingsPage() {
               {captureNotes.map((note, index) => (
                 <Typography key={note.lead} variant="body2" component="p" sx={{ lineHeight: 1.75 }}>
                   <Box component="span" sx={{ fontWeight: 600 }}>{`${index + 1}. ${note.lead}`}</Box>
-                  {' —— '}
+                  {' — '}
                   {note.body}
                 </Typography>
               ))}

@@ -226,7 +226,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
           moved.has(game.game_id) ? { ...game, folder_id: folderId } : game
         )));
         if (result.failed.length > 0) {
-          setMoveError(result.failed.map((item) => item.message).join('；'));
+          setMoveError(result.failed.map((item) => item.message).join(t('game.listJoin')));
           return;
         }
       }
@@ -247,7 +247,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
       setSelectedIds((current) => current.filter((id) => !deleted.has(id)));
       setTotal((prev) => Math.max(0, prev - deleted.size));
       if (result.failed.length > 0) {
-        setBatchDeleteError(result.failed.map((item) => item.message).join('；'));
+        setBatchDeleteError(result.failed.map((item) => item.message).join(t('game.listJoin')));
         return;
       }
       setBatchDeleteOpen(false);

@@ -98,7 +98,7 @@ function PublicSeat({
     ? BLOOD_MOON.crimson
     : player.is_alive ? accent : 'rgba(212,168,83,0.18)';
   const label = [
-    `${seat}号`,
+    t('game.seatNumber', { seat }),
     badgeLabel,
     status,
     badgeSide ? t(badgeSide === 'on' ? 'game.onBadge' : 'game.offBadge') : '',
@@ -335,7 +335,7 @@ function PublicSeat({
               color: voteTarget === null ? 'text.disabled' : 'warning.light',
             }}
           >
-            {voteTarget === null ? '弃权' : `→ ${voteTarget}号`}
+            {voteTarget === null ? t('game.abstain') : `→ ${t('game.seatNumber', { seat: voteTarget })}`}
           </Typography>
         )}
       </Box>

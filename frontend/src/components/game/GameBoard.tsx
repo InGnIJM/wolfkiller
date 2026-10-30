@@ -446,7 +446,7 @@ export default function GameBoard({ onBack, gameId }: Props) {
             </Button>
           )}
           <Button size="small" onClick={onBack} variant="outlined">
-            返回
+            {t('common.back')}
           </Button>
         </Box>
       </Box>

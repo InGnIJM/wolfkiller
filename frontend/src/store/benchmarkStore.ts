@@ -214,7 +214,7 @@ export const useBenchmarkStore = create<BenchmarkStore>((set, get) => ({
       await get().loadDetail(runId);
       set({
         error: result.failed.length > 0
-          ? result.failed.map((item) => item.message).join('；')
+          ? result.failed.map((item) => item.message).join(i18n.t('game.listJoin'))
           : get().error,
       });
       return result;

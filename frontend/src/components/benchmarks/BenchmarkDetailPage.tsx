@@ -78,7 +78,7 @@ function boardCoverageText(coverage: Record<string, unknown>, t: TFunction): str
     return t('benchmark.seatsTimesGames', { seats, games });
   });
   const seer = coverage.seer_present === false ? t('benchmark.noSeerNote') : '';
-  return t('benchmark.coverage', { parts: parts.join('；'), note: seer });
+  return t('benchmark.coverage', { parts: parts.join(t('game.listJoin')), note: seer });
 }
 
 function performanceRows(report: BenchmarkReport | null, t: TFunction): PerformanceRow[] {
