@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -36,25 +38,25 @@ function estimateSingleGameMs(
 
 /** 预估值与单局超时的对比结论：超过超时即几乎必定超时，超过 75% 建议调大超时。 */
 function timeoutEstimateAlert(
-  estimatedMs: number, timeoutSeconds: number,
+  estimatedMs: number, timeoutSeconds: number, t: TFunction,
 ): { severity: 'info' | 'warning' | 'error'; message: string } {
   const estimatedMinutes = Math.round(estimatedMs / 60000);
   const timeoutMinutes = Math.round(timeoutSeconds / 60);
   if (estimatedMs > timeoutSeconds * 1000) {
     return {
       severity: 'error',
-      message: `预计单局约 ${estimatedMinutes} 分钟，已超过单局超时 ${timeoutMinutes} 分钟，几乎必定超时`,
+      message: t('benchmark.estimateOver', { estimated: estimatedMinutes, timeout: timeoutMinutes }),
     };
   }
   if (estimatedMs > timeoutSeconds * 1000 * 0.75) {
     return {
       severity: 'warning',
-      message: `预计单局约 ${estimatedMinutes} 分钟，接近单局超时 ${timeoutMinutes} 分钟，建议调大超时`,
+      message: t('benchmark.estimateNear', { estimated: estimatedMinutes, timeout: timeoutMinutes }),
     };
   }
   return {
     severity: 'info',
-    message: `预计单局约 ${estimatedMinutes} 分钟（单局超时 ${timeoutMinutes} 分钟）`,
+    message: t('benchmark.estimateOk', { estimated: estimatedMinutes, timeout: timeoutMinutes }),
   };
 }
 
@@ -64,11 +66,12 @@ function requestId(): string {
 }
 
 export default function NewBenchmarkPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { createDraft, actionPending, error } = useBenchmarkStore();
   const { configs, load: loadModels, loading: modelsLoading } = useModelConfigStore();
   const [presets, setPresets] = useState<GamePreset[]>([]);
-  const [name, setName] = useState('模型对抗评测');
+  const [name, setName] = useState(() => t('benchmark.defaultName'));
   const [mode, setMode] = useState<BenchmarkMode>('mixed_arena');
   const [presetId, setPresetId] = useState('');
   const [seed, setSeed] = useState(42);
@@ -137,7 +140,7 @@ export default function NewBenchmarkPage() {
         estimateSingleGameMs({
           playerCount, enableSheriff: Boolean(preset.enable_sheriff), avgMs: averageLatencyMs,
         }),
-        timeout,
+        timeout, t,
       )
     : null;
 
@@ -178,51 +181,51 @@ export default function NewBenchmarkPage() {
       py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
       bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
     }}>
-      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/benchmarks')} sx={{ mb: 2 }}>返回任务列表</Button>
-      <Typography component="h1" variant="h4">新建评测草稿</Typography>
+      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/benchmarks')} sx={{ mb: 2 }}>{t('benchmark.backToList')}</Button>
+      <Typography component="h1" variant="h4">{t('benchmark.newTitle')}</Typography>
       <Typography color="text.secondary" sx={{ mt: 1, mb: 3 }}>
-        创建只会冻结实验配置与完整排程；进入详情后点击“开始评测”才会调用模型。
+        {t('benchmark.newIntro')}
       </Typography>
       {(error || catalogError) && <Alert severity="error" sx={{ mb: 2 }}>{error || catalogError}</Alert>}
 
       <Stack spacing={3}>
         <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Typography component="h2" variant="h6" sx={{ mb: 2 }}>实验设置</Typography>
+          <Typography component="h2" variant="h6" sx={{ mb: 2 }}>{t('benchmark.sectionExperiment')}</Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-            <TextField label="任务名称" value={name} onChange={(event) => setName(event.target.value)} required />
+            <TextField label={t('benchmark.fieldName')} value={name} onChange={(event) => setName(event.target.value)} required />
             <FormControl>
-              <InputLabel id="benchmark-mode-label">评测模式</InputLabel>
-              <Select labelId="benchmark-mode-label" label="评测模式" value={mode} onChange={(event) => setMode(event.target.value as BenchmarkMode)}>
-                <MenuItem value="mixed_arena">混合模型对抗</MenuItem>
-                <MenuItem value="paired_regression">A/B 配置回归</MenuItem>
+              <InputLabel id="benchmark-mode-label">{t('benchmark.fieldMode')}</InputLabel>
+              <Select labelId="benchmark-mode-label" label={t('benchmark.fieldMode')} value={mode} onChange={(event) => setMode(event.target.value as BenchmarkMode)}>
+                <MenuItem value="mixed_arena">{t('benchmark.modeMixedLong')}</MenuItem>
+                <MenuItem value="paired_regression">{t('benchmark.modeRegressionLong')}</MenuItem>
               </Select>
             </FormControl>
             <FormControl>
-              <InputLabel id="scenario-label">角色场景</InputLabel>
-              <Select labelId="scenario-label" label="角色场景" value={presetId} onChange={(event) => applyPreset(event.target.value)}>
+              <InputLabel id="scenario-label">{t('benchmark.fieldScenario')}</InputLabel>
+              <Select labelId="scenario-label" label={t('benchmark.fieldScenario')} value={presetId} onChange={(event) => applyPreset(event.target.value)}>
                 {presets.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
               </Select>
             </FormControl>
-            <TextField label="随机种子" type="number" value={seed} onChange={(event) => setSeed(Math.max(0, Number(event.target.value)))} slotProps={{ htmlInput: { min: 0 } }} />
-            <TextField label="完整区组数" type="number" value={blocks} onChange={(event) => setBlocks(Math.max(1, Number(event.target.value)))} slotProps={{ htmlInput: { min: 1 } }} />
-            <TextField label="最多局数（留空不截断）" type="number" value={maxGames} onChange={(event) => setMaxGames(event.target.value === '' ? '' : Math.max(1, Number(event.target.value)))} slotProps={{ htmlInput: { min: 1 } }} />
-            <TextField label="并发数" type="number" value={concurrency} onChange={(event) => setConcurrency(Math.max(1, Math.min(4, Number(event.target.value))))} helperText="默认为 1，最多 4" slotProps={{ htmlInput: { min: 1, max: 4 } }} />
-            <TextField label="单局活动超时（秒）" type="number" value={timeout} onChange={(event) => setTimeoutValue(Math.max(1, Number(event.target.value)))} helperText="暂停、排队与离线时间不计入" slotProps={{ htmlInput: { min: 1 } }} />
+            <TextField label={t('benchmark.fieldSeed')} type="number" value={seed} onChange={(event) => setSeed(Math.max(0, Number(event.target.value)))} slotProps={{ htmlInput: { min: 0 } }} />
+            <TextField label={t('benchmark.fieldBlocks')} type="number" value={blocks} onChange={(event) => setBlocks(Math.max(1, Number(event.target.value)))} slotProps={{ htmlInput: { min: 1 } }} />
+            <TextField label={t('benchmark.fieldMaxGames')} type="number" value={maxGames} onChange={(event) => setMaxGames(event.target.value === '' ? '' : Math.max(1, Number(event.target.value)))} slotProps={{ htmlInput: { min: 1 } }} />
+            <TextField label={t('benchmark.fieldConcurrency')} type="number" value={concurrency} onChange={(event) => setConcurrency(Math.max(1, Math.min(4, Number(event.target.value))))} helperText={t('benchmark.concurrencyHint')} slotProps={{ htmlInput: { min: 1, max: 4 } }} />
+            <TextField label={t('benchmark.fieldTimeout')} type="number" value={timeout} onChange={(event) => setTimeoutValue(Math.max(1, Number(event.target.value)))} helperText={t('benchmark.timeoutHint')} slotProps={{ htmlInput: { min: 1 } }} />
           </Box>
           {preset && (
-            <Stack direction="row" useFlexGap spacing={1} sx={{ mt: 2, flexWrap: 'wrap' }} aria-label="角色配置">
+            <Stack direction="row" useFlexGap spacing={1} sx={{ mt: 2, flexWrap: 'wrap' }} aria-label={t('benchmark.rolesAria')}>
               {Object.entries(preset.role_counts).map(([role, count]) => <Chip key={role} label={`${role} × ${count}`} />)}
             </Stack>
           )}
         </Paper>
 
         <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Typography component="h2" variant="h6" sx={{ mb: 2 }}>模型配置</Typography>
+          <Typography component="h2" variant="h6" sx={{ mb: 2 }}>{t('benchmark.sectionModels')}</Typography>
           {mode === 'mixed_arena' ? (
             <FormControl fullWidth>
-              <InputLabel id="mixed-models-label">参赛模型</InputLabel>
+              <InputLabel id="mixed-models-label">{t('benchmark.fieldMixedModels')}</InputLabel>
               <Select
-                multiple labelId="mixed-models-label" label="参赛模型" value={modelIds}
+                multiple labelId="mixed-models-label" label={t('benchmark.fieldMixedModels')} value={modelIds}
                 onChange={(event) => setModelIds(typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value)}
                 renderValue={(selected) => selected.map((id) => modelById.get(id)?.name ?? id).join('、')}
               >
@@ -231,28 +234,28 @@ export default function NewBenchmarkPage() {
             </FormControl>
           ) : (
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-              {([['基线配置', baselineId, setBaselineId], ['候选配置', candidateId, setCandidateId]] as const).map(([label, value, setter]) => (
+              {([[t('benchmark.baseline'), baselineId, setBaselineId], [t('benchmark.candidate'), candidateId, setCandidateId]] as const).map(([label, value, setter]) => (
                 <TextField key={label} select label={label} value={value} onChange={(event) => setter(event.target.value)}>
                   {configs.filter((item) => !item.key_invalid).map((item) => <MenuItem key={item.id} value={item.id}>{item.name} · {item.model_id}</MenuItem>)}
                 </TextField>
               ))}
             </Box>
           )}
-          {!modelsLoading && configs.length === 0 && <Alert severity="warning" sx={{ mt: 2 }}>请先在模型管理中添加可用配置。</Alert>}
+          {!modelsLoading && configs.length === 0 && <Alert severity="warning" sx={{ mt: 2 }}>{t('benchmark.needConfigs')}</Alert>}
         </Paper>
 
         <Card component="section" variant="outlined" aria-live="polite">
           <CardContent>
-            <Typography component="h2" variant="h6">排程预览</Typography>
+            <Typography component="h2" variant="h6">{t('benchmark.sectionSchedule')}</Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(4, 1fr)' }, gap: 2, mt: 2 }}>
-              <Box><Typography color="text.secondary">玩家数</Typography><Typography variant="h5">{playerCount}</Typography></Box>
-              <Box><Typography color="text.secondary">完整区组局数</Typography><Typography variant="h5">{fullBlockGames}</Typography></Box>
-              <Box><Typography color="text.secondary">实际总局数</Typography><Typography variant="h5">{actualGames}</Typography></Box>
-              <Box><Typography color="text.secondary">均衡状态</Typography><Chip color={balanced ? 'success' : 'warning'} label={balanced ? '完整均衡' : '截断，不完全均衡'} /></Box>
+              <Box><Typography color="text.secondary">{t('benchmark.playerCount')}</Typography><Typography variant="h5">{playerCount}</Typography></Box>
+              <Box><Typography color="text.secondary">{t('benchmark.fullBlockGames')}</Typography><Typography variant="h5">{fullBlockGames}</Typography></Box>
+              <Box><Typography color="text.secondary">{t('benchmark.actualGames')}</Typography><Typography variant="h5">{actualGames}</Typography></Box>
+              <Box><Typography color="text.secondary">{t('benchmark.balance')}</Typography><Chip color={balanced ? 'success' : 'warning'} label={t(balanced ? 'benchmark.balanced' : 'benchmark.truncated')} /></Box>
             </Box>
             {preset && (
               <Alert severity={estimate ? estimate.severity : 'info'} sx={{ mt: 2 }}>
-                {estimate ? estimate.message : '暂无该模型的历史延迟数据，无法预估单局时长'}
+                {estimate ? estimate.message : t('benchmark.noEstimate')}
               </Alert>
             )}
           </CardContent>
@@ -260,7 +263,7 @@ export default function NewBenchmarkPage() {
 
         <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
           <Button variant="contained" size="large" startIcon={<SaveOutlinedIcon />} disabled={!canSubmit || actionPending} aria-busy={actionPending} onClick={() => void submit()}>
-            {actionPending ? '正在创建…' : '创建草稿'}
+            {t(actionPending ? 'benchmark.creating' : 'benchmark.createDraft')}
           </Button>
         </Box>
       </Stack>

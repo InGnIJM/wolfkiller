@@ -367,6 +367,13 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
 // ── 执行状态 ──────────────────────────────────────────────────
 
 /** 大厅卡片 / 对局页的执行状态（`cancelled` 是后端已有、前端联合曾缺的取值）。 */
+/** 评测任务状态 → 中文（BenchmarkStatus 的展示层，机器码契约在后端）。 */
+export const BENCHMARK_STATUS_LABELS: Record<string, string> = {
+  draft: '草稿', pending: '待开始', running: '运行中', pausing: '暂停中',
+  paused: '已暂停', interrupted: '已中断', blocked: '已阻塞',
+  completed: '已完成', failed: '失败', cancelled: '已取消',
+};
+
 export const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
   running: '运行中',
   paused: '已暂停',
@@ -526,6 +533,12 @@ export const ROLE_NAME_LABELS: Record<string, string> = {
 export function roleName(roleId: string | null | undefined): string | undefined {
   if (!roleId) return undefined;
   return ROLE_NAME_LABELS[roleId];
+}
+
+/** `recovery_block_code` → 提示文案；未知码原样返回（后端码才是稳定契约）。 */
+export function recoveryBlockLabel(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return RECOVERY_BLOCK_LABELS[code] ?? code;
 }
 
 /** 上帝视角按座位读快照上的真实身份短名；座位或角色未知时不猜。 */

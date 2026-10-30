@@ -17,7 +17,9 @@ import DownloadIcon from '@mui/icons-material/Download';
 import { benchmarkExportUrl } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
 import type { BenchmarkReport, BenchmarkStatus, GamePhase, WinningCamp } from '../../store/types';
-import { PHASE_LABELS, WINNER_LABELS } from '../../labels';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
+import { useLabels } from '../../i18n/useLabels';
 import { BACKDROP } from '../../theme/tokens';
 
 const TERMINAL = new Set<BenchmarkStatus>(['completed', 'failed', 'cancelled']);
@@ -63,7 +65,7 @@ interface PerformanceRow {
   value: number | null;
 }
 
-function boardCoverageText(coverage: Record<string, unknown>): string | null {
+function boardCoverageText(coverage: Record<string, unknown>, t: TFunction): string | null {
   const boards = Array.isArray(coverage.boards) ? coverage.boards : [];
   if (boards.length === 0) return null;
   const parts = boards.map((raw) => {
@@ -73,13 +75,13 @@ function boardCoverageText(coverage: Record<string, unknown>): string | null {
       (total, value) => total + (typeof value === 'number' ? value : 0), 0,
     );
     const games = typeof item.games === 'number' ? item.games : 0;
-    return `${seats} 人局 × ${games}`;
+    return t('benchmark.seatsTimesGames', { seats, games });
   });
-  const seer = coverage.seer_present === false ? '；本批不含预言家，预言家相关指标无样本' : '';
-  return `板型覆盖：${parts.join('；')}${seer}`;
+  const seer = coverage.seer_present === false ? t('benchmark.noSeerNote') : '';
+  return t('benchmark.coverage', { parts: parts.join('；'), note: seer });
 }
 
-function performanceRows(report: BenchmarkReport | null): PerformanceRow[] {
+function performanceRows(report: BenchmarkReport | null, t: TFunction): PerformanceRow[] {
   if (!report) return [];
   const modelRows = record(report.metrics).model_performance;
   if (Array.isArray(modelRows)) {
@@ -87,9 +89,9 @@ function performanceRows(report: BenchmarkReport | null): PerformanceRow[] {
       const item = record(raw);
       return {
         id: String(item.id ?? index),
-        model: String(item.model ?? item.model_name ?? '未知模型'),
+        model: String(item.model ?? item.model_name ?? t('benchmark.unknownModel')),
         dimension: item.camp ? 'camp' : 'role',
-        group: String(item.role ?? item.camp ?? '全部'),
+        group: String(item.role ?? item.camp ?? t('benchmark.all')),
         samples: typeof item.samples === 'number' ? item.samples : 0,
         value: typeof item.win_rate === 'number' ? item.win_rate : null,
       };
@@ -102,7 +104,7 @@ function performanceRows(report: BenchmarkReport | null): PerformanceRow[] {
       const item = record(raw);
       rows.push({
         id: `${dimension}-${group}`,
-        model: '全部模型',
+        model: t('benchmark.allModels'),
         dimension,
         group,
         samples: typeof item.games === 'number' ? item.games : 0,
@@ -114,6 +116,8 @@ function performanceRows(report: BenchmarkReport | null): PerformanceRow[] {
 }
 
 export default function BenchmarkDetailPage() {
+  const { t } = useTranslation();
+  const L = useLabels();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
@@ -143,7 +147,7 @@ export default function BenchmarkDetailPage() {
     return () => window.clearInterval(timer);
   }, [current, id, loadDetail, report]);
 
-  const rows = useMemo(() => performanceRows(report)
+  const rows = useMemo(() => performanceRows(report, t)
     .filter((row) => dimension === 'all' || row.dimension === dimension)
     .sort((left, right) => {
       const leftValue = sort === 'samples' ? left.samples : left.value ?? -1;
@@ -159,12 +163,12 @@ export default function BenchmarkDetailPage() {
     else { setSort(next); setDescending(true); }
   };
 
-  if (!id) return <Alert severity="error">缺少评测任务 ID。</Alert>;
+  if (!id) return <Alert severity="error">{t('benchmark.missingId')}</Alert>;
   if (loading && !current) {
     return <Box role="status" sx={{ flex: 1, display: 'grid', placeItems: 'center' }}><CircularProgress /></Box>;
   }
   if (!current) {
-    return <Container sx={{ py: 4 }}><Alert severity="error">{error ?? '评测任务不存在'}</Alert></Container>;
+    return <Container sx={{ py: 4 }}><Alert severity="error">{error ?? t('benchmark.runNotFound')}</Alert></Container>;
   }
 
   const progress = typeof current.progress === 'number'
@@ -182,7 +186,7 @@ export default function BenchmarkDetailPage() {
   const decisionSamples = record(decision?.samples);
   const decisionGames = numberAt(decision, 'samples', 'games');
   const coverage = record(reportSummary.coverage);
-  const boardSummary = boardCoverageText(coverage);
+  const boardSummary = boardCoverageText(coverage, t);
   const status = current.status;
 
   return (
@@ -191,42 +195,42 @@ export default function BenchmarkDetailPage() {
       py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
       bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
     }}>
-      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/benchmarks')} sx={{ mb: 2 }}>返回任务列表</Button>
+      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/benchmarks')} sx={{ mb: 2 }}>{t('benchmark.backToList')}</Button>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <Box>
           <Typography component="h1" variant="h4">{current.name}</Typography>
-          <Stack direction="row" spacing={1} sx={{ mt: 1 }}><Chip label={status} /><Chip variant="outlined" label={current.mode === 'mixed_arena' ? '混合对抗' : 'A/B 回归'} /></Stack>
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }}><Chip label={status} /><Chip variant="outlined" label={t(current.mode === 'mixed_arena' ? 'benchmark.modeMixed' : 'benchmark.modeRegression')} /></Stack>
         </Box>
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
-          {(status === 'draft' || status === 'pending') && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'start')}>开始评测</Button>}
-          {status === 'running' && <Button variant="outlined" startIcon={<PauseIcon />} disabled={actionPending} onClick={() => void control(id, 'pause')}>暂停</Button>}
-          {status === 'paused' && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'resume')}>继续</Button>}
-          {status === 'interrupted' && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'start')}>恢复执行</Button>}
-          {!TERMINAL.has(status) && <Button color="error" startIcon={<CancelOutlinedIcon />} disabled={actionPending} onClick={() => void control(id, 'cancel')}>取消</Button>}
-          <Button color="error" variant="outlined" startIcon={<DeleteOutlinedIcon />} disabled={actionPending} onClick={() => setDeleteRunOpen(true)}>删除本次评测</Button>
+          {(status === 'draft' || status === 'pending') && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'start')}>{t('benchmark.start')}</Button>}
+          {status === 'running' && <Button variant="outlined" startIcon={<PauseIcon />} disabled={actionPending} onClick={() => void control(id, 'pause')}>{t('benchmark.pause')}</Button>}
+          {status === 'paused' && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'resume')}>{t('benchmark.resume')}</Button>}
+          {status === 'interrupted' && <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={actionPending} onClick={() => void control(id, 'start')}>{t('benchmark.resumeRun')}</Button>}
+          {!TERMINAL.has(status) && <Button color="error" startIcon={<CancelOutlinedIcon />} disabled={actionPending} onClick={() => void control(id, 'cancel')}>{t('benchmark.cancel')}</Button>}
+          <Button color="error" variant="outlined" startIcon={<DeleteOutlinedIcon />} disabled={actionPending} onClick={() => setDeleteRunOpen(true)}>{t('benchmark.deleteRun')}</Button>
         </Stack>
       </Box>
       {error && <Alert severity="warning" sx={{ mt: 2 }}>{error}</Alert>}
 
-      <Paper variant="outlined" sx={{ p: 2, mt: 3 }} aria-label="任务进度">
+      <Paper variant="outlined" sx={{ p: 2, mt: 3 }} aria-label={t('benchmark.progressAria')}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, mb: 1 }}>
-          <Typography sx={{ fontWeight: 700 }}>任务进度</Typography>
+          <Typography sx={{ fontWeight: 700 }}>{t('benchmark.progressAria')}</Typography>
           <Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>{current.terminal_count ?? 0}/{current.planned_count ?? 0}</Typography>
         </Box>
-        <LinearProgress variant="determinate" value={Math.max(0, Math.min(100, progress * 100))} aria-label="评测完成进度" />
+        <LinearProgress variant="determinate" value={Math.max(0, Math.min(100, progress * 100))} aria-label={t('benchmark.progressBarAria')} />
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          已完成 {current.completed_count ?? 0} · 失败 {current.failed_count ?? 0} · 状态每 3 秒刷新
+          {t('benchmark.progressLine', { done: current.completed_count ?? 0, failed: current.failed_count ?? 0 })}
         </Typography>
       </Paper>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2, my: 3 }}>
         {[
-          ['完成率', rate(numberAt(games, 'completed') !== null && numberAt(games, 'total') ? (numberAt(games, 'completed') ?? 0) / (numberAt(games, 'total') ?? 1) : null)],
-          ['有效请求率', rate(numberAt(requests, 'success_rate'))],
-          ['已知 token', numberAt(tokenUsage, 'known_total_tokens')?.toLocaleString() ?? '—'],
-          ['调用延迟 p95', numberAt(latency, 'p95') === null ? '—' : `${numberAt(latency, 'p95')} ms`],
-          ['平均轮次', averageRounds === null ? '—' : averageRounds.toFixed(1)],
-          ['中断率', rate(interruptionRate)],
+          [t('benchmark.metricCompletion'), rate(numberAt(games, 'completed') !== null && numberAt(games, 'total') ? (numberAt(games, 'completed') ?? 0) / (numberAt(games, 'total') ?? 1) : null)],
+          [t('benchmark.metricReqSuccess'), rate(numberAt(requests, 'success_rate'))],
+          [t('benchmark.metricTokens'), numberAt(tokenUsage, 'known_total_tokens')?.toLocaleString() ?? '—'],
+          [t('benchmark.metricLatency'), numberAt(latency, 'p95') === null ? '—' : `${numberAt(latency, 'p95')} ms`],
+          [t('benchmark.metricRounds'), averageRounds === null ? '—' : averageRounds.toFixed(1)],
+          [t('benchmark.metricInterruption'), rate(interruptionRate)],
         ].map(([label, value]) => (
           <Card key={label} variant="outlined"><CardContent><Typography color="text.secondary">{label}</Typography><Typography variant="h5" sx={{ mt: 1, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography></CardContent></Card>
         ))}
@@ -234,14 +238,14 @@ export default function BenchmarkDetailPage() {
 
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Box><Typography component="h2" variant="h6">模型表现</Typography><Typography variant="body2" color="text.secondary">胜率按模型、角色或阵营查看；样本量与数值同时展示。</Typography><Typography variant="body2" color="text.secondary">每行是「模型 × 角色/阵营」切片里的座位样本：座位、板型与阵营开局随机分配，这不是模型 A/B 对比，不能据此判断模型强弱。</Typography></Box>
-          <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel id="performance-filter-label">分组筛选</InputLabel><Select labelId="performance-filter-label" label="分组筛选" value={dimension} onChange={(event) => setDimension(event.target.value as typeof dimension)}><MenuItem value="all">全部</MenuItem><MenuItem value="role">按角色</MenuItem><MenuItem value="camp">按阵营</MenuItem></Select></FormControl>
+          <Box><Typography component="h2" variant="h6">{t('benchmark.perfTitle')}</Typography><Typography variant="body2" color="text.secondary">{t('benchmark.perfDesc1')}</Typography><Typography variant="body2" color="text.secondary">{t('benchmark.perfDesc2')}</Typography></Box>
+          <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel id="performance-filter-label">{t('benchmark.groupBy')}</InputLabel><Select labelId="performance-filter-label" label={t('benchmark.groupBy')} value={dimension} onChange={(event) => setDimension(event.target.value as typeof dimension)}><MenuItem value="all">{t('benchmark.all')}</MenuItem><MenuItem value="role">{t('benchmark.byRole')}</MenuItem><MenuItem value="camp">{t('benchmark.byCamp')}</MenuItem></Select></FormControl>
         </Box>
-        {rows.length === 0 ? <Alert severity="info">报告尚无模型分组数据，任务运行后可刷新报告。</Alert> : (
+        {rows.length === 0 ? <Alert severity="info">{t('benchmark.perfEmpty')}</Alert> : (
           <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table sx={{ minWidth: 640 }} aria-label="模型表现表">
-              <TableHead><TableRow><TableCell>模型</TableCell><TableCell>维度</TableCell><TableCell>分组</TableCell><TableCell sortDirection={sort === 'samples' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'samples' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('samples')}>样本数</Button></TableCell><TableCell sortDirection={sort === 'value' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'value' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('value')}>胜率</Button></TableCell></TableRow></TableHead>
-              <TableBody>{rows.map((row) => <TableRow key={row.id}><TableCell>{row.model}</TableCell><TableCell>{row.dimension === 'role' ? '角色' : '阵营'}</TableCell><TableCell>{row.group}</TableCell><TableCell>{row.samples}</TableCell><TableCell>{rate(row.value)}</TableCell></TableRow>)}</TableBody>
+            <Table sx={{ minWidth: 640 }} aria-label={t('benchmark.perfTitle')}>
+              <TableHead><TableRow><TableCell>{t('benchmark.colModel')}</TableCell><TableCell>{t('benchmark.colDimension')}</TableCell><TableCell>{t('benchmark.colGroup')}</TableCell><TableCell sortDirection={sort === 'samples' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'samples' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('samples')}>{t('benchmark.colSamples')}</Button></TableCell><TableCell sortDirection={sort === 'value' ? (descending ? 'desc' : 'asc') : false}><Button color="inherit" aria-sort={sort === 'value' ? (descending ? 'descending' : 'ascending') : 'none'} onClick={() => changeSort('value')}>{t('benchmark.colWinRate')}</Button></TableCell></TableRow></TableHead>
+              <TableBody>{rows.map((row) => <TableRow key={row.id}><TableCell>{row.model}</TableCell><TableCell>{t(row.dimension === 'role' ? 'benchmark.dimRole' : 'benchmark.dimCamp')}</TableCell><TableCell>{row.group}</TableCell><TableCell>{row.samples}</TableCell><TableCell>{rate(row.value)}</TableCell></TableRow>)}</TableBody>
             </Table>
           </TableContainer>
         )}
@@ -249,40 +253,40 @@ export default function BenchmarkDetailPage() {
 
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ mb: 2 }}>
-          <Typography component="h2" variant="h6">决策质量</Typography>
+          <Typography component="h2" variant="h6">{t('benchmark.decisionTitle')}</Typography>
           <Typography variant="body2" color="text.secondary">
-            跨局池化口径，见 docs/benchmark.md；{decisionGames === null ? '' : `基于 ${decisionGames} 局有决策明细的对局。`}狼票集中度不在此展示：跨局池化后不可解读（需按轮次重算）。
+            {t('benchmark.decisionDesc', { games: decisionGames === null ? '' : t('benchmark.decisionGames', { count: decisionGames }) })}
           </Typography>
           {boardSummary === null ? null : (
             <Typography variant="body2" color="text.secondary">{boardSummary}</Typography>
           )}
         </Box>
         {decision === null ? (
-          <Alert severity="info">本次报告没有决策质量数据（旧版本报告，或这些对局缺少 summary.json 明细）。</Alert>
+          <Alert severity="info">{t('benchmark.decisionEmpty')}</Alert>
         ) : (
           <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table sx={{ minWidth: 520 }} aria-label="决策质量表">
+            <Table sx={{ minWidth: 520 }} aria-label={t('benchmark.decisionTitle')}>
               <TableHead>
-                <TableRow><TableCell>指标</TableCell><TableCell>取值</TableCell><TableCell>样本</TableCell></TableRow>
+                <TableRow><TableCell>{t('benchmark.colMetric')}</TableCell><TableCell>{t('benchmark.colValue')}</TableCell><TableCell>{t('benchmark.colSample')}</TableCell></TableRow>
               </TableHead>
               <TableBody>
                 {([
-                  { id: 'seer-check', label: '预言家验中狼率', value: numberAt(decision, 'seer_check_hit_rate'), sample: numberAt(decisionSamples, 'seer_checks'), count: false },
-                  { id: 'witch-poison', label: '女巫毒中狼率', value: numberAt(decision, 'witch_poison_hit_rate'), sample: numberAt(decisionSamples, 'witch_poisons'), count: false },
-                  { id: 'hunter-shot', label: '猎人带狼率', value: numberAt(decision, 'hunter_shot_hit_rate'), sample: numberAt(decisionSamples, 'hunter_shots'), count: false },
-                  { id: 'wolf-kill', label: '狼刀命中神职率', value: numberAt(decision, 'wolf_kill_god_rate'), sample: numberAt(decisionSamples, 'wolf_kills'), count: false },
-                  { id: 'pure-white', label: '纯白之女验中狼率', value: numberAt(decision, 'pure_white_check_hit_rate'), sample: numberAt(decisionSamples, 'pure_white_checks'), count: false },
-                  { id: 'wolf-witch', label: '狼巫验中纯白率', value: numberAt(decision, 'wolf_witch_check_hit_rate'), sample: numberAt(decisionSamples, 'wolf_witch_checks'), count: false },
-                  { id: 'gargoyle', label: '石像鬼验中狼率', value: numberAt(decision, 'gargoyle_check_hit_rate'), sample: numberAt(decisionSamples, 'gargoyle_checks'), count: false },
-                  { id: 'demon-hunter', label: '猎魔人狩猎中狼率', value: numberAt(decision, 'demon_hunter_hunt_hit_rate'), sample: numberAt(decisionSamples, 'demon_hunter_hunts'), count: false },
-                  { id: 'dance-pool', label: '舞池含狼率', value: numberAt(decision, 'dance_pool_wolf_rate'), sample: numberAt(decisionSamples, 'dance_pools'), count: false },
-                  { id: 'mask-in-pool', label: '假面入池率', value: numberAt(decision, 'mask_in_pool_rate'), sample: numberAt(decisionSamples, 'mask_grants'), count: false },
-                  { id: 'good-vote', label: '好人投票命中狼率', value: numberAt(decision, 'good_vote_hit_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
-                  { id: 'good-abstain', label: '好人弃票率', value: numberAt(decision, 'good_vote_abstain_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
-                  { id: 'exile-wolf', label: '放逐命中狼率', value: numberAt(decision, 'exile_wolf_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
-                  { id: 'exile-misfire', label: '放逐误伤神职率', value: numberAt(decision, 'exile_god_misfire_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
-                  { id: 'witch-save-uses', label: '女巫用解药', value: numberAt(decision, 'witch_save_uses'), sample: null, count: true },
-                  { id: 'witch-poison-uses', label: '女巫用毒', value: numberAt(decision, 'witch_poison_uses'), sample: null, count: true },
+                  { id: 'seer-check', label: t('benchmark.metric.seerCheck'), value: numberAt(decision, 'seer_check_hit_rate'), sample: numberAt(decisionSamples, 'seer_checks'), count: false },
+                  { id: 'witch-poison', label: t('benchmark.metric.witchPoison'), value: numberAt(decision, 'witch_poison_hit_rate'), sample: numberAt(decisionSamples, 'witch_poisons'), count: false },
+                  { id: 'hunter-shot', label: t('benchmark.metric.hunterShot'), value: numberAt(decision, 'hunter_shot_hit_rate'), sample: numberAt(decisionSamples, 'hunter_shots'), count: false },
+                  { id: 'wolf-kill', label: t('benchmark.metric.wolfKill'), value: numberAt(decision, 'wolf_kill_god_rate'), sample: numberAt(decisionSamples, 'wolf_kills'), count: false },
+                  { id: 'pure-white', label: t('benchmark.metric.pureWhite'), value: numberAt(decision, 'pure_white_check_hit_rate'), sample: numberAt(decisionSamples, 'pure_white_checks'), count: false },
+                  { id: 'wolf-witch', label: t('benchmark.metric.wolfWitch'), value: numberAt(decision, 'wolf_witch_check_hit_rate'), sample: numberAt(decisionSamples, 'wolf_witch_checks'), count: false },
+                  { id: 'gargoyle', label: t('benchmark.metric.gargoyle'), value: numberAt(decision, 'gargoyle_check_hit_rate'), sample: numberAt(decisionSamples, 'gargoyle_checks'), count: false },
+                  { id: 'demon-hunter', label: t('benchmark.metric.demonHunter'), value: numberAt(decision, 'demon_hunter_hunt_hit_rate'), sample: numberAt(decisionSamples, 'demon_hunter_hunts'), count: false },
+                  { id: 'dance-pool', label: t('benchmark.metric.dancePool'), value: numberAt(decision, 'dance_pool_wolf_rate'), sample: numberAt(decisionSamples, 'dance_pools'), count: false },
+                  { id: 'mask-in-pool', label: t('benchmark.metric.maskInPool'), value: numberAt(decision, 'mask_in_pool_rate'), sample: numberAt(decisionSamples, 'mask_grants'), count: false },
+                  { id: 'good-vote', label: t('benchmark.metric.goodVote'), value: numberAt(decision, 'good_vote_hit_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
+                  { id: 'good-abstain', label: t('benchmark.metric.goodAbstain'), value: numberAt(decision, 'good_vote_abstain_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
+                  { id: 'exile-wolf', label: t('benchmark.metric.exileWolf'), value: numberAt(decision, 'exile_wolf_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
+                  { id: 'exile-misfire', label: t('benchmark.metric.exileMisfire'), value: numberAt(decision, 'exile_god_misfire_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
+                  { id: 'witch-save-uses', label: t('benchmark.metric.witchSaveUses'), value: numberAt(decision, 'witch_save_uses'), sample: null, count: true },
+                  { id: 'witch-poison-uses', label: t('benchmark.metric.witchPoisonUses'), value: numberAt(decision, 'witch_poison_uses'), sample: null, count: true },
                 ] as DecisionRow[]).map((row) => (
                   <TableRow key={row.id}>
                     <TableCell>{row.label}</TableCell>
@@ -301,25 +305,25 @@ export default function BenchmarkDetailPage() {
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Box>
-            <Typography component="h2" variant="h6">本次对局</Typography>
-            <Typography variant="body2" color="text.secondary">评测对局只在此页管理，可回放或删除。</Typography>
+            <Typography component="h2" variant="h6">{t('benchmark.gamesTitle')}</Typography>
+            <Typography variant="body2" color="text.secondary">{t('benchmark.gamesHint')}</Typography>
           </Box>
           {selectedIds.length > 0 && (
             <Stack direction="row" spacing={1}>
-              <Typography variant="body2" sx={{ alignSelf: 'center' }}>已选 {selectedIds.length} 局</Typography>
-              <Button color="error" disabled={actionPending} onClick={() => setBatchDeleteOpen(true)}>批量删除</Button>
-              <Button onClick={() => setSelectedIds([])}>取消选择</Button>
+              <Typography variant="body2" sx={{ alignSelf: 'center' }}>{t('benchmark.selectedGames', { count: selectedIds.length })}</Typography>
+              <Button color="error" disabled={actionPending} onClick={() => setBatchDeleteOpen(true)}>{t('lobby.batchDelete')}</Button>
+              <Button onClick={() => setSelectedIds([])}>{t('lobby.clearSelection')}</Button>
             </Stack>
           )}
         </Box>
-        {items.length === 0 ? <Typography color="text.secondary">暂无排程对局。</Typography> : (
+        {items.length === 0 ? <Typography color="text.secondary">{t('benchmark.noGames')}</Typography> : (
           <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table sx={{ minWidth: 760 }} aria-label="评测对局表">
+            <Table sx={{ minWidth: 760 }} aria-label={t('benchmark.gamesTableAria')}>
               <TableHead>
                 <TableRow>
                   <TableCell padding="checkbox">
                     <Checkbox
-                      slotProps={{ input: { 'aria-label': '全选对局' } }}
+                      slotProps={{ input: { 'aria-label': t('benchmark.selectAllAria') } }}
                       checked={deletableIds.length > 0 && deletableIds.every((gameId) => selectedIds.includes(gameId))}
                       indeterminate={selectedIds.length > 0 && selectedIds.length < deletableIds.length}
                       onChange={() => setSelectedIds((current) => (
@@ -327,11 +331,11 @@ export default function BenchmarkDetailPage() {
                       ))}
                     />
                   </TableCell>
-                  <TableCell>对局</TableCell>
-                  <TableCell>阶段</TableCell>
-                  <TableCell>状态</TableCell>
-                  <TableCell>胜负</TableCell>
-                  <TableCell align="right">操作</TableCell>
+                  <TableCell>{t('benchmark.gameCol')}</TableCell>
+                  <TableCell>{t('benchmark.phaseCol')}</TableCell>
+                  <TableCell>{t('benchmark.statusCol')}</TableCell>
+                  <TableCell>{t('benchmark.winnerCol')}</TableCell>
+                  <TableCell align="right">{t('benchmark.colActions')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -343,7 +347,7 @@ export default function BenchmarkDetailPage() {
                       <TableCell padding="checkbox">
                         {gameId && (
                           <Checkbox
-                            slotProps={{ input: { 'aria-label': `选择 ${item.name ?? gameId}` } }}
+                            slotProps={{ input: { 'aria-label': t('benchmark.selectGameAria', { name: item.name ?? gameId }) } }}
                             checked={selected}
                             onChange={() => setSelectedIds((current) => (
                               current.includes(gameId)
@@ -354,16 +358,16 @@ export default function BenchmarkDetailPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Typography sx={{ fontWeight: 700 }}>{item.name ?? `排程 #${item.item_index + 1}`}</Typography>
+                        <Typography sx={{ fontWeight: 700 }}>{item.name ?? t('benchmark.scheduledItem', { index: item.item_index + 1 })}</Typography>
                         <Typography variant="body2" color="text.secondary">
-                          {gameId ?? '尚未开局'}
-                          {item.round_number != null ? ` · 第 ${item.round_number} 轮` : ''}
+                          {gameId ?? t('benchmark.notStarted')}
+                          {item.round_number != null ? ` · ${t('benchmark.roundN', { round: item.round_number })}` : ''}
                           {item.alive_count != null && item.player_count != null ? ` · ${item.alive_count}/${item.player_count}` : ''}
                         </Typography>
                       </TableCell>
-                      <TableCell>{item.phase ? (PHASE_LABELS[item.phase as GamePhase] ?? item.phase) : '—'}</TableCell>
+                      <TableCell>{item.phase ? (L.PHASE_LABELS[item.phase as GamePhase] ?? item.phase) : '—'}</TableCell>
                       <TableCell>{item.terminal_reason ?? item.status}{item.execution_status ? ` · ${item.execution_status}` : ''}</TableCell>
-                      <TableCell>{item.winner ? (WINNER_LABELS[item.winner as WinningCamp] ?? item.winner) : '—'}</TableCell>
+                      <TableCell>{item.winner ? (L.WINNER_LABELS[item.winner as WinningCamp] ?? item.winner) : '—'}</TableCell>
                       <TableCell align="right">
                         {gameId && (
                           <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
@@ -372,7 +376,7 @@ export default function BenchmarkDetailPage() {
                               to={`/game/${gameId}`}
                               size="small"
                             >
-                              查看回放
+                              {t('benchmark.viewReplay')}
                             </Button>
                             <Button
                               color="error"
@@ -380,7 +384,7 @@ export default function BenchmarkDetailPage() {
                               disabled={actionPending}
                               onClick={() => setDeleteGameId(gameId)}
                             >
-                              删除
+                              {t('common.delete')}
                             </Button>
                           </Stack>
                         )}
@@ -395,28 +399,28 @@ export default function BenchmarkDetailPage() {
       </Paper>
 
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Typography component="h2" variant="h6">诊断与报告</Typography>
+          <Typography component="h2" variant="h6">{t('benchmark.diagTitle')}</Typography>
           <Stack spacing={1} sx={{ mt: 2 }}>
-            <Typography>指标版本：{report?.metric_version ?? '等待生成'}</Typography>
-            <Typography>报告状态：{report?.status === 'pending' ? '报告生成中' : report?.status === 'failed' ? '报告生成失败，可重新生成' : report?.provisional ? '运行中临时报告' : report ? '已冻结数据报告' : '待生成'}</Typography>
-            <Typography>用量完整率：{rate(numberAt(tokenUsage, 'completeness_rate'))}</Typography>
-            <Typography>未知请求：{numberAt(requests, 'unknown') ?? '—'}</Typography>
-            <Typography>中断/排除：{numberAt(report?.data_quality, 'interruptions') ?? '—'} / {numberAt(report?.data_quality, 'excluded_pairs') ?? '—'}</Typography>
+            <Typography>{t('benchmark.metricVersion', { version: report?.metric_version ?? t('benchmark.pendingGeneration') })}</Typography>
+            <Typography>{t('benchmark.reportStatus', { status: report?.status === 'pending' ? t('benchmark.reportPending') : report?.status === 'failed' ? t('benchmark.reportFailed') : report?.provisional ? t('benchmark.reportProvisional') : report ? t('benchmark.reportFrozen') : t('benchmark.reportToGenerate') })}</Typography>
+            <Typography>{t('benchmark.completeness', { rate: rate(numberAt(tokenUsage, 'completeness_rate')) })}</Typography>
+            <Typography>{t('benchmark.unknownRequests', { count: numberAt(requests, 'unknown') ?? '—' })}</Typography>
+            <Typography>{t('benchmark.interruptions', { interruptions: numberAt(report?.data_quality, 'interruptions') ?? '—', excluded: numberAt(report?.data_quality, 'excluded_pairs') ?? '—' })}</Typography>
           </Stack>
-          <Button startIcon={<RefreshIcon />} disabled={actionPending} onClick={() => void rebuildReport(id)} sx={{ mt: 2 }}>重新生成报告</Button>
-          <Typography component="h3" variant="subtitle1" sx={{ mt: 3, mb: 1 }}>导出</Typography>
+          <Button startIcon={<RefreshIcon />} disabled={actionPending} onClick={() => void rebuildReport(id)} sx={{ mt: 2 }}>{t('benchmark.rebuildReport')}</Button>
+          <Typography component="h3" variant="subtitle1" sx={{ mt: 3, mb: 1 }}>{t('benchmark.exportTitle')}</Typography>
           <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
             {(['json', 'csv', 'markdown'] as const).map((format) => <Button key={format} component="a" href={benchmarkExportUrl(id, format)} startIcon={<DownloadIcon />} variant="outlined">{format.toUpperCase()}</Button>)}
           </Stack>
         </Paper>
 
       <Dialog open={deleteGameId !== null} onClose={() => setDeleteGameId(null)}>
-        <DialogTitle>删除评测对局</DialogTitle>
+        <DialogTitle>{t('benchmark.deleteGameTitle')}</DialogTitle>
         <DialogContent>
-          <Typography>确定删除该评测对局？此操作不可恢复。</Typography>
+          <Typography>{t('benchmark.deleteGameConfirm')}</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteGameId(null)}>取消</Button>
+          <Button onClick={() => setDeleteGameId(null)}>{t('benchmark.cancel')}</Button>
           <Button
             color="error"
             disabled={actionPending}
@@ -426,18 +430,18 @@ export default function BenchmarkDetailPage() {
               void deleteGame(id, gameId).then((ok) => { if (ok) setDeleteGameId(null); });
             }}
           >
-            删除
+            {t('common.delete')}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={batchDeleteOpen} onClose={() => setBatchDeleteOpen(false)}>
-        <DialogTitle>批量删除评测对局</DialogTitle>
+        <DialogTitle>{t('benchmark.batchDeleteTitle')}</DialogTitle>
         <DialogContent>
-          <Typography>确定删除已选的 {selectedIds.length} 局？此操作不可恢复。</Typography>
+          <Typography>{t('benchmark.batchDeleteConfirm', { count: selectedIds.length })}</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBatchDeleteOpen(false)}>取消</Button>
+          <Button onClick={() => setBatchDeleteOpen(false)}>{t('benchmark.cancel')}</Button>
           <Button
             color="error"
             disabled={actionPending}
@@ -450,18 +454,18 @@ export default function BenchmarkDetailPage() {
               });
             }}
           >
-            删除
+            {t('common.delete')}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={deleteRunOpen} onClose={() => setDeleteRunOpen(false)}>
-        <DialogTitle>删除本次评测</DialogTitle>
+        <DialogTitle>{t('benchmark.deleteRun')}</DialogTitle>
         <DialogContent>
-          <Typography>将级联删除本次评测的全部对局与报告，且不可恢复。</Typography>
+          <Typography>{t('benchmark.deleteRunConfirm2')}</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteRunOpen(false)}>取消</Button>
+          <Button onClick={() => setDeleteRunOpen(false)}>{t('benchmark.cancel')}</Button>
           <Button
             color="error"
             disabled={actionPending}
@@ -469,7 +473,7 @@ export default function BenchmarkDetailPage() {
               void deleteRun(id).then((ok) => { if (ok) navigate('/benchmarks'); });
             }}
           >
-            删除本次评测
+            {t('benchmark.deleteRun')}
           </Button>
         </DialogActions>
       </Dialog>

@@ -312,6 +312,12 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
 
 // ── Execution ─────────────────────────────────────────────────
 
+export const BENCHMARK_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft', pending: 'Pending', running: 'Running', pausing: 'Pausing',
+  paused: 'Paused', interrupted: 'Interrupted', blocked: 'Blocked',
+  completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled',
+};
+
 export const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
   running: 'Running',
   paused: 'Paused',
