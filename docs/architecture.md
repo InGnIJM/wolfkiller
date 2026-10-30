@@ -46,7 +46,9 @@ WolfKiller/
 │   └── src/
 │       ├── api/                 # REST 客户端 + WebSocket hook
 │       ├── store/               # Zustand 状态管理 + 时间轴回放引擎 + 模型配置 store + 应用设置 store
-│       ├── labels.ts            # 取值→文案唯一来源（20 张文案表，键类型为联合）
+│       ├── labels.ts            # 取值→文案唯一来源（23 张中文文案表，键类型为联合）
+│       ├── i18n/                # react-i18next 资源树（zh/en 同构）+ labelsEn 镜像 + useLabels()
+│       ├── theme.ts             # createAppTheme(mode)：深/浅两档血月剧场工厂
 │       ├── theme/               # 设计令牌（tokens.ts 为色值唯一来源）
 │       └── components/
 │           ├── lobby/           # 大厅（普通对局列表、扁平文件夹、批量操作）
@@ -199,9 +201,9 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **状态管理**（`frontend/src/store/gameStore.ts`，Zustand 5）：同时处理直播模式（WebSocket 实时事件）与回放模式（HTTP 全量日志 + 播放/暂停、逐帧步进、0.5x~8x 倍速、按事件类型筛选）。倍速只作用于已落盘事件；直播下一格仍要等当前座位的模型调用结束。对局级 `modelSnapshot` 在详情/观众快照加载时写入，回放 seek 不改写。
 - **座位图**（`frontend/src/components/game/SeatMap.tsx`）：椭圆/双列布局；悬停弹出血月风格详情卡（身份、存活/发言、所用模型名与提供方）。公开 DTO 带 `is_sheriff`；仅 `enable_sheriff` 开局才会出现警长徽标。时间轴展示竞选当选与交徽/撕徽事件。**舞台几何的唯一真相是 `frontend/src/components/game/seatLayout.ts` 的纯函数 `computeStageLayout`**（几何因此可以脱开 DOM 单测）：椭圆 / 双列**只由宽度决定**（`width >= 720` 且 12 点两侧通道 `sideClearW >= 240`），高度不足时缩座位卡与中央面板、超出部分滚动，**不切换布局** —— 从前中央面板的固有高度估计参与 mode 判定，面板一封顶就把整张舞台推去双列、再反过来裁掉座位。同一处还修掉底部活动卡的顶压：`ActivityCard` 的整卡限高（`ACTIVITY_CARD_MAX_HEIGHT`）让长发言在卡内滚动，不再压扁座位舞台。回归门禁分别落在 `test/seatLayout.test.ts`、`test/SeatMap.test.tsx`（`data-layout`）与 `test/ActivityCard.test.tsx`（限高）。
 - **WebSocket**（`frontend/src/api/websocket.ts`）：自定义 hook，建立连接后将 JSON 消息路由到 Zustand store 对应处理函数
-- **主题**：深色主题「血月剧场」（Crimson Gothic）；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，组件禁止硬编码色值；风格稿见 `frontend/design-demos/`
+- **主题**：`createAppTheme(mode)` 工厂输出深/浅两档「血月剧场」（Crimson Gothic），深档酒红 × 鎏金、浅档羊皮纸 × 深酒红；设计令牌唯一来源为 `frontend/src/theme/tokens.ts`，令牌是 `var(--wk-*)` 引用、实体色按模式收进 `MODE_TOKENS` 并由 `cssVars()` 注入 `:root`，组件禁止硬编码色值；模式选择落 `store/uiSettingsStore.ts`（`system` 跟 `prefers-color-scheme`）；风格稿见 `frontend/design-demos/`
 - **旧档回放的两条路径**：`GET /api/games/{id}/events`（观众流，`audience_events` 表）是首选；无投影的对局回退到 `GET /api/games/{id}/logs`，它把 `game.log` 的记录投影成同一套公开事件。两条路径必须覆盖同一批公开类型 —— `tests/test_game_routes.py::test_every_public_audience_action_type_has_a_replay_branch` 遍历投影器声明的每个类型，用规范 payload 要求回放路径产出对应事件；承载不了的行改为**逐条跳过 + 计数 + 服务端告警**（`api/replay_diagnostics.py`），计数经内部只读接口 `GET /api/diagnostics/replay-drops` 查看，丢弃内容不进公开 DTO。
-- **文案**：后端只发机器值（`wolf_kill`、`wolves_outnumber_good`、`sheriff_election`…），取值→文案表唯一来源为 `frontend/src/labels.ts`，按**渲染语境**分 20 张文案表（死因表与编年史短标签对同一个键可以有不同措辞），键类型尽量收紧为联合类型。三处门禁绑住它：`src/test/labels.test.ts` 扫描组件源码（再出现本地 `*_LABELS`/`*_TAGS` 即红）并断言命名空间非空；后端 `tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读该文件，断言文案覆盖 `app/models/values.py`（死因/胜因/阵营）与 `GamePhase` 的每个取值 —— 这条跨语言断言补上了「后端加了值、界面没加文案」只能靠人眼发现的缝
+- **文案**：后端只发机器值（`wolf_kill`、`wolves_outnumber_good`、`sheriff_election`…），取值→文案表唯一来源为 `frontend/src/labels.ts`，按**渲染语境**分 23 张中文文案表（死因表与编年史短标签对同一个键可以有不同措辞），键类型尽量收紧为联合类型。i18n 走 `react-i18next`：整句 UI 文案用 `t()`（`src/i18n/{zh,en}.ts` 同构资源树），标签表用 `useLabels()` 在 `labels.ts` 与英文镜像 `src/i18n/labelsEn.ts` 之间按语言取模块；组件禁止直接 import `labels.ts`，模块级 helper 走 `i18n.t()` 或显式传 `L`。语言/主题偏好存 `store/uiSettingsStore.ts`（persist，`system` 跟随系统）。三处门禁绑住它：`src/test/labels.test.ts` 扫描组件源码（再出现本地 `*_LABELS`/`*_TAGS` 即红）并断言命名空间非空；`src/test/i18n.test.ts` 断言 zh/en 资源键集与 labels/labelsEn 导出对齐；后端 `tests/test_values.py::test_frontend_labels_cover_every_declared_value` 直接读 `labels.ts`，断言文案覆盖 `app/models/values.py`（死因/胜因/阵营）与 `GamePhase` 的每个取值 —— 这条跨语言断言补上了「后端加了值、界面没加文案」只能靠人眼发现的缝
 - **大厅与评测隔离**：`GET /api/games` 只返回 `benchmark_run_id` 为空且 `source != benchmark` 的普通对局；评测局仍可通过 `GET /api/games/{id}` 回放。大厅用扁平文件夹（`GET/POST /api/folders`、`PUT /api/games/{id}/folder`、`POST /api/games/batch-move|batch-delete`）收纳与批量删除。评测对局只从评测页进出：`GET /api/benchmarks/{id}/games` 并上名称/阶段/胜负等投影；`DELETE /api/benchmarks/{id}/games/{game_id}`、`POST .../games/batch-delete` 先解绑再删档；`DELETE /api/benchmarks/{id}` 取消进行中的 run 并级联删除绑定对局与报告。大厅独立 `DELETE /api/games/{id}` 对评测局仍返回 409。
 
 ## 关键设计约束
