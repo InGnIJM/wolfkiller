@@ -8,12 +8,19 @@ Qwen3-4B 级别的小模型蒸馏/后训练到接近 teacher 大模型的局内�
 ```
 post_training/
   export_dataset.py   # llm_prompts.jsonl x model_requests -> SFT JSONL 导出器
-  test/               # pytest 单测（--cov=export_dataset 100%）
+  tokenize_report.py  # Qwen3 tokenizer 实测长度分布 -> tokenize_report.json
+  prepare_dataset.py  # 12k 窗口应用：history 块保尾截头 -> *_final.jsonl
+  train_sft.py        # WSL 内跑的 Unsloth QLoRA 训练入口（含 --smoke）
+  test/               # pytest 单测（各模块 --cov 100%）
   data/               # 导出产物（已 gitignore）
     train.jsonl       # 训练集（按 game_id 切分，防同局泄漏）
     eval.jsonl        # 评估集
+    train_final.jsonl # 12k 窗口后的最终训练集
+    eval_final.jsonl
     excluded.jsonl    # 被剔除样本及原因（留作 KTO 负样本候选）
     report.json       # 分布统计
+    tokenize_report.json
+    prepare_report.json
 ```
 
 ## 用法
@@ -21,10 +28,13 @@ post_training/
 ```bash
 cd post_training
 python export_dataset.py                 # 默认读 ../backend/data，全部开关开
-python export_dataset.py --include-weak-teachers   # 保留 glm/mimo 样本（打标不丢）
-python export_dataset.py --no-upgrade    # 不做旧格式升级
-python -m pytest test/ -q                # 测试
-python -m pytest test/ --cov=export_dataset --cov-report=term-missing
+python tokenize_report.py                # 实测 token 分布
+python prepare_dataset.py                # 应用 12k 窗口（保尾截头）
+python -m pytest test/ -q                # 全部测试
+
+# WSL 内（venv 在 ~/sft，模型在 /mnt/e/models/）：
+~/sft/bin/python train_sft.py --smoke    # 显存冒烟
+~/sft/bin/python train_sft.py            # 正式训练
 ```
 
 ## 样本格式
