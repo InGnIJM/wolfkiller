@@ -48,6 +48,9 @@ async def test_model_test_uses_llm_client_and_reports_capabilities(monkeypatch):
     assert response.ok is True
     assert response.capabilities.strict_tools is False
     assert llm_client.call_args.kwargs["config"].provider_profile == "openrouter"
+    # The probe client is closed after the call; it must own a private httpx
+    # pool so its aclose() cannot kill a running game's shared connections.
+    assert llm_client.call_args.kwargs["dedicated_http_clients"] is True
 
 
 @pytest.mark.asyncio

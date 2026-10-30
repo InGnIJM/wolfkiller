@@ -45,7 +45,7 @@ async def test_create_game_passes_only_llm_clients_to_game_core(
     class FakeLLMClient:
         instances = []
 
-        def __init__(self, *, config: LLMClientConfig):
+        def __init__(self, *, config: LLMClientConfig, dedicated_http_clients: bool = False):
             self.config = config
             self.instances.append(self)
 

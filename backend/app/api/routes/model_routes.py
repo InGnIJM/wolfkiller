@@ -175,7 +175,7 @@ async def delete_model(config_id: str):
 
 def _probe_model(config: LLMClientConfig) -> dict[str, bool]:
     """Own the client's complete lifetime in the worker, even on cancellation."""
-    client = LLMClient(config=config)
+    client = LLMClient(config=config, dedicated_http_clients=True)
     try:
         return client.probe()
     finally:
