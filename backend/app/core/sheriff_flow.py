@@ -543,7 +543,13 @@ class SheriffDirector:
             except KeyError:
                 identity = player.role
             camp = player.camp
-        lines = [f"你是{seat}号，身份：{identity}，阵营：{camp}。"]
+        from app.agents.persona import persona_line
+        from app.agents.stakes import stakes_text
+        lines = [
+            f"你是{seat}号，身份：{identity}，阵营：{camp}。",
+            persona_line(state.game_id, seat),
+            f"局势距离：{stakes_text(state, seat)}",
+        ]
 
         facts: list[str] = []
         try:

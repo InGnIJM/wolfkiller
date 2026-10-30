@@ -5,6 +5,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
+from app.agents.persona import persona_line
+from app.agents.stakes import stakes_text
 from app.core.conversation_log import ConversationLog
 from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
 from app.core.wolf_pack import actor_sees_pack, in_wolf_pack
@@ -80,7 +82,7 @@ _FIRST_NIGHT_NOTICE = (
     "座位号只是玩家编号。它不表示远近、连号、居中或排头，也不能用来猜测谁像神职、谁是更好的刀口。"
     "发言顺序只在系统明确给出时才存在；首夜还没有发言顺序。"
     "全队已经达成的一致目标直接执行。没有特殊战术时参考 RANDOM_HINT，它不是必须采用的指令。"
-    "首夜也可以评估自刀骗药，但必须全队权衡女巫开药与减员风险。\n"
+    "首夜也可以把自刀骗药作为常规刀口选项之一与其他选项同权评估。\n"
 )
 
 _TARGET_RULE = TARGET_SELECTION_RULE
@@ -331,7 +333,19 @@ class NightDirector:
             "A deliberate target among your teammates, including yourself, is "
             "a valid strategy unless the action contract forbids it. "
             "【自刀/刀队友战术】选择己方队友或自己作为刀口属于合法的进阶博弈战术（如首夜自刀骗取女巫解药打造高身份银水牌、制造内讧假象，或狼王借刀开枪等）。"
-            "自刀属于高风险高回报策略，需全队权衡女巫开药可能性并达成共识。"
+            "收益：被女巫救起即获银水身份，可带队站边或反打真预言家；成本：女巫不救则己方减员一人。"
+            "自刀、刀队友与普通刀口按同一计票规则竞争，得票最多者落刀，无需全员同意；"
+            "若决定自刀，须在讨论中明确指定由哪位队友担任刀口（自愿或按分工），否则该选项不成立。"
+        )
+
+    def _advocate_clause(self, state: GameState, seat: int) -> str:
+        """Rotate one pack seat per night to put a high-risk option on the table."""
+        wolves = self._wolf_team(state)
+        if len(wolves) < 2 or wolves[(state.round_number - 1) % len(wolves)] != seat:
+            return ""
+        return (
+            "- 本轮由你担任战术倡导者：请先提出一个高风险备选刀口"
+            "（自刀、刀队友或佯攻免疫位）供全队评估；评估后不合适也要给出排除理由。\n"
         )
 
     def _night_immune_clause(self, state: GameState) -> str:
@@ -392,6 +406,7 @@ class NightDirector:
         system = (
             self._system_prefix(state)
             + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
+            + persona_line(state.game_id, seat) + " "
             "Discuss tonight's kill target with your teammates in a natural "
             "private chat: reply to what your teammates just said (agree, "
             "add, or push back) and then state your own view. Never reveal "
@@ -406,6 +421,7 @@ class NightDirector:
             f"第{state.round_number}晚狼队讨论。"
             f"{self._teammates_clause(state, seat)}"
             f"场上存活玩家：{alive}。\n"
+            + "局势距离：" + stakes_text(state, seat) + "\n"
             + self._fallback_hint(random_hint) + ""
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
             f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
@@ -426,10 +442,11 @@ class NightDirector:
             "②倒钩位：白天初期站好人视角制造内部【对立】假象，关键时刻反水带节奏；"
             "③划水位：发言低调不主动带节奏，减少自身暴露；"
             "④明冲锋位：公开为队友背书（仅在局势明确有利、己方占优时才用，不要首夜盲目冲锋）；"
-            "⑤自刀银水位：首夜主动自刀骗取女巫解药，次日以银水高身份带队站边或反打真预言家（注意：需承担女巫不救直接阵亡的减员风险，须全队达成一致方可采用）。"
+            "⑤自刀银水位：首夜主动自刀骗取女巫解药，次日以银水高身份带队站边或反打真预言家（注意：需承担女巫不救直接阵亡的减员风险，并须指定由谁担任刀口）。"
             "每位队员在计划里应有明确分工，绝不要全员集体压注同一路线。计划会同步给全体队友。\n"
-            "- 今晚落刀目标既可选择好人，也可由队员提议自刀战术；全队应权衡女巫开药概率与减员风险，达成一致后再执行。\n"
+            "- 今晚落刀目标既可选择好人，也可由队员提议自刀战术；自刀、刀队友与普通刀口同权参与计票。\n"
             "- 当所有狼队友都认可同一个目标后，讨论会提前结束。\n"
+            + self._advocate_clause(state, seat)
             + _night_notice(state)
             + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤400字)", '
             '"preferred_target": 座位号或null, "day_plan": "次日白天配合计划(≤400字，可空)"} '
@@ -447,6 +464,7 @@ class NightDirector:
         system = (
             self._system_prefix(state)
             + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
+            + persona_line(state.game_id, seat) + " "
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "
             + self._self_kill_clause(state, seat)
@@ -458,6 +476,7 @@ class NightDirector:
             f"第{state.round_number}晚狼队投票。"
             f"{self._teammates_clause(state, seat)}"
             f"场上存活玩家：{alive}。\n"
+            + "局势距离：" + stakes_text(state, seat) + "\n"
             + self._fallback_hint(random_hint) + ""
             f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
             f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
