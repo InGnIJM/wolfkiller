@@ -426,7 +426,7 @@ export const en: typeof zh = {
     resetBoard: 'Reset to board',
     addRole: 'Add roles',
     statTotal: 'Total',
-    statTotalSuffix: '',
+    statTotalSuffix: 'players',
     statWolf: 'Wolves',
     statGood: 'Good',
     statThird: 'Third party',
