@@ -120,7 +120,7 @@ export const NIGHT_ACTION_VERBS: Record<NightActionType, string> = {
 };
 
 /** 定序王子作废当轮放逐票后，同轮 ``exiled_seat === null`` 的票型文案。 */
-export const VOTE_REWOUND_RESULT = '放逐投票作废，重新投票';
+export const VOTE_REWOUND_RESULT: string = '放逐投票作废，重新投票';
 
 /**
  * 觉醒女巫协助者表态（`awakened_witch_assist_vote.vote`）。
@@ -313,7 +313,7 @@ export const THOUGHT_ROLE_NAMES: Record<ThoughtActionType, string> = {
  * 于是上帝视角把引擎的报错读成了玩家的内心独白。现在这条动作由 `degraded` 标记，
  * 眉标换成中性说法，读者一眼能看出「这轮不是他决定的」。
  */
-export const DEGRADED_ACTION_LABEL = '系统代行';
+export const DEGRADED_ACTION_LABEL: string = '系统代行';
 
 /**
  * 编年史条目的短标签。**独立于死因表**：同一个事件类型（例如 `self_explode`）
@@ -467,3 +467,72 @@ export const KNOWLEDGE_LABELS: Record<string, string> = {
   has_gun: '枪',
   last_wolf_kill_target: '昨夜狼刀目标',
 };
+
+// ── 角色名 ────────────────────────────────────────────────────
+
+/**
+ * 角色 id → 短名的唯一来源（键开放：后端 catalog 可以新增角色）。
+ *
+ * 这份表接管了原先 `roleMeta.ts` 里 `ROLE_ROWS` 的 label 列 —— 文案统一
+ * 回 labels 体系，多语言由 `i18n/labelsEn.ts` 的同形表镜像；roleMeta
+ * 只保留配色 / 底色 / 立绘这些与语言无关的视觉元数据。
+ */
+export const ROLE_NAME_LABELS: Record<string, string> = {
+  'wolf-killer-werewolf': '狼人',
+  'wolf-killer-witch': '女巫',
+  'wolf-killer-awakened-witch': '觉醒女巫',
+  'wolf-killer-seer': '预言家',
+  'wolf-killer-hunter': '猎人',
+  'wolf-killer-awakened-hunter': '觉醒猎人',
+  'wolf-killer-villager': '平民',
+  'wolf-killer-guard': '守卫',
+  'wolf-killer-idiot': '白痴',
+  'wolf-killer-werewolf-king': '白狼王',
+  'wolf-killer-wolf-king': '狼王',
+  'wolf-killer-awakened-wolf-king': '觉醒狼王',
+  'wolf-killer-evil-knight': '恶夜骑士',
+  'wolf-killer-dream-weaver': '摄梦人',
+  'wolf-killer-gargoyle': '石像鬼',
+  'wolf-killer-gravekeeper': '守墓人',
+  'wolf-killer-knight': '骑士',
+  'wolf-killer-wolf-beauty': '狼美人',
+  'wolf-killer-awakened-wolf-beauty': '觉醒狼美人',
+  'wolf-killer-old-drunkard': '老酒鬼',
+  'wolf-killer-lonely-girl': '孤独少女',
+  'wolf-killer-awakened-seer': '觉醒预言家',
+  'wolf-killer-fragrance-phantom': '寻香魅影',
+  'wolf-killer-pure-white': '纯白之女',
+  'wolf-killer-wolf-witch': '狼巫',
+  'wolf-killer-crimson-envoy': '赤月使徒',
+  'wolf-killer-nightmare': '噩梦之影',
+  'wolf-killer-mask': '假面',
+  'wolf-killer-demon-hunter': '猎魔人',
+  'wolf-killer-dancer': '舞者',
+  'wolf-killer-miracle-merchant': '奇迹商人',
+  'wolf-killer-mirror-girl': '魔镜少女',
+  'wolf-killer-awakened-hidden-wolf': '觉醒隐狼',
+  'wolf-killer-radiance-earl': '流光伯爵',
+  'wolf-killer-eclipse-maid': '蚀日侍女',
+  'wolf-killer-time-wolf': '蚀时狼妃',
+  'wolf-killer-order-prince': '定序王子',
+  'wolf-killer-fool-seer': '愚言家',
+  'wolf-killer-iron-villager': '铁好人',
+  'wolf-killer-crow': '乌鸦',
+  'wolf-killer-cupid': '丘比特',
+  'wolf-killer-admirer': '暗恋者',
+};
+
+/** 角色短名；未登记返回 `undefined`，调用方显示「未知身份」。 */
+export function roleName(roleId: string | null | undefined): string | undefined {
+  if (!roleId) return undefined;
+  return ROLE_NAME_LABELS[roleId];
+}
+
+/** 上帝视角按座位读快照上的真实身份短名；座位或角色未知时不猜。 */
+export function roleLabelForSeat(
+  seat: number | null | undefined,
+  players: Record<number, { role?: string }> | undefined,
+): string | undefined {
+  if (seat == null || players == null) return undefined;
+  return roleName(players[seat]?.role);
+}

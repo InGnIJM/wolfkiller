@@ -6,11 +6,14 @@ export default defineConfig({
   plugins: [react()],
   test: {
     exclude: [...configDefaults.exclude, 'e2e/**'],
+    setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text'],
       include: [
         'src/labels.ts',
+        'src/i18n/useLabels.ts',
+        'src/store/uiSettingsStore.ts',
         'src/store/gameStore.ts',
         'src/store/benchmarkStore.ts',
         'src/api/websocket.ts',

@@ -1,0 +1,98 @@
+import { zh } from './zh';
+
+/**
+ * English resource tree. Declared as `typeof zh` so tsc enforces that every
+ * key in the Chinese tree exists here with the same shape — a missing or
+ * extra key is a compile error, not a runtime surprise.
+ */
+export const en: typeof zh = {
+  common: {
+    confirm: 'OK',
+    cancel: 'Cancel',
+    close: 'Close',
+    save: 'Save',
+    delete: 'Delete',
+    back: 'Back',
+    loading: 'Loading',
+    unknown: 'Unknown',
+    seatNumber: 'Seat {{seat}}',
+    enabled: 'On',
+    disabled: 'Off',
+    unknownRole: 'Unknown role',
+  },
+  nav: {
+    subtitle: 'CRIMSON THEATER · AI WEREWOLF',
+    rules: 'Rules',
+    benchmarks: 'Benchmarks',
+    models: 'Models',
+    settings: 'Settings',
+  },
+  settings: {
+    title: 'Settings',
+    appearance: 'Appearance',
+    language: 'Language',
+    languageFollowSystem: 'Follow system',
+    themeMode: 'Theme',
+    themeFollowSystem: 'Follow system',
+    themeDark: 'Dark',
+    themeLight: 'Light',
+    loadingAria: 'Loading settings',
+    promptCapture: {
+      title: 'Training corpus capture (raw LLM prompts)',
+      switchLabel: 'Capture raw LLM prompts',
+      status: 'Status: {{value}}',
+      source: {
+        ui: 'Controlled by this page (PROMPT_CAPTURE_ENABLED is ignored)',
+        env: 'Controlled by the PROMPT_CAPTURE_ENABLED environment variable (read at backend startup; restart required)',
+        default: 'On by default (no UI setting and no environment variable)',
+      },
+      notesTitle: 'What this switch does',
+      notes: [
+        {
+          lead: 'Purpose',
+          body: 'Pairs the exact prompt sent to each seat\'s model (full system + user text) with its reply into (prompt, completion) training pairs for fine-tuning a small local model later. It only writes files and changes no game logic.',
+        },
+        {
+          lead: 'Where it writes',
+          body: 'backend/data/games/<game ID>/llm_prompts.jsonl — one file per game, alongside game.log and llm_calls.log. Append-only; never overwritten or auto-cleaned.',
+        },
+        {
+          lead: 'Disk usage',
+          body: 'Measured over 163 local games (source: prompt_chars in each game\'s llm_calls.log): a typical game is ~2.3 MB (median 1.42M prompt chars across ~116 records); most games fall in 1.4–3.0 MB; long games with many calls reach 6–26 MB. Turn this off if disk is tight, or delete data/games/<id>/ you no longer need.',
+        },
+        {
+          lead: 'When it applies',
+          body: 'Only to newly created games. Running or interrupted games keep the setting they started with: on stays on until the game ends, off stays off. This is deliberate — a half-captured corpus is hard to train on. So after switching off, in-flight games keep writing until they finish.',
+        },
+        {
+          lead: 'Impact of turning off',
+          body: 'None. Speeches, votes, night actions, resume and replay all work as before — no new capture files are produced (not a single byte).',
+        },
+        {
+          lead: 'Does it write secrets',
+          body: 'No. Only prompt bodies and light metadata (round, phase, seat, model name, request ID) are persisted; API keys and custom headers never enter these files.',
+        },
+        {
+          lead: 'Stop one game right now',
+          body: 'Pause the game → delete its llm_prompts.jsonl → resume it (resume ignores this switch and only checks whether the file exists). Note the game then keeps only its first half of corpus; the file cannot be deleted while the game is running (handle is open), so pause or interrupt first.',
+        },
+      ],
+      revertToEnv: 'Revert to environment variable',
+      feedbackEnabled: 'Enabled: capture starts with the next newly created game.',
+      feedbackDisabled: 'Disabled: new games will not be captured; running games stop at the end of their current game.',
+      feedbackFollowEnv: 'Reverted to following PROMPT_CAPTURE_ENABLED (currently: {{value}}).',
+    },
+    autoReview: {
+      title: 'Automatic post-game review (god view)',
+      switchLabel: 'Generate a post-game review when a game ends',
+      description: 'After a normal game ends, a two-stage god-view review runs automatically and writes review.json (benchmark games skip auto-generation; you can still trigger it manually from the game page).',
+      feedbackEnabled: 'Automatic post-game review enabled.',
+      feedbackDisabled: 'Automatic post-game review disabled (you can still trigger it manually on the game page).',
+    },
+  },
+  errors: {
+    invalidAudienceSeq: 'Received an invalid audience event sequence number; the event was not applied.',
+    seqConflict: 'Event sequence {{seq}} conflicts; waiting to re-sync.',
+    incompleteBenchmarkPage: 'Benchmark games page is incomplete; please retry.',
+  },
+};
