@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
+import type { LabelsModule } from '../../i18n/useLabels';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
@@ -6,7 +9,6 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 
-import { WINNING_CAMP_LABELS } from '../../labels';
 import type { RoleCatalogItem, WinningCamp } from '../../store/types';
 import { BLOOD_MOON, HAIRLINE, INK } from '../../theme/tokens';
 import RolePortrait from '../shared/RolePortrait';
@@ -14,9 +16,9 @@ import { rankOf } from '../shared/roleMeta';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
-function campLabel(camp: string): string {
-  return camp in WINNING_CAMP_LABELS
-    ? WINNING_CAMP_LABELS[camp as WinningCamp]
+function campLabel(camp: string, L: LabelsModule): string {
+  return camp in L.WINNING_CAMP_LABELS
+    ? L.WINNING_CAMP_LABELS[camp as WinningCamp]
     : camp;
 }
 
@@ -36,6 +38,8 @@ interface Props {
 export default function AddRoleDialog({
   open, candidates, onClose, onConfirm,
 }: Props) {
+  const { t } = useTranslation();
+  const L = useLabels();
   const [rawQuery, setRawQuery] = useState('');
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -86,17 +90,17 @@ export default function AddRoleDialog({
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth aria-labelledby="add-role-title">
       <DialogTitle id="add-role-title" sx={{ pb: 0.5 }}>
-        添加角色
+        {t('create.addRoleTitle')}
         <IconButton
           size="small"
-          aria-label="关闭"
+          aria-label={t('create.close')}
           onClick={onClose}
           sx={{ position: 'absolute', right: 12, top: 12 }}
         >
           <CloseIcon fontSize="small" />
         </IconButton>
         <Typography variant="caption" sx={{ display: 'block', color: INK.faint, mt: 0.5 }}>
-          已选中 {picked.size} 个 · 当前板子已有 {candidates.length === 0 ? '全部' : ''} 角色不再列出
+          {t('create.pickedCount', { picked: picked.size, existing: candidates.length === 0 ? t('create.allRoles') : '' })}
         </Typography>
       </DialogTitle>
 
@@ -104,11 +108,11 @@ export default function AddRoleDialog({
         <TextField
           value={rawQuery}
           onChange={(event) => setRawQuery(event.target.value)}
-          placeholder="搜索角色…"
+          placeholder={t('create.searchRole')}
           size="small"
           fullWidth
           slotProps={{
-            htmlInput: { 'aria-label': '搜索角色' },
+            htmlInput: { 'aria-label': t('create.searchRoleAria') },
             input: {
               startAdornment: (
                 <InputAdornment position="start">
@@ -123,12 +127,12 @@ export default function AddRoleDialog({
           {groups.length === 0 && (
             <Box sx={{ py: 3, textAlign: 'center' }}>
               <Typography variant="body2" sx={{ color: INK.dim }}>
-                没有可添加的角色
+                {t('create.noAddableRoles')}
               </Typography>
               <Typography variant="caption" sx={{ color: INK.faint }}>
                 {candidates.length === 0
-                  ? '全部角色都已经在这个板子里了'
-                  : '换个关键词试试'}
+                  ? t('create.allRolesAdded')
+                  : t('create.tryAnotherKeyword')}
               </Typography>
             </Box>
           )}
@@ -142,7 +146,7 @@ export default function AddRoleDialog({
                   letterSpacing: '0.08em', fontWeight: 600,
                 }}
               >
-                {campLabel(camp)} · {items.length}
+                {campLabel(camp, L)} · {items.length}
               </Typography>
               <Stack spacing={0.5}>
                 {items.map((role) => {
@@ -187,14 +191,14 @@ export default function AddRoleDialog({
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button color="inherit" onClick={onClose}>取消</Button>
+        <Button color="inherit" onClick={onClose}>{t('common.cancel')}</Button>
         <Button
           variant="contained"
           disableElevation
           disabled={picked.size === 0}
           onClick={() => onConfirm([...picked])}
         >
-          添加 {picked.size} 个角色
+          {t('create.addNRoles', { count: picked.size })}
         </Button>
       </DialogActions>
     </Dialog>

@@ -15,6 +15,7 @@ import type {
 import { BACKDROP } from '../../theme/tokens';
 
 export default function CreateGameWizard() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>({});

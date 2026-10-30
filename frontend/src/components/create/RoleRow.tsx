@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 import { Box, Chip, IconButton, Stack, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 
-import { WINNING_CAMP_LABELS } from '../../labels';
 import type { RoleCatalogItem, WinningCamp } from '../../store/types';
 import { BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
 import RolePortrait from '../shared/RolePortrait';
@@ -22,10 +22,12 @@ interface Props {
 export default function RoleRow({
   role, count, added = false, canIncrement, canDecrement, onChange,
 }: Props) {
+  const { t } = useTranslation();
+  const L = useLabels();
   const wolf = role.camp === 'werewolf';
   const campColor = wolf ? BLOOD_MOON.crimson : INK.dim;
-  const campText = role.camp in WINNING_CAMP_LABELS
-    ? WINNING_CAMP_LABELS[role.camp as WinningCamp]
+  const campText = role.camp in L.WINNING_CAMP_LABELS
+    ? L.WINNING_CAMP_LABELS[role.camp as WinningCamp]
     : role.camp;
 
   return (
