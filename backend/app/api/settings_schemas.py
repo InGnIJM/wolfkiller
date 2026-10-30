@@ -30,3 +30,8 @@ class PromptCaptureSettingsRequest(BaseModel):
     #: ``None`` (or an absent field) clears the interface override, which hands
     #: control back to the environment variable and then the built-in default.
     enabled: Optional[Annotated[bool, Field(strict=True)]] = None
+
+
+AutoReviewSettingsResponse = PromptCaptureSettingsResponse
+AutoReviewSettingsRequest = PromptCaptureSettingsRequest
+

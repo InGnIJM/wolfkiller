@@ -26,12 +26,29 @@ logger = logging.getLogger(__name__)
 
 SETTINGS_FILENAME = "settings.json"
 APP_SETTINGS_PATH_ENV = "APP_SETTINGS_PATH"
+AUTO_REVIEW_ENV = "AUTO_REVIEW_ENABLED"
 _PROMPT_CAPTURE_KEY = "prompt_capture_enabled"
+_AUTO_REVIEW_KEY = "auto_review_enabled"
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def resolve_auto_review_setting(
+    stored: Optional[bool],
+) -> tuple[bool, str]:
+    """Return ``(enabled, source)`` where source is ``ui``, ``env``, or ``default``."""
+    if type(stored) is bool:
+        return stored, "ui"
+    raw = os.getenv(AUTO_REVIEW_ENV)
+    if raw is not None and raw.strip():
+        return raw.strip().lower() in _TRUTHY, "env"
+    return True, "default"
 
 
 class AppSettingsStore(Protocol):
     def get_prompt_capture_enabled(self) -> Optional[bool]: ...
     def set_prompt_capture_enabled(self, enabled: Optional[bool]) -> None: ...
+    def get_auto_review_enabled(self) -> Optional[bool]: ...
+    def set_auto_review_enabled(self, enabled: Optional[bool]) -> None: ...
 
 
 class JsonAppSettingsStore:
@@ -59,6 +76,20 @@ class JsonAppSettingsStore:
                 settings.pop(_PROMPT_CAPTURE_KEY, None)
             else:
                 settings[_PROMPT_CAPTURE_KEY] = enabled
+            self._write(settings)
+
+    def get_auto_review_enabled(self) -> Optional[bool]:
+        with self._lock:
+            value = self._read().get(_AUTO_REVIEW_KEY)
+        return value if type(value) is bool else None
+
+    def set_auto_review_enabled(self, enabled: Optional[bool]) -> None:
+        with self._lock:
+            settings = self._read()
+            if enabled is None:
+                settings.pop(_AUTO_REVIEW_KEY, None)
+            else:
+                settings[_AUTO_REVIEW_KEY] = enabled
             self._write(settings)
 
     def _read(self) -> dict:
