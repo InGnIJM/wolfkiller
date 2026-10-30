@@ -1,5 +1,7 @@
+import anthropic
 from langchain_anthropic import ChatAnthropic
 from langchain_anthropic._client_utils import (
+    _AsyncHttpxClientWrapper, _SyncHttpxClientWrapper,
     _get_default_async_httpx_client, _get_default_httpx_client,
 )
 from langchain_core.language_models import BaseChatModel
@@ -53,6 +55,8 @@ class AnthropicMessagesTransport:
         profile: ProviderProfile,
         purpose: CallPurpose,
         chat_model_factory=None,
+        *,
+        dedicated_http_clients: bool = False,
     ) -> BaseChatModel:
         budget = call_budget(config, purpose)
         kwargs = {
@@ -71,7 +75,33 @@ class AnthropicMessagesTransport:
         if headers:
             kwargs["default_headers"] = headers
         factory = chat_model_factory or ChatAnthropic
-        return factory(**kwargs)
+        model = factory(**kwargs)
+        if dedicated_http_clients and isinstance(model, ChatAnthropic):
+            self._inject_dedicated_http_clients(model)
+        return model
+
+    @staticmethod
+    def _inject_dedicated_http_clients(model: ChatAnthropic) -> None:
+        """Swap the shared-pool SDK clients for private ones.
+
+        ``ChatAnthropic`` resolves ``_client``/``_async_client`` lazily through
+        LangChain's process-wide per-(base_url, timeout) cache. Pre-seeding
+        the cached properties keeps the close path identical while the pool
+        belongs to this model alone, so LLMClient.aclose() cannot kill
+        sibling clients still using the shared pool.
+        """
+        params = model._client_params
+        http_params = {
+            "base_url": params["base_url"],
+            "timeout": params["timeout"],
+            "proxy": model.anthropic_proxy,
+        }
+        model.__dict__["_client"] = anthropic.Client(
+            **params, http_client=_SyncHttpxClientWrapper(**http_params),
+        )
+        model.__dict__["_async_client"] = anthropic.AsyncClient(
+            **params, http_client=_AsyncHttpxClientWrapper(**http_params),
+        )
 
     @staticmethod
     def discard_shared_http_clients() -> None:

@@ -37,6 +37,7 @@ from app.agents.providers.errors import (  # noqa: F401
     SERVER_ERRORS,
     TIMEOUT_ERRORS,
     TRANSIENT_PROVIDER_ERRORS,
+    ProviderDeadlineTimeout,
     classify_provider_error,
     is_refused_error,
     status_code_of,
@@ -336,6 +337,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float | None = None,
         config: LLMClientConfig | None = None,
+        dedicated_http_clients: bool = False,
     ):
         base_config = config if config is not None else env_default_client_config()
         self._config = replace(
@@ -358,6 +360,10 @@ class LLMClient:
             self.model_name,
         )
         self._transport = transport_for(self.provider_profile)
+        #: Clients that may close while sibling clients still need the shared
+        #: httpx pool (one-shot commentary/review/probe clients, and game
+        #: seats at game end) must own private pools instead.
+        self._dedicated_http_clients = dedicated_http_clients
         # One ChatModel per (purpose, config) instead of one per call: every
         # build creates a fresh httpx SDK client, and unclosed clients
         # segfault the interpreter at shutdown on Windows.
@@ -374,6 +380,17 @@ class LLMClient:
     def prefers_json_actions(self) -> bool:
         """Whether later actions should skip the native action tool."""
         return self._prefers_json_actions
+
+    @property
+    def provider_key(self) -> str:
+        """Stable identity for the provider-health breaker.
+
+        Includes the resolved profile and base URL, not just the model id: two
+        seats can share ``gemini-3.8-flash`` through different gateways and one
+        gateway can be down while the other is healthy.
+        """
+        profile = getattr(self.provider_profile, "profile_id", "unknown")
+        return f"{profile}|{self._config.base_url}|{self.model_name}"
 
     def note_action_tools_unsupported(self) -> None:
         """Remember that this provider will not do native action tools."""
@@ -409,6 +426,7 @@ class LLMClient:
                 self.provider_profile,
                 purpose,
                 chat_model_factory=factory,
+                dedicated_http_clients=self._dedicated_http_clients,
             )
             self._built_models[key] = model
         return model
@@ -494,32 +512,66 @@ class LLMClient:
         return asdict(self.provider_profile.capabilities)
 
     @staticmethod
-    def _complete(model, messages):
+    def _complete(model, messages, *, timeout: float | None = None):
         """Run one model call over HTTP streaming when the type supports it.
 
         ``ChatOpenAI.stream`` posts ``stream: true``, which Antigravity maps
         to ``streamGenerateContent``; ``.invoke`` uses the tighter
         ``generateContent`` bucket and 429s the account pool. Types that only
         implement ``invoke`` (test doubles) keep that path.
+
+        ``timeout`` is a wall-clock budget for the whole call, not a per-read
+        timeout. ``ChatOpenAI``'s own timeout is applied by httpx per request
+        and per read, so a model that trickles chunks can exceed the declared
+        action budget indefinitely; a pipeline action that did so in the
+        2026-10-27 game took 130s against a 125s budget. The check below runs
+        after every chunk; a non-streaming ``invoke`` can only be checked after
+        it returns, which is enough for the test doubles and legacy types.
         """
+        started = time.monotonic()
+
+        def exceeded() -> bool:
+            return timeout is not None and time.monotonic() - started > timeout
+
         if _type_defines(model, "stream"):
             acc = None
             for chunk in model.stream(messages):
+                if exceeded():
+                    raise ProviderDeadlineTimeout(
+                        f"model stream exceeded wall-clock budget {timeout}s"
+                    )
                 acc = chunk if acc is None else acc + chunk
             return acc if acc is not None else AIMessage(content="")
-        return model.invoke(messages)
+        response = model.invoke(messages)
+        if exceeded():
+            raise ProviderDeadlineTimeout(
+                f"model call exceeded wall-clock budget {timeout}s"
+            )
+        return response
 
     @staticmethod
     async def _acomplete(
         model, messages,
         on_chunk: Callable[[str], Awaitable[None]] | None = None,
+        *,
+        timeout: float | None = None,
     ):
         """Async counterpart of :meth:`_complete`; always astream when present."""
-        if _type_defines(model, "astream"):
-            return await LLMClient._stream_and_accumulate(
-                model, messages, on_chunk=on_chunk,
-            )
-        return await model.ainvoke(messages)
+        try:
+            if _type_defines(model, "astream"):
+                stream = LLMClient._stream_and_accumulate(
+                    model, messages, on_chunk=on_chunk,
+                )
+                if timeout is None:
+                    return await stream
+                return await asyncio.wait_for(stream, timeout=timeout)
+            if timeout is None:
+                return await model.ainvoke(messages)
+            return await asyncio.wait_for(model.ainvoke(messages), timeout=timeout)
+        except asyncio.TimeoutError as error:
+            raise ProviderDeadlineTimeout(
+                f"model async call exceeded wall-clock budget {timeout}s"
+            ) from error
 
     @staticmethod
     def map_strict_capability_error(error: Exception) -> Exception:
@@ -694,6 +746,20 @@ class LLMClient:
             )
         return result
 
+    def _action_wall_clock_timeout(self) -> float:
+        """Wall-clock budget for one structured action/JSON call.
+
+        Mirrors ``providers.base.call_budget`` for ACTION_PURPOSES: the larger
+        of the first/retry budgets plus 5s of headroom. The value is passed to
+        ``_complete``/``_acomplete`` as a total deadline, not as an httpx
+        per-read timeout.
+        """
+        first = float(getattr(self, "action_timeout_seconds", 90.0) or 90.0)
+        retry = float(
+            getattr(self, "action_retry_timeout_seconds", 120.0) or 120.0
+        )
+        return max(first, retry) + 5.0
+
     def invoke_action(self, messages, contract: ActionContract) -> StructuredResponse:
         """Invoke one action contract through native tools with JSON fallback.
 
@@ -709,6 +775,7 @@ class LLMClient:
                 attempts += 1
                 response = self._complete(
                     self.get_model_with_action_tool(contract), messages,
+                    timeout=self._action_wall_clock_timeout(),
                 )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(
@@ -724,14 +791,20 @@ class LLMClient:
                 )
                 self.note_action_tools_unsupported()
                 attempts += 1
-                response = self._complete(self.get_action_model(), messages)
+                response = self._complete(
+                    self.get_action_model(), messages,
+                    timeout=self._action_wall_clock_timeout(),
+                )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
                 )
         else:
             attempts += 1
-            response = self._complete(self.get_action_model(), messages)
+            response = self._complete(
+                self.get_action_model(), messages,
+                timeout=self._action_wall_clock_timeout(),
+            )
             usage = merge_usage(usage, extract_usage(response))
             result = self._structured_response(
                 response, contract.resolved_tool_name,
@@ -758,6 +831,7 @@ class LLMClient:
                 attempts += 1
                 response = self._complete(
                     self.get_model_with_json_tool(tool_name, schema), messages,
+                    timeout=self._action_wall_clock_timeout(),
                 )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
@@ -777,11 +851,17 @@ class LLMClient:
                     type(error).__name__,
                 )
                 attempts += 1
-                response = self._complete(self.get_action_model(), messages)
+                response = self._complete(
+                    self.get_action_model(), messages,
+                    timeout=self._action_wall_clock_timeout(),
+                )
                 usage = merge_usage(usage, extract_usage(response))
         else:
             attempts += 1
-            response = self._complete(self.get_action_model(), messages)
+            response = self._complete(
+                self.get_action_model(), messages,
+                timeout=self._action_wall_clock_timeout(),
+            )
             usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)
         result = self._require_schema_fields(result, schema)
@@ -854,6 +934,7 @@ class LLMClient:
                 model = self.get_model_with_json_tool(tool_name, schema)
                 response = await self._acomplete(
                     model, messages, on_chunk=on_chunk,
+                    timeout=self._action_wall_clock_timeout(),
                 )
                 usage = merge_usage(usage, extract_usage(response))
                 result = self._structured_response(response, tool_name)
@@ -876,6 +957,7 @@ class LLMClient:
         action_model = self.get_action_model()
         response = await self._acomplete(
             action_model, messages, on_chunk=on_chunk,
+            timeout=self._action_wall_clock_timeout(),
         )
         usage = merge_usage(usage, extract_usage(response))
         result = self._structured_response(response, tool_name)

@@ -1,3 +1,4 @@
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessageChunk
 from langchain_openai import ChatOpenAI as _LangChainChatOpenAI
@@ -61,6 +62,8 @@ class OpenAICompatibleTransport:
         profile: ProviderProfile,
         purpose: CallPurpose,
         chat_model_factory=None,
+        *,
+        dedicated_http_clients: bool = False,
     ) -> BaseChatModel:
         budget = call_budget(config, purpose)
         kwargs = {
@@ -68,7 +71,14 @@ class OpenAICompatibleTransport:
             "api_key": config.api_key,
             "base_url": config.base_url,
             "max_tokens": budget.max_tokens,
-            "timeout": budget.timeout,
+            # An unhashable timeout makes the SDK skip its process-wide
+            # per-(base_url, timeout) httpx cache: the model then owns a
+            # private pool that LLMClient.aclose() may close without killing
+            # sibling clients still holding the shared one.
+            "timeout": (
+                httpx.Timeout(budget.timeout)
+                if dedicated_http_clients else budget.timeout
+            ),
             "max_retries": provider_max_retries(),
         }
         if purpose is CallPurpose.ACTION_STRICT and profile.strict_endpoint:
