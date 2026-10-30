@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import i18n from '../i18n';
 import * as api from '../api/client';
 import type {
   BatchDeleteResult, BenchmarkCreateInput, BenchmarkItem, BenchmarkReport, BenchmarkRun,
@@ -38,7 +39,7 @@ async function loadAllGames(runId: string): Promise<BenchmarkItem[]> {
     const page = await api.fetchBenchmarkGames(runId, games.length, limit);
     games.push(...page.games);
     if (page.total !== undefined ? games.length >= page.total : page.games.length < limit) return games;
-    if (page.games.length === 0) throw new Error('评测对局分页不完整，请重试。');
+    if (page.games.length === 0) throw new Error(i18n.t('errors.incompleteBenchmarkPage'));
   }
 }
 

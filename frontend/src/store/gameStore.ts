@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+
+import i18n from '../i18n';
 import type {
   AudienceEvent,
   AudienceEventPage,
@@ -767,13 +769,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let streamError = state.streamError;
     for (const event of page.events) {
       if (!Number.isInteger(event.seq) || event.seq <= 0) {
-        streamError = '收到无效的观众事件序号，已停止应用该事件。';
+        streamError = i18n.t('errors.invalidAudienceSeq');
         continue;
       }
       if (event.seq <= state.audienceCursor) continue;
       const existing = pending[event.seq];
       if (existing && existing.event_id !== event.event_id) {
-        streamError = `事件序号 ${event.seq} 存在冲突，等待重新同步。`;
+        streamError = i18n.t('errors.seqConflict', { seq: event.seq });
         continue;
       }
       pending[event.seq] = event;

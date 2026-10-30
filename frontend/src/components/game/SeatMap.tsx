@@ -5,6 +5,7 @@ import { fetchRoleCatalog } from '../../api/client';
 import type { GamePhase, ModelSnapshotEntry, PublicPlayerState, RoleCatalogItem } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
 import { ROLE_COLORS, BLOOD_MOON, CANVAS, HAIRLINE, ON_ACCENT, SHADOW } from '../../theme/tokens';
+import { useTranslation } from 'react-i18next';
 import { useLabels } from '../../i18n/useLabels';
 import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
@@ -26,8 +27,6 @@ function toRoman(seat: number): string {
 
 /** 竞选期座位归属：警上（已上警）/ 警下（未上警、握有警长投票权） */
 type BadgeSide = 'on' | 'off';
-
-const BADGE_SIDE_LABEL: Record<BadgeSide, string> = { on: '警上', off: '警下' };
 
 interface Props {
   players: Record<number, PublicPlayerState>;
@@ -75,10 +74,11 @@ function PublicSeat({
   badgeSide?: BadgeSide;
   catalog: ReadonlyMap<string, RoleCatalogItem>;
 }) {
+  const { t } = useTranslation();
   const L = useLabels();
   const badge = roleMetaFor(player.role);
   const badgeLabel = L.roleName(player.role);
-  const status = !player.is_alive ? '出局' : player.can_vote === false ? '存活·无投票权' : '存活';
+  const status = !player.is_alive ? t('game.dead') : player.can_vote === false ? t('game.aliveNoVote') : t('game.alive');
   const accent = badge?.color ?? (
     player.camp === 'werewolf' ? ROLE_COLORS.werewolf.color
       : player.camp === 'good' ? ROLE_COLORS.villager.color
@@ -101,8 +101,8 @@ function PublicSeat({
     `${seat}号`,
     badgeLabel,
     status,
-    badgeSide ? BADGE_SIDE_LABEL[badgeSide] : '',
-    player.is_sheriff ? '警长' : '',
+    badgeSide ? t(badgeSide === 'on' ? 'game.onBadge' : 'game.offBadge') : '',
+    player.is_sheriff ? t('game.sheriff') : '',
   ].filter(Boolean).join(' ');
   const catalogEntry = player.role ? catalog.get(player.role) : undefined;
 
@@ -198,7 +198,7 @@ function PublicSeat({
             whiteSpace: 'nowrap',
           }}
         >
-          警长
+          {t('game.sheriff')}
         </Typography>
       )}
       {!player.is_alive && (
@@ -273,7 +273,7 @@ function PublicSeat({
                       }),
                 }}
               >
-                {BADGE_SIDE_LABEL[badgeSide]}
+                {t(badgeSide === 'on' ? 'game.onBadge' : 'game.offBadge')}
               </Typography>
             )}
           </Box>

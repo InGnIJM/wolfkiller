@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, IconButton, Typography, LinearProgress, Chip } from '@mui/material';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -6,11 +7,13 @@ import PauseIcon from '@mui/icons-material/Pause';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
 import LiveTvIcon from '@mui/icons-material/LiveTv';
 import { useGameStore, isAtTimelineEnd } from '../../store/gameStore';
-import { PHASE_LABELS } from '../../labels';
+import { useLabels } from '../../i18n/useLabels';
 
 const SPEEDS = [0.5, 1, 2, 4, 8];
 
 export default function TimelineController() {
+  const { t } = useTranslation();
+  const L = useLabels();
   const {
     timeline, timelineIndex, isPlaying, playSpeed,
     stepBack, play, pause, stepForward, setSpeed, seekTo,
@@ -19,7 +22,7 @@ export default function TimelineController() {
 
   const total = timeline.length;
   const progress = total > 0 ? ((timelineIndex + 1) / total) * 100 : 0;
-  const currentPhaseLabel = PHASE_LABELS[phase] || phase;
+  const currentPhaseLabel = L.PHASE_LABELS[phase] || phase;
   const isAtEnd = isAtTimelineEnd(timeline, timelineIndex);
 
   useEffect(() => {
@@ -75,12 +78,12 @@ export default function TimelineController() {
           borderColor: 'divider',
         }}
       >
-        <IconButton aria-label="上一个事件" size="small" onClick={stepBack} disabled={timelineIndex <= 0}>
+        <IconButton aria-label={t('game.previousEvent')} size="small" onClick={stepBack} disabled={timelineIndex <= 0}>
           <SkipPreviousIcon fontSize="small" />
         </IconButton>
 
         <IconButton
-          aria-label={isPlaying ? '暂停' : '播放'}
+          aria-label={t(isPlaying ? 'game.pause' : 'game.play')}
           size="small"
           color={isPlaying ? 'primary' : 'default'}
           onClick={isPlaying ? pause : play}
@@ -89,7 +92,7 @@ export default function TimelineController() {
           {isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
         </IconButton>
 
-        <IconButton aria-label="下一个事件" size="small" onClick={stepForward} disabled={isAtEnd}>
+        <IconButton aria-label={t('game.nextEvent')} size="small" onClick={stepForward} disabled={isAtEnd}>
           <SkipNextIcon fontSize="small" />
         </IconButton>
 
@@ -118,7 +121,7 @@ export default function TimelineController() {
         {!isFollowingLive && (
           <Chip
             icon={<LiveTvIcon />}
-            label="回到直播"
+            label={t('game.backToLive')}
             size="small"
             color="primary"
             onClick={goLive}
@@ -127,8 +130,8 @@ export default function TimelineController() {
         )}
 
         <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto', fontSize: '0.8rem' }}>
-          第{roundNumber}轮 · {currentPhaseLabel}
-          {isPaused && ' (已暂停)'}
+          {t('game.roundAndPhase', { round: roundNumber, phase: currentPhaseLabel })}
+          {isPaused && t('game.pausedSuffix')}
         </Typography>
 
         <Typography variant="caption" color="text.disabled" sx={{ ml: 1.5, minWidth: 52, textAlign: 'right' }}>
@@ -137,11 +140,11 @@ export default function TimelineController() {
       </Box>
 
       <Box
-        aria-label="回放进度"
+        aria-label={t('game.replayProgress')}
         aria-valuemax={Math.max(0, total - 1)}
         aria-valuemin={0}
         aria-valuenow={Math.max(0, timelineIndex)}
-        aria-valuetext={total > 0 ? `第${timelineIndex + 1}条，共${total}条事件` : '暂无回放事件'}
+        aria-valuetext={total > 0 ? t('game.replayPosition', { current: timelineIndex + 1, total }) : t('game.noReplayEvents')}
         role="slider"
         tabIndex={0}
         sx={{
