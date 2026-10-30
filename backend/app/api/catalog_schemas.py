@@ -7,10 +7,13 @@ class RoleCatalogItem(BaseModel):
     role_id: str
     display_name: str
     name_zh: str
+    name_en: str | None = None
     camp: str
     icon: str
     description: str
+    description_en: str | None = None
     rules: list[str] = Field(default_factory=list)
+    rules_en: list[str] | None = None
     min_count: int
     max_count: int | None
     dependencies: list[str]
@@ -24,7 +27,9 @@ class RoleCatalogResponse(BaseModel):
 class PresetItem(BaseModel):
     id: str
     name: str
+    name_en: str | None = None
     description: str
+    description_en: str | None = None
     role_counts: dict[str, int]
     enable_sheriff: bool = False
     # Rule-set knob the wizard forwards verbatim into ``CreateGameRequest``.
