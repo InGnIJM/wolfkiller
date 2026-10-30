@@ -24,6 +24,7 @@ from app.services.audience_event_service import AudienceEventService
 from app.services.benchmark_game_executor import BenchmarkGameExecutor
 from app.services.benchmark_service import BenchmarkService
 from app.services.commentary_service import CommentaryService
+from app.services.game_export import GameExportService
 from app.services.game_service import GameService
 from app.services.memory_service import MemoryService
 from app.services.review_service import ReviewService
@@ -62,6 +63,11 @@ commentary_service = CommentaryService(
 review_service = ReviewService(
     repository=repository,
     data_dir=str(data_dir),
+)
+game_export_service = GameExportService(
+    repository=repository,
+    data_dir=str(data_dir),
+    game_service=game_service,
 )
 event_bus.subscribe(BusEvent.PHASE_CHANGED, commentary_service.on_phase_changed)
 event_bus.subscribe(BusEvent.GAME_OVER, commentary_service.on_game_over)
