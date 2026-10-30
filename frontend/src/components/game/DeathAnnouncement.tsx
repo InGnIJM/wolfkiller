@@ -16,9 +16,8 @@ import Whatshot from '@mui/icons-material/Whatshot';
 import type { SvgIconComponent } from '@mui/icons-material';
 import type { DeathRecord } from '../../store/types';
 import RolePortrait from '../shared/RolePortrait';
-import { roleMetaFor } from '../shared/roleMeta';
-import { DEATH_CAUSE_LABELS } from '../../labels';
-import { BACKDROP, HAIRLINE } from '../../theme/tokens';
+import { useLabels } from '../../i18n/useLabels';
+import { BACKDROP, BLOOD_MOON, HAIRLINE, ROLE_COLORS } from '../../theme/tokens';
 
 interface Props {
   deaths: DeathRecord[];
@@ -39,13 +38,13 @@ const CAUSE_ICONS: Record<string, SvgIconComponent> = {
 };
 
 export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
+  const L = useLabels();
   const latest = deaths[deaths.length - 1];
   if (!latest) return null;
 
-  const causeLabel = DEATH_CAUSE_LABELS[latest.cause] || latest.cause;
+  const causeLabel = L.DEATH_CAUSE_LABELS[latest.cause] || latest.cause;
   const Icon = CAUSE_ICONS[latest.cause] ?? PersonOff;
-  const revealed = roleMetaFor(revealedRole);
-  const roleLabel = revealed?.label ?? revealedRole ?? null;
+  const roleLabel = L.roleName(revealedRole) ?? revealedRole ?? null;
 
   return (
     <Dialog open maxWidth="xs" fullWidth aria-label="死亡公告">
@@ -70,10 +69,10 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
             borderRadius: '50%',
             display: 'grid',
             placeItems: 'center',
-            color: '#F6686C',
-            bgcolor: 'rgba(229,72,77,0.12)',
-            border: '1px solid rgba(229,72,77,0.35)',
-            boxShadow: '0 0 24px rgba(229,72,77,0.25)',
+            color: ROLE_COLORS.werewolf.color,
+            bgcolor: 'rgba(201,86,107,0.12)',
+            border: '1px solid rgba(201,86,107,0.35)',
+            boxShadow: '0 0 24px rgba(201,86,107,0.25)',
           }}
         >
           <Icon sx={{ fontSize: 30 }} />
@@ -82,7 +81,7 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
           {latest.player_seat}号玩家出局
         </Typography>
         {roleLabel && (
-          <Typography variant="body1" sx={{ fontWeight: 700, color: '#D4A853' }}>
+          <Typography variant="body1" sx={{ fontWeight: 700, color: BLOOD_MOON.gold }}>
             身份：{roleLabel}
           </Typography>
         )}

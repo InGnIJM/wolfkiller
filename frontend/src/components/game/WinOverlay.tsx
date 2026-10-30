@@ -58,7 +58,7 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
               letterSpacing: 4,
               color: CAMP_ACCENT[winResult.winning_camp],
               textShadow: winResult.winning_camp === 'werewolf'
-                ? '0 0 30px rgba(229,72,77,0.35)'
+                ? '0 0 30px rgba(201,86,107,0.35)'
                 : '0 0 30px rgba(212,168,83,0.3)',
             }}
           >

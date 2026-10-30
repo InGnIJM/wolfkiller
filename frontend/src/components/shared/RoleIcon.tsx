@@ -32,7 +32,8 @@ import Link from '@mui/icons-material/Link';
 import Loyalty from '@mui/icons-material/Loyalty';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { INK, ROLE_COLORS } from '../../theme/tokens';
-import { roleMetaFor } from './roleMeta';
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 
 interface Props {
   role: string | null;
@@ -86,10 +87,12 @@ const ROLE_ICONS: Record<string, { Icon: SvgIconComponent; color: string }> = {
 
 // 统一使用 Material Icons（@mui/icons-material），禁止 emoji 作为结构图标
 export default function RoleIcon({ role, size = 28 }: Props) {
+  const { t } = useTranslation();
+  const L = useLabels();
   if (!role) return null;
   const entry = ROLE_ICONS[role];
   const Icon = entry ? entry.Icon : Help;
-  const label = roleMetaFor(role)?.label ?? '未知身份';
+  const label = L.roleName(role) ?? t('common.unknownRole');
   const color = entry ? entry.color : INK.faint;
   return (
     <span

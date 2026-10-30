@@ -10,8 +10,8 @@ import {
   VOTE_REWOUND_RESULT, awakenedWitchPoisonResultLabel, awakenedWitchVoteLabel,
   thoughtActorName, voteRoundWasRewound,
 } from '../../labels';
-import { roleLabelForSeat } from '../shared/roleMeta';
-import { AVATAR_PALETTE, INK, ROLE_COLORS } from '../../theme/tokens';
+import { useLabels } from '../../i18n/useLabels';
+import { AVATAR_INK, AVATAR_PALETTE, BLOOD_MOON, ON_ACCENT, PLATE, ROLE_COLORS, SCRIM } from '../../theme/tokens';
 
 const livePulse = keyframes`
   0%, 100% { opacity: 0.4; transform: scale(0.85); }
@@ -70,7 +70,7 @@ function ActivityFrame({ tone, children }: CardProps) {
         borderColor: 'divider',
         borderTop: '2px solid',
         borderTopColor: tone,
-        bgcolor: 'rgba(23,18,33,0.82)',
+        bgcolor: PLATE.strong,
         px: 2.5,
         py: 1.6,
         maxHeight: ACTIVITY_CARD_MAX_HEIGHT,
@@ -117,10 +117,10 @@ function StreamingSpeechBody({ text, thinking }: { text: string; thinking: strin
           minHeight: 0,
           maxHeight: ACTIVITY_BODY_MAX_HEIGHT,
           overflowY: 'auto',
-          bgcolor: 'rgba(0, 0, 0, 0.25)',
+          bgcolor: SCRIM.soft,
           p: 1.5,
           borderRadius: 1,
-          border: '1px solid rgba(229, 72, 77, 0.25)',
+          border: '1px solid rgba(201, 86, 107, 0.25)',
         }}
       >
         {thinkingOnly ? (
@@ -174,7 +174,7 @@ function LiveTag({ label }: { label: string }) {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 0.8,
-        color: '#F4B3B6',
+        color: ROLE_COLORS.werewolf.color,
         fontSize: '0.65rem',
         fontWeight: 700,
         letterSpacing: 2,
@@ -186,8 +186,8 @@ function LiveTag({ label }: { label: string }) {
           width: 7,
           height: 7,
           borderRadius: '50%',
-          bgcolor: '#E5484D',
-          boxShadow: '0 0 10px rgba(229,72,77,0.9)',
+          bgcolor: BLOOD_MOON.crimson,
+          boxShadow: '0 0 10px rgba(201,86,107,0.9)',
           animation: `${livePulse} 1.4s ease-in-out infinite`,
         }}
       />
@@ -207,12 +207,12 @@ function SeatAvatar({ seat, size = 40 }: { seat: number; size?: number }) {
         borderRadius: '50%',
         display: 'grid',
         placeItems: 'center',
-        color: INK.primary,
+        color: AVATAR_INK,
         fontWeight: 800,
         fontSize: size * 0.4,
         bgcolor: color,
         border: '1px solid rgba(212,168,83,0.35)',
-        boxShadow: '0 0 14px rgba(229,72,77,0.22)',
+        boxShadow: '0 0 14px rgba(201,86,107,0.22)',
         flexShrink: 0,
       }}
     >
@@ -246,7 +246,7 @@ function SpeechView({
       ? 'CAMPAIGN'
       : 'LIVE · 第' + String(payload.round_number) + '轮';
   return (
-    <ActivityFrame tone="#E5484D">
+    <ActivityFrame tone={BLOOD_MOON.crimson}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={payload.player_seat} />
         <Box>
@@ -329,14 +329,14 @@ function ThoughtView({
   durationSec: number | null;
 }) {
   return (
-    <ActivityFrame tone="#B08BE0">
+    <ActivityFrame tone={ROLE_COLORS.witch.color}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         {seat !== null ? <SeatAvatar seat={seat} /> : <Box sx={{ width: 40 }} />}
         <Box>
           <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
             {seat !== null ? `${seat}号` : ''}{label}
           </Typography>
-          <Typography variant="caption" sx={{ color: '#B08BE0', letterSpacing: 2, fontWeight: 600 }}>
+          <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, letterSpacing: 2, fontWeight: 600 }}>
             内心思考
           </Typography>
         </Box>
@@ -371,7 +371,7 @@ function ChatView({
   label = '狼群密谋',
   tag = 'WOLF CHAT',
   metaKind = '狼聊',
-  tone = '#F4B3B6',
+  tone = ROLE_COLORS.werewolf.color,
 }: {
   seat: number;
   text: string;
@@ -444,7 +444,7 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
     ? '竞选自爆'
     : (DEATH_CAUSE_LABELS[payload.cause] ?? payload.cause);
   return (
-    <ActivityFrame tone="#F6686C">
+    <ActivityFrame tone={ROLE_COLORS.werewolf.color}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
         <Box
           aria-hidden="true"
@@ -454,16 +454,16 @@ function DeathView({ payload }: { payload: Extract<PublicReplayEvent['payload'],
             borderRadius: '50%',
             display: 'grid',
             placeItems: 'center',
-            color: 'background.paper',
-            bgcolor: '#E5484D',
-            boxShadow: '0 0 14px rgba(229,72,77,0.5)',
+            color: ON_ACCENT,
+            bgcolor: BLOOD_MOON.crimson,
+            boxShadow: '0 0 14px rgba(201,86,107,0.5)',
             flexShrink: 0,
           }}
         >
           <CloseIcon sx={{ fontSize: 20 }} />
         </Box>
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: '#F4B3B6' }}>
+          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: ROLE_COLORS.werewolf.color }}>
             {payload.player_seat}号玩家出局
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
@@ -483,7 +483,7 @@ function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['paylo
     ? (rewound ? VOTE_REWOUND_RESULT : '平票，无人被放逐')
     : `${payload.exiled_seat}号被放逐`;
   return (
-    <ActivityFrame tone="#D4A853">
+    <ActivityFrame tone={BLOOD_MOON.gold}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
         <Box
           aria-hidden="true"
@@ -493,8 +493,8 @@ function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['paylo
             borderRadius: '50%',
             display: 'grid',
             placeItems: 'center',
-            color: 'background.paper',
-            bgcolor: '#D4A853',
+            color: ON_ACCENT,
+            bgcolor: BLOOD_MOON.gold,
             boxShadow: '0 0 14px rgba(212,168,83,0.5)',
             flexShrink: 0,
             fontSize: 20,
@@ -504,7 +504,7 @@ function VoteResultView({ payload }: { payload: Extract<PublicReplayEvent['paylo
           票
         </Box>
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: '#E8C887' }}>
+          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: BLOOD_MOON.goldLight }}>
             {exiled}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
@@ -548,7 +548,7 @@ function DayVerdictView({
               borderRadius: '50%',
               display: 'grid',
               placeItems: 'center',
-              color: 'background.paper',
+              color: ON_ACCENT,
               bgcolor: tone,
               flexShrink: 0,
               fontSize: 16,
@@ -583,6 +583,7 @@ function DayVerdictView({
 
 export default function ActivityCard() {
   const { timeline, timelineIndex, streamingSpeech, isFollowingLive, players } = useGameStore();
+  const L = useLabels();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;
@@ -608,7 +609,7 @@ export default function ActivityCard() {
 
       if (isStreaming) {
         return (
-          <ActivityFrame tone="#E5484D">
+          <ActivityFrame tone={BLOOD_MOON.crimson}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, width: '100%', flex: 1, minHeight: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -631,7 +632,7 @@ export default function ActivityCard() {
       }
 
       return (
-        <ActivityFrame tone="#E5484D">
+        <ActivityFrame tone={BLOOD_MOON.crimson}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
@@ -669,7 +670,7 @@ export default function ActivityCard() {
           label={entry.payload.degraded
             ? DEGRADED_ACTION_LABEL
             : `${thoughtActorName(entry.payload.action_type, {
-              roleName: roleLabelForSeat(entry.payload.seat, players),
+              roleName: L.roleLabelForSeat(entry.payload.seat, players),
             })}思考`}
           seat={entry.payload.seat}
           text={
@@ -723,7 +724,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={`${entry.payload.seat}号发动逆转时空`}
           subtitle={`放逐投票作废，重新投票 · 第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="REWIND"
         />
       );
@@ -733,7 +734,7 @@ export default function ActivityCard() {
           seat={entry.payload.target_seat}
           title={`${entry.payload.target_seat}号翻牌免于出局`}
           subtitle={`失去投票权，之后不再能被放逐 · 第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="FLIPPED"
         />
       );
@@ -743,7 +744,7 @@ export default function ActivityCard() {
           seat={entry.payload.target_seat}
           title={`${entry.payload.seat}号骑士翻牌决斗${entry.payload.target_seat}号`}
           subtitle={`${campLabel(entry.payload.camp)} · 第${entry.payload.round_number}轮`}
-          tone="#E5484D"
+          tone={BLOOD_MOON.crimson}
           tag="DUEL"
         />
       );
@@ -752,7 +753,7 @@ export default function ActivityCard() {
       // recorded before the field existed only carry the caster.
       const charmed = entry.payload.target_seat;
       return (
-        <ActivityFrame tone="#F4B3B6">
+        <ActivityFrame tone={ROLE_COLORS.werewolf.color}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
@@ -773,7 +774,7 @@ export default function ActivityCard() {
     }
     case 'fragrance_bond':
       return (
-        <ActivityFrame tone="#C08FE0">
+        <ActivityFrame tone={ROLE_COLORS.witch.color}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
@@ -792,7 +793,7 @@ export default function ActivityCard() {
       // recorded before the field existed only carry the caster.
       const standIn = entry.payload.target_seat;
       return (
-        <ActivityFrame tone="#F4B3B6">
+        <ActivityFrame tone={ROLE_COLORS.werewolf.color}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
@@ -817,7 +818,7 @@ export default function ActivityCard() {
           seat={entry.payload.target_seat}
           title={`${entry.payload.seat}号出局，${entry.payload.target_seat}号殉情`}
           subtitle={`${DEATH_CAUSE_LABELS[entry.payload.cause] ?? entry.payload.cause} · 第${entry.payload.round_number}轮`}
-          tone="#F4B3B6"
+          tone={ROLE_COLORS.werewolf.color}
           tag="REVENGE"
         />
       );
@@ -827,7 +828,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={`${entry.payload.seat}号自爆，带走 ${entry.payload.target_seat}号`}
           subtitle={`本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
-          tone="#F6686C"
+          tone={ROLE_COLORS.werewolf.color}
           tag="SELF EXPLODE"
         />
       );
@@ -837,7 +838,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={`${entry.payload.seat}号起舞：${entry.payload.pool_seats.join('、')}号共舞`}
           subtitle={`人数少的一方当夜出局 · 第${entry.payload.round_number}轮`}
-          tone="#C9A7E8"
+          tone={ROLE_COLORS.witch.color}
           tag="DANCE POOL"
         />
       );
@@ -847,7 +848,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={`${entry.payload.seat}号给 ${entry.payload.target_seat}号戴上面具`}
           subtitle={`目标${entry.payload.in_pool ? '在' : '不在'}舞池中，本次阵营比较被翻转 · 第${entry.payload.round_number}轮`}
-          tone="#C9A7E8"
+          tone={ROLE_COLORS.witch.color}
           tag="MASK"
         />
       );
@@ -905,7 +906,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={`${entry.payload.seat}号自爆，封印当晚好人技能`}
           subtitle={`被封印：${entry.payload.silenced_seats.join('、') || '无人'} · 本日发言与投票取消，直接入夜 · 第${entry.payload.round_number}轮`}
-          tone="#F6686C"
+          tone={ROLE_COLORS.werewolf.color}
           tag="CRIMSON EXPLODE"
         />
       );
@@ -915,7 +916,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={entry.payload.seat == null ? '警长竞选结束，警徽流失' : `${entry.payload.seat}号当选警长`}
           subtitle={`第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="SHERIFF"
         />
       );
@@ -927,7 +928,7 @@ export default function ActivityCard() {
             ? `${entry.payload.from_seat}号撕毁警徽`
             : `${entry.payload.from_seat}号将警徽移交给${entry.payload.to_seat}号`}
           subtitle={`第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="BADGE"
           detail={entry.payload.reasoning ?? null}
         />
@@ -938,7 +939,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={entry.payload.choice === 'run' ? `${entry.payload.seat}号上警` : `${entry.payload.seat}号过`}
           subtitle={`警长竞选 · 第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="RUN"
         />
       );
@@ -948,7 +949,7 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={entry.payload.choice === 'withdraw' ? `${entry.payload.seat}号退水` : `${entry.payload.seat}号留下`}
           subtitle={`警长竞选 · 第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="WITHDRAW"
         />
       );
@@ -960,7 +961,7 @@ export default function ActivityCard() {
             ? `${entry.payload.voter_seat}号弃权`
             : `${entry.payload.voter_seat}号投给 ${entry.payload.target_seat}号`}
           subtitle={`${entry.payload.kind === 'pk' ? 'PK票' : '警票'} · 第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag={entry.payload.kind === 'pk' ? 'PK VOTE' : 'SHERIFF VOTE'}
         />
       );
@@ -970,19 +971,19 @@ export default function ActivityCard() {
           seat={entry.payload.seat}
           title={`${entry.payload.seat}号选择${SHERIFF_SIDE_LABELS[entry.payload.side] ?? entry.payload.side}发言`}
           subtitle={`第${entry.payload.round_number}轮`}
-          tone="#E8C887"
+          tone={BLOOD_MOON.goldLight}
           tag="SIDE"
         />
       );
     case 'commentary':
       return (
-        <ActivityFrame tone="#6EC8C8">
+        <ActivityFrame tone={ROLE_COLORS.guard.color}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
             <Box>
               <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
                 {entry.payload.title}
               </Typography>
-              <Typography variant="caption" sx={{ color: '#6EC8C8', letterSpacing: 2, fontWeight: 600 }}>
+              <Typography variant="caption" sx={{ color: ROLE_COLORS.guard.color, letterSpacing: 2, fontWeight: 600 }}>
                 上帝视角解说
               </Typography>
             </Box>

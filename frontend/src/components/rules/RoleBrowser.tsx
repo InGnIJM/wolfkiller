@@ -8,7 +8,7 @@ import SearchIcon from '@mui/icons-material/Search';
 
 import { WINNING_CAMP_LABELS } from '../../labels';
 import type { RoleCatalogItem, WinningCamp } from '../../store/types';
-import { BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
+import { BLOOD_MOON, CANVAS, HAIRLINE, INK, SHADOW } from '../../theme/tokens';
 import RoleIcon from '../shared/RoleIcon';
 import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
@@ -234,7 +234,7 @@ export default function RoleBrowser({ groups }: Props) {
                   borderRadius: 1,
                   overflow: 'hidden',
                   border: `1px solid ${HAIRLINE.strong}`,
-                  boxShadow: '0 10px 24px rgba(0, 0, 0, 0.35)',
+                  boxShadow: `0 10px 24px ${SHADOW.soft}`,
                 }}
               >
                 <RolePortrait roleId={selected.role_id} width="100%" showLabel={false} />

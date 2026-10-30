@@ -1,7 +1,8 @@
 import { Box } from '@mui/material';
 
 import { CARD_BACK, INK, roleArt } from '../../theme/tokens';
-import { roleMetaFor } from './roleMeta';
+import { useTranslation } from 'react-i18next';
+import { useLabels } from '../../i18n/useLabels';
 
 interface Props {
   roleId: string | null | undefined;
@@ -34,7 +35,9 @@ export default function RolePortrait({
 }: Props) {
   const art = roleArt(roleId);
   const missing = art === CARD_BACK;
-  const label = roleMetaFor(roleId)?.label ?? '未知身份';
+  const { t } = useTranslation();
+  const L = useLabels();
+  const label = L.roleName(roleId) ?? t('common.unknownRole');
 
   return (
     <Box

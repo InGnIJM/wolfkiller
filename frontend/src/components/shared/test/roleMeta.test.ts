@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { roleName } from '../../../labels';
 import { rankOf, roleMetaFor, ROLE_META, ROLE_ORDER } from '../roleMeta';
 import { CARD_BACK, ROLE_ART_BY_ID, ROLE_COLORS, roleArt } from '../../../theme/tokens';
 import type { RoleColorKey } from '../../../theme/tokens';
@@ -103,10 +104,10 @@ describe('roleMeta', () => {
 describe('role labels', () => {
   it('gives every registered role a non-empty Chinese label', () => {
     for (const id of REGISTERED) {
-      expect(roleMetaFor(id)?.label, id).toBeTruthy();
+      expect(roleName(id), id).toBeTruthy();
     }
     // 记忆面板曾用一张只含 16 个旧角色的表，新增角色会退回显示机器 id。
-    expect(roleMetaFor('wolf-killer-crow')?.label).toBe('乌鸦');
+    expect(roleName('wolf-killer-crow')).toBe('乌鸦');
   });
 });
 

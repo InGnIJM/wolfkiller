@@ -4,15 +4,9 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useGameStore } from '../../store/gameStore';
 import { fetchGameMemories } from '../../api/client';
 import type { PlayerMemory, PublicReplayEvent } from '../../store/types';
-import {
-  DEATH_CAUSE_LABELS, DEGRADED_ACTION_LABEL, EVENT_TAGS, KNOWLEDGE_LABELS,
-  MEMORY_ACTION_LABELS, MEMORY_EVENT_LABELS,
-  PLAYER_STATUS_LABELS, SHERIFF_SIDE_LABELS, THOUGHT_ROLE_NAMES,
-  VOTE_REWOUND_RESULT, awakenedWitchPoisonResultLabel, awakenedWitchVoteLabel,
-  nightActionCaption, thoughtActorName, voteRoundWasRewound,
-} from '../../labels';
-import { roleLabelForSeat, roleMetaFor } from '../shared/roleMeta';
-import { ROLE_COLORS } from '../../theme/tokens';
+import { useLabels } from '../../i18n/useLabels';
+import type { LabelsModule } from '../../i18n/useLabels';
+import { BLOOD_MOON, INK, INK_WASH, ROLE_COLORS } from '../../theme/tokens';
 
 interface Props {
   onClose: () => void;
@@ -29,20 +23,20 @@ function eventTone(event: PublicReplayEvent): string {
     || event.event_type === 'wraith_illusion'
     || event.event_type === 'fragrance_bond'
     || event.event_type === 'wolf_beauty_revenge'
-  ) return '#F4B3B6';
-  if (event.event_type === 'narration') return '#7D7468';
-  if (event.event_type === 'commentary') return '#6EC8C8';
+  ) return ROLE_COLORS.werewolf.color;
+  if (event.event_type === 'narration') return INK.faint;
+  if (event.event_type === 'commentary') return ROLE_COLORS.guard.color;
   // 觉醒女巫的毒药协助四拍都归女巫紫；放在 includes('vote') 之前，
   // 否则 assist_vote 会被当成白天/警长票染成金色。
   if (event.event_type.startsWith('awakened_witch_')) return ROLE_COLORS.witch.color;
-  if (event.event_type.includes('vote')) return '#E8C887';
-  if (event.event_type.includes('thought')) return '#C4B5FD';
+  if (event.event_type.includes('vote')) return BLOOD_MOON.goldLight;
+  if (event.event_type.includes('thought')) return ROLE_COLORS.witch.color;
   if (
     event.event_type === 'night_action'
     || event.event_type === 'dance_pool'
     || event.event_type === 'mask_granted'
-  ) return '#9DC8E8';
-  return '#D4A853';
+  ) return ROLE_COLORS.seer.color;
+  return BLOOD_MOON.gold;
 }
 
 // —— 编年史日分组：夜行动 → 第N夜，其余 → 第N天 ——
@@ -104,13 +98,13 @@ function formatKnowledgeValue(key: string, value: unknown): string {
   return String(value);
 }
 
-function formatActionHistoryItem(item: Record<string, unknown>): string {
+function formatActionHistoryItem(item: Record<string, unknown>, L: LabelsModule): string {
   const round = item.round ?? '?';
   const action = item.action;
   if (action !== null && typeof action === 'object') {
     const record = action as Record<string, unknown>;
     const actionType = record.action_type ?? '?';
-    const label = MEMORY_ACTION_LABELS[String(actionType)] ?? String(actionType);
+    const label = L.MEMORY_ACTION_LABELS[String(actionType)] ?? String(actionType);
     const targetSeat = record.target_seat;
     const target = targetSeat !== null && targetSeat !== undefined ? ` → ${targetSeat}号` : '';
     return `行动 ${round}轮：${label}${target}`;
@@ -127,14 +121,15 @@ function formatActionHistoryItem(item: Record<string, unknown>): string {
   return `行动 ${round}轮：${item.phase ?? '?'}`;
 }
 
-function formatWitnessedEvent(item: Record<string, unknown>): string {
+function formatWitnessedEvent(item: Record<string, unknown>, L: LabelsModule): string {
   const round = item.round ?? '?';
   const eventType = item.event ?? item.type ?? '?';
-  const label = MEMORY_EVENT_LABELS[String(eventType)] ?? String(eventType);
+  const label = L.MEMORY_EVENT_LABELS[String(eventType)] ?? String(eventType);
   return `见证 ${round}轮：${label}`;
 }
 
 function MemoryCard({ memory }: { memory: PlayerMemory }) {
+  const L = useLabels();
   const knowledgeEntries = Object.entries(memory.private_knowledge);
   return (
     <Box
@@ -144,11 +139,11 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
         borderRadius: 2,
         borderLeft: '3px solid',
         borderColor: memory.is_alive ? 'success.main' : 'text.disabled',
-        bgcolor: 'rgba(242,233,220,0.03)',
+        bgcolor: INK_WASH,
       }}
     >
       <Typography variant="caption" sx={{ fontWeight: 600 }}>
-        {memory.seat_number}号 · {roleMetaFor(memory.role)?.label ?? memory.role}
+        {memory.seat_number}号 · {L.roleName(memory.role) ?? memory.role}
         {' · '}
         <Typography component="span" variant="caption" color={memory.is_alive ? 'success.light' : 'text.disabled'}>
           {memory.is_alive ? '存活' : '出局'}
@@ -158,7 +153,7 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
         <Box sx={{ mt: 0.4 }}>
           {knowledgeEntries.map(([key, value]) => (
             <Typography key={key} variant="caption" color="info.light" sx={{ display: 'block', fontSize: '0.7rem' }}>
-              {KNOWLEDGE_LABELS[key] ?? key}：{formatKnowledgeValue(key, value)}
+              {L.KNOWLEDGE_LABELS[key] ?? key}：{formatKnowledgeValue(key, value)}
             </Typography>
           ))}
         </Box>
@@ -175,7 +170,7 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
             color="text.secondary"
             sx={{ display: 'block', mt: 0.2, fontSize: '0.7rem' }}
           >
-            {formatActionHistoryItem(item)}
+            {formatActionHistoryItem(item, L)}
           </Typography>
         ))
       )}
@@ -191,7 +186,7 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
             color="text.secondary"
             sx={{ display: 'block', mt: 0.2, fontSize: '0.7rem' }}
           >
-            {formatWitnessedEvent(item)}
+            {formatWitnessedEvent(item, L)}
           </Typography>
         ))
       )}
@@ -206,6 +201,7 @@ function EventCard({
   event: PublicReplayEvent;
   onClick: () => void;
 }) {
+  const L = useLabels();
   const players = useGameStore((s) => s.players);
   const timeline = useGameStore((s) => s.timeline);
   let content: React.ReactNode;
@@ -245,8 +241,8 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           投票结果 · 第{event.payload.round_number}轮 · {event.payload.exiled_seat === null
-            ? (voteRoundWasRewound(event.payload.round_number, timeline)
-              ? VOTE_REWOUND_RESULT
+            ? (L.voteRoundWasRewound(event.payload.round_number, timeline)
+              ? L.VOTE_REWOUND_RESULT
               : '平票')
             : `${event.payload.exiled_seat}号被放逐`}
         </Typography>
@@ -356,7 +352,7 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
-            {event.payload.seat}号协助者{awakenedWitchVoteLabel(event.payload.vote)}（毒药目标 {event.payload.target_seat}号） · 第{event.payload.round_number}轮
+            {event.payload.seat}号协助者{L.awakenedWitchVoteLabel(event.payload.vote)}（毒药目标 {event.payload.target_seat}号） · 第{event.payload.round_number}轮
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.reasoning || '（无理由）'}
@@ -367,7 +363,7 @@ function EventCard({
     case 'awakened_witch_poison_result':
       content = (
         <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, fontWeight: 500 }}>
-          {event.payload.target_seat}号毒药{awakenedWitchPoisonResultLabel(event.payload.result)} · 第{event.payload.round_number}轮
+          {event.payload.target_seat}号毒药{L.awakenedWitchPoisonResultLabel(event.payload.result)} · 第{event.payload.round_number}轮
         </Typography>
       );
       break;
@@ -427,18 +423,18 @@ function EventCard({
     case 'sheriff_side':
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
-          {`${event.payload.seat}号选择${SHERIFF_SIDE_LABELS[event.payload.side] ?? event.payload.side}发言 · 第${event.payload.round_number}轮`}
+          {`${event.payload.seat}号选择${L.SHERIFF_SIDE_LABELS[event.payload.side] ?? event.payload.side}发言 · 第${event.payload.round_number}轮`}
         </Typography>
       );
       break;
     case 'night_action':
       content = (
         <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-          {nightActionCaption(event.payload.action_type, {
+          {L.nightActionCaption(event.payload.action_type, {
             seat: event.payload.seat,
             targetSeat: event.payload.target_seat,
             intendedSeat: event.payload.intended_seat,
-            roleName: roleLabelForSeat(event.payload.seat, players),
+            roleName: L.roleLabelForSeat(event.payload.seat, players),
           })} · 第{event.payload.round_number}轮
         </Typography>
       );
@@ -458,7 +454,7 @@ function EventCard({
     case 'commentary':
       content = (
         <>
-          <Typography variant="caption" sx={{ color: '#6EC8C8', fontWeight: 600 }}>
+          <Typography variant="caption" sx={{ color: ROLE_COLORS.guard.color, fontWeight: 600 }}>
             {event.payload.title}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }}>
@@ -481,7 +477,7 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {event.payload.seat}号 → {event.payload.target_seat === null ? '弃权' : `${event.payload.target_seat}号`}
-          （{event.payload.degraded ? `${DEGRADED_ACTION_LABEL}：` : ''}{event.payload.reasoning}）
+          （{event.payload.degraded ? `${L.DEGRADED_ACTION_LABEL}：` : ''}{event.payload.reasoning}）
         </Typography>
       );
       break;
@@ -489,7 +485,7 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {`${event.payload.player_seat}号 ${
-            PLAYER_STATUS_LABELS[event.payload.status] ?? event.payload.status
+            L.PLAYER_STATUS_LABELS[event.payload.status] ?? event.payload.status
           } · 第${event.payload.round_number}轮`}
         </Typography>
       );
@@ -499,7 +495,7 @@ function EventCard({
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {event.payload.seat}号{THOUGHT_ROLE_NAMES[event.event_type]}思考
+            {event.payload.seat}号{L.THOUGHT_ROLE_NAMES[event.event_type]}思考
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {event.payload.text}
@@ -509,13 +505,13 @@ function EventCard({
       break;
     case 'night_thought': {
       const { action_type, seat, target_seat, reasoning, degraded } = event.payload;
-      const who = thoughtActorName(action_type, {
-        roleName: roleLabelForSeat(seat, players),
+      const who = L.thoughtActorName(action_type, {
+        roleName: L.roleLabelForSeat(seat, players),
       });
       content = (
         <>
           <Typography variant="caption" color="info.light" sx={{ fontWeight: 500 }}>
-            {degraded ? `${DEGRADED_ACTION_LABEL} · ${seat}号` : `${seat}号${who}思考`}
+            {degraded ? `${L.DEGRADED_ACTION_LABEL} · ${seat}号` : `${seat}号${who}思考`}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }} noWrap>
             {/* 代行动作没有「目标/不行动」可言，正文只留中性说明。 */}
@@ -530,7 +526,7 @@ function EventCard({
     case 'death':
       content = (
         <Typography variant="caption" color="error.light" sx={{ fontWeight: 500 }}>
-          {event.payload.player_seat}号出局 · {DEATH_CAUSE_LABELS[event.payload.cause]} · 第{event.payload.round_number}轮
+          {event.payload.player_seat}号出局 · {L.DEATH_CAUSE_LABELS[event.payload.cause]} · 第{event.payload.round_number}轮
         </Typography>
       );
       break;
@@ -556,7 +552,7 @@ function EventCard({
 
   // 上表的键就是渲染面的全集（未知类型在上面的 default 已经返回 null），
   // 所以这里不需要「未知就写事件」的兜底。
-  const tag = EVENT_TAGS[event.event_type];
+  const tag = L.EVENT_TAGS[event.event_type];
   const tone = eventTone(event);
 
   return (
@@ -618,7 +614,7 @@ function EventCard({
             lineHeight: 1.4,
             color: tone,
             border: '1px solid',
-            borderColor: `${tone}66`,
+            borderColor: `color-mix(in srgb, ${tone} 40%, transparent)`,
             borderRadius: 0.6,
             px: 0.7,
             py: 0.1,

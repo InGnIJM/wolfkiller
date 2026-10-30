@@ -3,7 +3,7 @@ import { Box, Typography } from '@mui/material';
 import type { SeatModelInfo } from '../../store/seatModels';
 import RolePortrait from '../shared/RolePortrait';
 import { providerProfileLabel } from '../models/providerProfiles';
-import { BACKDROP, BLOOD_MOON, CANVAS, HAIRLINE, INK } from '../../theme/tokens';
+import { BACKDROP, BLOOD_MOON, CANVAS, HAIRLINE, INK, SHADOW } from '../../theme/tokens';
 
 function campLabel(camp?: string): string | undefined {
   if (camp === 'werewolf') return '狼人阵营';
@@ -82,7 +82,7 @@ export default function SeatHoverCard({
         borderRadius: 1.5,
         bgcolor: CANVAS.surfaceRaised,
         border: `1px solid ${HAIRLINE.strong}`,
-        boxShadow: `0 12px 28px rgba(0,0,0,0.55), 0 0 0 1px ${accent}33`,
+        boxShadow: `0 12px 28px ${SHADOW.pop}, 0 0 0 1px color-mix(in srgb, ${accent} 20%, transparent)`,
         pointerEvents: 'auto',
       }}
     >

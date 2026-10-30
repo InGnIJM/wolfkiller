@@ -371,7 +371,7 @@ function Stat({
     <Box
       data-testid={testId}
       sx={{
-        border: `1px solid ${tone === 'wolf' ? 'rgba(194, 46, 66, 0.4)' : HAIRLINE.soft}`,
+        border: `1px solid ${tone === 'wolf' ? 'rgba(168, 55, 74, 0.4)' : HAIRLINE.soft}`,
         borderRadius: 0.5, px: 1, py: 0.25, fontSize: 11, color,
       }}
     >

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchRoleCatalog } from '../../api/client';
 import type { GamePhase, ModelSnapshotEntry, PublicPlayerState, RoleCatalogItem } from '../../store/types';
 import { seatModelLookup, type SeatModelInfo } from '../../store/seatModels';
-import { ROLE_COLORS, BLOOD_MOON, CANVAS, HAIRLINE } from '../../theme/tokens';
+import { ROLE_COLORS, BLOOD_MOON, CANVAS, HAIRLINE, ON_ACCENT, SHADOW } from '../../theme/tokens';
+import { useLabels } from '../../i18n/useLabels';
 import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
 import SeatHoverCard from './SeatHoverCard';
@@ -13,8 +14,8 @@ import { clampValue, computeStageLayout } from './seatLayout';
 // 模板字符串里的属性必须是 CSS 写法。写成 boxShadow 时浏览器会丢掉这条声明，
 // 呼吸光就不会出现，座位上只剩罗马数字变色。
 const speakerPulse = keyframes`
-  0%, 100% { box-shadow: 0 0 0 2px rgba(229,72,77,0.95), 0 0 16px 3px rgba(229,72,77,0.72); }
-  50% { box-shadow: 0 0 0 3px rgba(244,179,182,1), 0 0 28px 8px rgba(229,72,77,0.95); }
+  0%, 100% { box-shadow: 0 0 0 2px rgba(201,86,107,0.95), 0 0 16px 3px rgba(201,86,107,0.72); }
+  50% { box-shadow: 0 0 0 3px rgba(244,179,182,1), 0 0 28px 8px rgba(201,86,107,0.95); }
 `;
 
 // 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字
@@ -74,11 +75,13 @@ function PublicSeat({
   badgeSide?: BadgeSide;
   catalog: ReadonlyMap<string, RoleCatalogItem>;
 }) {
+  const L = useLabels();
   const badge = roleMetaFor(player.role);
+  const badgeLabel = L.roleName(player.role);
   const status = !player.is_alive ? '出局' : player.can_vote === false ? '存活·无投票权' : '存活';
   const accent = badge?.color ?? (
-    player.camp === 'werewolf' ? '#E5484D'
-      : player.camp === 'good' ? '#93B58C'
+    player.camp === 'werewolf' ? ROLE_COLORS.werewolf.color
+      : player.camp === 'good' ? ROLE_COLORS.villager.color
         : player.camp === 'third_party' ? BLOOD_MOON.gold
           : 'divider'
   );
@@ -96,7 +99,7 @@ function PublicSeat({
     : player.is_alive ? accent : 'rgba(212,168,83,0.18)';
   const label = [
     `${seat}号`,
-    badge?.label,
+    badgeLabel,
     status,
     badgeSide ? BADGE_SIDE_LABEL[badgeSide] : '',
     player.is_sheriff ? '警长' : '',
@@ -109,7 +112,7 @@ function PublicSeat({
         <SeatHoverCard
           seat={seat}
           roman={toRoman(seat)}
-          roleLabel={badge?.label}
+          roleLabel={badgeLabel}
           camp={player.camp}
           isAlive={player.is_alive}
           canVote={player.can_vote}
@@ -161,12 +164,12 @@ function PublicSeat({
         borderRadius: 2,
         bgcolor: CANVAS.surface,
         boxShadow: isCurrentSpeaker
-          ? '0 0 0 2px rgba(229,72,77,0.95), 0 0 22px 6px rgba(229,72,77,0.8)'
+          ? '0 0 0 2px rgba(201,86,107,0.95), 0 0 22px 6px rgba(201,86,107,0.8)'
           : onBadge
-            ? `0 0 0 2px ${BLOOD_MOON.gold}55, 0 0 20px 6px ${BLOOD_MOON.gold}66, 0 10px 26px rgba(0,0,0,0.45)`
+            ? `0 0 0 2px color-mix(in srgb, ${BLOOD_MOON.gold} 33%, transparent), 0 0 20px 6px color-mix(in srgb, ${BLOOD_MOON.gold} 40%, transparent), 0 10px 26px ${SHADOW.card}`
             : player.is_alive
-              ? `0 0 14px ${accent}44, 0 10px 26px rgba(0,0,0,0.45)`
-              : '0 10px 26px rgba(0,0,0,0.45)',
+              ? `0 0 14px color-mix(in srgb, ${accent} 27%, transparent), 0 10px 26px ${SHADOW.card}`
+              : `0 10px 26px ${SHADOW.card}`,
         opacity: player.is_alive ? 1 : 0.5,
         filter: player.is_alive ? 'none' : 'grayscale(0.7)',
         transition: 'transform 0.2s ease, border-color 0.2s ease',
@@ -182,7 +185,7 @@ function PublicSeat({
             top: -10,
             left: '50%',
             transform: 'translateX(-50%)',
-            color: 'background.paper',
+            color: ON_ACCENT,
             bgcolor: 'warning.main',
             borderRadius: 99,
             px: 0.9,
@@ -191,7 +194,7 @@ function PublicSeat({
             fontWeight: 800,
             letterSpacing: 1,
             lineHeight: 1.4,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+            boxShadow: `0 2px 8px ${SHADOW.card}`,
             whiteSpace: 'nowrap',
           }}
         >
@@ -210,9 +213,9 @@ function PublicSeat({
             borderRadius: '50%',
             display: 'grid',
             placeItems: 'center',
-            color: 'background.paper',
+            color: ON_ACCENT,
             bgcolor: 'error.main',
-            boxShadow: '0 0 10px rgba(229,72,77,0.6)',
+            boxShadow: '0 0 10px rgba(201,86,107,0.6)',
           }}
         >
           <CloseIcon sx={{ fontSize: 13 }} />
@@ -240,8 +243,8 @@ function PublicSeat({
                   position: 'absolute',
                   inset: 0,
                   pointerEvents: 'none',
-                  background: 'linear-gradient(180deg, rgba(229,72,77,0.28), rgba(229,72,77,0.08) 42%, rgba(229,72,77,0.34))',
-                  boxShadow: 'inset 0 0 16px rgba(229,72,77,0.65)',
+                  background: 'linear-gradient(180deg, rgba(201,86,107,0.28), rgba(201,86,107,0.08) 42%, rgba(201,86,107,0.34))',
+                  boxShadow: 'inset 0 0 16px rgba(201,86,107,0.65)',
                 }}
               />
             )}
@@ -295,7 +298,7 @@ function PublicSeat({
                 fontSize: numeralSize,
                 lineHeight: 1,
                 fontFamily: '"Cinzel","Noto Serif SC",serif',
-                color: isCurrentSpeaker ? '#F4B3B6' : 'text.primary',
+                color: isCurrentSpeaker ? ROLE_COLORS.werewolf.color : 'text.primary',
               }}
             >
               {toRoman(seat)}
@@ -310,10 +313,10 @@ function PublicSeat({
                   lineHeight: 1.15,
                   letterSpacing: compact ? '0.02em' : '0.08em',
                   color: badge.color,
-                  ...(player.is_alive ? {} : { textDecoration: 'line-through', textDecorationColor: 'rgba(229,72,77,0.7)' }),
+                  ...(player.is_alive ? {} : { textDecoration: 'line-through', textDecorationColor: 'rgba(201,86,107,0.7)' }),
                 }}
               >
-                {badge.label}
+                {badgeLabel}
               </Typography>
             )}
           </Box>
