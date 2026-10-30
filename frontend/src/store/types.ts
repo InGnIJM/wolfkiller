@@ -254,6 +254,19 @@ export interface NarrationPayload {
   text: string;
 }
 
+export type CommentaryBeat = 'night' | 'day' | 'final';
+
+export interface CommentaryPayload {
+  round_number: number;
+  beat: CommentaryBeat;
+  title: string;
+  text: string;
+  model_id?: string | null;
+  generated_at?: string | null;
+  status?: 'ok' | 'failed' | null;
+  failure_code?: string | null;
+}
+
 export interface PlayerStatusPayload {
   round_number: number;
   player_seat: number;
@@ -400,6 +413,12 @@ export interface WinResult {
   winners?: number[] | null;
 }
 
+export interface PauseInfo {
+  code: string | null;
+  reason: string | null;
+  detail?: Record<string, unknown> | null;
+}
+
 export interface PublicGameState {
   game_id: string;
   phase: GamePhase;
@@ -416,6 +435,9 @@ export interface PublicGameState {
   execution_status?: ExecutionStatus;
   recoverable?: boolean;
   recovery_block_code?: string | null;
+  pause_code?: string | null;
+  pause_reason?: string | null;
+  pause_detail?: Record<string, unknown> | null;
   model_snapshot?: ModelSnapshotEntry[];
 }
 
@@ -458,6 +480,7 @@ export type PublicReplayEvent =
   | PublicReplayEnvelope<'speaking', SpeakingPayload>
   | PublicReplayEnvelope<'night_action', NightActionRecord>
   | PublicReplayEnvelope<'narration', NarrationPayload>
+  | PublicReplayEnvelope<'commentary', CommentaryPayload>
   | PublicReplayEnvelope<'player_status', PlayerStatusPayload>
   | PublicReplayEnvelope<'wolf_chat_message', WolfChatMessagePayload>
   | PublicReplayEnvelope<'wolf_vote', WolfVotePayload>
@@ -478,6 +501,9 @@ export type PublicReplayEvent =
       execution_status: ExecutionStatus;
       recoverable: boolean;
       recovery_block_code: string | null;
+      pause_code?: string | null;
+      pause_reason?: string | null;
+      pause_detail?: Record<string, unknown> | null;
     }>;
 
 /** The closed set of audience event types; text tables key off this union. */
@@ -527,6 +553,9 @@ export interface GameListItem {
   execution_status?: ExecutionStatus;
   recoverable?: boolean;
   recovery_block_code?: string | null;
+  pause_code?: string | null;
+  pause_reason?: string | null;
+  pause_detail?: Record<string, unknown> | null;
   source?: 'native' | 'legacy' | 'benchmark' | string;
   folder_id?: string | null;
 }
@@ -583,7 +612,7 @@ export type WSMessage =
   | { type: 'vote_cast'; vote: VoteRecord }
   | { type: 'player_died'; death: DeathRecord }
   | { type: 'game_over'; win_result: WinResult; state: PublicGameState }
-  | { type: 'paused_state'; paused: boolean }
+  | { type: 'paused_state'; paused: boolean; code?: string | null; reason?: string | null }
   | { type: 'speech_stream'; seat: number; text: string }
   | { type: 'speech_thinking'; seat: number; text: string };
 
@@ -652,6 +681,50 @@ export interface ModelTestResult {
 export interface PromptCaptureSetting {
   enabled: boolean;
   source: 'default' | 'env' | 'ui';
+}
+
+export type AutoReviewSetting = PromptCaptureSetting;
+
+export interface ReviewMvp {
+  seat: number;
+  role: string;
+  reason: string;
+}
+
+export interface ReviewTurningPoint {
+  round: number;
+  title: string;
+  detail: string;
+}
+
+export interface ReviewMistake {
+  seat: number;
+  title: string;
+  detail: string;
+}
+
+export interface ReviewRoundDigest {
+  round: number;
+  digest: string;
+}
+
+export interface GameReviewBody {
+  overview: string;
+  mvp: ReviewMvp | null;
+  turning_points: ReviewTurningPoint[];
+  mistakes: ReviewMistake[];
+  camp_assessment: Record<string, string>;
+  closing: string;
+  round_digests: ReviewRoundDigest[];
+}
+
+export interface GameReviewStatus {
+  game_id: string;
+  status: 'none' | 'pending' | 'ready' | 'failed';
+  review: GameReviewBody | null;
+  failure: string | null;
+  generated_at: string | null;
+  model_id: string | null;
 }
 
 export interface RoleCatalogItem {

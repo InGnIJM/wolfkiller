@@ -144,9 +144,17 @@ describe('useWebSocket', () => {
     act(() => {
       socket.emit({ type: 'paused_state', paused: true });
       socket.emit({ type: 'paused_state', paused: false });
+      socket.emit({
+        type: 'paused_state', paused: true,
+        code: 'provider_circuit_open', reason: '模型通道连续失败，已自动暂停',
+      });
     });
 
-    expect(setPaused.mock.calls).toEqual([[true], [false]]);
+    expect(setPaused.mock.calls).toEqual([
+      [true, { code: null, reason: null }],
+      [false, null],
+      [true, { code: 'provider_circuit_open', reason: '模型通道连续失败，已自动暂停' }],
+    ]);
 
     setPaused.mockClear();
     // hasExactKeys 的长度分支与数组分支必须由这些用例守住：
@@ -159,6 +167,8 @@ describe('useWebSocket', () => {
       { type: 'paused_state' },
       { type: 'paused_state', paused: 1 },
       { type: 'paused_state', paused: true, role: 'werewolf' },
+      { type: 'paused_state', paused: true, code: 1 },
+      { type: 'paused_state', paused: true, reason: 1 },
       { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: 1 },
     ];
     act(() => invalidMessages.forEach((message) => socket.emit(message)));
