@@ -15,6 +15,7 @@ import type {
   VoteRecord,
   WinResult,
   ModelSnapshotEntry,
+  PauseInfo,
   StreamingSpeech,
 } from './types';
 
@@ -57,6 +58,7 @@ interface GameStore extends DerivedState {
   executionStatus: ExecutionStatus | null;
   recoverable: boolean;
   recoveryBlockCode: string | null;
+  pauseInfo: PauseInfo | null;
   modelSnapshot: ModelSnapshotEntry[];
   streamingSpeech: StreamingSpeech | null;
 
@@ -67,7 +69,7 @@ interface GameStore extends DerivedState {
   addDeath: (death: DeathRecord) => void;
   setWinResult: (result: WinResult) => void;
   setConnected: (connected: boolean) => void;
-  setPaused: (paused: boolean) => void;
+  setPaused: (paused: boolean, info?: PauseInfo | null) => void;
   setCurrentSpeaker: (seat: number | null) => void;
   setStreamingSpeech: (seat: number, text: string) => void;
   setStreamingThinking: (seat: number, thinking: string) => void;
@@ -131,6 +133,7 @@ const initialState = {
   streamError: null as string | null,
   isFollowingLive: true,
   executionStatus: null as ExecutionStatus | null,
+  pauseInfo: null as PauseInfo | null,
   recoverable: false,
   recoveryBlockCode: null as string | null,
   modelSnapshot: [] as ModelSnapshotEntry[],
@@ -417,6 +420,7 @@ function deriveState(
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
       case 'narration':
+      case 'commentary':
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         currentSpeaker = null;
         break;
@@ -552,6 +556,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       executionStatus: state.execution_status ?? null,
       recoverable: state.recoverable ?? false,
       recoveryBlockCode: state.recovery_block_code ?? null,
+      pauseInfo: state.pause_code
+        ? { code: state.pause_code, reason: state.pause_reason ?? null, detail: state.pause_detail ?? null }
+        : null,
+      isPaused: state.execution_status === 'paused',
     });
   },
 
@@ -577,7 +585,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setWinResult: (result) => set({ winResult: result, phase: 'game_over', showWinOverlay: true, streamingSpeech: null }),
   setConnected: (connected) => set({ connected }),
-  setPaused: (paused) => set({ isPaused: paused }),
+  setPaused: (paused, info) => set({
+    isPaused: paused,
+    pauseInfo: paused ? (info ?? null) : null,
+  }),
   setCurrentSpeaker: (seat) => set((state) => ({
     currentSpeaker: seat,
     streamingSpeech: state.streamingSpeech?.seat === seat ? state.streamingSpeech : null,
@@ -688,6 +699,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       executionStatus: state.execution_status ?? null,
       recoverable: state.recoverable ?? false,
       recoveryBlockCode: state.recovery_block_code ?? null,
+      pauseInfo: state.pause_code
+        ? { code: state.pause_code, reason: state.pause_reason ?? null, detail: state.pause_detail ?? null }
+        : null,
+      isPaused: state.execution_status === 'paused',
       modelSnapshot: state.model_snapshot ?? [],
       timeline: [],
       timelineIndex: -1,

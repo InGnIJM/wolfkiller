@@ -455,6 +455,10 @@ function EventSummary({
     case 'narration':
       text = entry.payload.title;
       break;
+    case 'commentary':
+      text = entry.payload.title;
+      tone = '#6EC8C8';
+      break;
     case 'winner':
       text = `${WINNING_CAMP_LABELS[entry.payload.winning_camp] ?? entry.payload.winning_camp}获胜`;
       tone = '#F4B3B6';
@@ -530,7 +534,7 @@ function LiveSpeechLine({ seat }: { seat: number }) {
 }
 
 export default function CenterDisplay() {
-  const { phase, roundNumber, timeline, timelineIndex, isPaused } = useGameStore();
+  const { phase, roundNumber, timeline, timelineIndex, isPaused, pauseInfo } = useGameStore();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;
@@ -538,9 +542,11 @@ export default function CenterDisplay() {
   if (isPaused && !entry) {
     return (
       <Box sx={{ textAlign: 'center', py: 2, bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2 }}>
-        <Typography variant="subtitle1" color="text.secondary">游戏已暂停</Typography>
+        <Typography variant="subtitle1" color="text.secondary">
+          {pauseInfo?.reason ?? '游戏已暂停'}
+        </Typography>
         <Typography variant="caption" color="text.disabled" sx={{ mt: 0.5, display: 'block' }}>
-          点击播放按钮继续
+          {pauseInfo?.code ? `原因：${pauseInfo.code}` : '点击播放按钮继续'}
         </Typography>
       </Box>
     );

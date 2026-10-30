@@ -349,6 +349,7 @@ export const EVENT_TAGS: Record<PublicEventType, string> = {
   speaking: '开口',
   night_action: '夜间',
   narration: '旁白',
+  commentary: '解说',
   player_status: '状态',
   wolf_chat_message: '狼聊',
   wolf_vote: '狼票',
