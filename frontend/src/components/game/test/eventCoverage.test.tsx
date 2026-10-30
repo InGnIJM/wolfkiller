@@ -332,6 +332,15 @@ const CASES: SurfaceCase[] = [
     expected: { activity: 'ignore', center: 'render', history: 'render' },
   },
   {
+    what: '上帝视角解说（异步旁路事件）',
+    event: {
+      ...at,
+      event_type: 'commentary',
+      payload: { round_number: 1, beat: 'night', title: '第1夜 · 夜话解说', text: '今夜预言家验出狼人。' },
+    },
+    expected: { activity: 'render', center: 'render', history: 'render' },
+  },
+  {
     what: '结算给座位留下的标记（中毒/中枪未死、延迟死亡）',
     event: {
       ...at,
@@ -415,7 +424,7 @@ describe('render-surface event coverage', () => {
   it('covers every backend audience event type exactly once', () => {
     const listed = CASES.map((item) => item.event.event_type);
     expect(new Set(listed).size).toBe(listed.length);
-    expect(listed).toHaveLength(40);
+    expect(listed).toHaveLength(41);
   });
 
   const surfaces: Surface[] = ['activity', 'center', 'history'];

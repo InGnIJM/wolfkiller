@@ -31,6 +31,7 @@ function eventTone(event: PublicReplayEvent): string {
     || event.event_type === 'wolf_beauty_revenge'
   ) return '#F4B3B6';
   if (event.event_type === 'narration') return '#7D7468';
+  if (event.event_type === 'commentary') return '#6EC8C8';
   // 觉醒女巫的毒药协助四拍都归女巫紫；放在 includes('vote') 之前，
   // 否则 assist_vote 会被当成白天/警长票染成金色。
   if (event.event_type.startsWith('awakened_witch_')) return ROLE_COLORS.witch.color;
@@ -59,6 +60,7 @@ const NIGHT_TYPES = new Set([
 const DAYTIME_REVENGE_CAUSES: ReadonlySet<string> = new Set(['exile', 'knight_duel']);
 
 function isNightEvent(event: PublicReplayEvent): boolean {
+  if (event.event_type === 'commentary') return event.payload.beat === 'night';
   if (NIGHT_TYPES.has(event.event_type)) return true;
   return event.event_type === 'wolf_beauty_revenge'
     && !DAYTIME_REVENGE_CAUSES.has(event.payload.cause);
@@ -451,6 +453,18 @@ function EventCard({
             {event.payload.text}
           </Typography>
         </Box>
+      );
+      break;
+    case 'commentary':
+      content = (
+        <>
+          <Typography variant="caption" sx={{ color: '#6EC8C8', fontWeight: 600 }}>
+            {event.payload.title}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.72rem' }}>
+            {event.payload.text}
+          </Typography>
+        </>
       );
       break;
     case 'wolf_chat_message':

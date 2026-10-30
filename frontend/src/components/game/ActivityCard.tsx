@@ -974,6 +974,39 @@ export default function ActivityCard() {
           tag="SIDE"
         />
       );
+    case 'commentary':
+      return (
+        <ActivityFrame tone="#6EC8C8">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
+            <Box>
+              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                {entry.payload.title}
+              </Typography>
+              <Typography variant="caption" sx={{ color: '#6EC8C8', letterSpacing: 2, fontWeight: 600 }}>
+                上帝视角解说
+              </Typography>
+            </Box>
+            <LiveTag label="COMMENTARY" />
+          </Box>
+          <Typography
+            variant="body2"
+            data-testid="activity-body"
+            data-max-height={ACTIVITY_BODY_MAX_HEIGHT}
+            sx={{
+              ...activityBodySx,
+              color: entry.payload.status === 'failed' ? 'text.disabled' : 'text.primary',
+            }}
+          >
+            {entry.payload.text}
+          </Typography>
+          <MetaRow
+            roundNumber={entry.payload.round_number}
+            kind="解说"
+            timestamp={entry.timestamp}
+            durationSec={durationSec}
+          />
+        </ActivityFrame>
+      );
     default:
       return null;
   }
