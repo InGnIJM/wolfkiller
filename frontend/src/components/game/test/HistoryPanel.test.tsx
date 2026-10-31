@@ -107,11 +107,11 @@ describe('HistoryPanel staged night event cards', () => {
     render(<HistoryPanel onClose={vi.fn()} />);
 
     expect(screen.getByText(/4号猎人思考/)).toBeVisible();
-    expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
+    expect(screen.getByText(/目标 6号：我开枪带走6号/)).toBeVisible();
 
     fireEvent.click(screen.getByRole('tab', { name: /思考/ }));
     expect(screen.getByText(/4号猎人思考/)).toBeVisible();
-    expect(screen.getByText(/目标6号：我开枪带走6号/)).toBeVisible();
+    expect(screen.getByText(/目标 6号：我开枪带走6号/)).toBeVisible();
   });
 
   it('groups daytime speeches into 第N天 chronicle marks', () => {
@@ -205,11 +205,11 @@ describe('HistoryPanel staged night event cards', () => {
     render(<HistoryPanel onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
-    expect(screen.getByText(/7号翻牌免于出局，失去投票权 · 第1轮/)).toBeVisible();
-    expect(screen.queryByText(/3号自爆带走8号/)).not.toBeInTheDocument();
+    expect(screen.getByText(/7号翻牌免于出局 · 第1轮/)).toBeVisible();
+    expect(screen.queryByText(/3号自爆，带走 8号/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: /死亡/ }));
-    expect(screen.getByText(/3号自爆带走8号，本日发言与投票取消 · 第2轮/)).toBeVisible();
+    expect(screen.getByText(/本日发言与投票取消，直接入夜 · 第2轮 · 3号自爆，带走 8号/)).toBeVisible();
     expect(screen.queryByText(/7号翻牌免于出局/)).not.toBeInTheDocument();
   });
 
@@ -252,7 +252,7 @@ describe('HistoryPanel staged night event cards', () => {
     expect(screen.getByText(/2号将警徽移交给5号 · 第2轮/)).toBeVisible();
     expect(screen.getByText(/5号撕毁警徽 · 第2轮/)).toBeVisible();
     // 警长的思考是上帝视角信息：有理由才追加，旧档没有这个字段
-    expect(screen.getByText(/（警长思考：9号是金水，但场上已无合适人选）/)).toBeVisible();
+    expect(screen.getByText(/警长思考：9号是金水，但场上已无合适人选/)).toBeVisible();
 
     fireEvent.click(screen.getByRole('tab', { name: /投票/ }));
     expect(screen.getByText(/2号当选警长 · 第1轮/)).toBeVisible();
@@ -481,10 +481,10 @@ describe('HistoryPanel memory detail', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
 
-    expect(await screen.findByText(/狼队友：2号、3号/)).toBeVisible();
-    expect(screen.getByText(/查验记录：2号→狼人、3号→好人、4号→neutral、5号→第三方/)).toBeVisible();
-    expect(screen.getByText(/昨夜狼刀目标：6号/)).toBeVisible();
-    expect(screen.getByText(/note：保留信息/)).toBeVisible();
+    expect(await screen.findByText(/狼队友: 2号、3号/)).toBeVisible();
+    expect(screen.getByText(/查验记录: 2号→狼人阵营、3号→好人阵营、4号→neutral、5号→第三方阵营/)).toBeVisible();
+    expect(screen.getByText(/昨夜狼刀目标: 6号/)).toBeVisible();
+    expect(screen.getByText(/note: 保留信息/)).toBeVisible();
     expect(screen.getByText(/行动 1轮：毒人 → 6号/)).toBeVisible();
     expect(screen.getByText(/行动 \?轮：future_action/)).toBeVisible();
     expect(screen.getByText(/发言 \?轮：/)).toBeVisible();
@@ -574,15 +574,15 @@ describe('HistoryPanel role-skill event cards', () => {
     });
     render(<HistoryPanel onClose={vi.fn()} />);
 
-    expect(screen.getByText(/4号起舞，邀请 4、8、11号共舞/)).toBeVisible();
-    expect(screen.getByText(/3号给 5号戴上面具/)).toBeVisible();
+    expect(screen.getByText(/4号起舞：4、8、11号共舞/)).toBeVisible();
+    expect(screen.getByText(/3号给5号戴面具（在舞池）/)).toBeVisible();
     expect(screen.getAllByText('第3夜').length).toBeGreaterThan(0);
     expect(screen.getAllByText('第2夜').length).toBeGreaterThan(0);
 
     // 「夜晚 N」页签（第 5 个）里也要有它们，否则它们只存在于「全部」页签。
     fireEvent.click(screen.getByRole('tab', { name: /^夜晚/ }));
-    expect(screen.getByText(/4号起舞，邀请 4、8、11号共舞/)).toBeVisible();
-    expect(screen.getByText(/3号给 5号戴上面具/)).toBeVisible();
+    expect(screen.getByText(/4号起舞：4、8、11号共舞/)).toBeVisible();
+    expect(screen.getByText(/3号给5号戴面具（在舞池）/)).toBeVisible();
   });
 
   it('says 不在舞池 and 无人 for the empty branches of mask and crimson cards', () => {
@@ -605,8 +605,8 @@ describe('HistoryPanel role-skill event cards', () => {
     });
     render(<HistoryPanel onClose={vi.fn()} />);
 
-    expect(screen.getByText(/3号给 5号戴上面具（目标不在舞池中/)).toBeVisible();
-    expect(screen.getByText(/1号自爆，当晚好人技能被封印（无人）/)).toBeVisible();
+    expect(screen.getByText(/3号给5号戴面具（不在舞池）/)).toBeVisible();
+    expect(screen.getByText(/1号自爆，封印当晚好人技能/)).toBeVisible();
   });
 
   it('marks an engine-cast action as 系统代行 instead of a player decision', () => {
@@ -640,7 +640,7 @@ describe('HistoryPanel role-skill event cards', () => {
     // 代行动作没有「不行动」这个决定，也没有角色名眉标。
     expect(screen.queryByText(/不行动/)).toBeNull();
     expect(screen.queryByText(/女巫思考/)).toBeNull();
-    expect(screen.getByText(/1号 → 弃权（系统代行：本轮未提交决策）/)).toBeVisible();
+    expect(screen.getByText(/1号 → 弃权（系统代行: 本轮未提交决策）/)).toBeVisible();
   });
 
   it('marks an archived charm entry as missing its target', () => {

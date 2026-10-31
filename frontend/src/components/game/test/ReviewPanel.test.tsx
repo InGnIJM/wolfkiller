@@ -72,7 +72,7 @@ describe('ReviewPanel', () => {
     expect(screen.getByText('1号 · 预言家')).toBeInTheDocument();
     expect(screen.getByText('第2轮 · 放逐狼王')).toBeInTheDocument();
     expect(screen.getByText('3号 · 站错边')).toBeInTheDocument();
-    expect(screen.getByText('「正义必胜」')).toBeInTheDocument();
+    expect(screen.getByText('正义必胜')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     await waitFor(() => {

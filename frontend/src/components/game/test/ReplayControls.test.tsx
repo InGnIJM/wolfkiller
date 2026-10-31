@@ -239,7 +239,7 @@ describe('HistoryPanel accessibility', () => {
     expect(screen.getByRole('button', { name: /2号被放逐/ })).toBeVisible();
     expect(screen.getByRole('button', { name: /弃权/ })).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: /死亡/ }));
-    expect(screen.getByRole('button', { name: /2号出局/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /2号 夜间死亡/ })).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: /夜晚/ }));
     expect(screen.getByRole('button', { name: /狼人行动/ })).toBeVisible();
   });
@@ -309,7 +309,7 @@ describe('HistoryPanel accessibility', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '记忆' }));
     expect(await screen.findByText(/3号 · 女巫/)).toBeVisible();
-    expect(screen.getByText(/解药：可用/)).toBeVisible();
+    expect(screen.getByText(/解药: 可用/)).toBeVisible();
   });
 
   it('surfaces a friendly message when seat memories fail to load', async () => {
