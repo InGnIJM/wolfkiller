@@ -658,6 +658,22 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.getByText(/6号发动魅惑 · 第3轮 · 目标未记录/)).toBeVisible();
   });
 
+  it('labels an assist vote without reasoning as （无理由）', () => {
+    useGameStore.setState({
+      timeline: [
+        {
+          ...replayEventMeta,
+          event_type: 'awakened_witch_assist_vote',
+          payload: { seat: 7, target_seat: 4, vote: 'veto', reasoning: '', round_number: 2 },
+        },
+      ],
+    });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    expect(screen.getByText(/7号表态反对（毒药目标 4号）/)).toBeVisible();
+    expect(screen.getByText('（无理由）')).toBeVisible();
+  });
+
   it('marks an archived illusion entry as missing its target', () => {
     useGameStore.setState({
       timeline: [
