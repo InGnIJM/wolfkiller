@@ -192,9 +192,12 @@ test('opens the failed game at its linked audience event', async ({ page }) => {
   await installMockApi(page, state);
   await page.goto(`/benchmarks/${state.benchmark.run_id}`);
 
-  await page.getByRole('link', { name: '查看回放 · 事件 2' }).click();
-  await expect(page).toHaveURL(/\/game\/failed-game\?seq=2$/);
-  await expect(page.getByRole('slider', { name: '回放进度' })).toHaveAttribute('aria-valuetext', '第2条，共3条事件');
+  await page.getByRole('link', { name: '查看回放' }).click();
+  await expect(page).toHaveURL(/\/game\/failed-game$/);
+  const progress = page.getByRole('slider', { name: '回放进度' });
+  await expect(progress).toHaveAttribute('aria-valuetext', '第3条，共3条事件');
+  await page.getByRole('button', { name: '上一个事件' }).click();
+  await expect(progress).toHaveAttribute('aria-valuetext', '第2条，共3条事件');
   await expect(page.getByText('回到直播')).toBeVisible();
 });
 
