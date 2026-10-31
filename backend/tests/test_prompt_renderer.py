@@ -325,3 +325,37 @@ def test_renderer_injects_sheriff_rules_when_enabled() -> None:
     assert "1.5" in rendered
     assert '"sheriff":2' in rendered.replace(" ", "")
     assert "do not invent mechanics from other Werewolf variants" in rendered
+
+
+def test_render_truncates_oversized_history_to_byte_budget() -> None:
+    """History past the byte budget loses its oldest records, not the game."""
+    spec, contract, context = values()
+    # ~80KB of 4-byte chars after the 20k-character cap: guaranteed to overflow
+    # the 65,536-byte prompt budget regardless of the fixture's frame size.
+    history = "狼窝旧记录甲\n" + "🐺" * 19_000 + "\n最新狼窝记录乙"
+    rendered = PromptRenderer().render(spec, contract, context, history)
+    assert len(rendered.encode("utf-8")) <= 65_536
+    # The tail describes the live situation and survives; the oldest record
+    # is what the truncation drops.
+    assert "最新狼窝记录乙" in rendered
+    assert "狼窝旧记录甲" not in rendered
+    assert rendered.endswith("</record></untrusted_action_history>")
+
+
+def test_render_drops_partial_first_record_on_truncation() -> None:
+    """A mid-record byte cut starts at the next line boundary instead."""
+    spec, contract, context = values()
+    history = "🐺" * 19_000 + "\n" + "🐺" * 900
+    rendered = PromptRenderer().render(spec, contract, context, history)
+    assert len(rendered.encode("utf-8")) <= 65_536
+    assert "🐺" in rendered
+
+
+def test_render_truncates_history_without_newline() -> None:
+    """No line boundary in the tail: the raw truncated tail is kept."""
+    spec, contract, context = values()
+    rendered = PromptRenderer().render(
+        spec, contract, context, "🐺" * 19_000,
+    )
+    assert len(rendered.encode("utf-8")) <= 65_536
+    assert "🐺" in rendered
