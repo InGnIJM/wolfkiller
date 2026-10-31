@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { renderHook } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import i18n from '../i18n';
 import { en } from '../i18n/en';
@@ -101,6 +101,15 @@ describe('uiSettingsStore 解析逻辑', () => {
     expect(resolveLanguage('system', 'zh-TW')).toBe('zh-CN');
     expect(resolveLanguage('system', 'en-US')).toBe('en');
     expect(resolveLanguage('system', 'ja-JP')).toBe('en');
+  });
+
+  it('resolveLanguage：无 navigator 环境回落 zh-CN', () => {
+    vi.stubGlobal('navigator', undefined);
+    try {
+      expect(resolveLanguage('system')).toBe('zh-CN');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('resolveThemeMode：system 跟 prefers-color-scheme', () => {

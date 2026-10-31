@@ -930,6 +930,50 @@ describe('public replay state', () => {
     expect(useGameStore.getState().revealOnDeath).toBe(false);
   });
 
+  it('carries pause info from public state and audience snapshots', () => {
+    const pausedState: PublicGameState = {
+      game_id: 'game-1',
+      phase: 'speech',
+      round_number: 1,
+      players: currentPlayers,
+      sheriff: null,
+      speeches: [],
+      death_history: [],
+      win_result: null,
+      execution_status: 'paused',
+      pause_code: 'model_timeout',
+    };
+
+    useGameStore.getState().setGameState(pausedState);
+    expect(useGameStore.getState().pauseInfo).toEqual({
+      code: 'model_timeout', reason: null, detail: null,
+    });
+    expect(useGameStore.getState().isPaused).toBe(true);
+
+    useGameStore.getState().setGameState({
+      ...pausedState, pause_reason: '模型连续超时', pause_detail: { seat: 3 },
+    });
+    expect(useGameStore.getState().pauseInfo).toEqual({
+      code: 'model_timeout', reason: '模型连续超时', detail: { seat: 3 },
+    });
+
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1', seq: 0, projection_version: 1, state: pausedState,
+    });
+    expect(useGameStore.getState().pauseInfo).toEqual({
+      code: 'model_timeout', reason: null, detail: null,
+    });
+
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: { ...pausedState, pause_reason: '模型连续超时', pause_detail: { seat: 3 } },
+    });
+    expect(useGameStore.getState().pauseInfo).toEqual({
+      code: 'model_timeout', reason: '模型连续超时', detail: { seat: 3 },
+    });
+    expect(useGameStore.getState().isPaused).toBe(true);
+  });
+
   it('updates direct public websocket state and controls', () => {
     const state: PublicGameState = {
       game_id: 'game-1',

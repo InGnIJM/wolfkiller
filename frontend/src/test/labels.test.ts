@@ -24,6 +24,32 @@ describe('文案表本身', () => {
   });
 });
 
+describe('recovery_block_code 标签', () => {
+  it('已知码映射文案，未知码与空值原样兜底', () => {
+    expect(labels.recoveryBlockLabel('role_declaration_drift')).toBe('角色声明已变更');
+    expect(labels.recoveryBlockLabel('future_code')).toBe('future_code');
+    expect(labels.recoveryBlockLabel(null)).toBeNull();
+    expect(labels.recoveryBlockLabel(undefined)).toBeNull();
+  });
+});
+
+describe('觉醒女巫标签函数', () => {
+  it('协助者表态覆盖三种票与未知值', () => {
+    expect(labels.awakenedWitchVoteLabel('agree')).toBe('同意');
+    expect(labels.awakenedWitchVoteLabel('veto')).toBe('反对');
+    expect(labels.awakenedWitchVoteLabel('pass')).toBe('弃权');
+    expect(labels.awakenedWitchVoteLabel('future_vote' as never)).toBe('future_vote');
+  });
+
+  it('毒药结果覆盖四种结局与未知值', () => {
+    expect(labels.awakenedWitchPoisonResultLabel('passed')).toBe('生效');
+    expect(labels.awakenedWitchPoisonResultLabel('vetoed')).toBe('被否决');
+    expect(labels.awakenedWitchPoisonResultLabel('incomplete')).toBe('未完成');
+    expect(labels.awakenedWitchPoisonResultLabel('aborted')).toBe('中止');
+    expect(labels.awakenedWitchPoisonResultLabel('future_result' as never)).toBe('future_result');
+  });
+});
+
 describe('文案统一由 src/labels.ts 管理', () => {
   it('组件里不再有本地文案表', () => {
     // 33 张表曾散在 10 个组件里，同一套词汇被抄 2-5 份；谁再写一张本地表，这里就红。
