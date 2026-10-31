@@ -2969,6 +2969,30 @@ class TestCommandProvider:
         assert command.degraded is True
         llm.get_model.assert_not_called()
 
+    def test_provider_degrades_when_prompt_render_fails(self):
+        """A render fault is one seat's action problem, not a game killer."""
+        from app.core.night_flow import NightDirector
+
+        service = GameService(WSManager(), EventBus())
+        snapshot = builtin_registry.freeze()
+        renderer = MagicMock()
+        renderer.render.side_effect = ValueError("prompt is too large")
+        llm = MagicMock()
+        director = NightDirector(snapshot, lambda messages: None)
+        provider = service._command_provider(
+            snapshot, renderer, lambda seat: llm, director,
+        )
+
+        command = provider(
+            self._request("wolf-killer-seer"), MagicMock(game_id="g"), 0,
+        )
+
+        assert command.action_type == "pass"
+        assert command.target_seat is None
+        assert command.reasoning == DEGRADED_REASONING
+        assert command.degraded is True
+        llm.invoke_action.assert_not_called()
+
 
 class TestReconstruction:
     def _write_log(self, tmp_path, game_id, lines):

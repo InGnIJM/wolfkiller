@@ -3234,7 +3234,28 @@ class GameService:
                 context = replace(context, facts={
                     **context.facts, "RANDOM_HINT": fallback_target,
                 })
-            prompt = renderer.render(role_spec, request.contract, context, history)
+            try:
+                prompt = renderer.render(role_spec, request.contract, context, history)
+            except Exception:
+                # A render fault (overlarge prompt, malformed context) is one
+                # seat's action problem, not pipeline corruption: degrade like
+                # any other unusable answer instead of killing the game.
+                logger.warning(
+                    "Action prompt render failed for seat=%s contract=%s "
+                    "point=%s; degrading to safe fallback",
+                    request.actor_seat, request.contract.contract_id,
+                    request.contract.schedule_point.value,
+                    exc_info=True,
+                )
+                self._pause_once_or_degrade(
+                    context.game_id, request.action_key, request.contract,
+                )
+                return PipelineActionCommand(
+                    action_type=request.contract.fallback_action_type,
+                    target_seat=None,
+                    reasoning=DEGRADED_REASONING,
+                    degraded=True,
+                )
             messages = [
                 SystemMessage(content=_SYSTEM_PROMPT),
                 HumanMessage(content=prompt),
