@@ -56,6 +56,15 @@ describe('GameCard', () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it('offers a replay export link in the menu without entering the game', () => {
+    const { onClick } = renderCard();
+    fireEvent.click(screen.getByRole('button', { name: '对局操作' }));
+    const item = screen.getByRole('menuitem', { name: /导出复盘/ });
+    expect(item).toHaveAttribute('href', expect.stringContaining('/api/games/abcd1234/export'));
+    fireEvent.click(item);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
   it('shows winner chips and the error phase label', () => {
     const { unmount } = render(
       <GameCard

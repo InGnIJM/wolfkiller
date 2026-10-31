@@ -77,6 +77,12 @@ vi.mock('../HistoryPanel', () => ({
   default: () => <div data-testid="history-panel" />,
 }));
 
+vi.mock('../ReviewPanel', () => ({
+  default: ({ open, onClose }: { open: boolean; onClose: () => void }) => (
+    open ? <button data-testid="review-panel" onClick={onClose}>复盘面板</button> : null
+  ),
+}));
+
 const detail: PublicGameState = {
   game_id: 'game-1',
   phase: 'game_over',
@@ -167,6 +173,16 @@ describe('GameBoard public replay', () => {
     await screen.findByTestId('seat-map');
     const link = screen.getByRole('link', { name: '导出复盘' });
     expect(link).toHaveAttribute('href', 'https://api.test/games/game-1/export');
+  });
+
+  it('opens and closes the post-game review panel', async () => {
+    render(<GameBoard gameId="game-1" onBack={vi.fn()} />);
+
+    await screen.findByTestId('seat-map');
+    fireEvent.click(screen.getByRole('button', { name: '查看对局' }));
+    fireEvent.click(screen.getByRole('button', { name: '赛后复盘' }));
+    fireEvent.click(await screen.findByTestId('review-panel'));
+    expect(screen.queryByTestId('review-panel')).not.toBeInTheDocument();
   });
 
   it('treats a public detail without model_snapshot as unknown seat models', async () => {
