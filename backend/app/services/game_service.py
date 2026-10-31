@@ -890,6 +890,10 @@ class GameService:
         # Never popped: dropping a lock while it is held would let a second one
         # be created for the same game.
         self._control_locks: dict[str, asyncio.Lock] = {}
+        # Set by ``aclose`` so consumption-wait loops can escape: a paused game
+        # parks executor workers in them forever, and they must exit before
+        # ``loop.shutdown_default_executor`` can join them.
+        self._closed = threading.Event()
 
         # Restore completed games so list / detail endpoints still work
         self._load_persisted_games()
@@ -2610,6 +2614,8 @@ class GameService:
         if self.repository is None:
             return
         while True:
+            if self._closed.is_set():
+                raise ModelRequestUnavailable("service is shutting down")
             record = self.repository.get_game(game_id)
             if record is None:
                 raise ModelRequestUnavailable("game was deleted before result consumption")
@@ -2626,6 +2632,8 @@ class GameService:
         if self.repository is None:
             return
         while True:
+            if self._closed.is_set():
+                raise ModelRequestUnavailable("service is shutting down")
             record = self.repository.get_game(game_id)
             if record is None:
                 raise ModelRequestUnavailable("game was deleted before result consumption")
@@ -3748,6 +3756,9 @@ class GameService:
         unclosed httpx/openai clients crash interpreter finalization on
         Windows (segfault, reported as exit code 2816).
         """
+        # First: parked consumption waits must see this before the executor
+        # joins its workers, or shutdown deadlocks on paused games.
+        self._closed.set()
         clocks = list(self._clock_tasks.values())
         for clock in clocks:
             clock.cancel()

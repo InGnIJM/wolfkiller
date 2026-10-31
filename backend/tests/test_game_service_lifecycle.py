@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -1178,6 +1180,60 @@ def test_sync_model_consumption_waits_and_rejects_invalid_records(
             asyncio.run(legacy.aclose())
     finally:
         asyncio.run(service.aclose())
+        repository.close()
+
+
+def test_sync_consumption_wait_unblocks_on_service_close(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="paused",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    done = threading.Event()
+    box: dict[str, object] = {}
+
+    def waiter() -> None:
+        try:
+            service._wait_model_consumption_allowed_sync("game")
+        except Exception as exc:
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=waiter, daemon=True)
+    worker.start()
+    time.sleep(0.2)
+    # Parked on the paused game: it must not outlive the service.
+    assert not done.is_set()
+    try:
+        asyncio.run(service.aclose())
+        assert done.wait(timeout=5), "consumption wait survived service shutdown"
+        assert isinstance(box["exc"], ModelRequestUnavailable)
+    finally:
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_async_consumption_wait_unblocks_on_service_close(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="paused",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    waiter = asyncio.ensure_future(service._wait_model_consumption_allowed("game"))
+    await asyncio.sleep(0.2)
+    assert not waiter.done()
+    try:
+        await service.aclose()
+        with pytest.raises(ModelRequestUnavailable):
+            await asyncio.wait_for(waiter, timeout=5)
+    finally:
         repository.close()
 
 
