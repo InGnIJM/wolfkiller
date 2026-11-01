@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import Mapping
 from typing import Annotated, Any
@@ -80,24 +81,33 @@ def get_export_service():
     return game_export_service
 
 
-def _execution_info(service: GameService, game_id: str, state) -> dict[str, object]:
-    getter = getattr(service, "get_execution_info", None)
-    if callable(getter):
-        try:
-            value = getter(game_id)
-        except KeyError:
+def _execution_info(
+    service: GameService, game_id: str, state,
+    record: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    if record is not None:
+        record_getter = getattr(service, "execution_info_from_record", None)
+        value = record_getter(record) if callable(record_getter) else None
+    else:
+        getter = getattr(service, "get_execution_info", None)
+        if callable(getter):
+            try:
+                value = getter(game_id)
+            except KeyError:
+                value = None
+        else:
             value = None
-        if isinstance(value, Mapping):
-            return {
-                "execution_status": str(value.get("execution_status", "running")),
-                "recoverable": bool(value.get("recoverable", False)),
-                "recovery_block_code": value.get("recovery_block_code"),
-                "pause_code": value.get("pause_code"),
-                "pause_reason": value.get("pause_reason"),
-                "pause_detail": value.get("pause_detail"),
-                "interruption_count": int(value.get("interruption_count", 0)),
-                "benchmark_run_id": value.get("benchmark_run_id"),
-            }
+    if isinstance(value, Mapping):
+        return {
+            "execution_status": str(value.get("execution_status", "running")),
+            "recoverable": bool(value.get("recoverable", False)),
+            "recovery_block_code": value.get("recovery_block_code"),
+            "pause_code": value.get("pause_code"),
+            "pause_reason": value.get("pause_reason"),
+            "pause_detail": value.get("pause_detail"),
+            "interruption_count": int(value.get("interruption_count", 0)),
+            "benchmark_run_id": value.get("benchmark_run_id"),
+        }
     phase = getattr(state, "phase", None)
     phase_str = getattr(phase, "value", None) or (phase if isinstance(phase, str) else None)
     if phase_str is None and isinstance(state, Mapping):
@@ -174,18 +184,21 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
     )
 
 
-def _list_item(service: GameService, game_id: str, state) -> GameListItem:
+def _list_item(
+    service: GameService, game_id: str, state,
+    record: Mapping[str, object] | None = None,
+    folder_id: str | None = None,
+) -> GameListItem:
     win = state.win_result.get("winning_camp") if state.win_result else None
-    execution = _execution_info(service, game_id, state)
-    folder_id = None
-    getter = getattr(service, "get_game_folder_id", None)
-    if callable(getter):
-        value = getter(game_id)
-        if isinstance(value, str) and value:
-            folder_id = value
+    execution = _execution_info(service, game_id, state, record)
+    name_getter = getattr(service, "display_name_from_record", None)
+    if callable(name_getter):
+        name = name_getter(game_id, record)
+    else:
+        name = service.get_display_name(game_id)
     return GameListItem(
         game_id=game_id,
-        name=service.get_display_name(game_id),
+        name=name,
         phase=state.phase.value,
         round_number=state.round_number,
         player_count=len(state.players),
@@ -203,31 +216,48 @@ async def list_games(
     folder_id: Annotated[str | None, Query()] = None,
 ):
     service = get_service()
+    # Two bulk reads replace per-game lookups: the list can hold hundreds of
+    # games and each repository call opens its own connection.
+    record_getter = getattr(service, "game_record_index", None)
+    records: dict[str, Any] = (
+        await asyncio.to_thread(record_getter) if callable(record_getter) else {}
+    )
+    folder_getter = getattr(service, "game_folder_index", None)
+    folders: dict[str, str] = (
+        await asyncio.to_thread(folder_getter) if callable(folder_getter) else {}
+    )
+    lobby_checker = getattr(service, "is_lobby_record", None)
+    legacy_checker = getattr(service, "is_lobby_game", None)
     games = service.list_games()
-    matching_games: list[tuple[str, Any]] = []
+    matching_games: list[tuple[str, Any, Any, str | None]] = []
     for g in games:
-        checker = getattr(service, "is_lobby_game", None)
-        if callable(checker) and not checker(g):
+        record = records.get(g)
+        if callable(lobby_checker):
+            if not lobby_checker(record):
+                continue
+        elif callable(legacy_checker) and not legacy_checker(g):
             continue
         state = service.get_game_state(g)
         if state is None:
             continue
+        cur_folder = folders.get(g)
         if folder_id is not None and folder_id != "all":
-            getter = getattr(service, "get_game_folder_id", None)
-            cur_folder = getter(g) if callable(getter) else None
             if folder_id == "unfiled":
                 if cur_folder is not None:
                     continue
             elif cur_folder != folder_id:
                 continue
-        matching_games.append((g, state))
+        matching_games.append((g, state, record, cur_folder))
 
     total = len(matching_games)
     start = (page - 1) * page_size
     end = start + page_size
     page_slice = matching_games[start:end]
 
-    items = [_list_item(service, g, state) for g, state in page_slice]
+    items = [
+        _list_item(service, g, state, record, cur_folder)
+        for g, state, record, cur_folder in page_slice
+    ]
     return GameListResponse(games=items, total=total, page=page, page_size=page_size)
 
 

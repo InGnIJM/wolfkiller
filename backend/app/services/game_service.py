@@ -979,6 +979,10 @@ class GameService:
         record = self.repository.get_game(game_id)
         if record is None:
             raise KeyError(game_id)
+        return self.execution_info_from_record(record)
+
+    def execution_info_from_record(self, record: Mapping[str, object]) -> dict[str, object]:
+        """Project one ``games`` row into the public execution-info shape."""
         status = str(record["execution_status"])
         block = record["recovery_block_code"]
         pause_code = record.get("pause_code")
@@ -1913,66 +1917,11 @@ class GameService:
                     logger.debug("Failed to remove partial game directory", exc_info=True)
             raise
 
-        def _watch_engine(done: asyncio.Task) -> None:
-            """Surface engine crashes instead of silently freezing the game."""
-            clock_task = self._clock_tasks.pop(game_id, None)
-            if clock_task is not None and not clock_task.done():
-                clock_task.cancel()
-            # Release the capture descriptor here too: a long-lived process would
-            # otherwise hold one open fd per game it has ever run.
-            self._close_prompt_capture(game_id)
-            asyncio.create_task(self._close_game_clients(game_id))
-            if done.cancelled():
-                return
-            exc = done.exception()
-            if exc is None:
-                current_state = self._games.get(game_id)
-                if (
-                    self.repository is not None
-                    and current_state is not None
-                    and current_state.phase is GamePhase.GAME_OVER
-                ):
-                    try:
-                        self.repository.transition_execution(
-                            game_id, expected=("running", "paused"),
-                            target="completed",
-                        )
-                    except (KeyError, InvalidExecutionTransition):
-                        logger.debug("Game completion status was already finalized", exc_info=True)
-                return
-            logger.error(
-                "Game engine crashed for %s",
-                game_id,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
-            state = self._games.get(game_id)
-            if state is None:
-                return
-            state.phase = GamePhase.ERROR
-            if self.repository is not None:
-                try:
-                    self.repository.transition_execution(
-                        game_id, expected=("running", "paused"), target="failed",
-                    )
-                except (KeyError, InvalidExecutionTransition):
-                    logger.debug("Game failure status was already finalized", exc_info=True)
-            self._manifest.update_game(game_id, phase=GamePhase.ERROR.value)
-            engine.game_logger.log_phase_change(
-                game_id, GamePhase.ERROR.value, state.round_number,
-            )
-
-            async def _broadcast_error() -> None:
-                await self.event_bus.publish(
-                    BusEvent.PHASE_CHANGED,
-                    game_id=game_id,
-                    phase=GamePhase.ERROR.value,
-                    round_number=state.round_number,
-                    state=state,
-                )
-
-            asyncio.create_task(_broadcast_error())
-
-        task.add_done_callback(_watch_engine)
+        # The same watcher rules as the recovery path: a one-shot contract
+        # exhaustion pauses the game, a provider outage fails it, and only a
+        # genuine crash writes the ERROR phase. A create-path watcher that
+        # treated every exception as a crash would silently defeat the pause.
+        self._attach_task_watcher(game_id, engine, task)
 
         logger.info(f"Game created: {game_id}, {config.total_players} players")
         return game_id
@@ -2981,10 +2930,24 @@ class GameService:
     def _attach_task_watcher(
         self, game_id: str, engine: GameEngine, task: asyncio.Task,
     ) -> None:
+        """Attach the single engine-done watcher used by create and recovery.
+
+        One implementation owns every terminal mapping: completion, provider
+        outage (``ProviderOutageFailed`` → ``failed``), recoverable pause
+        (``DecisionPaused`` → ``paused``), and genuine crash (``failed`` +
+        ERROR phase). The two paths used to keep separate watchers and the
+        create one never learned the pause/outage branches, so a one-shot
+        contract exhaustion looked like a crash on a fresh game.
+        """
+
         def watch(done: asyncio.Task) -> None:
             clock = self._clock_tasks.pop(game_id, None)
             if clock is not None and not clock.done():
                 clock.cancel()
+            # Release the capture descriptor here too: a long-lived process
+            # would otherwise hold one open fd per game it has ever run. The
+            # recovery path never latches a capture, so this is a no-op there.
+            self._close_prompt_capture(game_id)
             asyncio.create_task(self._close_game_clients(game_id))
             if done.cancelled():
                 return
@@ -3042,7 +3005,7 @@ class GameService:
                 self._broadcast_pause(game_id, code, detail)
                 return
             logger.error(
-                "Recovered game engine crashed for %s", game_id,
+                "Game engine crashed for %s", game_id,
                 exc_info=(type(error), error, error.__traceback__),
             )
             self._health_guards.pop(game_id, None)
@@ -3055,6 +3018,32 @@ class GameService:
                     )
                 except (KeyError, InvalidExecutionTransition):
                     logger.debug("Recovered game failure already finalized", exc_info=True)
+            if state is None:
+                return
+            try:
+                self._manifest.update_game(
+                    game_id, phase=GamePhase.ERROR.value,
+                )
+            except Exception:
+                logger.debug(
+                    "Manifest error-phase update failed", exc_info=True,
+                )
+            game_logger = getattr(engine, "game_logger", None)
+            if game_logger is not None:
+                game_logger.log_phase_change(
+                    game_id, GamePhase.ERROR.value, state.round_number,
+                )
+
+            async def _broadcast_error() -> None:
+                await self.event_bus.publish(
+                    BusEvent.PHASE_CHANGED,
+                    game_id=game_id,
+                    phase=GamePhase.ERROR.value,
+                    round_number=state.round_number,
+                    state=state,
+                )
+
+            asyncio.create_task(_broadcast_error())
 
         task.add_done_callback(watch)
 
@@ -3503,6 +3492,11 @@ class GameService:
         task = self._tasks.get(game_id)
         if task is not None and not task.done():
             await asyncio.shield(task)
+        elif task is not None:
+            # The runner finished before we looked: its done-callbacks are
+            # queued but may not have persisted the terminal status yet, so
+            # yield one tick before reading the durable execution info.
+            await asyncio.sleep(0)
         return self.get_execution_info(game_id)
 
     async def cancel_benchmark_game(
@@ -3519,6 +3513,30 @@ class GameService:
         status = str(record["execution_status"])
         if status == "cancelled":
             return self.get_execution_info(game_id)
+        if status == "running":
+            self._persist_runtime_clock(game_id, running=True)
+        # Commit the terminal row before touching the runner: the generation
+        # bump already isolates every late write, and a caller can be destroyed
+        # by the runner's own done-watcher while it waits on the task below —
+        # the armed-timeout heartbeat cancels the runner, and the watcher then
+        # cancels ``_clock_tasks[game_id]``, which is the heartbeat itself.
+        try:
+            self.repository.transition_execution(
+                game_id,
+                expected=("running", "paused", "interrupted", "recovery_blocked", "failed"),
+                target="cancelled",
+                increment_generation=True,
+                recovery_block_code=recovery_block_code,
+            )
+        except InvalidExecutionTransition:
+            # A concurrent cancel already landed: same outcome, not an error.
+            latest = self.repository.get_game(game_id)
+            if latest is None or str(latest["execution_status"]) != "cancelled":
+                raise
+            return self.get_execution_info(game_id)
+        # Detach the clock task before killing the runner so the runner's
+        # watcher cannot cancel a canceller that is itself the clock task.
+        self._clock_tasks.pop(game_id, None)
         engine = self._engines.get(game_id)
         if engine is not None:
             await engine.stop()
@@ -3526,28 +3544,38 @@ class GameService:
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        if status == "running":
-            self._persist_runtime_clock(game_id, running=True)
-        self.repository.transition_execution(
-            game_id,
-            expected=("running", "paused", "interrupted", "recovery_blocked", "failed"),
-            target="cancelled",
-            increment_generation=True,
-            recovery_block_code=recovery_block_code,
-        )
         await self._close_game_clients(game_id)
         return self.get_execution_info(game_id)
 
     def list_games(self) -> list[str]:
         return list(self._games.keys())
 
-    def is_lobby_game(self, game_id: str) -> bool:
-        if self.repository is None:
-            return True
-        record = self.repository.get_game(game_id)
+    @staticmethod
+    def is_lobby_record(record: Mapping[str, object] | None) -> bool:
+        """Project one ``games`` row into the lobby-visibility flag."""
         if record is None:
             return True
         return record.get("benchmark_run_id") is None and record.get("source") != "benchmark"
+
+    def is_lobby_game(self, game_id: str) -> bool:
+        if self.repository is None:
+            return True
+        return self.is_lobby_record(self.repository.get_game(game_id))
+
+    def game_record_index(self) -> dict[str, dict[str, object]]:
+        """Fetch every ``games`` row once, keyed by game_id, for list views."""
+        if self.repository is None:
+            return {}
+        return {
+            str(record["game_id"]): record
+            for record in self.repository.list_games()
+        }
+
+    def game_folder_index(self) -> dict[str, str]:
+        """Fetch the full game_id → folder_id map in one query."""
+        if self.repository is None:
+            return {}
+        return self.repository.list_folder_items()
 
     def get_game_folder_id(self, game_id: str) -> str | None:
         if self.repository is None:
@@ -3646,16 +3674,25 @@ class GameService:
                 })
         return {"deleted": deleted, "failed": failed}
 
-    def get_display_name(self, game_id: str) -> str:
-        if self.repository is not None:
-            record = self.repository.get_game(game_id)
-            if record is not None and isinstance(record.get("name"), str):
-                return str(record["name"])
+    def display_name_from_record(
+        self, game_id: str, record: Mapping[str, object] | None,
+    ) -> str:
+        """Project one ``games`` row into the display name, with manifest fallback."""
+        if record is not None and isinstance(record.get("name"), str):
+            return str(record["name"])
         entry = self._manifest.get_entry(game_id) or {}
         name = entry.get("name")
         if isinstance(name, str) and name.strip():
             return name.strip()
         return game_id[:8]
+
+    def get_display_name(self, game_id: str) -> str:
+        record = (
+            self.repository.get_game(game_id)
+            if self.repository is not None
+            else None
+        )
+        return self.display_name_from_record(game_id, record)
 
     def rename_game(self, game_id: str, name: str) -> None:
         if game_id not in self._games:

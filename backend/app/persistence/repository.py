@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 T = TypeVar("T")
 _FOLDER_NAME_MAX = 50
 
@@ -76,12 +76,6 @@ def _ensure_column(
     names = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
     if column not in names:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
-
-
-def _percentile(sorted_values: list[int], fraction: float) -> int:
-    """Nearest-rank percentile over an already sorted, non-empty sample."""
-    index = min(int(len(sorted_values) * fraction), len(sorted_values) - 1)
-    return sorted_values[index]
 
 
 def _references_model_config(value: object, config_id: str) -> bool:
@@ -414,6 +408,23 @@ class GameRepository:
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (4, _now()),
                 )
+            if current < 5:
+                # Minimal legacy databases (e.g. test fixtures that only create
+                # the tables they exercise) may lack model_attempts entirely.
+                tables = {
+                    row[0] for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                if "model_attempts" in tables:
+                    connection.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_model_attempts_started_at "
+                        "ON model_attempts(status, started_at)"
+                    )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (5, _now()),
+                )
 
     def _write(self, function: Callable[..., T], *args: object) -> T:
         if self._closed:
@@ -692,6 +703,14 @@ class GameRepository:
             )
             if cursor.rowcount != 1:
                 raise KeyError(folder_id)
+
+    def list_folder_items(self) -> dict[str, str]:
+        """Return the full game_id → folder_id map in one query."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT game_id, folder_id FROM game_folder_items"
+            ).fetchall()
+            return {str(row["game_id"]): str(row["folder_id"]) for row in rows}
 
     def get_game_folder(self, game_id: str) -> str | None:
         with self._connect() as connection:
@@ -1502,34 +1521,43 @@ class GameRepository:
         take before committing an hour of wall clock to it, so only attempts
         that actually resolved with a recorded ``elapsed_ms`` count, and a
         group below ``min_samples`` is dropped rather than published as if a
-        handful of calls were a measurement.
+        handful of calls were a measurement. The ranking runs inside SQL so
+        only the two percentile rows per group cross into Python.
         """
         query = (
-            "SELECT r.model_id, r.provider_profile, a.elapsed_ms "
-            "FROM model_attempts a JOIN model_requests r "
-            "ON r.game_id=a.game_id AND r.request_id=a.request_id "
-            "WHERE a.status='resolved' AND a.elapsed_ms IS NOT NULL"
+            "WITH ranked AS ("
+            "SELECT r.model_id AS model_id, r.provider_profile AS provider_profile,"
+            " a.elapsed_ms AS elapsed_ms,"
+            " ROW_NUMBER() OVER (PARTITION BY r.model_id, r.provider_profile"
+            " ORDER BY a.elapsed_ms) AS rn,"
+            " COUNT(*) OVER (PARTITION BY r.model_id, r.provider_profile) AS n,"
+            " SUM(a.elapsed_ms) OVER (PARTITION BY r.model_id, r.provider_profile) AS total_ms"
+            " FROM model_attempts a JOIN model_requests r"
+            " ON r.game_id=a.game_id AND r.request_id=a.request_id"
+            " WHERE a.status='resolved' AND a.elapsed_ms IS NOT NULL"
         )
-        params: tuple[object, ...] = ()
+        params: list[object] = []
         if since is not None:
             query += " AND a.started_at >= ?"
-            params = (since,)
+            params.append(since)
+        query += (
+            ") SELECT model_id, provider_profile, n, total_ms,"
+            " MAX(CASE WHEN rn = CAST(n*0.5 AS INTEGER)+1 THEN elapsed_ms END) AS p50,"
+            " MAX(CASE WHEN rn = CAST(n*0.9 AS INTEGER)+1 THEN elapsed_ms END) AS p90"
+            " FROM ranked"
+            " WHERE n >= ? AND rn IN (CAST(n*0.5 AS INTEGER)+1, CAST(n*0.9 AS INTEGER)+1)"
+            " GROUP BY model_id, provider_profile"
+        )
+        params.append(min_samples)
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        grouped: dict[tuple[str, str], list[int]] = {}
-        for row in rows:
-            key = (row["model_id"], row["provider_profile"])
-            grouped.setdefault(key, []).append(int(row["elapsed_ms"]))
         stats: dict[tuple[str, str], dict[str, int]] = {}
-        for key, values in grouped.items():
-            if len(values) < min_samples:
-                continue
-            values.sort()
-            stats[key] = {
-                "samples": len(values),
-                "avg_ms": round(sum(values) / len(values)),
-                "p50_ms": _percentile(values, 0.50),
-                "p90_ms": _percentile(values, 0.90),
+        for row in rows:
+            stats[(row["model_id"], row["provider_profile"])] = {
+                "samples": int(row["n"]),
+                "avg_ms": round(int(row["total_ms"]) / int(row["n"])),
+                "p50_ms": int(row["p50"]),
+                "p90_ms": int(row["p90"]),
             }
         return stats
 
