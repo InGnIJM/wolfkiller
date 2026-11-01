@@ -44,6 +44,7 @@ from app.stores.model_config_store import get_model_config_store
 from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.prompt_renderer import PromptRenderer
+from app.agents.prompt_window import stable_tail
 from app.agents.output_parser import coerce_payload_to_schema
 from app.agents.game_rules import NIGHT_SYSTEM_PROMPT as _SYSTEM_PROMPT
 from app.core.action_resolver import ActionResolver
@@ -363,6 +364,9 @@ def _log_llm_telemetry(
             prompt_tokens=(usage.prompt_tokens if usage else None),
             completion_tokens=(usage.completion_tokens if usage else None),
             total_tokens=(usage.total_tokens if usage else None),
+            cached_prompt_tokens=(
+                getattr(usage, "cached_prompt_tokens", None) if usage else None
+            ),
             retried=attempts > 1, parse_result=parse_result,
             failure_code=failure_code,
         )
@@ -802,7 +806,11 @@ def _usage_mapping(value: object) -> dict[str, int] | None:
     fields = ("prompt_tokens", "completion_tokens", "total_tokens")
     if any(type(getattr(value, name, None)) is not int for name in fields):
         return None
-    return {name: int(getattr(value, name)) for name in fields}
+    mapping = {name: int(getattr(value, name)) for name in fields}
+    cached = getattr(value, "cached_prompt_tokens", None)
+    if type(cached) is int:
+        mapping["cached_prompt_tokens"] = cached
+    return mapping
 
 
 class GameService:
@@ -3190,7 +3198,9 @@ class GameService:
                 history = "\n".join(
                     f"[{record.round_number}|{record.phase}|"
                     f"{record.speaker_seat if record.speaker_seat is not None else ''}] {record.content}"
-                    for record in records[-120:]
+                    # Whole-step window: a sliding [-120:] moved the first
+                    # record on every append and broke the prefix cache.
+                    for record in stable_tail(records, 120, 20)
                 )
             fallback_target = self._fallback_target(
                 request, context, history,

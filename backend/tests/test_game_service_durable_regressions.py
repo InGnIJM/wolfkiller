@@ -134,6 +134,12 @@ def test_model_snapshot_refuses_ambiguous_runtime_binding(entry, message):
     (SimpleNamespace(prompt_tokens=True, completion_tokens=2, total_tokens=3), None),
     (SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3),
      {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
+    (SimpleNamespace(
+        prompt_tokens=4, completion_tokens=2, total_tokens=6, cached_prompt_tokens=3,
+    ), {
+        "prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6,
+        "cached_prompt_tokens": 3,
+    }),
 ])
 def test_provider_usage_preserves_known_counts_without_inventing_tokens(value, expected):
     assert module._usage_mapping(value) == expected
