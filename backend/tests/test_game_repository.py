@@ -29,7 +29,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
         assert repository.database_path == tmp_path / "wolfkiller.sqlite3"
-        assert repository.schema_version() == 4
+        assert repository.schema_version() == 5
         pragmas = repository.pragmas()
         assert pragmas == {
             "journal_mode": "wal",
@@ -539,11 +539,52 @@ def test_v3_database_gains_the_pause_columns(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 4
+        assert repository.schema_version() == 5
         row = repository.get_game("old")
         assert row["pause_code"] is None
         assert row["pause_detail"] == {}
         assert row["paused_at"] is None
+    finally:
+        repository.close()
+
+
+def test_v4_database_gains_the_attempts_started_index(tmp_path) -> None:
+    """A pre-v5 database upgrades and receives the latency-stats index."""
+    path = tmp_path / "wolfkiller.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+        INSERT INTO schema_migrations(version, applied_at) VALUES (1, 'x');
+        INSERT INTO schema_migrations(version, applied_at) VALUES (2, 'x');
+        INSERT INTO schema_migrations(version, applied_at) VALUES (3, 'x');
+        INSERT INTO schema_migrations(version, applied_at) VALUES (4, 'x');
+        CREATE TABLE model_attempts (attempt_id TEXT PRIMARY KEY, status TEXT, started_at TEXT);
+    """)
+    connection.commit()
+    connection.close()
+
+    repository = GameRepository(tmp_path)
+    try:
+        assert repository.schema_version() == 5
+        with repository._connect() as connection:
+            names = {
+                row[0] for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'"
+                )
+            }
+        assert "idx_model_attempts_started_at" in names
+    finally:
+        repository.close()
+
+
+def test_list_folder_items_returns_full_mapping(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        assert repository.list_folder_items() == {}
+        folder = repository.create_folder("归档")
+        _game(repository)
+        repository.set_game_folder("game-1", folder["folder_id"])
+        assert repository.list_folder_items() == {"game-1": folder["folder_id"]}
     finally:
         repository.close()
 

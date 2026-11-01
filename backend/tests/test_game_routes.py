@@ -251,20 +251,41 @@ async def test_list_games_omits_missing_states(monkeypatch):
         None,
     ]
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
-    service.get_display_name.side_effect = lambda gid: f"{gid}-name"
+    service.game_record_index.return_value = {}
+    service.game_folder_index.return_value = {}
+    service.is_lobby_record.return_value = True
+    service.display_name_from_record.side_effect = lambda gid, _rec: f"{gid}-name"
+    service.get_execution_info.return_value = {
+        "execution_status": "completed",
+        "recoverable": False,
+        "recovery_block_code": None,
+        "pause_code": None,
+        "pause_reason": None,
+        "pause_detail": None,
+        "interruption_count": 0,
+        "benchmark_run_id": None,
+    }
 
     response = await game_routes.list_games()
 
     assert response.games[0].game_id == "present"
     assert response.games[0].name == "present-name"
     assert response.games[0].winner == "good"
+    assert response.games[0].execution_status == "completed"
 
 
 @pytest.mark.asyncio
 async def test_list_games_skips_benchmark_owned_games(monkeypatch):
     service = MagicMock()
     service.list_games.return_value = ["native", "bench"]
-    service.is_lobby_game.side_effect = lambda gid: gid == "native"
+    service.game_record_index.return_value = {
+        "native": {"game_id": "native", "benchmark_run_id": None, "source": "native"},
+        "bench": {"game_id": "bench", "benchmark_run_id": "run-1", "source": "benchmark"},
+    }
+    service.is_lobby_record.side_effect = (
+        lambda record: record is None
+        or (record.get("benchmark_run_id") is None and record.get("source") != "benchmark")
+    )
     state = SimpleNamespace(
         phase=SimpleNamespace(value="night"),
         round_number=1,
@@ -273,8 +294,8 @@ async def test_list_games_skips_benchmark_owned_games(monkeypatch):
         players={1: object()},
     )
     service.get_game_state.return_value = state
-    service.get_display_name.return_value = "普通局"
-    service.get_game_folder_id.return_value = "folder-1"
+    service.game_folder_index.return_value = {"native": "folder-1"}
+    service.display_name_from_record.return_value = "普通局"
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
     response = await game_routes.list_games()
@@ -290,7 +311,10 @@ async def test_list_games_skips_benchmark_owned_games(monkeypatch):
 async def test_list_games_pagination_and_folder_filtering(monkeypatch):
     service = MagicMock()
     service.list_games.return_value = ["g1", "g2", "g3"]
-    service.is_lobby_game.return_value = True
+    service.game_record_index.return_value = {
+        gid: {"game_id": gid} for gid in ("g1", "g2", "g3")
+    }
+    service.is_lobby_record.return_value = True
     state = SimpleNamespace(
         phase=SimpleNamespace(value="night"),
         round_number=1,
@@ -299,9 +323,18 @@ async def test_list_games_pagination_and_folder_filtering(monkeypatch):
         players={1: object()},
     )
     service.get_game_state.return_value = state
-    service.get_display_name.side_effect = lambda gid: f"{gid}-name"
-    folders = {"g1": "f1", "g2": None, "g3": "f2"}
-    service.get_game_folder_id.side_effect = lambda gid: folders.get(gid)
+    service.display_name_from_record.side_effect = lambda gid, _rec: f"{gid}-name"
+    service.game_folder_index.return_value = {"g1": "f1", "g3": "f2"}
+    service.execution_info_from_record.return_value = {
+        "execution_status": "running",
+        "recoverable": True,
+        "recovery_block_code": None,
+        "pause_code": "manual",
+        "pause_reason": "手动暂停",
+        "pause_detail": {"by": "op"},
+        "interruption_count": 2,
+        "benchmark_run_id": None,
+    }
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
     # Test pagination slicing
@@ -315,6 +348,11 @@ async def test_list_games_pagination_and_folder_filtering(monkeypatch):
     resp_all = await game_routes.list_games(folder_id="all")
     assert resp_all.total == 3
     assert len(resp_all.games) == 3
+    assert resp_all.games[0].execution_status == "running"
+    assert resp_all.games[0].recoverable is True
+    assert resp_all.games[0].pause_code == "manual"
+    assert resp_all.games[0].pause_reason == "手动暂停"
+    assert resp_all.games[0].interruption_count == 2
 
     # Test folder_id="unfiled"
     resp_unfiled = await game_routes.list_games(folder_id="unfiled")
@@ -369,6 +407,50 @@ def test_list_item_skips_missing_folder_lookup():
     assert item.name == "普通局"
 
 
+def test_list_item_with_record_but_no_record_getters():
+    """A record without record-aware helpers falls back to the legacy path."""
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        players={1: object()},
+        alive_players=lambda: [1],
+        win_result=None,
+    )
+    service = SimpleNamespace(get_display_name=lambda _gid: "普通局")
+    item = game_routes._list_item(service, "g1", state, {"game_id": "g1"}, "f1")
+    assert item.folder_id == "f1"
+    assert item.name == "普通局"
+    assert item.execution_status == "running"
+
+
+@pytest.mark.asyncio
+async def test_list_games_falls_back_to_legacy_lobby_checker(monkeypatch):
+    """Services without record-aware helpers still honour is_lobby_game."""
+    state = SimpleNamespace(
+        phase=SimpleNamespace(value="night"),
+        round_number=1,
+        alive_players=lambda: [object()],
+        win_result=None,
+        players={1: object()},
+    )
+    def _exec(game_id):
+        raise KeyError(game_id)
+
+    service = SimpleNamespace(
+        list_games=lambda: ["native", "bench"],
+        get_game_state=lambda _gid: state,
+        get_display_name=lambda _gid: "普通局",
+        is_lobby_game=lambda gid: gid == "native",
+        get_execution_info=_exec,
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    resp = await game_routes.list_games()
+    assert [item.game_id for item in resp.games] == ["native"]
+    assert resp.total == 1
+    assert resp.games[0].execution_status == "running"
+
+
 @pytest.mark.asyncio
 async def test_rename_game_returns_updated_list_item(monkeypatch):
     state = SimpleNamespace(
@@ -380,7 +462,7 @@ async def test_rename_game_returns_updated_list_item(monkeypatch):
     )
     service = MagicMock()
     service.get_game_state.return_value = state
-    service.get_display_name.return_value = "新名字"
+    service.display_name_from_record.return_value = "新名字"
     monkeypatch.setattr(game_routes, "get_service", lambda: service)
 
     response = await game_routes.rename_game("g1", RenameGameRequest(name="新名字"))
