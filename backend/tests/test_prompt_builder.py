@@ -166,8 +166,63 @@ class TestPromptBuilder:
         assert "<untrusted_self_history>" in prompt
         assert "alive_count" in prompt
         assert "&lt;/authoritative_state&gt;" in prompt
-        assert prompt.index("<authoritative_state>") < prompt.index("<untrusted_public_history>")
-        assert prompt.index("<untrusted_self_history>") < prompt.index("<decision_gate>")
+        # Prefix-cache order: rules -> public history -> identity -> own records
+        # -> volatile state -> decision gate.
+        order = [
+            prompt.index("<public_role_rules>"),
+            prompt.index("<untrusted_public_history>"),
+            prompt.index("<authoritative_state>"),
+            prompt.index("<untrusted_wolf_channel>"),
+            prompt.index("<untrusted_self_history>"),
+            prompt.index("## 当前公开状态"),
+            prompt.index("<decision_gate>"),
+        ]
+        assert order == sorted(order)
+        assert prompt.index("你的身份：1号玩家") < prompt.index("<untrusted_wolf_channel>")
+
+    def test_day_prompts_of_different_seats_share_rules_and_public_history_prefix(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.speaking_order = [1, 2, 3, 4]
+        log = make_log()
+        log.add_public_speech(2, "wolf-killer-werewolf", "我是好人", 1, "speech")
+        log.add_werewolf_channel("刀4", 1, speaker_seat=2, speaker_role="wolf-killer-werewolf")
+
+        wolf = builder.build_speech_prompt(state, 1, "wolf-killer-werewolf", log, "day_speech")
+        villager = builder.build_speech_prompt(state, 4, "wolf-killer-villager", log, "day_speech")
+
+        shared = wolf[:wolf.index("</untrusted_public_history>")]
+        assert "我是好人" in shared
+        assert villager.startswith(shared)
+
+    def test_a_new_public_speech_only_extends_the_previous_day_prompt_prefix(self):
+        builder = PromptBuilder()
+        state = make_state()
+        state.speaking_order = [1, 2, 3, 4]
+        log = make_log()
+        for index in range(33):
+            log.add_public_speech(2, "wolf-killer-villager", f"发言{index}", 1, "speech")
+        before = builder.build_speech_prompt(state, 4, "wolf-killer-villager", log, "day_speech")
+        log.add_public_speech(3, "wolf-killer-villager", "新的发言", 1, "speech")
+        after = builder.build_speech_prompt(state, 4, "wolf-killer-villager", log, "day_speech")
+
+        cut = before.index("\n</untrusted_public_history>")
+        assert after.startswith(before[:cut])
+        assert "新的发言" in after[cut:]
+
+    def test_private_records_no_longer_push_public_lines_out_of_the_window(self):
+        builder = PromptBuilder()
+        state = make_state()
+        log = ConversationLog()
+        log.add_public_speech(2, "wolf-killer-villager", "最早的公开发言", 1, "speech")
+        for index in range(40):
+            log.add_werewolf_channel(f"狼频道{index}", 1, speaker_seat=2, speaker_role="wolf-killer-werewolf")
+
+        prompt = builder.build_speech_prompt(state, 1, "wolf-killer-werewolf", log, "day_speech")
+
+        assert "最早的公开发言" in prompt
+        assert "狼频道0" not in prompt
+        assert "狼频道39" in prompt
 
     def test_speech_prompt_contains_camp_members_only_for_camp_roles(self):
         builder = PromptBuilder()
