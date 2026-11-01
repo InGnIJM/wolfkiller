@@ -438,3 +438,34 @@ def test_tool_content_fallbacks_are_counted_separately_from_speech_fallbacks() -
     assert result["tool_content_fallbacks"] == 1
     assert result["fallbacks"] == 0
     assert result["errors"] == 0
+
+
+def test_cache_hit_rate_counts_only_calls_that_reported_cache_hits() -> None:
+    from app.services.game_summary import _llm_aggregate
+
+    result = _llm_aggregate([
+        {"data": {"call_kind": "speech", "prompt_tokens": 1000, "cached_prompt_tokens": 800}},
+        {"data": {"call_kind": "speech", "prompt_tokens": 1000, "cached_prompt_tokens": 400}},
+        {"data": {"call_kind": "night", "prompt_tokens": 500, "cached_prompt_tokens": 0}},
+        # No cache report: stays out of the denominator.
+        {"data": {"call_kind": "action", "prompt_tokens": 9000}},
+        {"data": {"prompt_tokens": 100, "cached_prompt_tokens": 50}},
+    ])
+
+    cache = result["cache"]
+    assert cache["known_prompt"] == 2600
+    assert cache["cached_prompt"] == 1250
+    assert cache["hit_rate"] == round(1250 / 2600, 4)
+    assert cache["by_kind"] == {
+        "night": {"known_prompt": 500, "cached_prompt": 0, "hit_rate": 0.0},
+        "speech": {"known_prompt": 2000, "cached_prompt": 1200, "hit_rate": 0.6},
+        "unknown": {"known_prompt": 100, "cached_prompt": 50, "hit_rate": 0.5},
+    }
+
+
+def test_cache_block_is_unknown_without_any_cache_report() -> None:
+    from app.services.game_summary import _llm_aggregate
+
+    cache = _llm_aggregate([{"data": {"call_kind": "speech", "prompt_tokens": 10}}])["cache"]
+
+    assert cache == {"known_prompt": 0, "cached_prompt": 0, "hit_rate": None, "by_kind": {}}

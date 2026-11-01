@@ -277,6 +277,26 @@ def _summarize(
     }
 
 
+def _cache_entry(prompt: int, cached: int) -> dict:
+    return {
+        "known_prompt": prompt,
+        "cached_prompt": cached,
+        "hit_rate": round(cached / prompt, 4) if prompt else None,
+    }
+
+
+def _cache_block(by_kind: dict[str, list[int]]) -> dict:
+    """Prefix-cache hit rate, overall and per call kind."""
+    prompt = sum(bucket[0] for bucket in by_kind.values())
+    cached = sum(bucket[1] for bucket in by_kind.values())
+    return {
+        **_cache_entry(prompt, cached),
+        "by_kind": {
+            kind: _cache_entry(*bucket) for kind, bucket in sorted(by_kind.items())
+        },
+    }
+
+
 def _llm_aggregate(records: list[dict]) -> dict:
     tokens = {"prompt": 0, "completion": 0, "total": 0}
     elapsed: list[int] = []
@@ -285,12 +305,23 @@ def _llm_aggregate(records: list[dict]) -> dict:
     fallbacks = 0
     tool_content_fallbacks = 0
     retried = 0
+    # [prompt tokens, cached prompt tokens] over calls that reported both, per
+    # call kind: a provider that never reports cache hits must not dilute the rate.
+    cache_by_kind: dict[str, list[int]] = {}
 
     for record in records:
         data = record.get("data") if isinstance(record.get("data"), dict) else {}
         kind = data.get("call_kind")
         if isinstance(kind, str):
             by_kind[kind] = by_kind.get(kind, 0) + 1
+        cached = data.get("cached_prompt_tokens")
+        prompt = data.get("prompt_tokens")
+        if type(cached) is int and type(prompt) is int:
+            bucket = cache_by_kind.setdefault(
+                kind if isinstance(kind, str) else "unknown", [0, 0],
+            )
+            bucket[0] += prompt
+            bucket[1] += cached
         for field, target in (
             ("prompt_tokens", "prompt"),
             ("completion_tokens", "completion"),
@@ -325,6 +356,7 @@ def _llm_aggregate(records: list[dict]) -> dict:
         "tool_content_fallbacks": tool_content_fallbacks,
         "retried": retried,
         "tokens": tokens,
+        "cache": _cache_block(cache_by_kind),
         "elapsed_ms": {
             "p50": _percentile(elapsed, 50),
             "p95": _percentile(elapsed, 95),
