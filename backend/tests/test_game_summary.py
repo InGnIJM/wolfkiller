@@ -380,6 +380,10 @@ def test_rejected_actions_are_counted_per_round_not_as_slow_rules(tmp_path: Path
     summary = build_game_summary(str(tmp_path), "gr")
 
     assert summary["rounds"]["1"]["rejected_actions"] == 2
+    assert summary["rounds"]["1"]["rejected_action_details"] == [
+        {"contract_id": "dance_pool", "violation": "dance_mandatory"},
+        {"contract_id": "dance_pool", "violation": "dance_mandatory"},
+    ]
     assert summary["engine"]["slow_rules"] == [{
         "stage": "night_action", "label": "validation", "elapsed_ms": 12,
     }]

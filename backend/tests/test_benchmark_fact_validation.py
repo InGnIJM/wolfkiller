@@ -42,8 +42,10 @@ def test_mixed_uncertainty_excludes_invalid_blocks_and_incomplete_player_facts()
     assert mixed[0]["camp"] == "good"
     assert mixed[0]["valid_seats"] == 1
     assert mixed[0]["block_count"] == 1
-    assert mixed[0]["low"] is None and mixed[0]["high"] is None
-    # 单 block 的区间不存在，报告必须说清原因，而不是报一个「跑过 2000 次」的样本数。
+    # 单 block 无法 bootstrap，回退 Wilson 95% 区间并标记 interval_method，
+    # 报告仍说清没有做过重采样（samples=0 + insufficient_blocks）。
+    assert mixed[0]["low"] == 0.206543 and mixed[0]["high"] == 1.0
+    assert mixed[0]["interval_method"] == "wilson"
     assert mixed[0]["samples"] == 0
     assert mixed[0]["insufficient_blocks"] is True
 
