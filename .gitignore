@@ -83,5 +83,6 @@ post_training/data/
 post_training/tmp/
 post_training/*.sqlite3
 post_training/.venv/
-post_training/train.log
+post_training/*.log
+post_training/ckpt/
 post_training/unsloth_compiled_cache/
