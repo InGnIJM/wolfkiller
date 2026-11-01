@@ -146,6 +146,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - `backend/.env` 含 API key，已被 `backend/.gitignore` 忽略、**未提交到仓库**；保持该状态，不要提交或推送
 - 游戏数据存储在 `backend/data/`：SQLite 事实库 `wolfkiller.sqlite3`，以及 `games/<id>/` 下的 JSONL 日志和角色记忆。训练语料采集写 `games/<id>/llm_prompts.jsonl`，应用设置写 `data/settings.json`（两者都被 `backend/.gitignore` 的 `data/*` 覆盖）
 - **训练语料采集开关的三条红线**：(a) 开关**不进** `GameConfig` / checkpoint / `PointKey` / `_MODEL_PARAMETER_FIELDS`（它是进程配置，不是对局状态）；(b) 生效时机是**下一局** —— `GameService._latch_capture_request()` 只在建局时解析一次开关，**恢复路径不解析**，`games/<id>/llm_prompts.jsonl` 的存在与否就是那个耐久闩锁（所以关掉开关后正在跑的对局仍会写到自己结束，这是故意的，不是 bug）；(c) `/api/settings/prompt-capture` 的响应是**闭集**（只有 `enabled` + `source`），不得携带 prompt 内容 / `game_id` / 文件路径，请求体是严格布尔（`"yes"` / `1` → 422）
+- **提示词分层顺序是前缀缓存契约**：整局不变规则 → 跨座位共享的公开记录 → 本座位身份/人设 → 本座位追加型记录 → 易变状态（回合、存活、局势、`revision`、`RANDOM_HINT`）→ 本次任务；白天 `PromptBuilder._build_base`、动作 `PromptRenderer.render`（`PROJECTED_CONTEXT` 在最后）、狼队 `NightDirector`（system 对全体狼一致）、警长 `SheriffDirector._context_block` 同一套顺序，system prompt 文本不为此改动。历史截断一律走 `agents/prompt_window.stable_tail` / `stable_tail_by_budget`（按整块前移、不少于旧窗口），禁止滑动 `[-N:]`。命中率：单局 summary `llm.cache`、评测 `attempts.token_usage.cache_hit_rate`（v7）；离线 `python scripts/prompt_size_report.py --prefix`
 - 后端 Python 需要 >= 3.11；前端 Node.js >= 20.19
 - 禁止删除 `data/` 目录下正在进行的游戏数据，否则会导致游戏中断。运行时备份请用 SQLite `.backup`，不要只拷主 `.sqlite3` 文件
 - 环境默认 LLM 配置在 `backend/.env`（含 API key、model、temperature 等），已存模型由模型管理页维护；`LLM_MODELS` 仅兼容首个非空值且已弃用
