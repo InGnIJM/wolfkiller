@@ -1,4 +1,4 @@
-import { Box, Tooltip, Typography, keyframes } from '@mui/material';
+import { Box, Tooltip, Typography } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchRoleCatalog } from '../../api/client';
@@ -11,13 +11,6 @@ import RolePortrait from '../shared/RolePortrait';
 import { roleMetaFor } from '../shared/roleMeta';
 import SeatHoverCard from './SeatHoverCard';
 import { clampValue, computeStageLayout } from './seatLayout';
-
-// 模板字符串里的属性必须是 CSS 写法。写成 boxShadow 时浏览器会丢掉这条声明，
-// 呼吸光就不会出现，座位上只剩罗马数字变色。
-const speakerPulse = keyframes`
-  0%, 100% { box-shadow: 0 0 0 2px rgba(201,86,107,0.95), 0 0 16px 3px rgba(201,86,107,0.72); }
-  50% { box-shadow: 0 0 0 3px rgba(244,179,182,1), 0 0 28px 8px rgba(201,86,107,0.95); }
-`;
 
 // 罗马数字编号（1~12 人局）；超出 12 人回退为普通数字
 const ROMAN = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ', 'Ⅺ', 'Ⅻ'];
@@ -92,8 +85,8 @@ function PublicSeat({
   const railWidth = compact ? 18 : 22;
   const onBadge = badgeSide === 'on';
   const offBadge = badgeSide === 'off';
-  // 竞选期用金色边框标出警上、暗金虚线标出警下；此时发言者改用红色脉冲光环，
-  // 两组信号同时可见（发言者一定是警上，红脉冲只加在光环上，不再抢边框）
+  // 竞选期用金色边框标出警上、暗金虚线标出警下；此时发言者改用红色发丝环，
+  // 两组信号同时可见（发言者一定是警上，红环只加在外圈，不再抢边框）
   const defaultBorder = isCurrentSpeaker
     ? BLOOD_MOON.crimson
     : player.is_alive ? accent : 'rgba(212,168,83,0.18)';
@@ -164,17 +157,12 @@ function PublicSeat({
         borderRadius: 2,
         bgcolor: CANVAS.surface,
         boxShadow: isCurrentSpeaker
-          ? '0 0 0 2px rgba(201,86,107,0.95), 0 0 22px 6px rgba(201,86,107,0.8)'
-          : onBadge
-            ? `0 0 0 2px color-mix(in srgb, ${BLOOD_MOON.gold} 33%, transparent), 0 0 20px 6px color-mix(in srgb, ${BLOOD_MOON.gold} 40%, transparent), 0 10px 26px ${SHADOW.card}`
-            : player.is_alive
-              ? `0 0 14px color-mix(in srgb, ${accent} 27%, transparent), 0 10px 26px ${SHADOW.card}`
-              : `0 10px 26px ${SHADOW.card}`,
+          ? `0 0 0 2px rgba(201,86,107,0.95), 0 10px 26px ${SHADOW.card}`
+          : `0 10px 26px ${SHADOW.card}`,
         opacity: player.is_alive ? 1 : 0.5,
         filter: player.is_alive ? 'none' : 'grayscale(0.7)',
         transition: 'transform 0.2s ease, border-color 0.2s ease',
         '&:hover': { transform: 'translateY(-3px)' },
-        ...(isCurrentSpeaker ? { animation: `${speakerPulse} 1.2s ease-in-out infinite` } : {}),
       }}
     >
       {player.is_sheriff && (
@@ -190,8 +178,8 @@ function PublicSeat({
             borderRadius: 99,
             px: 0.9,
             py: 0.1,
-            fontSize: '0.58rem',
-            fontWeight: 800,
+            fontSize: '0.65rem',
+            fontWeight: 600,
             letterSpacing: 1,
             lineHeight: 1.4,
             boxShadow: `0 2px 8px ${SHADOW.card}`,
@@ -215,7 +203,7 @@ function PublicSeat({
             placeItems: 'center',
             color: ON_ACCENT,
             bgcolor: 'error.main',
-            boxShadow: '0 0 10px rgba(201,86,107,0.6)',
+            boxShadow: `0 2px 8px ${SHADOW.card}`,
           }}
         >
           <CloseIcon sx={{ fontSize: 13 }} />
@@ -244,7 +232,6 @@ function PublicSeat({
                   inset: 0,
                   pointerEvents: 'none',
                   background: 'linear-gradient(180deg, rgba(201,86,107,0.28), rgba(201,86,107,0.08) 42%, rgba(201,86,107,0.34))',
-                  boxShadow: 'inset 0 0 16px rgba(201,86,107,0.65)',
                 }}
               />
             )}
@@ -259,8 +246,8 @@ function PublicSeat({
                   px: 0.55,
                   py: 0.05,
                   borderRadius: 0.75,
-                  fontSize: '0.55rem',
-                  fontWeight: 800,
+                  fontSize: '0.62rem',
+                  fontWeight: 600,
                   lineHeight: 1.5,
                   letterSpacing: 0.5,
                   whiteSpace: 'nowrap',
@@ -294,7 +281,7 @@ function PublicSeat({
             <Typography
               variant="caption"
               sx={{
-                fontWeight: 800,
+                fontWeight: 600,
                 fontSize: numeralSize,
                 lineHeight: 1,
                 fontFamily: '"Cinzel","Noto Serif SC",serif',
@@ -308,7 +295,7 @@ function PublicSeat({
                 component="span"
                 sx={{
                   writingMode: 'vertical-rl',
-                  fontWeight: 700,
+                  fontWeight: 600,
                   fontSize: roleSize,
                   lineHeight: 1.15,
                   letterSpacing: compact ? '0.02em' : '0.08em',
@@ -329,7 +316,7 @@ function PublicSeat({
               bgcolor: CANVAS.surface,
               borderTop: `1px solid ${HAIRLINE.soft}`,
               fontSize: metaSize,
-              fontWeight: 700,
+              fontWeight: 600,
               lineHeight: 1.3,
               textAlign: 'center',
               color: voteTarget === null ? 'text.disabled' : 'warning.light',
@@ -506,10 +493,10 @@ export default function SeatMap({
                 key={seat}
                 sx={{
                   position: 'absolute',
-                  left: size.w / 2 + position.x,
-                  top: size.h / 2 + position.y,
-                  transform: 'translate(-50%, -50%)',
-                  transition: 'left 0.35s ease, top 0.35s ease',
+                  left: size.w / 2,
+                  top: size.h / 2,
+                  transform: `translate(-50%, -50%) translate(${position.x}px, ${position.y}px)`,
+                  transition: 'transform 0.35s ease',
                 }}
               >
                 <PublicSeat
