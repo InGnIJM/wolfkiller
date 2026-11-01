@@ -98,7 +98,7 @@ export default function SeatHoverCard({
       <Typography
         sx={{
           fontFamily: '"Cinzel","Noto Serif SC",serif',
-          fontWeight: 800,
+          fontWeight: 600,
           fontSize: '0.78rem',
           letterSpacing: 1.5,
           color: INK.primary,
@@ -111,7 +111,7 @@ export default function SeatHoverCard({
           sx={{
             mt: 0.25,
             fontSize: '0.72rem',
-            fontWeight: 700,
+            fontWeight: 600,
             letterSpacing: 1,
             color: accent,
           }}

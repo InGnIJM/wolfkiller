@@ -393,8 +393,8 @@ export default function GameBoard({ onBack, gameId }: Props) {
         backdropFilter: 'blur(12px)',
       }}>
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.6 }}>
-          <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 2 }}>{t('game.aliveStat')}</Typography>
-          <Typography sx={{ color: 'secondary.main', fontWeight: 800, fontSize: '0.9rem', lineHeight: 1 }}>{aliveCount}</Typography>
+          <Typography variant="caption" color="text.disabled" sx={{ letterSpacing: 1 }}>{t('game.aliveStat')}</Typography>
+          <Typography sx={{ color: 'secondary.main', fontWeight: 600, fontSize: '0.9rem', lineHeight: 1 }}>{aliveCount}</Typography>
           <Typography variant="caption" color="text.disabled">/ {totalPlayers}</Typography>
         </Box>
         <Box aria-hidden="true" sx={{ width: '1px', height: 14, bgcolor: 'divider' }} />

@@ -92,7 +92,6 @@ export function AppShell() {
                   border: '1px solid',
                   borderColor: 'divider',
                   bgcolor: `color-mix(in srgb, ${BLOOD_MOON.crimsonDeep} 18%, transparent)`,
-                  boxShadow: `0 0 16px color-mix(in srgb, ${BLOOD_MOON.crimson} 22%, transparent)`,
                 }}
               >
                 <DarkModeIcon sx={{ fontSize: 17 }} />
@@ -105,7 +104,7 @@ export function AppShell() {
                   sx={{
                     display: 'block',
                     lineHeight: 1.15,
-                    fontWeight: 700,
+                    fontWeight: 600,
                     fontSize: '1.05rem',
                     letterSpacing: '3px',
                     color: 'text.primary',
@@ -120,9 +119,9 @@ export function AppShell() {
                     display: 'block',
                     lineHeight: 1,
                     mt: 0.2,
-                    fontSize: '0.6rem',
+                    fontSize: '0.7rem',
                     fontWeight: 600,
-                    letterSpacing: '5px',
+                    letterSpacing: '3px',
                     color: 'secondary.dark',
                   }}
                 >
