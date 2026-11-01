@@ -263,7 +263,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
   return (
     <Box sx={{ position: 'relative', flex: 1, minHeight: 0 }}>
     <PageBackground variant="lobby" placement="contained" />
-    <Container maxWidth="sm" sx={{
+    <Container maxWidth="md" sx={{
       position: 'relative', zIndex: 1,
       py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 },
       bgcolor: BACKDROP.textPlate, backdropFilter: 'blur(12px)', borderRadius: 2,
@@ -278,7 +278,7 @@ export default function GameList({ onJoinGame, onCreateClick }: Props) {
         }}>
           <Typography
             variant="caption"
-            sx={{ display: 'block', mb: 0.3, fontWeight: 600, fontSize: '0.65rem', letterSpacing: 5, color: 'secondary.dark' }}
+            sx={{ display: 'block', mb: 0.3, fontWeight: 600, fontSize: '0.7rem', letterSpacing: 3, color: 'secondary.dark' }}
           >
             {t('lobby.titleLine')}
           </Typography>
