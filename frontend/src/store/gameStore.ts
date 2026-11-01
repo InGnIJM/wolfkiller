@@ -5,12 +5,10 @@ import type {
   AudienceEvent,
   AudienceEventPage,
   AudienceSnapshot,
-  DeathRecord,
   ExecutionStatus,
   GameLogs,
   GamePhase,
   NightActionRecord,
-  PublicGameState,
   PublicPlayerState,
   PublicReplayEvent,
   SpeechRecord,
@@ -25,7 +23,6 @@ interface DerivedState {
   players: Record<number, PublicPlayerState>;
   speeches: SpeechRecord[];
   votes: VoteRecord[];
-  deathHistory: DeathRecord[];
   nightActions: NightActionRecord[];
   phase: GamePhase;
   roundNumber: number;
@@ -64,18 +61,11 @@ interface GameStore extends DerivedState {
   modelSnapshot: ModelSnapshotEntry[];
   streamingSpeech: StreamingSpeech | null;
 
-  setGameState: (state: PublicGameState) => void;
-  setPhase: (phase: GamePhase, roundNumber: number) => void;
-  addSpeech: (speech: SpeechRecord) => void;
-  addVote: (vote: VoteRecord) => void;
-  addDeath: (death: DeathRecord) => void;
-  setWinResult: (result: WinResult) => void;
   setConnected: (connected: boolean) => void;
   setPaused: (paused: boolean, info?: PauseInfo | null) => void;
   setCurrentSpeaker: (seat: number | null) => void;
   setStreamingSpeech: (seat: number, text: string) => void;
   setStreamingThinking: (seat: number, thinking: string) => void;
-  clearStreamingSpeech: () => void;
 
   initPlayersFromDetail: (
     players: Record<number, PublicPlayerState>,
@@ -103,7 +93,6 @@ const emptyDerivedState: DerivedState = {
   players: {},
   speeches: [],
   votes: [],
-  deathHistory: [],
   nightActions: [],
   phase: 'waiting',
   roundNumber: 0,
@@ -288,7 +277,6 @@ function deriveState(
   const players = copyPlayers(initialPlayers);
   const speeches: SpeechRecord[] = [];
   const votes: VoteRecord[] = [];
-  const deathHistory: DeathRecord[] = [];
   const nightActions: NightActionRecord[] = [];
   let phase: GamePhase = 'waiting';
   let roundNumber = 0;
@@ -339,11 +327,6 @@ function deriveState(
           if (player) {
             players[event.payload.exiled_seat] = { ...player, is_alive: false };
           }
-          deathHistory.push({
-            player_seat: event.payload.exiled_seat,
-            cause: 'exile',
-            round_number: event.payload.round_number,
-          });
         }
         break;
       case 'night_action':
@@ -446,7 +429,6 @@ function deriveState(
         if (player) {
           players[event.payload.player_seat] = { ...player, is_alive: false };
         }
-        deathHistory.push(event.payload);
         roundNumber = Math.max(roundNumber, event.payload.round_number);
         break;
       }
@@ -510,7 +492,6 @@ function deriveState(
     players,
     speeches,
     votes,
-    deathHistory,
     nightActions,
     phase,
     roundNumber,
@@ -537,55 +518,6 @@ function startTimer(get: () => GameStore) {
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState,
 
-  setGameState: (state) => {
-    const currentPublicPlayers = copyPlayers(state.players);
-    set({
-      gameId: state.game_id,
-      revealOnDeath: state.reveal_on_death ?? false,
-      phase: state.phase,
-      roundNumber: state.round_number,
-      players: copyPlayers(currentPublicPlayers),
-      initialPlayers: buildInitialPlayers(currentPublicPlayers),
-      currentPublicPlayers,
-      speeches: state.speeches,
-      deathHistory: state.death_history,
-      nightActions: [],
-      winResult: state.win_result,
-      currentSpeaker: null,
-      // 快照不带竞选名单，等观众事件按 sheriff_run 重建
-      badgeCandidates: [],
-      offBadgeSeats: [],
-      executionStatus: state.execution_status ?? null,
-      recoverable: state.recoverable ?? false,
-      recoveryBlockCode: state.recovery_block_code ?? null,
-      pauseInfo: state.pause_code
-        ? { code: state.pause_code, reason: state.pause_reason ?? null, detail: state.pause_detail ?? null }
-        : null,
-      isPaused: state.execution_status === 'paused',
-    });
-  },
-
-  setPhase: (phase, roundNumber) => set({ phase, roundNumber, currentSpeaker: null, streamingSpeech: null }),
-
-  addSpeech: (speech) => set((state) => ({
-    speeches: [...state.speeches, speech],
-    currentSpeaker: speech.player_seat,
-    streamingSpeech: null,
-  })),
-
-  addVote: (vote) => set((state) => ({
-    votes: [...state.votes, vote],
-    currentSpeaker: vote.voter_seat,
-  })),
-
-  addDeath: (death) => set((state) => {
-    const players = copyPlayers(state.players);
-    const player = players[death.player_seat];
-    if (player) players[death.player_seat] = { ...player, is_alive: false };
-    return { players, deathHistory: [...state.deathHistory, death] };
-  }),
-
-  setWinResult: (result) => set({ winResult: result, phase: 'game_over', showWinOverlay: true, streamingSpeech: null }),
   setConnected: (connected) => set({ connected }),
   setPaused: (paused, info) => set({
     isPaused: paused,
@@ -608,7 +540,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const text = streamingSpeech?.seat === seat ? streamingSpeech.text : '';
     set({ streamingSpeech: { seat, text, thinking, updatedAt: Date.now() } });
   },
-  clearStreamingSpeech: () => set({ streamingSpeech: null }),
 
   initPlayersFromDetail: (players, revealOnDeath = false, modelSnapshot) => {
     const currentPublicPlayers = copyPlayers(players);
@@ -685,7 +616,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentPublicPlayers,
       speeches: state.speeches ?? [],
       votes: [],
-      deathHistory: state.death_history ?? [],
       nightActions: [],
       winResult: state.win_result,
       currentSpeaker: null,

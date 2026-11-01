@@ -65,7 +65,7 @@ Wolf Killer 源码基于 **Mozilla Public License Version 2.0 (MPL-2.0)** 发布
 - 权利说明：版权由 金铭 所有，随本项目 MPL-2.0 开源分发。
 
 ### 4.2 游戏大厅与回放界面背景与截图
-- 路径：`frontend/src/assets/bg/*.webp`、`frontend/src/assets/hero.png`、`docs/assets/*.png`。
+- 路径：`frontend/src/assets/bg/*.webp`、`docs/assets/*.png`。
 - 来源：本项目自研系统运行截图与原创主题设计背景图。
 
 ### 4.3 网易官方立绘（已退出仓库）
@@ -74,5 +74,5 @@ Wolf Killer 源码基于 **Mozilla Public License Version 2.0 (MPL-2.0)** 发布
 - 官方美术资产的权利归网易公司所有；本项目不再分发该批素材。
 
 ### 4.4 初始化模板残留图标
-- 路径：`frontend/src/assets/react.svg`、`frontend/src/assets/vite.svg`、`frontend/public/icons.svg`、`frontend/public/favicon.svg`。
+- 路径：`frontend/public/favicon.svg`。
 - 来源：前端项目初始化时由脚手架模板生成，仅作为基础演示与图标占位符。

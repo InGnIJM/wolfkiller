@@ -600,22 +600,6 @@ export interface StreamingSpeech {
   updatedAt: number;
 }
 
-export type WSMessage =
-  | { type: 'game_state'; state: PublicGameState }
-  | {
-      type: 'phase_change';
-      phase: GamePhase;
-      round_number: number;
-      state: PublicGameState;
-    }
-  | { type: 'speech'; speech: SpeechRecord }
-  | { type: 'vote_cast'; vote: VoteRecord }
-  | { type: 'player_died'; death: DeathRecord }
-  | { type: 'game_over'; win_result: WinResult; state: PublicGameState }
-  | { type: 'paused_state'; paused: boolean; code?: string | null; reason?: string | null }
-  | { type: 'speech_stream'; seat: number; text: string }
-  | { type: 'speech_thinking'; seat: number; text: string };
-
 // ── Model config & game creation catalog ──────────────────────
 
 /** Backend provider profile ids; `auto` infers one from the Base URL host. */

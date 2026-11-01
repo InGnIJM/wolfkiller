@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import theme, { createAppTheme } from '../theme';
+import { createAppTheme } from '../theme';
 import {
   BACKDROP, BACKGROUNDS, CARD_BACK, MODE_TOKENS, ROLE_ART_BY_ID, roleArt,
 } from '../theme/tokens';
@@ -16,6 +16,8 @@ const SHARED_FAMILY_ART = new Map([
 ]);
 
 describe('血月剧场主题令牌', () => {
+  const theme = createAppTheme('dark');
+
   it('使用血月剧场画布色与酒红金双色主轴', () => {
     expect(theme.palette.background.default).toBe('#1D0E13');
     expect(theme.palette.background.paper).toBe('#141417');

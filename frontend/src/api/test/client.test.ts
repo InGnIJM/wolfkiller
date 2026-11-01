@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   assignGameFolder, batchDeleteBenchmarkGames, batchDeleteGames, batchMoveGames,
-  createFolder, deleteBenchmark, deleteBenchmarkGame, deleteFolder,
+  createFolder, deleteBenchmark, deleteBenchmarkGame,
   fetchBenchmarkGames, fetchBenchmarkReport, createBenchmark, createGame, createModel, deleteGame, deleteModel,
   fetchAudienceEvents, fetchAudienceSnapshot, fetchConstraints, fetchPresets,
-  fetchRoleCatalog, getWsUrl, listBenchmarks, listFolders, listGames, listModels, renameFolder, renameGame,
+  fetchRoleCatalog, getWsUrl, listBenchmarks, listFolders, listGames, listModels, renameGame,
   testModelConnection, updateModel,
 } from '../client';
 
@@ -143,14 +143,6 @@ describe('model config api', () => {
     await createFolder('归档');
     expect(created.mock.calls[0][1].method).toBe('POST');
 
-    const renamed = mockFetch({ folder_id: 'f2', name: '新名' });
-    await renameFolder('f2', '新名');
-    expect(renamed.mock.calls[0][0]).toBe(`${BASE}/api/folders/f2`);
-
-    const removed = mockFetch({}, true, 204);
-    await deleteFolder('f2');
-    expect(removed.mock.calls[0][1].method).toBe('DELETE');
-
     const assigned = mockFetch({}, true, 204);
     await assignGameFolder('g1', null);
     expect(JSON.parse(assigned.mock.calls[0][1].body)).toEqual({ folder_id: null });
@@ -165,10 +157,6 @@ describe('model config api', () => {
     await expect(listFolders()).rejects.toThrow('List folders failed: 500');
     mockFetch({}, false, 500);
     await expect(createFolder('x')).rejects.toThrow('Create folder failed: 500');
-    mockFetch({}, false, 500);
-    await expect(renameFolder('f', 'x')).rejects.toThrow('Rename folder failed: 500');
-    mockFetch({}, false, 500);
-    await expect(deleteFolder('f')).rejects.toThrow('Delete folder failed: 500');
     mockFetch({}, false, 500);
     await expect(assignGameFolder('g', 'f')).rejects.toThrow('Assign folder failed: 500');
     mockFetch({}, false, 500);

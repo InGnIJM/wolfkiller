@@ -289,38 +289,23 @@ describe('useWebSocket', () => {
     expect(after.players).toEqual(before.players);
     expect(after.speeches).toEqual(before.speeches);
     expect(after.votes).toEqual(before.votes);
-    expect(after.deathHistory).toEqual(before.deathHistory);
+
     expect(after.winResult).toEqual(before.winResult);
     expect(after.isPaused).toBe(false);
     expect(errorSpy).toHaveBeenCalledOnce();
   });
 
-  it('clears handlers, closes, marks disconnected, and sends controls while a socket exists', () => {
+  it('clears handlers, closes, and marks disconnected while a socket exists', () => {
     const { result, unmount } = renderHook(() => useWebSocket());
-    expect(() => {
-      act(() => {
-        result.current.sendSpeed(2);
-        result.current.sendPause();
-        result.current.sendResume();
-      });
-    }).not.toThrow();
 
     act(() => result.current.connect('game-1'));
     const socket = MockWebSocket.instances[0];
     act(() => {
       socket.onopen?.();
-      result.current.sendSpeed(1.5);
-      result.current.sendPause();
-      result.current.sendResume();
     });
     useGameStore.setState({ gameId: 'rest-game' });
     act(() => result.current.disconnect());
 
-    expect(socket.send.mock.calls.map(([payload]) => payload)).toEqual([
-      JSON.stringify({ type: 'set_speed', delay_seconds: 1.5 }),
-      JSON.stringify({ type: 'pause' }),
-      JSON.stringify({ type: 'resume' }),
-    ]);
     expect(socket.onopen).toBeNull();
     expect(socket.onclose).toBeNull();
     expect(socket.onerror).toBeNull();

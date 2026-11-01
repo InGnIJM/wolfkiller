@@ -56,15 +56,11 @@ describe('incremental audience synchronization', () => {
     ]);
 
     expect(useGameStore.getState().players[2].is_alive).toBe(true);
-    expect(useGameStore.getState().deathHistory).toHaveLength(0);
 
     store.mergeAudienceEvents(page('game-1', [
       event(2, 'death', { player_seat: 2, cause: 'exile', round_number: 1 }),
     ]));
     expect(useGameStore.getState().players[2].is_alive).toBe(false);
-    expect(useGameStore.getState().deathHistory).toEqual([
-      { player_seat: 2, cause: 'exile', round_number: 1 },
-    ]);
   });
 
   it('normalizes a legacy death payload that keys the victim as seat', () => {
@@ -81,9 +77,6 @@ describe('incremental audience synchronization', () => {
       seat: 5, cause: 'hunter_shot', round_number: 3, player_seat: 5,
     });
     expect(useGameStore.getState().players[5].is_alive).toBe(false);
-    expect(useGameStore.getState().deathHistory).toEqual([
-      { seat: 5, cause: 'hunter_shot', round_number: 3, player_seat: 5 },
-    ]);
   });
 
   it('deduplicates events and holds out-of-order events until a gap is filled', () => {
@@ -272,7 +265,6 @@ describe('incremental audience synchronization', () => {
       is_alive: true, can_vote: false, revealed_role: 'wolf-killer-idiot',
     });
     expect(result.players[1].can_vote).toBeUndefined();
-    expect(result.deathHistory).toHaveLength(0);
     expect(result.roundNumber).toBe(3);
     expect(result.currentSpeaker).toBeNull();
   });

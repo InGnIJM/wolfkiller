@@ -98,21 +98,6 @@ export async function createFolder(name: string): Promise<GameFolder> {
   return res.json();
 }
 
-export async function renameFolder(folderId: string, name: string): Promise<GameFolder> {
-  const res = await fetch(`${getApiBase()}/api/folders/${folderId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) throw new Error(`Rename folder failed: ${res.status}`);
-  return res.json();
-}
-
-export async function deleteFolder(folderId: string): Promise<void> {
-  const res = await fetch(`${getApiBase()}/api/folders/${folderId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`Delete folder failed: ${res.status}`);
-}
-
 export async function assignGameFolder(gameId: string, folderId: string | null): Promise<void> {
   const res = await fetch(`${getApiBase()}/api/games/${gameId}/folder`, {
     method: 'PUT',

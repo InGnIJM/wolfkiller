@@ -109,7 +109,6 @@ export const en: typeof zh = {
     onBadge: 'Running',
     offBadge: 'Not running',
     seatNumber: 'Seat {{seat}}',
-    deathAnnouncement: 'Death announcement',
     playerOut: 'Seat {{seat}} is out',
     revealedRole: 'Role: {{role}}',
     deathRound: '{{cause}} · Round {{round}}',

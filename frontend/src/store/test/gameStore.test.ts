@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isAtTimelineEnd, useGameStore } from '../gameStore';
 import type {
   AudienceEvent,
+  AudienceEventPage,
+  AudienceSnapshot,
   GameLogs,
   PublicGameState,
   PublicPlayerState,
@@ -14,6 +16,44 @@ const currentPlayers: Record<number, PublicPlayerState> = {
   1: { seat_number: 1, is_alive: true, is_sheriff: false },
   2: { seat_number: 2, is_alive: false, is_sheriff: true },
 };
+
+const audienceSnapshot = (gameId: string, seq = 0): AudienceSnapshot => ({
+  game_id: gameId,
+  seq,
+  projection_version: 1,
+  state: {
+    game_id: gameId,
+    phase: 'waiting',
+    round_number: 0,
+    players: currentPlayers,
+    sheriff: null,
+    speeches: [],
+    death_history: [],
+    win_result: null,
+    execution_status: 'running',
+  },
+});
+
+const event = (
+  seq: number,
+  eventType: AudienceEvent['event_type'],
+  payload: Record<string, unknown>,
+): AudienceEvent => ({
+  seq,
+  event_id: `event-${seq}`,
+  event_type: eventType,
+  payload,
+  schema_version: 1,
+  timestamp: `2026-08-13T00:00:0${seq}Z`,
+});
+
+const page = (gameId: string, events: AudienceEvent[]): AudienceEventPage => ({
+  game_id: gameId,
+  after_seq: 0,
+  last_seq: Math.max(0, ...events.map((item) => item.seq)),
+  events,
+  caught_up: true,
+});
 
 afterEach(() => {
   useGameStore.getState().reset();
@@ -564,7 +604,7 @@ describe('public replay state', () => {
     expect(state.timelineIndex).toBe(2);
     expect(state.timeline).toEqual([phaseEvent, deathEvent, winnerEvent]);
     expect(state.players[2].is_alive).toBe(false);
-    expect(state.deathHistory).toEqual([deathEvent.payload]);
+
     expect(state.phase).toBe('game_over');
   });
 
@@ -813,7 +853,7 @@ describe('public replay state', () => {
     expect(state.timelineIndex).toBe(8);
     expect(state.speeches).toHaveLength(1);
     expect(state.votes).toHaveLength(1);
-    expect(state.deathHistory).toHaveLength(3);
+
     expect(state.nightActions).toEqual([{
       action_type: 'seer_check', target_seat: 1, round_number: 8, result: 'good',
     }]);
@@ -920,13 +960,18 @@ describe('public replay state', () => {
       win_result: null,
     };
 
-    useGameStore.getState().setGameState(state);
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1', seq: 0, projection_version: 1, state,
+    });
     expect(useGameStore.getState().revealOnDeath).toBe(true);
 
     useGameStore.getState().reset();
     expect(useGameStore.getState().revealOnDeath).toBe(false);
 
-    useGameStore.getState().setGameState({ ...state, reveal_on_death: undefined });
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1', seq: 0, projection_version: 1,
+      state: { ...state, reveal_on_death: undefined },
+    });
     expect(useGameStore.getState().revealOnDeath).toBe(false);
   });
 
@@ -943,19 +988,6 @@ describe('public replay state', () => {
       execution_status: 'paused',
       pause_code: 'model_timeout',
     };
-
-    useGameStore.getState().setGameState(pausedState);
-    expect(useGameStore.getState().pauseInfo).toEqual({
-      code: 'model_timeout', reason: null, detail: null,
-    });
-    expect(useGameStore.getState().isPaused).toBe(true);
-
-    useGameStore.getState().setGameState({
-      ...pausedState, pause_reason: '模型连续超时', pause_detail: { seat: 3 },
-    });
-    expect(useGameStore.getState().pauseInfo).toEqual({
-      code: 'model_timeout', reason: '模型连续超时', detail: { seat: 3 },
-    });
 
     useGameStore.getState().loadAudienceSnapshot({
       game_id: 'game-1', seq: 0, projection_version: 1, state: pausedState,
@@ -974,7 +1006,7 @@ describe('public replay state', () => {
     expect(useGameStore.getState().isPaused).toBe(true);
   });
 
-  it('updates direct public websocket state and controls', () => {
+  it('applies audience snapshots, events, and controls', () => {
     const state: PublicGameState = {
       game_id: 'game-1',
       phase: 'speech',
@@ -983,21 +1015,20 @@ describe('public replay state', () => {
       sheriff: 2,
       speeches: [{ player_seat: 1, text: '已有发言', round_number: 2 }],
       death_history: [{ player_seat: 2, cause: 'exile', round_number: 2 }],
-      win_result: null,
+      win_result: { winning_camp: 'good', reason: 'all_wolves_dead' },
     };
 
-    useGameStore.getState().setGameState(state);
-    useGameStore.getState().setPhase('vote_casting', 3);
-    useGameStore.getState().addSpeech({ player_seat: 1, text: '新发言', round_number: 3 });
-    useGameStore.getState().addVote({ voter_seat: 2, target_seat: 1, round_number: 3 });
-    useGameStore.getState().addDeath({ player_seat: 1, cause: 'poison', round_number: 3 });
-    useGameStore.getState().addDeath({ player_seat: 99, cause: 'hunter_shot', round_number: 3 });
+    useGameStore.getState().loadAudienceSnapshot({
+      game_id: 'game-1', seq: 0, projection_version: 1, state,
+    });
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(1, 'phase', { phase: 'vote_casting', round_number: 3 }),
+      event(2, 'speech', { player_seat: 1, text: '新发言', round_number: 3 }),
+      event(3, 'vote', { voter_seat: 2, target_seat: 1, round_number: 3 }),
+      event(4, 'death', { player_seat: 1, cause: 'poison', round_number: 3 }),
+    ]));
     useGameStore.getState().setConnected(true);
     useGameStore.getState().setCurrentSpeaker(2);
-    useGameStore.getState().setWinResult({
-      winning_camp: 'good',
-      reason: 'all_wolves_dead',
-    });
     useGameStore.getState().toggleHistory();
     useGameStore.getState().dismissWinOverlay();
 
@@ -1005,13 +1036,11 @@ describe('public replay state', () => {
     expect(result.gameId).toBe('game-1');
     expect(result.initialPlayers).not.toBe(state.players);
     expect(result.players[1].is_alive).toBe(false);
-    expect(result.speeches).toHaveLength(2);
+    expect(result.speeches).toHaveLength(1);
     expect(result.votes).toHaveLength(1);
-    expect(result.deathHistory).toHaveLength(3);
     expect(result.connected).toBe(true);
     expect(result.roundNumber).toBe(3);
     expect(result.currentSpeaker).toBe(2);
-    expect(result.phase).toBe('game_over');
     expect(result.showHistory).toBe(true);
     expect(result.showWinOverlay).toBe(false);
     expect(result.winOverlayDismissed).toBe(true);
@@ -1217,21 +1246,23 @@ describe('per-seat model snapshot', () => {
       expect(useGameStore.getState().streamingSpeech).toBeNull();
     });
 
-    it('clears streaming speech on clearStreamingSpeech and setPhase', () => {
+    it('clears streaming speech when a phase event arrives', () => {
       useGameStore.getState().reset();
+      useGameStore.getState().loadAudienceSnapshot(audienceSnapshot('game-1'));
       useGameStore.getState().setStreamingSpeech(3, '3号发言中');
-      useGameStore.getState().clearStreamingSpeech();
-      expect(useGameStore.getState().streamingSpeech).toBeNull();
 
-      useGameStore.getState().setStreamingSpeech(3, '3号发言中');
-      useGameStore.getState().setPhase('vote_casting', 1);
+      useGameStore.getState().mergeAudienceEvents(page('game-1', [
+        event(1, 'phase', { phase: 'vote_casting', round_number: 1 }),
+      ]));
       expect(useGameStore.getState().streamingSpeech).toBeNull();
     });
 
-    it('clears streaming speech on addSpeech and speaker change', () => {
+    it('clears streaming speech on speech events and speaker change', () => {
       useGameStore.getState().reset();
+      useGameStore.getState().loadAudienceSnapshot(audienceSnapshot('game-1'));
       useGameStore.getState().setStreamingSpeech(3, '3号发言中');
-      // Speaker change to seat 4
+
+      // Speaker change to seat 4 clears seat-3 stream
       useGameStore.getState().setCurrentSpeaker(4);
       expect(useGameStore.getState().streamingSpeech).toBeNull();
 
@@ -1240,12 +1271,10 @@ describe('per-seat model snapshot', () => {
       useGameStore.getState().setCurrentSpeaker(4);
       expect(useGameStore.getState().streamingSpeech?.text).toBe('4号发言中');
 
-      // Adding finalized speech clears it
-      useGameStore.getState().addSpeech({
-        player_seat: 4,
-        text: '4号完整发言',
-        round_number: 1,
-      });
+      // A finalized speech event clears it
+      useGameStore.getState().mergeAudienceEvents(page('game-1', [
+        event(1, 'speech', { player_seat: 4, text: '4号完整发言', round_number: 1 }),
+      ]));
       expect(useGameStore.getState().streamingSpeech).toBeNull();
     });
 

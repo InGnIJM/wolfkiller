@@ -160,24 +160,9 @@ export function useWebSocket() {
     useGameStore.getState().setConnected(false);
   }, []);
 
-  const sendSpeed = useCallback((delaySeconds: number) => {
-    wsRef.current?.send(JSON.stringify({
-      type: 'set_speed',
-      delay_seconds: delaySeconds,
-    }));
-  }, []);
-
-  const sendPause = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: 'pause' }));
-  }, []);
-
-  const sendResume = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: 'resume' }));
-  }, []);
-
   useEffect(() => {
     return disconnect;
   }, [disconnect]);
 
-  return { connect, disconnect, sendSpeed, sendPause, sendResume };
+  return { connect, disconnect };
 }

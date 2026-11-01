@@ -111,7 +111,6 @@ export const zh = {
     onBadge: '警上',
     offBadge: '警下',
     seatNumber: '{{seat}}号',
-    deathAnnouncement: '死亡公告',
     playerOut: '{{seat}}号玩家出局',
     revealedRole: '身份：{{role}}',
     deathRound: '{{cause}} · 第{{round}}轮',
