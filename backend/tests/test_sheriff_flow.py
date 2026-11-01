@@ -791,6 +791,26 @@ def test_vote_prompt_lists_candidates_and_speeches() -> None:
     assert "我是真预言家" in human
 
 
+def test_sheriff_prompts_put_shared_speeches_before_identity_and_rosters_last() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _rich_state()
+    office = state.sheriff_office
+    office.candidates = {5, 6}
+    office.active = {5, 6}
+    director = Director(conversation_log=_campaign_log())
+    seven = director.vote_prompt(state, 7, (5, 6))
+    nine = director.vote_prompt(state, 9, (5, 6))
+
+    assert seven[0] == nine[0]
+    human = nine[1]["content"]
+    order = [human.index(marker) for marker in (
+        "警上已发言", "你是9号，身份", "你的私有事实", "已上警座位", "局势距离", "第1轮警长投票",
+    )]
+    assert order == sorted(order)
+    shared = human[:human.index("你是9号，身份")]
+    assert seven[1]["content"].startswith(shared)
+
+
 def test_badge_loss_message_covers_all_reasons() -> None:
     from app.core.sheriff_flow import badge_loss_message
     full_slate = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})

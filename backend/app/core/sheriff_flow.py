@@ -545,11 +545,22 @@ class SheriffDirector:
             camp = player.camp
         from app.agents.persona import persona_line
         from app.agents.stakes import stakes_text
-        lines = [
-            f"你是{seat}号，身份：{identity}，阵营：{camp}。",
-            persona_line(state.game_id, seat),
-            f"局势距离：{stakes_text(state, seat)}",
-        ]
+        # Prefix-cache order (see AGENTS.md): the records every seat shares,
+        # then this seat's fixed identity and private facts, then the rosters
+        # and stakes that move with every decision.
+        lines: list[str] = []
+        speeches = self._speech_lines(state)
+        if speeches:
+            lines.append("警上已发言（仅作参考）：\n" + "\n".join(speeches))
+        if self._conversation_log is not None:
+            completed = [
+                record.content for record in self._conversation_log.get_public()
+                if record.phase == "sheriff_ballot"
+                and record.round_number == state.round_number
+            ][-2:]
+            lines.extend(completed)
+        lines.append(f"你是{seat}号，身份：{identity}，阵营：{camp}。")
+        lines.append(persona_line(state.game_id, seat))
 
         facts: list[str] = []
         try:
@@ -573,28 +584,6 @@ class SheriffDirector:
         lines.append(
             "你的私有事实：" + ("；".join(facts) if facts else "暂无夜间私密信息。")
         )
-        office = state.sheriff_office
-        ran = "、".join(f"{seat}号" for seat in sorted(office.candidates)) or "无"
-        # ``active`` is only written after the run loop (game_engine.py:1282) and
-        # again after the withdrawals (:1321): during the run stage it is still
-        # empty, so reading it there told every seat who had already run that
-        # nobody was a candidate ("已上警座位：4号、5号；当前候选人：无"). In the
-        # run stage the candidates are exactly the seats that have run so far.
-        contesting = office.candidates if office.step == "run" else office.active
-        active = "、".join(f"{seat}号" for seat in sorted(contesting)) or "无"
-        off_badge = "、".join(f"{seat}号" for seat in off_badge_seats(state)) or "无"
-        lines.append(f"已上警座位：{ran}；当前候选人：{active}。")
-        lines.append(f"未上警座位（警下，拥有警长投票权）：{off_badge}。")
-        speeches = self._speech_lines(state)
-        if speeches:
-            lines.append("警上已发言（仅作参考）：\n" + "\n".join(speeches))
-        if self._conversation_log is not None:
-            completed = [
-                record.content for record in self._conversation_log.get_public()
-                if record.phase == "sheriff_ballot"
-                and record.round_number == state.round_number
-            ][-2:]
-            lines.extend(completed)
         if wolf:
             # The camp line and the explode line have different gates: a hidden
             # wolf is a werewolf but sits outside the pack, and only the pack may
@@ -616,6 +605,19 @@ class SheriffDirector:
                     "但**不能自爆，也不能吞警徽**。"
                 )
             lines.extend(self._wolf_team_block(state, seat))
+        office = state.sheriff_office
+        ran = "、".join(f"{seat}号" for seat in sorted(office.candidates)) or "无"
+        # ``active`` is only written after the run loop (game_engine.py:1282) and
+        # again after the withdrawals (:1321): during the run stage it is still
+        # empty, so reading it there told every seat who had already run that
+        # nobody was a candidate ("已上警座位：4号、5号；当前候选人：无"). In the
+        # run stage the candidates are exactly the seats that have run so far.
+        contesting = office.candidates if office.step == "run" else office.active
+        active = "、".join(f"{seat}号" for seat in sorted(contesting)) or "无"
+        off_badge = "、".join(f"{seat}号" for seat in off_badge_seats(state)) or "无"
+        lines.append(f"已上警座位：{ran}；当前候选人：{active}。")
+        lines.append(f"未上警座位（警下，拥有警长投票权）：{off_badge}。")
+        lines.append(f"局势距离：{stakes_text(state, seat)}")
         return "\n".join(lines) + "\n"
 
     _MAX_WOLF_CHANNEL_LINES = 24
@@ -680,12 +682,12 @@ class SheriffDirector:
         explode = wolf and self._may_explode(state, seat)
         actions = [_RUN, _PASS] + ([_EXPLODE] if explode else [])
         human = (
-            f"第{state.round_number}轮警长竞选。{self._context_block(state, seat, wolf=wolf)}"
             "action_type=run 表示上警成为候选人（由从未上警的警下玩家投票，"
             "当选者白天放逐票计 1.5 票）；action_type=pass 表示不上警、"
             "保留警长投票权，白天仍可正常发言。"
-            "退水或上警都会让你失去警长投票权，请结合自身身份与目标权衡。"
-            f"请选择 action_type：{'、'.join(actions)}。"
+            "退水或上警都会让你失去警长投票权，请结合自身身份与目标权衡。\n"
+            f"{self._context_block(state, seat, wolf=wolf)}"
+            f"第{state.round_number}轮警长竞选。请选择 action_type：{'、'.join(actions)}。"
         )
         return self._messages(self._system(), human)
 
@@ -693,10 +695,10 @@ class SheriffDirector:
         explode = wolf and self._may_explode(state, seat)
         actions = [_STAY, _WITHDRAW] + ([_EXPLODE] if explode else [])
         human = (
-            f"第{state.round_number}轮警长竞选退水。你是{seat}号候选人。\n"
-            f"{self._context_block(state, seat, wolf=wolf)}"
             "action_type=stay 表示继续竞选；action_type=withdraw 表示退水，"
-            "退水后不再竞争警徽，也将失去警长投票权。"
+            "退水后不再竞争警徽，也将失去警长投票权。\n"
+            f"{self._context_block(state, seat, wolf=wolf)}"
+            f"第{state.round_number}轮警长竞选退水。你是{seat}号候选人。"
             f"请选择 action_type：{'、'.join(actions)}。"
         )
         return self._messages(self._system(), human)
@@ -707,11 +709,12 @@ class SheriffDirector:
     ) -> list[dict[str, str]]:
         listed = "、".join(f"{item}号" for item in candidates)
         human = (
-            f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，因此拥有警长投票权，"
-            f"请在候选人中选择：{listed}。结合警上发言判断谁更适合当警长。"
-            f"输出 action_type=vote 时**必须**把 target_seat 填为候选人座位号；"
-            f"不投任何人时输出 action_type=pass，且**不要**填 target_seat。\n"
+            "结合警上发言判断谁更适合当警长。"
+            "输出 action_type=vote 时**必须**把 target_seat 填为候选人座位号；"
+            "不投任何人时输出 action_type=pass，且**不要**填 target_seat。\n"
             + self._context_block(state, seat, wolf=wolf)
+            + f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，因此拥有警长投票权，"
+            f"请在候选人中选择：{listed}。"
         )
         return self._messages(self._system(), human)
 
@@ -743,9 +746,9 @@ class SheriffDirector:
                 f"{side}（{_SIDE_HINTS.get(side, side)}）：{head}；顺序 {sequence}。"
             )
         human = (
-            f"你是警长{seat}号，请选择今天的发言方向。\n"
+            "请选择今天的发言方向。\n"
             f"{self._context_block(state, seat, wolf=False)}"
-            f"昨夜死亡：{dead_line}；存活玩家：{alive_line}。\n"
+            f"你是警长{seat}号。昨夜死亡：{dead_line}；存活玩家：{alive_line}。\n"
             + "\n".join(previews)
             + f"\n请选择 side，只能是：{'、'.join(sides)}。"
         )
@@ -754,13 +757,12 @@ class SheriffDirector:
     def badge_prompt(self, state: GameState, seat: int, targets: Sequence[int]) -> list[dict[str, str]]:
         listed = "、".join(f"{item}号" for item in targets) or "无"
         human = (
-            f"你是即将出局的警长{seat}号。\n"
+            "action_type 为 transfer 时必须给出 target_seat；tear 时省略 target_seat（或给 null）。\n"
             # 出局警长拿到与其他警长提示词同样的私有事实：没有它们，预言家无从
             # 知道自己刚验出的是金水还是查杀，也就无法用警徽去标记这次查验。
             # wolf=False 是刻意的：狼人分支那句「可自爆吞警徽」只属于竞选期。
             f"{self._context_block(state, seat, wolf=False)}"
-            f"可移交警徽给：{listed}，或撕毁警徽。"
-            "action_type 为 transfer 时必须给出 target_seat；tear 时省略 target_seat（或给 null）。"
+            f"你是即将出局的警长{seat}号。可移交警徽给：{listed}，或撕毁警徽。"
         )
         return self._messages(self._system(), human)
 
