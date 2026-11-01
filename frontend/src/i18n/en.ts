@@ -611,6 +611,7 @@ export const en: typeof zh = {
     metricReqSuccess: 'Request success rate',
     metricActionRate: 'Decisive action rate',
     metricTokens: 'Known tokens',
+    metricCacheHit: 'Cache hit rate',
     metricLatency: 'Call latency p95',
     metricRounds: 'Avg rounds',
     metricInterruption: 'Interruption rate',

@@ -613,6 +613,7 @@ export const zh = {
     metricReqSuccess: '请求成功率',
     metricActionRate: '实质动作率',
     metricTokens: '已知 token',
+    metricCacheHit: '缓存命中率',
     metricLatency: '调用延迟 p95',
     metricRounds: '平均轮次',
     metricInterruption: '中断率',

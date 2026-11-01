@@ -239,6 +239,7 @@ export default function BenchmarkDetailPage() {
           [t('benchmark.metricReqSuccess'), rate(numberAt(requests, 'valid_rate'))],
           [t('benchmark.metricActionRate'), rate(numberAt(requests, 'success_rate'))],
           [t('benchmark.metricTokens'), numberAt(tokenUsage, 'known_total_tokens')?.toLocaleString() ?? '—'],
+          [t('benchmark.metricCacheHit'), rate(numberAt(tokenUsage, 'cache_hit_rate'))],
           [t('benchmark.metricLatency'), numberAt(latency, 'p95') === null ? '—' : `${numberAt(latency, 'p95')} ms`],
           [t('benchmark.metricRounds'), averageRounds === null ? '—' : averageRounds.toFixed(1)],
           [t('benchmark.metricInterruption'), rate(interruptionRate)],
