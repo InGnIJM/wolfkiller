@@ -77,7 +77,7 @@ def test_repository_startup_runs_v3_death_backfill(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 5
+        assert repository.schema_version() == 6
     finally:
         repository.close()
 
