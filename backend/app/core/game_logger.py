@@ -182,7 +182,8 @@ class GameLogger:
         model_id: Optional[str] = None, prompt_chars: int = 0,
         elapsed_ms: int = 0, prompt_tokens: Optional[int] = None,
         completion_tokens: Optional[int] = None,
-        total_tokens: Optional[int] = None, retried: bool = False,
+        total_tokens: Optional[int] = None,
+        cached_prompt_tokens: Optional[int] = None, retried: bool = False,
         parse_result: Optional[str] = None,
         failure_code: Optional[str] = None,
         timeout_type: Optional[str] = None,
@@ -213,6 +214,8 @@ class GameLogger:
             data["completion_tokens"] = completion_tokens
         if total_tokens is not None:
             data["total_tokens"] = total_tokens
+        if cached_prompt_tokens is not None:
+            data["cached_prompt_tokens"] = cached_prompt_tokens
         if failure_code is not None:
             data["failure_code"] = failure_code
         if timeout_type is not None:

@@ -428,6 +428,22 @@ class TestNightTelemetry:
         assert data["prompt_tokens"] == 1400
         assert data["total_tokens"] == 1610
         assert data["retried"] is False
+        assert "cached_prompt_tokens" not in data
+
+    def test_success_record_includes_prefix_cache_hits(self, tmp_path: Path):
+        from app.agents.llm_client import LLMUsage
+
+        logger = GameLogger(data_dir=str(tmp_path))
+
+        _log_llm_telemetry(
+            logger, "g1", 2, 3,
+            tool_name="werewolf_discussion", model_id="deepseek-x",
+            prompt_chars=2500, elapsed_ms=3200,
+            usage=LLMUsage(1400, 210, 1610, cached_prompt_tokens=1280), attempts=1,
+            parse_result="ok",
+        )
+
+        assert read_llm_calls(tmp_path, "g1")[0]["data"]["cached_prompt_tokens"] == 1280
 
     def test_error_record_carries_failure_code(self, tmp_path: Path):
         logger = GameLogger(data_dir=str(tmp_path))

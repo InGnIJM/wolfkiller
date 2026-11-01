@@ -737,6 +737,9 @@ class BaseRole:
             prompt_tokens=(usage.prompt_tokens if usage is not None else None),
             completion_tokens=(usage.completion_tokens if usage is not None else None),
             total_tokens=(usage.total_tokens if usage is not None else None),
+            cached_prompt_tokens=(
+                usage.cached_prompt_tokens if usage is not None else None
+            ),
         )
 
     def _action_timeout_seconds(self, *, retried: bool, final: bool = False) -> float:
