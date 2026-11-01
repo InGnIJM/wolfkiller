@@ -7,16 +7,20 @@ Runs inside WSL2:
 
 Design pins (all load-bearing at 8GB):
 
-* ``max_seq_length=12288`` — the measured window: 99.76% of samples fit
-  natively, the rest were tail-truncated by ``prepare_dataset.py``.
+* ``max_seq_length=8192`` — the strong-teacher subset is pre-filtered to fit
+  this window by ``subset_teacher.py`` (the completion must never be clipped,
+  since TRL right-truncates and would drop the label tail).
 * ``completion_only_loss=True`` — loss on assistant tokens only. Without it
   the 15w-vocab logits over a 12k sequence alone exceed VRAM; with it, logits
   are computed only over the few hundred target tokens.
-* ``paged_adamw_8bit`` + ``gradient_checkpointing="unsloth"`` + batch 1 with
-  gradient accumulation — the only combination that fits.
+* ``paged_adamw_8bit`` + ``gradient_checkpointing="unsloth"`` + small batches
+  with gradient accumulation — the only combination that fits.
 * Dataset is converted to TRL conversational ``prompt``/``completion`` pairs
   (our ``messages`` list minus/plus the final assistant turn) so TRL can mask
   the prompt side for completion-only loss.
+* Checkpoints are written every ``--save-steps`` optimizer steps; ``--resume``
+  continues from the newest ``checkpoint-*`` under ``--out`` (or an explicit
+  path), restoring model/optimizer/scheduler/RNG and the data cursor.
 """
 
 from __future__ import annotations
@@ -24,6 +28,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+
+
+def latest_checkpoint(out_dir: str) -> str | None:
+    """Newest ``checkpoint-<step>`` under out_dir, or None."""
+    best_step, best_path = -1, None
+    if not os.path.isdir(out_dir):
+        return None
+    for name in os.listdir(out_dir):
+        match = re.fullmatch(r"checkpoint-(\d+)", name)
+        if match and int(match.group(1)) > best_step:
+            best_step, best_path = int(match.group(1)), os.path.join(out_dir, name)
+    return best_path
 
 
 def load_pairs(path: str):
@@ -102,14 +119,16 @@ def train(args) -> None:
         tokenizer=tokenizer,
         train_dataset=dataset,
         args=SFTConfig(
-            per_device_train_batch_size=1,
+            per_device_train_batch_size=args.batch_size,
             gradient_accumulation_steps=args.grad_accum,
             num_train_epochs=args.epochs,
             learning_rate=args.lr,
             lr_scheduler_type="cosine",
             warmup_ratio=0.05,
             logging_steps=10,
-            save_strategy="epoch",
+            save_strategy="steps",
+            save_steps=args.save_steps,
+            save_total_limit=3,
             output_dir=args.out,
             bf16=True,
             max_length=args.seq_len,
@@ -120,7 +139,8 @@ def train(args) -> None:
             seed=42,
         ),
     )
-    trainer.train()
+    resume = args.resume or (latest_checkpoint(args.out) if args.auto_resume else None)
+    trainer.train(resume_from_checkpoint=resume)
     model.save_pretrained(os.path.join(args.out, "lora_final"))
     tokenizer.save_pretrained(os.path.join(args.out, "lora_final"))
 
@@ -134,13 +154,19 @@ def main() -> int:
         "--data",
         default="/mnt/e/code/WolfKiller/post_training/data/train_final.jsonl",
     )
-    parser.add_argument("--seq-len", type=int, default=12288)
+    parser.add_argument("--seq-len", type=int, default=8192)
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--epochs", type=float, default=2.0)
-    parser.add_argument("--grad-accum", type=int, default=16)
-    parser.add_argument("--out", default="./ckpt/wolfkiller-sft")
+    parser.add_argument("--epochs", type=float, default=1.0)
+    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--grad-accum", type=int, default=8)
+    parser.add_argument("--save-steps", type=int, default=50)
+    parser.add_argument("--resume", default=None,
+                        help="checkpoint dir to resume from; empty uses --auto-resume")
+    parser.add_argument("--auto-resume", action="store_true",
+                        help="resume from the newest checkpoint-* under --out")
+    parser.add_argument("--out", default="./ckpt/wolfkiller-sft-strong")
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     if args.smoke:
