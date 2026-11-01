@@ -22,10 +22,7 @@ const WEREWOLF_CATALOG: RoleCatalogItem = {
   icon: 'wolf',
   description: '夜晚睁眼，与狼队友商议刀人',
   rules: ['夜晚与狼队友共用同一次狼刀。'],
-  min_count: 0,
-  max_count: null,
-  dependencies: [],
-  exclusions: [],
+  max_count: null
 };
 
 class MockResizeObserver {

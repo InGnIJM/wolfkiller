@@ -740,10 +740,7 @@ export interface RoleCatalogItem {
   /** 玩家向的规则条目；旧响应或测试 mock 可能没有这个字段。 */
   rules?: string[];
   rules_en?: string[];
-  min_count: number;
   max_count: number | null;
-  dependencies: string[];
-  exclusions: string[];
 }
 
 /** 女巫自救规则：假面官方板子首夜可自救，网易官方赛制板子全程禁止。 */

@@ -68,7 +68,7 @@ from app.roles.cupid import CUPID_SPEC, Cupid
 from app.roles.admirer import ADMIRER_SPEC, Admirer
 
 
-_VISIBLE_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
+_VISIBLE_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP"})
 # Selected-target facts a contract may request. Kept in sync with the
 # projector's whitelists: requesting a namespace is what makes the target's
 # observable camp/statuses/public resources/exact role visible to the hook.
@@ -165,28 +165,8 @@ class RegistrySnapshot:
             raise ValueError("role count sum must equal player_count")
         for role_id, spec in self.specs.items():
             count = counts[role_id]
-            if count < spec.min_count:
-                raise ValueError(f"role minimum not satisfied: {role_id}")
             if spec.max_count is not None and count > spec.max_count:
                 raise ValueError(f"role maximum exceeded: {role_id}")
-            if count == 0:
-                continue
-            missing = sorted(
-                dependency
-                for dependency in spec.dependencies
-                if counts[dependency] == 0
-            )
-            if missing:
-                raise ValueError(
-                    f"role dependency not satisfied: {role_id} requires {missing[0]}"
-                )
-            conflicts = sorted(
-                exclusion for exclusion in spec.exclusions if counts[exclusion] > 0
-            )
-            if conflicts:
-                raise ValueError(
-                    f"role exclusion violated: {role_id} excludes {conflicts[0]}"
-                )
 
 
 class RoleRegistry:
@@ -224,9 +204,8 @@ class RoleRegistry:
         with self._lock:
             local_specs = dict(self._pipeline_specs)
         contract_ids: dict[str, str] = {}
-        known_roles = set(local_specs)
         for spec in dict(sorted(local_specs.items())).values():
-            self._validate_pipeline_spec(spec, contract_ids, known_roles)
+            self._validate_pipeline_spec(spec, contract_ids)
         specs = MappingProxyType(dict(sorted(local_specs.items())))
         digest_source = "[" + ",".join(
             PipelineRoleSpec.to_json(spec) for spec in specs.values()
@@ -238,23 +217,11 @@ class RoleRegistry:
     def _validate_pipeline_spec(
         spec: PipelineRoleSpec,
         contract_ids: dict[str, str],
-        known_roles: set[str],
     ) -> None:
         if _STABLE_ID.fullmatch(spec.role_id) is None:
             raise ValueError("role id has an invalid stable format")
-        if spec.min_count < 0:
-            raise ValueError("role minimum must be non-negative")
-        if spec.max_count is not None and spec.max_count < spec.min_count:
-            raise ValueError("role maximum must be at least its minimum")
-        if spec.dependencies & spec.exclusions:
-            raise ValueError("role dependency and exclusion cannot overlap")
-        if spec.role_id in spec.dependencies or spec.role_id in spec.exclusions:
-            raise ValueError("role cannot depend on or exclude itself")
-        unknown_constraints = (spec.dependencies | spec.exclusions) - known_roles
-        if unknown_constraints:
-            raise ValueError(
-                f"unknown role dependency or exclusion: {min(unknown_constraints)}"
-            )
+        if spec.max_count is not None and spec.max_count < 0:
+            raise ValueError("role maximum must be non-negative")
         if not spec.visibility_namespaces <= _VISIBLE_NAMESPACES:
             raise ValueError("unknown visibility namespace")
         if spec.bond_slot and spec.bond_slot not in spec.initial_private_data:

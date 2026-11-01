@@ -20,7 +20,7 @@ const role = (
   max_count: number | null = null,
 ) => ({
   role_id, display_name: name_zh, name_zh, camp, icon: role_id,
-  description, min_count: 0, max_count, dependencies: [], exclusions: [],
+  description, max_count
 });
 
 const ROLES = [

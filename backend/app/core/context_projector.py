@@ -23,7 +23,7 @@ from app.core.wolf_pack import (
 )
 
 
-_KNOWN_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"})
+_KNOWN_NAMESPACES = frozenset({"PUBLIC", "ACTOR", "CAMP"})
 _TRIGGER_EVENT_FIELDS = frozenset(
     {
         "event_id",
@@ -412,7 +412,6 @@ class ContextProjector:
             facts.update(self._derived_facts(state, actor, spec))
         if "CAMP" in visible:
             facts.update(_camp_facts(state, actor))
-        # RELATION is intentionally a no-op until GameState has tagged relation facts.
 
         # Until Task 19 adds GameState.state_revision, the signed request is the
         # only authoritative revision boundary and must be copied exactly.

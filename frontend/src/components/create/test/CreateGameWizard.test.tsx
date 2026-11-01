@@ -31,16 +31,16 @@ vi.mock('react-router-dom', async (importOriginal) => {
 });
 
 const ROLES = [
-  { role_id: 'wolf-killer-werewolf', display_name: 'Werewolf', name_zh: '狼人', camp: 'werewolf', icon: 'wolf', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-villager', display_name: 'Villager', name_zh: '平民', camp: 'good', icon: 'villager', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-seer', display_name: 'Seer', name_zh: '预言家', camp: 'good', icon: 'seer', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-witch', display_name: 'Witch', name_zh: '女巫', camp: 'good', icon: 'witch', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-hunter', display_name: 'Hunter', name_zh: '猎人', camp: 'good', icon: 'hunter', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-guard', display_name: 'Guard', name_zh: '守卫', camp: 'good', icon: 'guard', description: '', min_count: 0, max_count: null, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-idiot', display_name: 'Idiot', name_zh: '白痴', camp: 'good', icon: 'idiot', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-werewolf-king', display_name: 'Werewolf King', name_zh: '白狼王', camp: 'werewolf', icon: 'wolf_king', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-wolf-beauty', display_name: 'Wolf Beauty', name_zh: '狼美人', camp: 'werewolf', icon: 'wolf_beauty', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
-  { role_id: 'wolf-killer-knight', display_name: 'Knight', name_zh: '骑士', camp: 'good', icon: 'knight', description: '', min_count: 0, max_count: 1, dependencies: [], exclusions: [] },
+  { role_id: 'wolf-killer-werewolf', display_name: 'Werewolf', name_zh: '狼人', camp: 'werewolf', icon: 'wolf', description: '', max_count: null },
+  { role_id: 'wolf-killer-villager', display_name: 'Villager', name_zh: '平民', camp: 'good', icon: 'villager', description: '', max_count: null },
+  { role_id: 'wolf-killer-seer', display_name: 'Seer', name_zh: '预言家', camp: 'good', icon: 'seer', description: '', max_count: null },
+  { role_id: 'wolf-killer-witch', display_name: 'Witch', name_zh: '女巫', camp: 'good', icon: 'witch', description: '', max_count: null },
+  { role_id: 'wolf-killer-hunter', display_name: 'Hunter', name_zh: '猎人', camp: 'good', icon: 'hunter', description: '', max_count: null },
+  { role_id: 'wolf-killer-guard', display_name: 'Guard', name_zh: '守卫', camp: 'good', icon: 'guard', description: '', max_count: null },
+  { role_id: 'wolf-killer-idiot', display_name: 'Idiot', name_zh: '白痴', camp: 'good', icon: 'idiot', description: '', max_count: 1 },
+  { role_id: 'wolf-killer-werewolf-king', display_name: 'Werewolf King', name_zh: '白狼王', camp: 'werewolf', icon: 'wolf_king', description: '', max_count: 1 },
+  { role_id: 'wolf-killer-wolf-beauty', display_name: 'Wolf Beauty', name_zh: '狼美人', camp: 'werewolf', icon: 'wolf_beauty', description: '', max_count: 1 },
+  { role_id: 'wolf-killer-knight', display_name: 'Knight', name_zh: '骑士', camp: 'good', icon: 'knight', description: '', max_count: 1 },
 ];
 
 const PRESETS: GamePreset[] = [

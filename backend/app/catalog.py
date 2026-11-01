@@ -1364,10 +1364,7 @@ def _catalog_item(role_id: str, spec) -> dict:
         "rules_en": [
             rule for rule in meta.get("rules_en", ()) if isinstance(rule, str)
         ] or None,
-        "min_count": spec.min_count,
         "max_count": spec.max_count,
-        "dependencies": sorted(spec.dependencies),
-        "exclusions": sorted(spec.exclusions),
     }
 
 

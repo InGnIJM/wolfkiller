@@ -103,7 +103,6 @@ def test_schedule_and_effect_enums_are_complete_and_stable() -> None:
         "add_status",
         "remove_status",
         "add_relation",
-        "remove_relation",
         "record_private_fact",
         "submit_damage",
         "submit_protection",

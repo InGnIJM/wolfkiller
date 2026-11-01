@@ -61,7 +61,6 @@ class EffectKind(str, Enum):
     ADD_STATUS = "add_status"
     REMOVE_STATUS = "remove_status"
     ADD_RELATION = "add_relation"
-    REMOVE_RELATION = "remove_relation"
     RECORD_PRIVATE_FACT = "record_private_fact"
     SUBMIT_DAMAGE = "submit_damage"
     SUBMIT_PROTECTION = "submit_protection"
@@ -626,9 +625,6 @@ class RoleSpec(_FrozenValue):
     visibility_namespaces: frozenset[str] = frozenset()
     allowed_effects: frozenset[EffectKind] = frozenset()
     tags: frozenset[str] = frozenset()
-    dependencies: frozenset[str] = frozenset()
-    exclusions: frozenset[str] = frozenset()
-    min_count: int = 0
     max_count: int | None = None
     instructions: str = ""
     #: The role's own opening line for the night script: ``(title, text)``.
@@ -699,8 +695,6 @@ class RoleSpec(_FrozenValue):
         for name in (
             "visibility_namespaces",
             "tags",
-            "dependencies",
-            "exclusions",
             "projected_facts",
             "opening_points",
         ):
@@ -712,7 +706,6 @@ class RoleSpec(_FrozenValue):
             _require_str("bond_slot", self.bond_slot)
             if not _TOKEN.fullmatch(self.bond_slot):
                 raise ValueError("bond_slot must be a token")
-        _require_int("min_count", self.min_count)
         _require_int("max_count", self.max_count, optional=True)
         opening = self.opening_narration
         if type(opening) is not tuple or len(opening) not in (0, 2):
@@ -742,8 +735,6 @@ class RoleSpec(_FrozenValue):
         )
         object.__setattr__(self, "visibility_namespaces", frozenset(self.visibility_namespaces))
         object.__setattr__(self, "tags", frozenset(self.tags))
-        object.__setattr__(self, "dependencies", frozenset(self.dependencies))
-        object.__setattr__(self, "exclusions", frozenset(self.exclusions))
         object.__setattr__(self, "projected_facts", frozenset(self.projected_facts))
         object.__setattr__(self, "opening_points", frozenset(self.opening_points))
         try:
@@ -780,8 +771,6 @@ class RoleSpec(_FrozenValue):
             "visibility_namespaces",
             "allowed_effects",
             "tags",
-            "dependencies",
-            "exclusions",
             "projected_facts",
             "opening_points",
         ):

@@ -37,19 +37,16 @@ const ROLES: RoleCatalogItem[] = [
   {
     role_id: 'wolf-killer-werewolf', display_name: 'Werewolf', name_zh: '狼人',
     camp: 'werewolf', icon: 'wolf', description: '夜晚睁眼刀人',
-    rules: ['与狼队友共用同一次狼刀。', '彼此知道身份。'],
-    min_count: 0, max_count: null, dependencies: [], exclusions: [],
+    rules: ['与狼队友共用同一次狼刀。', '彼此知道身份。'], max_count: null
   },
   {
     role_id: 'wolf-killer-idiot', display_name: 'Idiot', name_zh: '白痴',
-    camp: 'good', icon: 'idiot', description: '被放逐时翻牌免死',
-    min_count: 0, max_count: 1, dependencies: [], exclusions: [],
+    camp: 'good', icon: 'idiot', description: '被放逐时翻牌免死', max_count: 1
   },
   {
     role_id: 'wolf-killer-mystery', display_name: 'Mystery', name_zh: '神秘人',
     camp: 'third_party', icon: 'unknown', description: '未登记阵营',
-    rules: ['主程序之外的阵营也要照常渲染。'],
-    min_count: 0, max_count: null, dependencies: [], exclusions: [],
+    rules: ['主程序之外的阵营也要照常渲染。'], max_count: null
   },
 ];
 

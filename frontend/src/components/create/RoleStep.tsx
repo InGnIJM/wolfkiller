@@ -142,7 +142,7 @@ export default function RoleStep({
 
   const canDecrement = (role: RoleCatalogItem) => {
     const current = roleCounts[role.role_id] ?? 0;
-    if (current <= 0 || current <= role.min_count) return false;
+    if (current <= 0) return false;
     if (!constraints) return true;
     if (total - 1 < constraints.min_players) return false;
     if (role.camp === 'werewolf' && wolfCount - 1 < constraints.min_werewolves) return false;

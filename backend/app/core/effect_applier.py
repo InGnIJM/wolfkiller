@@ -253,7 +253,7 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
         EffectKind.SET_RESOURCE: frozenset({"target", "resource", "value"}),
         EffectKind.SET_PRIVATE_DATA: frozenset({"target", "key", "value"}),
         **{kind: frozenset({"target", "status"}) for kind in (EffectKind.ADD_STATUS, EffectKind.REMOVE_STATUS)},
-        **{kind: frozenset({"target", "relation", "other_seat"}) for kind in (EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION)},
+        EffectKind.ADD_RELATION: frozenset({"target", "relation", "other_seat"}),
         EffectKind.RECORD_PRIVATE_FACT: frozenset({"target", "namespace", "fact"}),
         EffectKind.SUBMIT_DAMAGE: frozenset({"target", "amount", "cause"}),
         EffectKind.SUBMIT_PROTECTION: frozenset({"target", "amount", "source"}),
@@ -321,7 +321,7 @@ def _validate_payload(effect: GameEffect, seats: set[int]) -> dict[str, object]:
         _token_field(payload, "key")
     elif kind in {EffectKind.ADD_STATUS, EffectKind.REMOVE_STATUS}:
         _token_field(payload, "status")
-    elif kind in {EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION}:
+    elif kind is EffectKind.ADD_RELATION:
         _token_field(payload, "relation")
         other = _int_field(payload, "other_seat", positive=True)
         if other not in seats: raise EffectRejected("relation seat does not exist")
@@ -404,19 +404,15 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
         else:
             if status not in statuses: raise EffectConflict("status is absent")
             statuses.remove(status)
-    elif kind in {EffectKind.ADD_RELATION, EffectKind.REMOVE_RELATION}:
+    elif kind is EffectKind.ADD_RELATION:
         relations = runtime.relations.setdefault(target, set())
         relation = (str(payload["relation"]), int(payload["other_seat"]))
-        if kind is EffectKind.ADD_RELATION:
-            # Already a member before this batch: re-establishing it is a no-op,
-            # not a rejection. Already added *by* this batch: that is a malformed
-            # batch and must stay fatal.
-            if relation in relations and relation not in (preexisting_relations or {}).get(target, frozenset()):
-                raise EffectConflict("relation already present")
-            relations.add(relation)
-        else:
-            if relation not in relations: raise EffectConflict("relation is absent")
-            relations.remove(relation)
+        # Already a member before this batch: re-establishing it is a no-op,
+        # not a rejection. Already added *by* this batch: that is a malformed
+        # batch and must stay fatal.
+        if relation in relations and relation not in (preexisting_relations or {}).get(target, frozenset()):
+            raise EffectConflict("relation already present")
+        relations.add(relation)
     elif kind is EffectKind.RECORD_PRIVATE_FACT:
         runtime.private_facts.setdefault(target, []).append({"namespace": payload["namespace"], "fact": payload["fact"]})
     elif kind is EffectKind.SUBMIT_DAMAGE:

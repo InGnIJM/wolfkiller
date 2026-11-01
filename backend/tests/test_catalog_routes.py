@@ -14,8 +14,7 @@ from app.roles.registry import builtin_registry
 
 def test_catalog_item_known_role_uses_metadata():
     spec = SimpleNamespace(
-        display_name="Werewolf", camp_id="werewolf", min_count=0,
-        max_count=None, dependencies=frozenset(), exclusions=frozenset(),
+        display_name="Werewolf", camp_id="werewolf", max_count=None,
     )
     item = _catalog_item("wolf-killer-werewolf", spec)
 
@@ -28,8 +27,7 @@ def test_catalog_item_known_role_uses_metadata():
 
 def test_catalog_item_unknown_role_falls_back_to_spec_display():
     spec = SimpleNamespace(
-        display_name="Mystery", camp_id="third_party", min_count=1,
-        max_count=3, dependencies=frozenset({"a"}), exclusions=frozenset(),
+        display_name="Mystery", camp_id="third_party", max_count=3,
     )
     item = _catalog_item("x-unknown-role", spec)
 
@@ -37,16 +35,12 @@ def test_catalog_item_unknown_role_falls_back_to_spec_display():
     assert item["icon"] == "unknown"
     assert item["description"] == ""
     assert item["rules"] == []
-    assert item["min_count"] == 1
     assert item["max_count"] == 3
-    assert item["dependencies"] == ["a"]
-    assert item["exclusions"] == []
 
 
 def test_catalog_item_drops_non_string_rule_entries(monkeypatch):
     spec = SimpleNamespace(
-        display_name="Mixed", camp_id="good", min_count=0,
-        max_count=None, dependencies=frozenset(), exclusions=frozenset(),
+        display_name="Mixed", camp_id="good", max_count=None,
     )
     monkeypatch.setitem(ROLE_METADATA, "x-mixed-role", {"rules": ["可用", 7]})
 
@@ -67,8 +61,7 @@ def test_every_registered_role_publishes_rule_bullets():
 
 def test_catalog_item_empty_display_falls_back_to_role_id():
     spec = SimpleNamespace(
-        display_name="", camp_id="good", min_count=0, max_count=None,
-        dependencies=frozenset(), exclusions=frozenset(),
+        display_name="", camp_id="good", max_count=None,
     )
     item = _catalog_item("x-unknown-role", spec)
     assert item["display_name"] == "x-unknown-role"

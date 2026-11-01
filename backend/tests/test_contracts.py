@@ -598,10 +598,10 @@ class TestPipelineRoleRegistry:
         results = []
         failures = []
 
-        def gated_validation(spec, contract_ids, known_roles):
+        def gated_validation(spec, contract_ids):
             validation_started.set()
             assert continue_validation.wait(timeout=5)
-            return original(spec, contract_ids, known_roles)
+            return original(spec, contract_ids)
 
         monkeypatch.setattr(
             RoleRegistry, "_validate_pipeline_spec", staticmethod(gated_validation)
@@ -768,26 +768,7 @@ class TestPipelineRoleRegistry:
                 "visibility",
             ),
             ((_pipeline_spec("Bad Role"),), "role id"),
-            ((_pipeline_spec(min_count=-1),), "minimum"),
-            ((_pipeline_spec(min_count=2, max_count=1),), "maximum"),
-            (
-                (
-                    _pipeline_spec(
-                        dependencies=frozenset({"other"}),
-                        exclusions=frozenset({"other"}),
-                    ),
-                    _pipeline_spec("other", contracts=()),
-                ),
-                "overlap",
-            ),
-            (
-                (_pipeline_spec(dependencies=frozenset({"pipeline-role"})),),
-                "itself",
-            ),
-            (
-                (_pipeline_spec(dependencies=frozenset({"missing"})),),
-                "unknown role",
-            ),
+            ((_pipeline_spec(max_count=-1),), "maximum"),
             (
                 (
                     _pipeline_spec(
@@ -1003,30 +984,13 @@ class TestPipelineRoleRegistry:
         with pytest.raises(ValueError, match="player_count"):
             RoleRegistry().freeze().validate_role_counts({}, player_count)
 
-    def test_snapshot_enforces_minimum_maximum_dependency_and_exclusion(self):
+    def test_snapshot_enforces_maximum(self):
         registry = RoleRegistry()
-        registry.register_pipeline(
-            _pipeline_spec(
-                "seer",
-                min_count=1,
-                max_count=2,
-                dependencies=frozenset({"villager"}),
-                exclusions=frozenset({"wolf"}),
-            )
-        )
+        registry.register_pipeline(_pipeline_spec("seer", max_count=2))
         registry.register_pipeline(_pipeline_spec("villager", contracts=()))
-        registry.register_pipeline(_pipeline_spec("wolf", contracts=()))
         snapshot = registry.freeze()
 
-        with pytest.raises(ValueError, match="minimum"):
-            snapshot.validate_role_counts({"seer": 0, "villager": 2}, 2)
         with pytest.raises(ValueError, match="maximum"):
             snapshot.validate_role_counts({"seer": 3, "villager": 1}, 4)
-        with pytest.raises(ValueError, match="dependency"):
-            snapshot.validate_role_counts({"seer": 1, "villager": 0}, 1)
-        with pytest.raises(ValueError, match="exclusion"):
-            snapshot.validate_role_counts(
-                {"seer": 1, "villager": 1, "wolf": 1}, 3
-            )
 
         snapshot.validate_role_counts({"seer": 1, "villager": 1}, 2)

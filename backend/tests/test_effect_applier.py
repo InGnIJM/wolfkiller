@@ -111,7 +111,6 @@ def test_applies_all_effect_kinds_and_deep_freezes_result() -> None:
             (EffectKind.ADD_STATUS, {"target": 2, "status": "marked"}, 2),
             (EffectKind.REMOVE_STATUS, {"target": 2, "status": "marked"}, 2),
             (EffectKind.ADD_RELATION, {"target": 1, "relation": "known", "other_seat": 2}, 1),
-            (EffectKind.REMOVE_RELATION, {"target": 1, "relation": "known", "other_seat": 2}, 1),
             (EffectKind.RECORD_PRIVATE_FACT, {"target": 1, "namespace": "seer", "fact": {"wolf": 2}}, 1),
             (EffectKind.SUBMIT_DAMAGE, {"target": 2, "amount": 1, "cause": "attack"}, 2),
             (EffectKind.SUBMIT_PROTECTION, {"target": 3, "amount": 1}, 3),
@@ -125,7 +124,7 @@ def test_applies_all_effect_kinds_and_deep_freezes_result() -> None:
     assert result.revision == 1 and not s.players[2].is_alive
     assert runtime.role_resources[1]["antidote"] == 0
     assert runtime.private_data[1]["vision"] == {"seat": 2}
-    assert runtime.statuses[2] == set() and runtime.relations[1] == set()
+    assert runtime.statuses[2] == set() and runtime.relations[1] == {("known", 2)}
     assert runtime.private_facts[1][0]["namespace"] == "seer"
     assert runtime.pending_damage == ({"target": 2, "amount": 1, "cause": "attack"},)
     assert runtime.pending_protection == ({"target": 3, "amount": 1},)
@@ -372,7 +371,7 @@ def test_conflicts_and_underflow_are_atomic() -> None:
     cases = [
         batch([(EffectKind.CONSUME_RESOURCE, {"target": 1, "resource": "r", "amount": 1}, 1)]),
         batch([(EffectKind.REMOVE_STATUS, {"target": 1, "status": "missing"}, 1)]),
-        batch([(EffectKind.REMOVE_RELATION, {"target": 1, "relation": "x", "other_seat": 2}, 1)]),
+        batch([(EffectKind.REMOVE_STATUS, {"target": 2, "status": "x"}, 1)]),
         batch([(EffectKind.MARK_DEATH, {"target": 2, "cause": "x"}, 2), (EffectKind.MARK_DEATH, {"target": 2, "cause": "x"}, 2)]),
     ]
     for effects in cases:

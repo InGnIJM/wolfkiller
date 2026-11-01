@@ -14,10 +14,7 @@ class RoleCatalogItem(BaseModel):
     description_en: str | None = None
     rules: list[str] = Field(default_factory=list)
     rules_en: list[str] | None = None
-    min_count: int
     max_count: int | None
-    dependencies: list[str]
-    exclusions: list[str]
 
 
 class RoleCatalogResponse(BaseModel):

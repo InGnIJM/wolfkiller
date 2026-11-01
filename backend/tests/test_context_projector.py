@@ -392,7 +392,7 @@ def test_contract_visibility_intersects_role_visibility_and_relation_is_empty(
         role_id="hybrid",
         camp_id="werewolf",
         contracts=(actor_only,),
-        visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP", "RELATION"}),
+        visibility_namespaces=frozenset({"PUBLIC", "ACTOR", "CAMP"}),
     )
     registry = RegistrySnapshot(specs={"hybrid": spec}, digest="v")
     state.players[1].role = "hybrid"
