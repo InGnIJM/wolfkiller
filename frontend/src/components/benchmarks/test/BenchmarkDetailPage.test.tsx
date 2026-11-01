@@ -176,6 +176,16 @@ describe('benchmark decision quality', () => {
     await showDetail();
     expect(screen.getByText('平均轮次').parentElement).toHaveTextContent('平均轮次—');
     expect(screen.getByText('中断率').parentElement).toHaveTextContent('中断率—');
+    expect(screen.getByText('缓存命中率').parentElement).toHaveTextContent('缓存命中率—');
+  });
+
+  it('shows the prefix-cache hit rate from token usage', async () => {
+    vi.mocked(api.fetchBenchmarkReport).mockResolvedValue({
+      status: 'ready', provisional: false,
+      summary: { attempts: { token_usage: { known_total_tokens: 1000, cache_hit_rate: 0.625 } } },
+    });
+    await showDetail();
+    expect(screen.getByText('缓存命中率').parentElement).toHaveTextContent('缓存命中率62.5%');
   });
 });
 
