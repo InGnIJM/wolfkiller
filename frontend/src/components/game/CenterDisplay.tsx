@@ -166,8 +166,8 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
       <Typography
         sx={{
           fontSize: 'clamp(8px, 1.15cqh, 10px)',
-          fontWeight: 700,
-          letterSpacing: 'clamp(2.5px, 1.1cqi, 6px)',
+          fontWeight: 600,
+          letterSpacing: 'clamp(1.5px, 0.9cqi, 4px)',
           color: 'secondary.dark',
           fontFamily: '"Cinzel","Noto Serif SC",serif',
         }}
@@ -178,7 +178,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
         sx={{
           mt: 0.5,
           fontSize: 'clamp(20px, min(7.4cqh, 13cqi), 46px)',
-          fontWeight: 900,
+          fontWeight: 700,
           lineHeight: 1.2,
           letterSpacing: 'clamp(2px, 2.4cqi, 8px)',
           fontFamily: '"Cinzel","Noto Serif SC",serif',
@@ -186,7 +186,6 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
           WebkitBackgroundClip: 'text',
           backgroundClip: 'text',
           color: 'transparent',
-          textShadow: '0 18px 50px rgba(212,168,83,0.22)',
         }}
       >
         {t('game.dayTitle', { day: i18n.language.startsWith('zh') ? upperDay(roundNumber) : ordinalEn(roundNumber) })}
@@ -196,8 +195,8 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
           display: 'inline-block',
           mt: 0.4,
           fontSize: 'clamp(11px, 1.9cqh, 15.2px)',
-          fontWeight: 700,
-          letterSpacing: 'clamp(2px, 1.7cqi, 5px)',
+          fontWeight: 600,
+          letterSpacing: 'clamp(1.5px, 1.2cqi, 3.5px)',
           color: 'text.primary',
           pb: 1,
           borderBottom: '1px solid',
@@ -226,9 +225,9 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
           sx={{
             display: 'block',
             color: ROLE_COLORS.werewolf.color,
-            fontWeight: 800,
-            letterSpacing: 3,
-            fontSize: 'clamp(8px, 1.05cqh, 9px)',
+            fontWeight: 600,
+            letterSpacing: 1.5,
+            fontSize: 'clamp(9px, 1.15cqh, 10px)',
             mb: 0.1,
           }}
         >
@@ -243,7 +242,7 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
         sx={{
           mt: 1,
           fontSize: 'clamp(9px, 1.25cqh, 10.9px)',
-          letterSpacing: 'clamp(1px, 0.9cqi, 3px)',
+          letterSpacing: 'clamp(0.5px, 0.7cqi, 2px)',
           color: 'text.disabled',
         }}
       >
@@ -490,12 +489,11 @@ function EventSummary({
           height: 7,
           borderRadius: '50%',
           bgcolor: tone,
-          boxShadow: `0 0 8px ${tone}`,
         }}
       />
       <Typography
         variant="caption"
-        sx={{ color: tone, fontWeight: 700, letterSpacing: 1.5, fontSize: 'clamp(9px, 1.3cqh, 11.5px)' }}
+        sx={{ color: tone, fontWeight: 600, letterSpacing: 0.75, fontSize: 'clamp(9px, 1.3cqh, 11.5px)' }}
       >
         {text}
       </Typography>

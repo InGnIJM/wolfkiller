@@ -127,7 +127,7 @@ text, thinking }: { text: string; thinking: string }) {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ display: 'block', letterSpacing: 2, mb: 0.5 }}
+            sx={{ display: 'block', letterSpacing: 1, mb: 0.5 }}
           >
             {t('game.acThinking')}
           </Typography>
@@ -175,9 +175,9 @@ function LiveTag({ label }: { label: string }) {
         alignItems: 'center',
         gap: 0.8,
         color: ROLE_COLORS.werewolf.color,
-        fontSize: '0.65rem',
-        fontWeight: 700,
-        letterSpacing: 2,
+        fontSize: '0.7rem',
+        fontWeight: 600,
+        letterSpacing: 1.5,
       }}
     >
       <Box
@@ -187,7 +187,6 @@ function LiveTag({ label }: { label: string }) {
           height: 7,
           borderRadius: '50%',
           bgcolor: BLOOD_MOON.crimson,
-          boxShadow: '0 0 10px rgba(201,86,107,0.9)',
           animation: `${livePulse} 1.4s ease-in-out infinite`,
         }}
       />
@@ -208,11 +207,10 @@ function SeatAvatar({ seat, size = 40 }: { seat: number; size?: number }) {
         display: 'grid',
         placeItems: 'center',
         color: AVATAR_INK,
-        fontWeight: 800,
+        fontWeight: 600,
         fontSize: size * 0.4,
         bgcolor: color,
         border: '1px solid rgba(212,168,83,0.35)',
-        boxShadow: '0 0 14px rgba(201,86,107,0.22)',
         flexShrink: 0,
       }}
     >
@@ -251,10 +249,10 @@ function SpeechView({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={payload.player_seat} />
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+          <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
             {t('game.seatNumber', { seat: payload.player_seat })}
           </Typography>
-          <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
+          <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 1.5, fontWeight: 600 }}>
             {kind}
           </Typography>
         </Box>
@@ -301,9 +299,9 @@ function MetaRow({
         display: 'flex',
         flexWrap: 'wrap',
         gap: 2.5,
-        fontSize: '0.6rem',
+        fontSize: '0.68rem',
         color: 'text.disabled',
-        letterSpacing: 1,
+        letterSpacing: 0.5,
         flexShrink: 0,
       }}
     >
@@ -336,10 +334,10 @@ function ThoughtView({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         {seat !== null ? <SeatAvatar seat={seat} /> : <Box sx={{ width: 40 }} />}
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+          <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
             {seat !== null ? t('game.seatNumber', { seat }) : ''}{label}
           </Typography>
-          <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, letterSpacing: 2, fontWeight: 600 }}>
+          <Typography variant="caption" sx={{ color: ROLE_COLORS.witch.color, letterSpacing: 1.5, fontWeight: 600 }}>
             {t('game.acInnerThought')}
           </Typography>
         </Box>
@@ -396,10 +394,10 @@ function ChatView({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
         <SeatAvatar seat={seat} />
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+          <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
             {t('game.seatNumber', { seat })}
           </Typography>
-          <Typography variant="caption" sx={{ color: tone, letterSpacing: 2, fontWeight: 700 }}>
+          <Typography variant="caption" sx={{ color: tone, letterSpacing: 1.5, fontWeight: 600 }}>
             {resolvedLabel}
           </Typography>
         </Box>
@@ -465,17 +463,16 @@ function DeathView({
             placeItems: 'center',
             color: ON_ACCENT,
             bgcolor: BLOOD_MOON.crimson,
-            boxShadow: '0 0 14px rgba(201,86,107,0.5)',
             flexShrink: 0,
           }}
         >
           <CloseIcon sx={{ fontSize: 20 }} />
         </Box>
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: ROLE_COLORS.werewolf.color }}>
+          <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2, color: ROLE_COLORS.werewolf.color }}>
             {t('game.playerOut', { seat: payload.player_seat })}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.75 }}>
             {explodeLabel} · {t('game.acRoundOnly', { round: payload.round_number })}
           </Typography>
         </Box>
@@ -507,19 +504,18 @@ function VoteResultView({
             placeItems: 'center',
             color: ON_ACCENT,
             bgcolor: BLOOD_MOON.gold,
-            boxShadow: '0 0 14px rgba(212,168,83,0.5)',
             flexShrink: 0,
             fontSize: 20,
-            fontWeight: 800,
+            fontWeight: 600,
           }}
         >
           {t('game.acBallot')}
         </Box>
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: BLOOD_MOON.goldLight }}>
+          <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2, color: BLOOD_MOON.goldLight }}>
             {exiled}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.75 }}>
             {t('game.acVoteResult', { round: payload.round_number })}
           </Typography>
         </Box>
@@ -565,17 +561,17 @@ function DayVerdictView({
               bgcolor: tone,
               flexShrink: 0,
               fontSize: 16,
-              fontWeight: 800,
+              fontWeight: 600,
             }}
           >
             {t('game.acSheriffBadge')}
           </Box>
         )}
         <Box>
-          <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2, color: tone }}>
+          <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2, color: tone }}>
             {title}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.75 }}>
             {subtitle}
           </Typography>
           {detail ? (
@@ -629,10 +625,10 @@ export default function ActivityCard() {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                   <SeatAvatar seat={entry.payload.seat} />
                   <Box>
-                    <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+                    <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
                       {t('game.seatNumber', { seat: entry.payload.seat })}
                     </Typography>
-                    <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
+                    <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 1.5, fontWeight: 600 }}>
                       {t('game.acSpeakingPlain')}
                     </Typography>
                   </Box>
@@ -650,10 +646,10 @@ export default function ActivityCard() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
-              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+              <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
                 {t('game.seatNumber', { seat: entry.payload.seat })}
               </Typography>
-              <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 3, fontWeight: 600 }}>
+              <Typography variant="caption" sx={{ color: 'secondary.main', letterSpacing: 1.5, fontWeight: 600 }}>
                 {t('game.acSpeakingPlain')}
               </Typography>
             </Box>
@@ -771,12 +767,12 @@ export default function ActivityCard() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
-              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+              <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
                 {charmed == null
                   ? t('game.evCharmStart', { seat: entry.payload.seat })
                   : t('game.evCharm', { seat: entry.payload.seat, target: charmed })}
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.75 }}>
                 {charmed == null
                   ? t('game.acRoundTargetMissing', { round: entry.payload.round_number })
                   : t('game.acRoundOnly', { round: entry.payload.round_number })}
@@ -792,10 +788,10 @@ export default function ActivityCard() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
-              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+              <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
                 {t('game.evEntangle', { seat: entry.payload.seat, targets: entry.payload.target_seats.join(t('game.listJoin')) })}
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.75 }}>
                 {t('game.acEntangleSub', { round: entry.payload.round_number })}
               </Typography>
             </Box>
@@ -811,12 +807,12 @@ export default function ActivityCard() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <SeatAvatar seat={entry.payload.seat} />
             <Box>
-              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+              <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
                 {standIn == null
                   ? t('game.evIllusionStart', { seat: entry.payload.seat })
                   : t('game.evIllusion', { seat: entry.payload.seat, target: standIn })}
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.75 }}>
                 {standIn == null
                   ? t('game.acRoundTargetMissing', { round: entry.payload.round_number })
                   : t('game.acRoundOnly', { round: entry.payload.round_number })}
@@ -994,10 +990,10 @@ export default function ActivityCard() {
         <ActivityFrame tone={ROLE_COLORS.guard.color}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexShrink: 0 }}>
             <Box>
-              <Typography sx={{ fontWeight: 800, letterSpacing: 1, lineHeight: 1.2 }}>
+              <Typography sx={{ fontWeight: 600, letterSpacing: 1, lineHeight: 1.2 }}>
                 {entry.payload.title}
               </Typography>
-              <Typography variant="caption" sx={{ color: ROLE_COLORS.guard.color, letterSpacing: 2, fontWeight: 600 }}>
+              <Typography variant="caption" sx={{ color: ROLE_COLORS.guard.color, letterSpacing: 1.5, fontWeight: 600 }}>
                 {t('game.acCommentary')}
               </Typography>
             </Box>
