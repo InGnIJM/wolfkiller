@@ -83,7 +83,7 @@ export default function BenchmarkListPage() {
                 const progress = progressOf(run);
                 return (
                   <TableRow key={run.run_id} hover>
-                    <TableCell><Typography sx={{ fontWeight: 700 }}>{run.name}</Typography></TableCell>
+                    <TableCell><Typography sx={{ fontWeight: 600 }}>{run.name}</Typography></TableCell>
                     <TableCell>{t(run.mode === 'mixed_arena' ? 'benchmark.modeMixed' : 'benchmark.modeRegression')}</TableCell>
                     <TableCell><Chip size="small" label={L.BENCHMARK_STATUS_LABELS[run.status] ?? run.status} /></TableCell>
                     <TableCell sx={{ minWidth: 180 }}>

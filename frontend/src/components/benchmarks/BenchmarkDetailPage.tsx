@@ -78,7 +78,17 @@ function boardCoverageText(coverage: Record<string, unknown>, t: TFunction): str
     return t('benchmark.seatsTimesGames', { seats, games });
   });
   const seer = coverage.seer_present === false ? t('benchmark.noSeerNote') : '';
-  return t('benchmark.coverage', { parts: parts.join(t('game.listJoin')), note: seer });
+  // 信息位角色是池化查验指标的样本来源：一个都没有时要明说，否则
+  // 「无样本」会被读成「都 miss 了」。旧报告没有该键时退回只看预言家。
+  const infoRoles = Array.isArray(coverage.info_roles_present)
+    ? coverage.info_roles_present
+    : null;
+  const info = infoRoles !== null && infoRoles.length === 0
+    ? t('benchmark.noInfoRoleNote')
+    : '';
+  return t('benchmark.coverage', {
+    parts: parts.join(t('game.listJoin')), note: `${info}${seer}`,
+  });
 }
 
 function performanceRows(report: BenchmarkReport | null, t: TFunction): PerformanceRow[] {
@@ -89,7 +99,7 @@ function performanceRows(report: BenchmarkReport | null, t: TFunction): Performa
       const item = record(raw);
       return {
         id: String(item.id ?? index),
-        model: String(item.model ?? item.model_name ?? t('benchmark.unknownModel')),
+        model: String(item.model_label ?? item.model ?? item.model_name ?? t('benchmark.unknownModel')),
         dimension: item.camp ? 'camp' : 'role',
         group: String(item.role ?? item.camp ?? t('benchmark.all')),
         samples: typeof item.samples === 'number' ? item.samples : 0,
@@ -214,7 +224,7 @@ export default function BenchmarkDetailPage() {
 
       <Paper variant="outlined" sx={{ p: 2, mt: 3 }} aria-label={t('benchmark.progressAria')}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, mb: 1 }}>
-          <Typography sx={{ fontWeight: 700 }}>{t('benchmark.progressAria')}</Typography>
+          <Typography sx={{ fontWeight: 600 }}>{t('benchmark.progressAria')}</Typography>
           <Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>{current.terminal_count ?? 0}/{current.planned_count ?? 0}</Typography>
         </Box>
         <LinearProgress variant="determinate" value={Math.max(0, Math.min(100, progress * 100))} aria-label={t('benchmark.progressBarAria')} />
@@ -226,7 +236,8 @@ export default function BenchmarkDetailPage() {
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2, my: 3 }}>
         {[
           [t('benchmark.metricCompletion'), rate(numberAt(games, 'completed') !== null && numberAt(games, 'total') ? (numberAt(games, 'completed') ?? 0) / (numberAt(games, 'total') ?? 1) : null)],
-          [t('benchmark.metricReqSuccess'), rate(numberAt(requests, 'success_rate'))],
+          [t('benchmark.metricReqSuccess'), rate(numberAt(requests, 'valid_rate'))],
+          [t('benchmark.metricActionRate'), rate(numberAt(requests, 'success_rate'))],
           [t('benchmark.metricTokens'), numberAt(tokenUsage, 'known_total_tokens')?.toLocaleString() ?? '—'],
           [t('benchmark.metricLatency'), numberAt(latency, 'p95') === null ? '—' : `${numberAt(latency, 'p95')} ms`],
           [t('benchmark.metricRounds'), averageRounds === null ? '—' : averageRounds.toFixed(1)],
@@ -358,7 +369,7 @@ export default function BenchmarkDetailPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Typography sx={{ fontWeight: 700 }}>{item.name ?? t('benchmark.scheduledItem', { index: item.item_index + 1 })}</Typography>
+                        <Typography sx={{ fontWeight: 600 }}>{item.name ?? t('benchmark.scheduledItem', { index: item.item_index + 1 })}</Typography>
                         <Typography variant="body2" color="text.secondary">
                           {gameId ?? t('benchmark.notStarted')}
                           {item.round_number != null ? ` · ${t('benchmark.roundN', { round: item.round_number })}` : ''}

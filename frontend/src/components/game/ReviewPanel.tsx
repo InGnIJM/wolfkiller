@@ -84,7 +84,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: 1 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, letterSpacing: 1 }}>
           {t('review.title')}
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -159,7 +159,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
       {data?.status === 'ready' && review && (
         <Stack spacing={2.5} sx={{ overflowY: 'auto', flex: 1, pr: 0.5 }}>
           <Box>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.8 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.8 }}>
               {t('review.overview')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
@@ -171,7 +171,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
             <Box sx={{ p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
                 <Chip label={t('review.mvp')} size="small" color="secondary" />
-                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                   {t('game.seatNumber', { seat: review.mvp.seat })} · {review.mvp.role}
                 </Typography>
               </Stack>
@@ -183,7 +183,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
 
           {review.turning_points.length > 0 && (
             <Box>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
                 {t('review.turningPoints')}
               </Typography>
               <Stack spacing={1.2}>
@@ -203,7 +203,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
 
           {review.mistakes.length > 0 && (
             <Box>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
                 {t('review.mistakes')}
               </Typography>
               <Stack spacing={1.2}>
@@ -222,7 +222,7 @@ export default function ReviewPanel({ gameId, open, onClose }: Props) {
           )}
 
           <Box>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
               {t('review.camps')}
             </Typography>
             <Stack spacing={1}>
