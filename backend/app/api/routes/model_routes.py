@@ -81,7 +81,8 @@ def _latency_for(
 @router.get("", response_model=ModelListResponse)
 async def list_models():
     store = get_model_config_store()
-    stats = _latency_stats()
+    # The stats query scans the attempts table; keep it off the event loop.
+    stats = await asyncio.to_thread(_latency_stats)
     return ModelListResponse(
         configs=[_to_response(c, _latency_for(c, stats)) for c in store.list_all()],
     )
