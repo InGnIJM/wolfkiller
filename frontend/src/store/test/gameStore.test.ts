@@ -518,7 +518,7 @@ describe('public replay state', () => {
     useGameStore.getState().initPlayersFromDetail(currentPlayers);
     useGameStore.getState().loadLogs(originalLogs);
     useGameStore.getState().seekTo(1);
-    useGameStore.getState().setPaused(false);
+    useGameStore.setState({ isPaused: false });
 
     useGameStore.getState().mergeLogs(extendedLogs);
 
@@ -563,7 +563,7 @@ describe('public replay state', () => {
     useGameStore.getState().initPlayersFromDetail(currentPlayers);
     useGameStore.getState().loadLogs(originalLogs);
     useGameStore.getState().seekTo(0);
-    useGameStore.getState().setPaused(true);
+    useGameStore.setState({ isPaused: true });
 
     useGameStore.getState().mergeLogs(extendedLogs);
 
@@ -593,7 +593,7 @@ describe('public replay state', () => {
     useGameStore.getState().initPlayersFromDetail(currentPlayers);
     useGameStore.getState().loadLogs({ game_id: 'game-1', events: [phaseEvent, winnerEvent] });
     useGameStore.getState().seekTo(1);
-    useGameStore.getState().setPaused(false);
+    useGameStore.setState({ isPaused: false });
 
     useGameStore.getState().mergeLogs({
       game_id: 'game-1',
@@ -636,7 +636,7 @@ describe('public replay state', () => {
       events: [phaseEvent, anchoredSpeech, deathEvent],
     });
     useGameStore.getState().seekTo(1);
-    useGameStore.getState().setPaused(true);
+    useGameStore.setState({ isPaused: true });
 
     useGameStore.getState().mergeLogs({
       game_id: 'game-1',
@@ -673,7 +673,7 @@ describe('public replay state', () => {
       events: [phaseEvent, repeatedSpeech, repeatedSpeech],
     });
     useGameStore.getState().seekTo(2);
-    useGameStore.getState().setPaused(true);
+    useGameStore.setState({ isPaused: true });
 
     useGameStore.getState().mergeLogs({
       game_id: 'game-1',
@@ -702,7 +702,7 @@ describe('public replay state', () => {
 
     useGameStore.getState().loadLogs({ game_id: 'game-1', events: [anchoredSpeech] });
     useGameStore.getState().seekTo(0);
-    useGameStore.getState().setPaused(true);
+    useGameStore.setState({ isPaused: true });
     useGameStore.getState().mergeLogs({
       game_id: 'game-1',
       events: [earlierSpeech, anchoredSpeech],
@@ -729,7 +729,7 @@ describe('public replay state', () => {
       events: [phaseEvent, speechEvent],
     });
     useGameStore.getState().seekTo(1);
-    useGameStore.getState().setPaused(true);
+    useGameStore.setState({ isPaused: true });
     useGameStore.getState().mergeLogs({ game_id: 'game-1', events: [phaseEvent] });
 
     expect(useGameStore.getState().timelineIndex).toBe(0);
@@ -765,7 +765,7 @@ describe('public replay state', () => {
       events: [phaseEvent, oldSpeech],
     });
     useGameStore.getState().seekTo(1);
-    useGameStore.getState().setPaused(false);
+    useGameStore.setState({ isPaused: false });
 
     useGameStore.getState().mergeLogs({
       game_id: 'game-1',
@@ -1141,7 +1141,7 @@ describe('public replay state', () => {
 
     useGameStore.getState().loadLogs(originalLogs);
     useGameStore.getState().seekTo(0);
-    useGameStore.getState().setPaused(true);
+    useGameStore.setState({ isPaused: true });
     useGameStore.getState().mergeLogs(extendedLogs);
 
     expect(useGameStore.getState().timelineIndex).toBe(0);

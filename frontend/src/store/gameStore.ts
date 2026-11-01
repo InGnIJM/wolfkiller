@@ -62,7 +62,6 @@ interface GameStore extends DerivedState {
   streamingSpeech: StreamingSpeech | null;
 
   setConnected: (connected: boolean) => void;
-  setPaused: (paused: boolean, info?: PauseInfo | null) => void;
   setCurrentSpeaker: (seat: number | null) => void;
   setStreamingSpeech: (seat: number, text: string) => void;
   setStreamingThinking: (seat: number, thinking: string) => void;
@@ -519,10 +518,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState,
 
   setConnected: (connected) => set({ connected }),
-  setPaused: (paused, info) => set({
-    isPaused: paused,
-    pauseInfo: paused ? (info ?? null) : null,
-  }),
   setCurrentSpeaker: (seat) => set((state) => ({
     currentSpeaker: seat,
     streamingSpeech: state.streamingSpeech?.seat === seat ? state.streamingSpeech : null,

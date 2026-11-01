@@ -76,7 +76,6 @@ from app.models.pipeline import (
     SchedulePoint,
 )
 from app.models.contracts import AcceptedAction, ActionCommand as ContractActionCommand
-from app.api.websocket.public_events import PublicNightSubstep, PublicVoteEvent
 from app.roles.registry import builtin_registry
 from app.api.websocket.ws_handler import WSManager
 from app.services.game_manifest import GameManifest, default_game_name
@@ -134,19 +133,6 @@ def _plain_json(value):
         return sorted((_plain_json(item) for item in value), key=repr)
     return value
 
-
-PUBLIC_NIGHT_SUBSTEPS = frozenset({
-    "werewolf_open",
-    "werewolf_vote",
-    "werewolf_target",
-    "werewolf_close",
-    "witch_open",
-    "witch_action",
-    "witch_close",
-    "seer_open",
-    "seer_check",
-    "seer_close",
-})
 
 # Domain event types a daytime pipeline window may emit that are already
 # published through a dedicated checkpoint: deaths through the
@@ -900,15 +886,14 @@ class GameService:
         self._load_native_games()
 
         self.event_bus.subscribe(BusEvent.PHASE_CHANGED, self._on_phase_changed)
-        self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._on_player_died)
-        self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._on_speech_made)
-        self.event_bus.subscribe(BusEvent.SPEAKING, self._on_speaking)
+        self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._wake_v2)
+        self.event_bus.subscribe(BusEvent.SPEECH_MADE, self._wake_v2)
+        self.event_bus.subscribe(BusEvent.SPEAKING, self._wake_v2)
         self.event_bus.subscribe(BusEvent.SPEECH_STREAM, self._on_speech_stream)
         self.event_bus.subscribe(BusEvent.SPEECH_THINKING, self._on_speech_thinking)
         self.event_bus.subscribe(BusEvent.ACTING, self._on_acting)
-        self.event_bus.subscribe(BusEvent.VOTE_CAST, self._on_vote_cast)
+        self.event_bus.subscribe(BusEvent.VOTE_CAST, self._wake_v2)
         self.event_bus.subscribe(BusEvent.GAME_OVER, self._on_game_over)
-        self.event_bus.subscribe(BusEvent.NIGHT_SUBSTEP, self._on_night_substep)
 
     # ── Persistence helpers ────────────────────────────────────────
 
@@ -1276,7 +1261,7 @@ class GameService:
                 # judged by pre-fix failures.
                 guard.reset()
             engine.resume()
-            self._broadcast_resume(game_id)
+            self.ws_manager.wake_v2(game_id)
             self._start_clock_heartbeat(game_id)
             return self.get_execution_info(game_id)
         if status == "paused":
@@ -1375,7 +1360,7 @@ class GameService:
             game_id, expected=expected_statuses, target="running",
             increment_generation=True,
         )
-        self._broadcast_resume(game_id)
+        self.ws_manager.wake_v2(game_id)
         self._write_recovery_audit(
             engine, state, verdict, force=force, from_status=status,
             execution_generation=int(updated["execution_generation"]),
@@ -2545,26 +2530,6 @@ class GameService:
             "manual": "手动暂停",
         }.get(code, f"已暂停（{code}）")
 
-    def _broadcast_pause(
-        self, game_id: str, code: str | None, detail: Mapping[str, object] | None,
-    ) -> None:
-        """Best-effort live hint; the durable row is the source of truth."""
-        try:
-            asyncio.create_task(self.ws_manager.broadcast(
-                game_id, "paused_state", paused=True, code=code,
-                reason=self._pause_reason(code),
-            ))
-        except Exception:
-            logger.debug("paused_state broadcast failed", exc_info=True)
-
-    def _broadcast_resume(self, game_id: str) -> None:
-        try:
-            asyncio.create_task(self.ws_manager.broadcast(
-                game_id, "paused_state", paused=False,
-            ))
-        except Exception:
-            logger.debug("paused_state resume broadcast failed", exc_info=True)
-
     async def _wait_model_consumption_allowed(self, game_id: str) -> None:
         if self.repository is None:
             return
@@ -3008,7 +2973,7 @@ class GameService:
                         )
                     except (KeyError, InvalidExecutionTransition):
                         logger.debug("Recovered game pause already finalized", exc_info=True)
-                self._broadcast_pause(game_id, code, detail)
+                self.ws_manager.wake_v2(game_id)
                 return
             logger.error(
                 "Game engine crashed for %s", game_id,
@@ -3865,32 +3830,12 @@ class GameService:
             return
         self._games[game_id] = state
         self._persist_game(state)
-        await self.ws_manager.broadcast(
-            game_id, "phase_change",
-            phase=kwargs.get("phase", ""),
-            round_number=kwargs.get("round_number", 0),
-            state=state.get_public_state(),
-        )
+        self.ws_manager.wake_v2(game_id)
 
-    async def _on_player_died(self, **kwargs) -> None:
+    async def _wake_v2(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)
-        death = kwargs.get("death")
-        if game_id is None or death is None:
-            return
-        death_dict = death.to_dict() if hasattr(death, "to_dict") else death
-        await self.ws_manager.broadcast(game_id, "player_died", death=death_dict)
-
-    async def _on_speaking(self, **kwargs) -> None:
-        game_id = self._known_game_id(kwargs)
-        seat = kwargs.get("seat")
-        if (
-            game_id is None
-            or isinstance(seat, bool)
-            or not isinstance(seat, int)
-            or seat < 1
-        ):
-            return
-        await self.ws_manager.broadcast(game_id, "speaking", seat=seat)
+        if game_id is not None:
+            self.ws_manager.wake_v2(game_id)
 
     async def _on_speech_stream(self, **kwargs) -> None:
         await self._notify_live_text("speech_stream", kwargs)
@@ -3912,7 +3857,6 @@ class GameService:
         ):
             return
         self.ws_manager.queue_v2_notice(game_id, msg_type, seat=seat, text=text)
-        await self.ws_manager.broadcast(game_id, msg_type, seat=seat, text=text)
 
     async def _on_acting(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)
@@ -3925,34 +3869,6 @@ class GameService:
         ):
             return
         self.ws_manager.queue_v2_notice(game_id, "acting", seat=seat)
-        await self.ws_manager.broadcast(game_id, "acting", seat=seat)
-
-    async def _on_speech_made(self, **kwargs) -> None:
-        game_id = self._known_game_id(kwargs)
-        speech = kwargs.get("speech")
-        if game_id is None or speech is None:
-            return
-        speech_dict = speech.to_dict() if hasattr(speech, "to_dict") else speech
-        await self.ws_manager.broadcast(game_id, "speech", speech=speech_dict)
-
-    async def _on_vote_cast(self, **kwargs) -> None:
-        game_id = self._known_game_id(kwargs)
-        vote = kwargs.get("vote")
-        if game_id is None or vote is None:
-            return
-        public_vote = PublicVoteEvent.from_internal(
-            vote=vote,
-            round_number=self._games[game_id].round_number,
-            **{
-                key: value for key, value in kwargs.items()
-                if key not in {"game_id", "vote"}
-            },
-        )
-        if public_vote is None:
-            return
-        await self.ws_manager.broadcast(
-            game_id, "vote_cast", vote=public_vote.to_payload(),
-        )
 
     async def _on_game_over(self, **kwargs) -> None:
         game_id = self._known_game_id(kwargs)
@@ -3961,7 +3877,6 @@ class GameService:
             return
         try:
             wr_dict = win_result.to_dict() if hasattr(win_result, "to_dict") else win_result
-            state = self._games[game_id]
             self._manifest.update_game(
                 game_id,
                 phase="game_over",
@@ -3973,34 +3888,5 @@ class GameService:
                 logger.exception(
                     "Failed to write benchmark summary for game=%s", game_id,
                 )
-            await self.ws_manager.broadcast(
-                game_id, "game_over", win_result=wr_dict,
-                state=state.get_public_state(),
-            )
         finally:
             await self._close_game_clients(game_id)
-
-    async def _on_night_substep(self, **kwargs) -> None:
-        game_id = self._known_game_id(kwargs)
-        step = kwargs.get("step")
-        round_number = kwargs.get("round_number")
-        if (
-            game_id is None
-            or not isinstance(step, str)
-            or step not in PUBLIC_NIGHT_SUBSTEPS
-            or not isinstance(round_number, int)
-            or isinstance(round_number, bool)
-            or round_number < 1
-        ):
-            return
-        payload = PublicNightSubstep.from_internal(
-            step=step,
-            round_number=round_number,
-            **{
-                key: value for key, value in kwargs.items()
-                if key not in {"game_id", "step", "round_number"}
-            },
-        )
-        await self.ws_manager.broadcast(
-            game_id, "night_substep", **payload.to_payload(),
-        )

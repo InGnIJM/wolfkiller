@@ -9,19 +9,6 @@ function hasExactKeys(value: unknown, keys: string[]): value is Record<string, u
   return actualKeys.length === keys.length && keys.every((key) => actualKeys.includes(key));
 }
 
-function isPausedState(value: unknown): value is {
-  type: 'paused_state'; paused: boolean; code?: string | null; reason?: string | null;
-} {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const keys = Object.keys(value);
-  if (!keys.every((key) => ['type', 'paused', 'code', 'reason'].includes(key))) return false;
-  const candidate = value as Record<string, unknown>;
-  if (candidate.type !== 'paused_state' || typeof candidate.paused !== 'boolean') return false;
-  if ('code' in candidate && candidate.code !== null && typeof candidate.code !== 'string') return false;
-  if ('reason' in candidate && candidate.reason !== null && typeof candidate.reason !== 'string') return false;
-  return true;
-}
-
 function isActing(value: unknown): value is { type: 'acting'; seat: number } {
   return hasExactKeys(value, ['type', 'seat'])
     && value.type === 'acting'
@@ -112,15 +99,7 @@ export function useWebSocket() {
           onCursorAhead?.();
           return;
         }
-        if (isPausedState(msg)) {
-          useGameStore.getState().setPaused(
-            msg.paused,
-            msg.paused ? {
-              code: msg.code ?? null,
-              reason: msg.reason ?? null,
-            } : null,
-          );
-        } else if (isLiveText(msg, 'speech_stream') && useGameStore.getState().isFollowingLive) {
+        if (isLiveText(msg, 'speech_stream') && useGameStore.getState().isFollowingLive) {
           useGameStore.getState().setStreamingSpeech(msg.seat, msg.text);
         } else if (isLiveText(msg, 'speech_thinking') && useGameStore.getState().isFollowingLive) {
           useGameStore.getState().setStreamingThinking(msg.seat, msg.text);

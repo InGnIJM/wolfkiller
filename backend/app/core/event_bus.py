@@ -17,7 +17,6 @@ class GameEvent(str, Enum):
     ACTING = "acting"
     VOTE_CAST = "vote_cast"
     NIGHT_ACTION_SUBMITTED = "night_action_submitted"
-    NIGHT_SUBSTEP = "night_substep"
     WIN_CONDITION_MET = "win_condition_met"
     GAME_OVER = "game_over"
 

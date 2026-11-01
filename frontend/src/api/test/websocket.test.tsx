@@ -35,7 +35,6 @@ class MockWebSocket {
 }
 
 const originalSetConnected = useGameStore.getState().setConnected;
-const originalSetPaused = useGameStore.getState().setPaused;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,7 +45,6 @@ beforeEach(() => {
   );
   useGameStore.setState({
     setConnected: originalSetConnected,
-    setPaused: originalSetPaused,
   });
   useGameStore.getState().reset();
 });
@@ -55,7 +53,6 @@ afterEach(() => {
   cleanup();
   useGameStore.setState({
     setConnected: originalSetConnected,
-    setPaused: originalSetPaused,
   });
   useGameStore.getState().reset();
   vi.unstubAllGlobals();
@@ -86,8 +83,6 @@ describe('useWebSocket', () => {
 
   it('replaces the prior socket and ignores every late callback from it', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const setPaused = vi.fn();
-    useGameStore.setState({ setPaused });
     const { result } = renderHook(() => useWebSocket());
 
     act(() => result.current.connect('game-1'));
@@ -118,13 +113,13 @@ describe('useWebSocket', () => {
     act(() => {
       staleHandlers.open?.();
       staleHandlers.message?.({
-        data: JSON.stringify({ type: 'paused_state', paused: true }),
+        data: JSON.stringify({ type: 'acting', seat: 4 }),
       });
       staleHandlers.error?.(new Event('error'));
       staleHandlers.close?.();
     });
     expect(useGameStore.getState().connected).toBe(true);
-    expect(setPaused).not.toHaveBeenCalled();
+    expect(useGameStore.getState().currentSpeaker).toBeNull();
     expect(errorSpy).not.toHaveBeenCalled();
 
     const currentError = new Event('error');
@@ -132,47 +127,6 @@ describe('useWebSocket', () => {
     expect(errorSpy).toHaveBeenCalledWith('WebSocket error:', currentError);
     act(() => currentSocket.onclose?.());
     expect(useGameStore.getState().connected).toBe(false);
-  });
-
-  it('accepts only exact paused messages at runtime', () => {
-    const setPaused = vi.fn();
-    useGameStore.setState({ setPaused });
-    const { result } = renderHook(() => useWebSocket());
-    act(() => result.current.connect('game-1'));
-    const socket = MockWebSocket.instances[0];
-
-    act(() => {
-      socket.emit({ type: 'paused_state', paused: true });
-      socket.emit({ type: 'paused_state', paused: false });
-      socket.emit({
-        type: 'paused_state', paused: true,
-        code: 'provider_circuit_open', reason: '模型通道连续失败，已自动暂停',
-      });
-    });
-
-    expect(setPaused.mock.calls).toEqual([
-      [true, { code: null, reason: null }],
-      [false, null],
-      [true, { code: 'provider_circuit_open', reason: '模型通道连续失败，已自动暂停' }],
-    ]);
-
-    setPaused.mockClear();
-    // hasExactKeys 的长度分支与数组分支必须由这些用例守住：
-    // 前者是 {type:'paused_state', paused:true, role:'werewolf'}，
-    // 后者是 []。删掉任一条都会让 websocket.ts 的分支覆盖掉下来。
-    const invalidMessages: unknown[] = [
-      null,
-      [],
-      'paused_state',
-      { type: 'paused_state' },
-      { type: 'paused_state', paused: 1 },
-      { type: 'paused_state', paused: true, role: 'werewolf' },
-      { type: 'paused_state', paused: true, code: 1 },
-      { type: 'paused_state', paused: true, reason: 1 },
-      { type: 'night_substep', phase: 'night', substep: 'witch_open', round_number: 1 },
-    ];
-    act(() => invalidMessages.forEach((message) => socket.emit(message)));
-    expect(setPaused).not.toHaveBeenCalled();
   });
 
   it('lights the live seat that is taking a night action', () => {

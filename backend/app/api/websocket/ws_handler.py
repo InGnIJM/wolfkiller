@@ -4,7 +4,7 @@ import json
 import logging
 from collections.abc import Mapping
 from fastapi import WebSocket, WebSocketDisconnect
-from app.core.event_bus import EventBus, GameEvent as BusEvent
+from app.core.event_bus import EventBus
 from app.services.audience_event_service import (
     AudienceCursorAheadError,
     AudienceGameNotFoundError,
@@ -24,23 +24,14 @@ class _V2SendError(RuntimeError):
 
 
 class WSManager:
-    """Manages WebSocket connections and broadcasts game state updates."""
+    """Manages protocol-2 WebSocket connections and live hints."""
 
     def __init__(self):
-        self._connections: dict[str, list[WebSocket]] = {}  # game_id -> [ws]
         self._v2_connections: dict[str, list[WebSocket]] = {}
         self._v2_wakeups: dict[str, dict[int, asyncio.Event]] = {}
         self._v2_notices: dict[str, dict[int, list[dict[str, object]]]] = {}
 
-    async def connect(self, game_id: str, ws: WebSocket) -> None:
-        await ws.accept()
-        self._connections.setdefault(game_id, []).append(ws)
-        logger.info(f"WS connected: game={game_id}, total_connections={len(self._connections[game_id])}")
-
     async def disconnect(self, game_id: str, ws: WebSocket) -> None:
-        if game_id in self._connections:
-            self._connections[game_id] = [c for c in self._connections[game_id] if c != ws]
-            logger.info(f"WS disconnected: game={game_id}")
         if game_id in self._v2_connections:
             self._v2_connections[game_id] = [
                 connection for connection in self._v2_connections[game_id]
@@ -64,23 +55,10 @@ class WSManager:
         )
         return wakeup
 
-    async def broadcast(self, game_id: str, msg_type: str, **payload) -> None:
+    def wake_v2(self, game_id: str) -> None:
+        """Wake protocol-2 senders so they poll for fresh events immediately."""
         for wakeup in self._v2_wakeups.get(game_id, {}).values():
             wakeup.set()
-        connections = self._connections.get(game_id, [])
-        if not connections:
-            return
-
-        message = json.dumps({"type": msg_type, **payload}, ensure_ascii=False)
-        dead = []
-        for ws in connections:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                dead.append(ws)
-
-        for ws in dead:
-            await self.disconnect(game_id, ws)
 
     def queue_v2_notice(self, game_id: str, msg_type: str, **payload: object) -> None:
         """Queue a live hint for protocol-2 viewers without a durable checkpoint."""
@@ -102,8 +80,7 @@ class WSManager:
         return notices
 
     async def close_game(self, game_id: str) -> None:
-        connections = list(self._connections.pop(game_id, []))
-        connections.extend(self._v2_connections.pop(game_id, []))
+        connections = self._v2_connections.pop(game_id, [])
         self._v2_wakeups.pop(game_id, None)
         self._v2_notices.pop(game_id, None)
         for ws in connections:
@@ -111,14 +88,6 @@ class WSManager:
                 await ws.close()
             except Exception:
                 logger.debug("Ignoring WebSocket close error for game %s", game_id)
-
-    async def send_to(self, game_id: str, ws: WebSocket, msg_type: str, **payload) -> None:
-        message = json.dumps({"type": msg_type, **payload}, ensure_ascii=False)
-        try:
-            await ws.send_text(message)
-        except Exception:
-            await self.disconnect(game_id, ws)
-
 
 class WSHandler:
     """Handles WebSocket lifecycle and message routing."""
@@ -133,24 +102,12 @@ class WSHandler:
             await self._handle_v2_connection(ws, game_id)
             return
 
-        await self.ws_manager.connect(game_id, ws)
-
-        # Send initial game state on connect
-        from app.main import game_service
-        state = game_service.get_game_state(game_id)
-        if state:
-            await self.ws_manager.send_to(
-                game_id, ws, "game_state",
-                state=state.get_public_state(),
-            )
-
-        try:
-            async for raw_msg in ws.iter_text():
-                await self._handle_message(game_id, ws, raw_msg)
-        except WebSocketDisconnect:
-            pass
-        finally:
-            await self.ws_manager.disconnect(game_id, ws)
+        await ws.accept()
+        await self._send_v2(
+            ws, "error", code="unsupported_protocol",
+            message="WebSocket protocol 2 required",
+        )
+        await self._close_v2(ws, 1008)
 
     @staticmethod
     def _protocol(ws: WebSocket) -> str:
@@ -355,7 +312,7 @@ class WSHandler:
             if handled or engine:
                 if not handled:
                     engine.pause()
-                await self.ws_manager.broadcast(game_id, "paused_state", paused=True)
+                self.ws_manager.wake_v2(game_id)
 
         elif msg_type == "resume":
             from app.main import game_service
@@ -364,7 +321,7 @@ class WSHandler:
             if handled or engine:
                 if not handled:
                     engine.resume()
-                await self.ws_manager.broadcast(game_id, "paused_state", paused=False)
+                self.ws_manager.wake_v2(game_id)
 
     @staticmethod
     async def _forward_control(service, action: str, game_id: str) -> bool:

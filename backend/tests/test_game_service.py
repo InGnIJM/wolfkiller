@@ -5,7 +5,7 @@ import logging
 import random
 import time
 from datetime import datetime, timezone
-from unittest.mock import ANY, AsyncMock, MagicMock, mock_open, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from app.core.conversation_log import ConversationLog
 from app.services.game_service import GameService
 from app.core.game_engine import GameEngine
@@ -1177,206 +1177,40 @@ class TestGameService:
         # Should not crash when state is None
 
     @pytest.mark.asyncio
-    async def test_speech_made_handler(self):
+    @pytest.mark.asyncio
+    async def test_wake_v2_wakes_only_the_registered_game(self):
         ws_manager = WSManager()
+        ws_manager.wake_v2 = MagicMock()
         bus = EventBus()
         service = GameService(ws_manager, bus)
+        service._games = {"game-a": MagicMock(), "game-b": MagicMock()}
 
-        game_id = await service.create_game()
-        from app.models.actions import SpeechRecord
-        speech = SpeechRecord(player_seat=1, text="test speech", round_number=1)
-        await service._on_speech_made(game_id=game_id, speech=speech)
-        # Should not crash
+        for event in (
+            BusEvent.PLAYER_DIED,
+            BusEvent.SPEECH_MADE,
+            BusEvent.SPEAKING,
+            BusEvent.VOTE_CAST,
+        ):
+            await bus.publish(event, game_id="game-a", payload={})
 
-    @pytest.mark.asyncio
-    async def test_speech_made_handler_none(self):
-        service = GameService(WSManager(), EventBus())
-        await service._on_speech_made(game_id="missing", speech=None)
-        # Should not crash
-
-    @pytest.mark.asyncio
-    async def test_vote_cast_handler(self):
-        ws_manager = WSManager()
-        bus = EventBus()
-        service = GameService(ws_manager, bus)
-
-        game_id = await service.create_game()
-        from app.models.actions import VoteAction
-        vote = VoteAction(voter_seat=1, target_seat=3, reasoning="test")
-        await service._on_vote_cast(game_id=game_id, vote=vote)
-        # Should not crash
-
-    @pytest.mark.asyncio
-    async def test_vote_cast_handler_none(self):
-        service = GameService(WSManager(), EventBus())
-        await service._on_vote_cast(game_id="missing", vote=None)
-        # Should not crash
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("target_seat", [3, None])
-    async def test_vote_cast_event_bus_broadcasts_exact_public_payload_only(
-        self, target_seat,
-    ):
-        from app.models.actions import VoteAction
-
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        bus = EventBus()
-        service = GameService(ws_manager, bus)
-        service._games = {"game-a": MagicMock(round_number=2)}
-        vote = VoteAction(
-            voter_seat=1,
-            target_seat=target_seat,
-            reasoning="private reasoning",
-            thinking="private chain of thought",
-        )
-
-        await bus.publish(BusEvent.VOTE_CAST, game_id="game-a", vote=vote)
-
-        ws_manager.broadcast.assert_awaited_once_with(
-            "game-a",
-            "vote_cast",
-            vote={
-                "round_number": 2,
-                "voter_seat": 1,
-                "target_seat": target_seat,
-            },
-        )
-        assert not {"reasoning", "thinking"} & set(
-            ws_manager.broadcast.await_args.kwargs["vote"]
-        )
+        assert ws_manager.wake_v2.call_count == 4
+        assert {call.args[0] for call in ws_manager.wake_v2.call_args_list} == {"game-a"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("game_id", [None, "", "unknown", 7])
-    async def test_vote_cast_drops_missing_or_unknown_game_id(self, game_id):
+    async def test_wake_v2_drops_missing_or_unknown_game_id(self, game_id):
         ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock(round_number=2)}
-
-        await service._on_vote_cast(
-            game_id=game_id,
-            vote={"voter_seat": 1, "target_seat": 2},
-        )
-
-        ws_manager.broadcast.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("round_number", "voter_seat", "target_seat"),
-        [
-            (0, 1, 2),
-            (-1, 1, 2),
-            (True, 1, 2),
-            ("2", 1, 2),
-            (2, 0, 2),
-            (2, -1, 2),
-            (2, True, 2),
-            (2, "1", 2),
-            (2, 1, 0),
-            (2, 1, -1),
-            (2, 1, True),
-            (2, 1, "2"),
-        ],
-    )
-    async def test_vote_cast_drops_invalid_public_identifiers(
-        self, round_number, voter_seat, target_seat,
-    ):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock(round_number=round_number)}
-
-        await service._on_vote_cast(
-            game_id="game-a",
-            vote={
-                "voter_seat": voter_seat,
-                "target_seat": target_seat,
-                "reasoning": "private",
-            },
-        )
-
-        ws_manager.broadcast.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("vote", [{}, object()])
-    async def test_vote_cast_drops_missing_public_fields(self, vote):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock(round_number=2)}
-
-        await service._on_vote_cast(game_id="game-a", vote=vote)
-
-        ws_manager.broadcast.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_vote_cast_drops_vote_whose_fields_cannot_be_read(self):
-        class UnreadableVote:
-            @property
-            def voter_seat(self):
-                raise ValueError("untrusted vote")
-
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock(round_number=2)}
-
-        await service._on_vote_cast(game_id="game-a", vote=UnreadableVote())
-
-        ws_manager.broadcast.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_player_died_handler_broadcasts_or_ignores_empty_death(self):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-1": MagicMock()}
-
-        await service._on_player_died(game_id="game-1", death={"player_seat": 1})
-        await service._on_player_died(game_id="game-1", death=None)
-
-        ws_manager.broadcast.assert_awaited_once_with(
-            "game-1", "player_died", death={"player_seat": 1}
-        )
-
-    @pytest.mark.asyncio
-    async def test_speaking_broadcasts_only_the_seat(self):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
+        ws_manager.wake_v2 = MagicMock()
         service = GameService(ws_manager, EventBus())
         service._games = {"game-a": MagicMock()}
 
-        await service._on_speaking(game_id="game-a", seat=3, context="day_speech")
+        await service._wake_v2(game_id=game_id, payload={})
 
-        ws_manager.broadcast.assert_awaited_once_with("game-a", "speaking", seat=3)
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("game_id", "seat"),
-        [
-            (None, 3),
-            ("unknown", 3),
-            ("game-a", True),
-            ("game-a", "3"),
-            ("game-a", 0),
-            ("game-a", -1),
-        ],
-    )
-    async def test_speaking_drops_unknown_or_invalid_envelopes(self, game_id, seat):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock()}
-
-        await service._on_speaking(game_id=game_id, seat=seat)
-
-        ws_manager.broadcast.assert_not_awaited()
+        ws_manager.wake_v2.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_acting_queues_the_seat_for_live_viewers(self):
         ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
         ws_manager.queue_v2_notice = MagicMock()
         service = GameService(ws_manager, EventBus())
         service._games = {"game-a": MagicMock()}
@@ -1384,7 +1218,6 @@ class TestGameService:
         await service._on_acting(game_id="game-a", seat=4)
 
         ws_manager.queue_v2_notice.assert_called_once_with("game-a", "acting", seat=4)
-        ws_manager.broadcast.assert_awaited_once_with("game-a", "acting", seat=4)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1399,7 +1232,6 @@ class TestGameService:
     )
     async def test_acting_drops_unknown_or_invalid_seats(self, game_id, seat):
         ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
         ws_manager.queue_v2_notice = MagicMock()
         service = GameService(ws_manager, EventBus())
         service._games = {"game-a": MagicMock()}
@@ -1407,12 +1239,10 @@ class TestGameService:
         await service._on_acting(game_id=game_id, seat=seat)
 
         ws_manager.queue_v2_notice.assert_not_called()
-        ws_manager.broadcast.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_speech_stream_queues_and_broadcasts(self):
+    async def test_speech_stream_queues_a_live_notice(self):
         ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
         ws_manager.queue_v2_notice = MagicMock()
         service = GameService(ws_manager, EventBus())
         service._games = {"game-a": MagicMock()}
@@ -1420,7 +1250,6 @@ class TestGameService:
         await service._on_speech_stream(game_id="game-a", seat=3, text="正在发言...")
 
         ws_manager.queue_v2_notice.assert_called_once_with("game-a", "speech_stream", seat=3, text="正在发言...")
-        ws_manager.broadcast.assert_awaited_once_with("game-a", "speech_stream", seat=3, text="正在发言...")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1437,7 +1266,6 @@ class TestGameService:
     )
     async def test_speech_stream_drops_unknown_or_invalid(self, game_id, seat, text):
         ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
         ws_manager.queue_v2_notice = MagicMock()
         service = GameService(ws_manager, EventBus())
         service._games = {"game-a": MagicMock()}
@@ -1446,12 +1274,10 @@ class TestGameService:
         await service._on_speech_thinking(game_id=game_id, seat=seat, text=text)
 
         ws_manager.queue_v2_notice.assert_not_called()
-        ws_manager.broadcast.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_speech_thinking_is_a_live_notice_only(self):
         ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
         ws_manager.queue_v2_notice = MagicMock()
         bus = EventBus()
         service = GameService(ws_manager, bus)
@@ -1460,104 +1286,6 @@ class TestGameService:
         await bus.publish(BusEvent.SPEECH_THINKING, game_id="game-a", seat=3, text="思考中")
 
         ws_manager.queue_v2_notice.assert_called_once_with("game-a", "speech_thinking", seat=3, text="思考中")
-        ws_manager.broadcast.assert_awaited_once_with("game-a", "speech_thinking", seat=3, text="思考中")
-
-    @pytest.mark.asyncio
-    async def test_night_substep_broadcasts_exact_public_payload_only(self):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock()}
-
-        await service._on_night_substep(
-            game_id="game-a",
-            step="seer_check",
-            highlight_seats=[4],
-            action_seat=4,
-            action={"target_seat": 2, "seer_result": "werewolf"},
-            wolf_kill_target=2,
-            round_number=3,
-        )
-
-        ws_manager.broadcast.assert_awaited_once_with(
-            "game-a",
-            "night_substep",
-            phase="night",
-            round_number=3,
-            substep="seer_check",
-        )
-        assert not {
-            "action", "action_seat", "highlight_seats", "wolf_kill_target",
-            "target_seat", "seer_result", "actor", "role", "result",
-        } & set(ws_manager.broadcast.await_args.kwargs)
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "step",
-        [
-            "werewolf_open",
-            "werewolf_vote",
-            "werewolf_target",
-            "werewolf_close",
-            "witch_open",
-            "witch_action",
-            "witch_close",
-            "seer_open",
-            "seer_check",
-            "seer_close",
-        ],
-    )
-    async def test_night_substep_projects_every_engine_public_step(self, step):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock()}
-
-        await service._on_night_substep(
-            game_id="game-a", step=step, round_number=1,
-        )
-
-        ws_manager.broadcast.assert_awaited_once_with(
-            "game-a", "night_substep",
-            phase="night", round_number=1, substep=step,
-        )
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("game_id", "step", "round_number"),
-        [
-            (None, "seer_check", 3),
-            ("unknown", "seer_check", 3),
-            ("game-a", None, 3),
-            ("game-a", 42, 3),
-            ("game-a", "seer_check", None),
-            ("game-a", "seer_check", "3"),
-            ("game-a", "seer_check", True),
-            ("game-a", "", 3),
-            ("game-a", "wolf_secret_target=2", 3),
-            ("game-a", "unrecognized_substep", 3),
-            ("game-a", "seer_check", 0),
-            ("game-a", "seer_check", -1),
-        ],
-    )
-    async def test_night_substep_drops_unknown_or_invalid_envelopes(
-        self, game_id, step, round_number,
-    ):
-        ws_manager = WSManager()
-        ws_manager.broadcast = AsyncMock()
-        service = GameService(ws_manager, EventBus())
-        service._games = {"game-a": MagicMock()}
-
-        await service._on_night_substep(
-            game_id=game_id,
-            step=step,
-            round_number=round_number,
-            target_seat=2,
-            role="seer",
-            result="werewolf",
-        )
-
-        ws_manager.broadcast.assert_not_awaited()
 
     def test_reconstruct_state_handles_missing_log_open_errors_and_invalid_records(self, monkeypatch):
         service = GameService(WSManager(), EventBus())
@@ -1626,56 +1354,24 @@ class TestGameService:
         # Should not crash
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("callback", "payload", "message_type"),
-        [
-            ("_on_player_died", {"death": {"player_seat": 2}}, "player_died"),
-            ("_on_speech_made", {"speech": {"player_seat": 2, "text": "hi"}}, "speech"),
-            ("_on_vote_cast", {"vote": {"voter_seat": 2, "target_seat": 1}}, "vote_cast"),
-            ("_on_game_over", {"win_result": {"winning_camp": "good"}}, "game_over"),
-        ],
-    )
-    async def test_public_event_routes_only_to_its_registered_game(
-        self, callback, payload, message_type,
-    ):
+    async def test_game_over_handler_updates_manifest_for_the_registered_game(self):
         manager = WSManager()
-        manager.broadcast = AsyncMock()
-        service = GameService(manager, EventBus())
-        first = MagicMock()
-        first.round_number = 1
-        first.get_public_state.return_value = {"game_id": "game-a"}
-        second = MagicMock()
-        second.get_public_state.return_value = {"game_id": "game-b"}
-        service._games = {"game-a": first, "game-b": second}
-        service._manifest = MagicMock()
-
-        await getattr(service, callback)(game_id="game-a", **payload)
-
-        assert manager.broadcast.await_count == 1
-        assert manager.broadcast.await_args.args[:2] == ("game-a", message_type)
-        if callback == "_on_game_over":
-            service._manifest.update_game.assert_called_once_with(
-                "game-a", phase="game_over", winner="good",
-            )
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("game_id", [None, "not-registered", "", 42])
-    async def test_public_event_with_missing_or_unknown_game_id_is_dropped(
-        self, game_id,
-    ):
-        manager = WSManager()
-        manager.broadcast = AsyncMock()
         service = GameService(manager, EventBus())
         service._games = {"game-a": MagicMock(), "game-b": MagicMock()}
+        service._manifest = MagicMock()
 
-        await service._on_player_died(game_id=game_id, death={"player_seat": 2})
+        await service._on_game_over(
+            game_id="game-a", win_result={"winning_camp": "good"},
+        )
 
-        manager.broadcast.assert_not_awaited()
+        service._manifest.update_game.assert_called_once_with(
+            "game-a", phase="game_over", winner="good",
+        )
 
     @pytest.mark.asyncio
-    async def test_mismatched_phase_event_is_dropped_without_persisting_or_broadcasting(self):
+    async def test_mismatched_phase_event_is_dropped_without_persisting_or_waking(self):
         manager = WSManager()
-        manager.broadcast = AsyncMock()
+        manager.wake_v2 = MagicMock()
         service = GameService(manager, EventBus())
         original = MagicMock()
         mismatched = MagicMock(game_id="game-b")
@@ -1688,7 +1384,7 @@ class TestGameService:
 
         assert service._games["game-a"] is original
         service._persist_game.assert_not_called()
-        manager.broadcast.assert_not_awaited()
+        manager.wake_v2.assert_not_called()
 
 
 def test_default_game_name_formats_shanghai_time_without_padding_month_day():

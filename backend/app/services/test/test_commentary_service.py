@@ -43,10 +43,10 @@ class _FakeLLMClient:
 
 class _FakeWSManager:
     def __init__(self):
-        self.broadcasts: list[tuple[str, str, dict[str, Any]]] = []
+        self.wakes: list[str] = []
 
-    async def broadcast(self, game_id: str, msg_type: str, **payload: Any) -> None:
-        self.broadcasts.append((game_id, msg_type, payload))
+    def wake_v2(self, game_id: str) -> None:
+        self.wakes.append(game_id)
 
 
 def _seed_game(
@@ -138,7 +138,7 @@ def test_resolve_commentary_client_config_env_and_saved(tmp_path, monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_commentary_service_phase_triggers_dedup_and_broadcast(tmp_path) -> None:
+async def test_commentary_service_phase_triggers_dedup_and_wake(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     ws = _FakeWSManager()
     clients: list[_FakeLLMClient] = []
@@ -170,7 +170,7 @@ async def test_commentary_service_phase_triggers_dedup_and_broadcast(tmp_path) -
         await service.wait_pending()
         assert len(clients) == 1
         assert clients[0].closed is True
-        assert len(ws.broadcasts) == 1
+        assert ws.wakes == ["g-1"]
 
         # Duplicate trigger for the same (round=1, beat="night") is skipped
         await service.on_phase_changed(game_id="g-1", phase="sheriff_election", round_number=1)

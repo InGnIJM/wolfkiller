@@ -300,6 +300,4 @@ class CommentaryService:
                 game_id, round_number, phase, "COMMENTARY", payload,
             )
             if self._ws_manager is not None:
-                await self._ws_manager.broadcast(
-                    game_id, "commentary", round_number=round_number, beat=beat,
-                )
+                self._ws_manager.wake_v2(game_id)

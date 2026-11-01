@@ -8,27 +8,17 @@ from app.core.event_bus import EventBus
 
 class TestWSManager:
     @pytest.mark.asyncio
-    async def test_connect(self):
-        mgr = WSManager()
-        mock_ws = MagicMock()
-        mock_ws.accept = AsyncMock()
-
-        await mgr.connect("game-1", mock_ws)
-
-        mock_ws.accept.assert_called_once()
-        assert "game-1" in mgr._connections
-        assert mock_ws in mgr._connections["game-1"]
-
-    @pytest.mark.asyncio
     async def test_disconnect(self):
         mgr = WSManager()
         mock_ws = MagicMock()
         mock_ws.accept = AsyncMock()
 
-        await mgr.connect("game-1", mock_ws)
+        await mgr.connect_v2("game-1", mock_ws)
         await mgr.disconnect("game-1", mock_ws)
 
-        assert mock_ws not in mgr._connections["game-1"]
+        assert mock_ws not in mgr._v2_connections["game-1"]
+        assert mgr._v2_wakeups["game-1"] == {}
+        assert mgr._v2_notices["game-1"] == {}
 
     @pytest.mark.asyncio
     async def test_disconnect_nonexistent_game(self):
@@ -37,62 +27,23 @@ class TestWSManager:
         # Should not raise
         await mgr.disconnect("nonexistent", mock_ws)
 
-    @pytest.mark.asyncio
-    async def test_broadcast_no_connections(self):
+    def test_wake_v2_without_wakeups(self):
         mgr = WSManager()
         # Should not raise when no connections
-        await mgr.broadcast("nonexistent", "test", data="hello")
+        mgr.wake_v2("nonexistent")
 
     @pytest.mark.asyncio
-    async def test_broadcast_with_connections(self):
+    async def test_wake_v2_sets_wakeup_without_sending(self):
         mgr = WSManager()
         mock_ws = MagicMock()
         mock_ws.accept = AsyncMock()
         mock_ws.send_text = AsyncMock()
 
-        await mgr.connect("game-1", mock_ws)
-        await mgr.broadcast("game-1", "phase_change", phase="night")
+        wakeup = await mgr.connect_v2("game-1", mock_ws)
+        mgr.wake_v2("game-1")
 
-        mock_ws.send_text.assert_called_once()
-        sent = json.loads(mock_ws.send_text.call_args[0][0])
-        assert sent["type"] == "phase_change"
-        assert sent["phase"] == "night"
-
-    @pytest.mark.asyncio
-    async def test_broadcast_removes_dead_connections(self):
-        mgr = WSManager()
-        mock_ws = MagicMock()
-        mock_ws.accept = AsyncMock()
-        mock_ws.send_text = AsyncMock(side_effect=Exception("disconnected"))
-
-        await mgr.connect("game-1", mock_ws)
-        await mgr.broadcast("game-1", "test")
-
-        # Dead connection should be removed
-        assert mock_ws not in mgr._connections.get("game-1", [])
-
-    @pytest.mark.asyncio
-    async def test_send_to(self):
-        mgr = WSManager()
-        mock_ws = MagicMock()
-        mock_ws.send_text = AsyncMock()
-
-        await mgr.send_to("game-1", mock_ws, "game_state", state={"test": True})
-
-        mock_ws.send_text.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_send_to_error_handling(self):
-        mgr = WSManager()
-        mock_ws = MagicMock()
-        mock_ws.accept = AsyncMock()
-        mock_ws.send_text = AsyncMock(side_effect=Exception("error"))
-
-        await mgr.connect("game-1", mock_ws)
-        await mgr.send_to("game-1", mock_ws, "test")
-
-        # Should remove dead connection
-        assert mock_ws not in mgr._connections.get("game-1", [])
+        assert wakeup.is_set()
+        mock_ws.send_text.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_close_game_closes_sockets_and_drops_entry(self):
@@ -100,12 +51,12 @@ class TestWSManager:
         ws = MagicMock()
         ws.accept = AsyncMock()
         ws.close = AsyncMock()
-        await mgr.connect("game-1", ws)
+        await mgr.connect_v2("game-1", ws)
 
         await mgr.close_game("game-1")
 
         ws.close.assert_awaited_once()
-        assert "game-1" not in mgr._connections
+        assert "game-1" not in mgr._v2_connections
 
     @pytest.mark.asyncio
     async def test_close_game_ignores_missing_and_close_errors(self):
@@ -113,27 +64,12 @@ class TestWSManager:
         ws = MagicMock()
         ws.accept = AsyncMock()
         ws.close = AsyncMock(side_effect=RuntimeError("already closed"))
-        await mgr.connect("game-1", ws)
+        await mgr.connect_v2("game-1", ws)
 
         await mgr.close_game("missing")
         await mgr.close_game("game-1")
 
-        assert "game-1" not in mgr._connections
-
-    @pytest.mark.asyncio
-    async def test_v2_connections_are_isolated_from_legacy_broadcasts(self):
-        mgr = WSManager()
-        ws = MagicMock()
-        ws.accept = AsyncMock()
-        ws.send_text = AsyncMock()
-
-        wakeup = await mgr.connect_v2("game-1", ws)
-        await mgr.broadcast("game-1", "phase_change", phase="night")
-
-        ws.accept.assert_awaited_once()
-        ws.send_text.assert_not_awaited()
-        assert ws in mgr._v2_connections["game-1"]
-        assert wakeup.is_set()
+        assert "game-1" not in mgr._v2_connections
 
 
 class TestWSHandler:
@@ -202,7 +138,7 @@ class TestWSHandler:
     @pytest.mark.asyncio
     async def test_handle_message_pause_and_resume(self):
         mgr = WSManager()
-        mgr.broadcast = AsyncMock()
+        mgr.wake_v2 = MagicMock()
         handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
         mock_engine = MagicMock()
         mock_engine.pause = MagicMock()
@@ -216,12 +152,11 @@ class TestWSHandler:
             await handler._handle_message("test-game", MagicMock(), '{"type": "resume"}')
         mock_engine.pause.assert_called_once()
         mock_engine.resume.assert_called_once()
-        assert mgr.broadcast.await_count == 2
+        assert mgr.wake_v2.call_count == 2
 
     @pytest.mark.asyncio
     async def test_handle_message_control_without_engine(self):
         mgr = WSManager()
-        mgr.broadcast = AsyncMock()
         handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
         mock_service = MagicMock()
         mock_service._engines = {}
@@ -235,59 +170,25 @@ class TestWSHandler:
         assert handler._game_speeds == {"missing": 0.5}
 
     @pytest.mark.asyncio
-    async def test_handle_connection_sends_state_and_routes_messages(self):
+    async def test_handle_connection_rejects_legacy_protocol(self):
         mgr = WSManager()
-        mgr.connect = AsyncMock()
-        mgr.send_to = AsyncMock()
         handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
         mock_ws = MagicMock()
-        mock_state = MagicMock()
-        mock_state.get_public_state.return_value = {"phase": "night"}
-        mock_service = MagicMock()
-        mock_service.get_game_state.return_value = mock_state
-        mock_service._engines = {}
-        received = []
+        mock_ws.query_params = {}
+        mock_ws.accept = AsyncMock()
+        mock_ws.send_text = AsyncMock()
+        mock_ws.close = AsyncMock()
 
-        async def iter_text():
-            for item in ('{"type": "set_speed", "delay_seconds": 1.0}',):
-                yield item
+        await handler.handle_connection(mock_ws, "game-1")
 
-        mock_ws.iter_text = iter_text
-        with patch.dict("sys.modules", {"app.main": MagicMock()}):
-            import sys
-            sys.modules["app.main"].game_service = mock_service
-            await handler.handle_connection(mock_ws, "game-1")
-        mgr.connect.assert_called_once_with("game-1", mock_ws)
-        mgr.send_to.assert_called_once()
-        assert mgr.send_to.call_args.args[2] == "game_state"
-        assert handler._game_speeds == {"game-1": 1.0}
-
-    @pytest.mark.asyncio
-    async def test_handle_connection_without_state_and_disconnect(self):
-        mgr = WSManager()
-        mgr.connect = AsyncMock()
-        mgr.send_to = AsyncMock()
-        mgr.disconnect = AsyncMock()
-        handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
-        mock_ws = MagicMock()
-        mock_service = MagicMock()
-        mock_service.get_game_state.return_value = None
-        mock_service._engines = {}
-
-        from fastapi import WebSocketDisconnect
-
-        async def iter_text():
-            if False:
-                yield ""
-            raise WebSocketDisconnect(code=1000)
-
-        mock_ws.iter_text = iter_text
-        with patch.dict("sys.modules", {"app.main": MagicMock()}):
-            import sys
-            sys.modules["app.main"].game_service = mock_service
-            await handler.handle_connection(mock_ws, "game-x")
-        mgr.send_to.assert_not_awaited()
-        mgr.disconnect.assert_called_once_with("game-x", mock_ws)
+        mock_ws.accept.assert_awaited_once()
+        error = json.loads(mock_ws.send_text.await_args.args[0])
+        assert error == {
+            "type": "error",
+            "code": "unsupported_protocol",
+            "message": "WebSocket protocol 2 required",
+        }
+        mock_ws.close.assert_awaited_once_with(code=1008)
 
     @pytest.mark.asyncio
     async def test_v2_connection_sends_hello_events_and_caught_up(self):
@@ -358,7 +259,7 @@ class TestWSHandler:
     @pytest.mark.asyncio
     async def test_v2_control_uses_game_service_control_boundary(self):
         mgr = WSManager()
-        mgr.broadcast = AsyncMock()
+        mgr.wake_v2 = MagicMock()
         handler = WSHandler(ws_manager=mgr, event_bus=EventBus())
         service = MagicMock()
         service.pause_game = AsyncMock(return_value={"execution_status": "paused"})
@@ -370,9 +271,7 @@ class TestWSHandler:
             await handler._handle_message("game-1", MagicMock(), '{"type":"pause"}')
 
         service.pause_game.assert_awaited_once_with("game-1")
-        mgr.broadcast.assert_awaited_once_with(
-            "game-1", "paused_state", paused=True,
-        )
+        mgr.wake_v2.assert_called_once_with("game-1")
 
 
 class TestV2FailureAndCleanup:
@@ -567,10 +466,10 @@ class TestV2FailureAndCleanup:
         assert await handler._forward_control(SimpleNamespace(), "resume", "g") is False
         service = SimpleNamespace(resume_game=AsyncMock(), _engines={})
         monkeypatch.setitem(sys.modules, "app.main", SimpleNamespace(game_service=service))
-        handler.ws_manager.broadcast = AsyncMock()
+        handler.ws_manager.wake_v2 = MagicMock()
         await handler._handle_message("g", self.socket(), '{"type":"resume"}')
         service.resume_game.assert_awaited_once_with("g")
-        handler.ws_manager.broadcast.assert_awaited_once_with("g", "paused_state", paused=False)
+        handler.ws_manager.wake_v2.assert_called_once_with("g")
 
 
 @pytest.mark.asyncio

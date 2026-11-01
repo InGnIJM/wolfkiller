@@ -143,20 +143,6 @@ async def test_the_health_audit_failure_is_swallowed(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_broadcast_failures_are_swallowed(tmp_path) -> None:
-    service = _service(tmp_path)
-    try:
-        def boom(*_args, **_kwargs):
-            raise RuntimeError("socket closed")
-
-        service.ws_manager.broadcast = boom  # type: ignore[method-assign]
-        service._broadcast_pause("g", "provider_circuit_open", {})
-        service._broadcast_resume("g")
-    finally:
-        await service.aclose()
-
-
-@pytest.mark.asyncio
 async def test_the_watcher_tolerates_a_provider_failure_without_repository(tmp_path) -> None:
     from app.agents.model_health import HealthEvent
     from app.core.model_health_guard import ProviderOutageFailed
