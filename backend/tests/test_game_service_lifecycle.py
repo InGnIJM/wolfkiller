@@ -1824,6 +1824,42 @@ async def test_the_watcher_fails_a_benchmark_game_on_a_provider_outage(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_the_watcher_survives_a_manifest_update_failure(
+    tmp_path, monkeypatch,
+) -> None:
+    """A manifest write that fails during crash finalization must not break it."""
+    repository = GameRepository(tmp_path)
+    repository.create_game(
+        game_id="game", name="game", config={}, execution_status="running",
+        source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    state = _state_with_players("game")
+    service._games["game"] = state
+    monkeypatch.setattr(
+        service._manifest, "update_game",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    async def crash() -> None:
+        raise RuntimeError("engine crash")
+
+    task = asyncio.get_running_loop().create_task(crash())
+    service._attach_task_watcher("game", SimpleNamespace(game_logger=None), task)
+    try:
+        with pytest.raises(RuntimeError):
+            await task
+        await asyncio.sleep(0)
+        assert repository.get_game("game")["execution_status"] == "failed"
+        assert state.phase is GamePhase.ERROR
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
 async def test_the_execution_info_exposes_pause_fields(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     repository.create_game(

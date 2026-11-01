@@ -52,6 +52,23 @@ async def test_is_lobby_game_hides_benchmark_owned_records(durable):
 
 
 @pytest.mark.asyncio
+async def test_record_and_folder_indexes_fetch_everything_at_once(durable):
+    service, repository = durable
+    add_game(service, repository, "native", benchmark=False)
+    folder = repository.create_folder("归档")
+    repository.set_game_folder("native", folder["folder_id"])
+
+    records = service.game_record_index()
+    assert set(records) == {"native"}
+    assert records["native"]["game_id"] == "native"
+    assert service.game_folder_index() == {"native": folder["folder_id"]}
+
+    service.repository = None
+    assert service.game_record_index() == {}
+    assert service.game_folder_index() == {}
+
+
+@pytest.mark.asyncio
 async def test_delete_benchmark_owned_game_releases_and_purges(durable):
     service, repository = durable
     add_game(service, repository, "bench", benchmark=True)
@@ -295,10 +312,111 @@ async def test_clock_heartbeat_cancels_armed_benchmark_timeout(durable, monkeypa
     monkeypatch.setattr(module.time, "monotonic", lambda: 1.0)
     monkeypatch.setattr(module.asyncio, "sleep", one_tick)
     service._start_clock_heartbeat("game")
-    await asyncio.wait_for(service._clock_tasks["game"], timeout=1.0)
+    heartbeat = service._clock_tasks["game"]
+    await asyncio.wait_for(heartbeat, timeout=1.0)
     record = repository.get_game("game")
     assert record["execution_status"] == "cancelled"
     assert record["recovery_block_code"] == "benchmark_game_timeout"
+    assert "game" not in service._clock_tasks
+
+
+@pytest.mark.asyncio
+async def test_benchmark_cancel_survives_runner_watcher_and_stays_idempotent(durable):
+    """The runner's watcher cancels ``_clock_tasks[game]``; a canceller that is
+    itself that clock task (the armed-timeout heartbeat) must still land the
+    durable row instead of dying mid-cancel on its own victim's callback."""
+    service, repository = durable
+    add_game(service, repository, status="running")
+    runner = asyncio.create_task(asyncio.Event().wait())
+    service._tasks["game"] = runner
+    service._engines["game"] = SimpleNamespace(stop=AsyncMock())
+    service._clock_tasks["game"] = asyncio.current_task()
+    service._attach_task_watcher("game", service._engines["game"], runner)
+    result = await service.cancel_benchmark_game("game")
+    assert result["execution_status"] == "cancelled"
+    assert repository.get_game("game")["execution_status"] == "cancelled"
+    assert "game" not in service._clock_tasks
+    assert await service.cancel_benchmark_game("game") == result
+
+
+@pytest.mark.asyncio
+async def test_benchmark_cancel_commits_before_the_runner_finishes_dying(durable):
+    """Even if the canceller is killed while the runner unwinds, the row is
+    already ``cancelled``: the transition lands before the task is awaited."""
+    service, repository = durable
+    add_game(service, repository, status="running")
+    gate = asyncio.Event()
+
+    async def slow_runner():
+        await gate.wait()
+
+    runner = asyncio.create_task(slow_runner())
+    service._tasks["game"] = runner
+    service._engines["game"] = SimpleNamespace(stop=AsyncMock())
+    canceller = asyncio.create_task(service.cancel_benchmark_game("game"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    canceller.cancel()
+    await asyncio.gather(canceller, return_exceptions=True)
+    gate.set()
+    await asyncio.gather(runner, return_exceptions=True)
+    assert repository.get_game("game")["execution_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_benchmark_cancel_tolerates_a_lost_transition_race(durable, monkeypatch):
+    """A concurrent cancel that already landed resolves to the same row."""
+    service, repository = durable
+    add_game(service, repository, status="running")
+    real_transition = repository.transition_execution
+    raced = False
+
+    def lose_race(*args, **kwargs):
+        nonlocal raced
+        if not raced:
+            raced = True
+            real_transition(
+                "game", expected=("running", "paused"), target="cancelled",
+            )
+            raise InvalidExecutionTransition("lost race")
+        return real_transition(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "transition_execution", lose_race)
+    result = await service.cancel_benchmark_game("game")
+    assert result["execution_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_benchmark_cancel_propagates_a_genuine_transition_failure(durable, monkeypatch):
+    service, repository = durable
+    add_game(service, repository, status="running")
+    monkeypatch.setattr(
+        repository, "transition_execution",
+        MagicMock(side_effect=InvalidExecutionTransition("still running")),
+    )
+    with pytest.raises(InvalidExecutionTransition):
+        await service.cancel_benchmark_game("game")
+
+
+@pytest.mark.asyncio
+async def test_benchmark_cancel_reraises_when_the_row_vanishes(durable, monkeypatch):
+    service, repository = durable
+    add_game(service, repository, status="running")
+    real_get = repository.get_game
+    reads = 0
+
+    def vanishing_get(game_id, **kwargs):
+        nonlocal reads
+        reads += 1
+        return None if reads > 1 else real_get(game_id, **kwargs)
+
+    monkeypatch.setattr(repository, "get_game", vanishing_get)
+    monkeypatch.setattr(
+        repository, "transition_execution",
+        MagicMock(side_effect=InvalidExecutionTransition("gone")),
+    )
+    with pytest.raises(InvalidExecutionTransition):
+        await service.cancel_benchmark_game("game")
 
 
 @pytest.fixture
