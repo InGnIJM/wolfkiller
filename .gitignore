@@ -86,3 +86,7 @@ post_training/.venv/
 post_training/*.log
 post_training/ckpt/
 post_training/unsloth_compiled_cache/
+
+# Devin ACP shim/poc runtime workspaces
+scripts/.devin_poc_workspace/
+scripts/.devin_shim_workspace/
