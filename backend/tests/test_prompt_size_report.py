@@ -133,3 +133,80 @@ def test_main_reports_missing_capture_and_emits_json(tmp_path: Path, capsys) -> 
 
     assert report.main(["--data-dir", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["files_scanned"] == 1
+
+
+def test_sections_are_found_in_any_order_and_repeated_blocks_are_summed() -> None:
+    reordered = (
+        "<public_role_rules>{\"rules\":[]}</public_role_rules>\n"
+        "ROLE_CONTRACT={\"instructions\":\"brief\"}\n"
+        "<untrusted_action_history><record>line</record></untrusted_action_history>\n"
+        "PROJECTED_CONTEXT={\"facts\":{}}"
+    )
+    contract = report.classify(_record("pipeline", reordered))
+    assert contract["sections"]["PROJECTED_CONTEXT"] == len("PROJECTED_CONTEXT={\"facts\":{}}")
+    assert contract["sections"]["ROLE_CONTRACT"] == len("ROLE_CONTRACT={\"instructions\":\"brief\"}\n")
+
+    day = report.classify(_record("speech", (
+        "<untrusted_public_history>\nx\n</untrusted_public_history>\n"
+        "<authoritative_state>a</authoritative_state>\n"
+        "<authoritative_state>bb</authoritative_state>"
+    )))
+    assert day["sections"]["authoritative_state"] == 2 * len("<authoritative_state></authoritative_state>") + 3
+    assert day["sections"]["public_history"] > 0
+    assert day["sections"]["self_history"] == 0
+
+
+def test_prefix_reuse_measures_the_longest_prefix_shared_with_earlier_prompts() -> None:
+    def record(kind: str, user: str, model: str | None = "m") -> dict:
+        item = _record(kind, user)
+        item["data"]["model_id"] = model
+        return item
+
+    result = report.prefix_reuse([
+        record("speech", "RULES|seat1"),
+        record("speech", "RULES|seat2"),
+        record("night", "RULES|seat1|more"),
+        record("speech", "RULES|seat2", model="other"),
+        {"data": {"messages": None}},
+    ])
+
+    system = len("<system>SYS<user>")
+    rules = system + len("RULES|seat")
+    assert result["kinds"]["speech"]["records"] == 3
+    assert result["kinds"]["speech"]["reusable_chars"] == rules
+    assert result["kinds"]["night"]["reusable_chars"] == system + len("RULES|seat1")
+    assert result["kinds"]["unknown"] == {
+        "records": 1, "prompt_chars": 0, "reusable_chars": 0, "reuse_rate": None,
+    }
+    assert result["records"] == 5
+    assert 0 < result["reuse_rate"] < 1
+
+
+def test_prefix_reuse_of_nothing_is_unknown() -> None:
+    assert report.prefix_reuse([]) == {
+        "records": 0, "prompt_chars": 0, "reusable_chars": 0,
+        "reuse_rate": None, "kinds": {},
+    }
+
+
+def test_main_prefix_flag_adds_the_reuse_report(tmp_path: Path, capsys) -> None:
+    _write(tmp_path, [_record("speech", DAY_USER_DEDUPED), _record("speech", DAY_USER_DEDUPED)])
+
+    assert report.main(["--data-dir", str(tmp_path), "--prefix"]) == 0
+    out = capsys.readouterr().out
+    assert "前缀可复用上限" in out
+    assert "50.0%" in out
+
+    assert report.main(["--data-dir", str(tmp_path), "--prefix", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["prefix_reuse"]["reuse_rate"] == 0.5
+
+
+def test_render_report_shows_a_dash_for_an_unknown_reuse_rate() -> None:
+    summary = {
+        "files_scanned": 0, "kinds": {}, "duplicates": {},
+        "prefix_reuse": {"reuse_rate": None, "kinds": {
+            "speech": {"records": 1, "reuse_rate": None},
+        }},
+    }
+    rendered = report.render_report(summary)
+    assert "前缀可复用上限（同模型历史请求的最长公共前缀）: —" in rendered
