@@ -339,7 +339,53 @@ def test_render_truncates_oversized_history_to_byte_budget() -> None:
     # is what the truncation drops.
     assert "最新狼窝记录乙" in rendered
     assert "狼窝旧记录甲" not in rendered
-    assert rendered.endswith("</record></untrusted_action_history>")
+    assert "最新狼窝记录乙</record></untrusted_action_history>\nPROJECTED_CONTEXT=" in rendered
+
+
+def test_action_prompt_sections_follow_the_prefix_cache_order() -> None:
+    spec, contract, context = values()
+    rendered = PromptRenderer().render(spec, contract, context, "history line")
+    order = [
+        rendered.index("<public_role_rules>"),
+        rendered.index("ROLE_CONTRACT="),
+        rendered.index("OUTPUT_ACTION_COMMAND_SCHEMA="),
+        rendered.index("TARGET_SELECTION_RULE="),
+        rendered.index("<untrusted_action_history>"),
+        rendered.index("PROJECTED_CONTEXT="),
+    ]
+    assert order == sorted(order)
+    assert rendered.splitlines()[-1].startswith("PROJECTED_CONTEXT=")
+
+
+def test_a_new_revision_only_changes_the_prompt_tail() -> None:
+    spec, contract, context = values()
+    renderer = PromptRenderer()
+    first = renderer.render(spec, contract, context, "a\nb")
+    later = renderer.render(spec, contract, replace(context, revision=9), "a\nb\nc")
+    cut = first.index("</record>")
+    assert later.startswith(first[:cut])
+    assert first != later
+
+
+def test_long_history_drops_whole_steps_so_appends_keep_the_prefix() -> None:
+    spec, contract, context = values()
+    renderer = PromptRenderer()
+    lines = [f"{index:03d}" + "x" * 96 for index in range(250)]
+    before = renderer.render(spec, contract, context, "\n".join(lines))
+    after = renderer.render(spec, contract, context, "\n".join(lines + ["new" + "y" * 96]))
+    assert "000" + "x" * 96 not in before
+    assert after.startswith(before[:before.index("</record>")])
+
+
+def test_byte_budget_cut_drops_whole_line_steps() -> None:
+    spec, contract, context = values()
+    lines = [f"{index:03d}" + "🐺" * 186 for index in range(100)]
+    rendered = PromptRenderer().render(spec, contract, context, "\n".join(lines))
+    assert len(rendered.encode("utf-8")) <= 65_536
+    assert lines[-1] in rendered
+    assert lines[0] not in rendered
+    kept = rendered[rendered.index("<record>") + len("<record>"):rendered.index("</record>")]
+    assert int(kept[:3]) % 20 == 0
 
 
 def test_render_drops_partial_first_record_on_truncation() -> None:
