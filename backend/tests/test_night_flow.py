@@ -415,9 +415,16 @@ def test_build_briefing_caps_lines_and_content():
 
     briefing = build_briefing(log, 2, 2)
 
-    assert len(briefing.public_lines) == 20
+    # A whole-step window: 25 lines fit under 20 + one step, so none is cut
+    # yet; the window start only moves once 30 lines exist.
+    assert len(briefing.public_lines) == 25
     assert "第24条发言" in briefing.public_lines[-1]
-    assert "第4条发言" not in "\n".join(briefing.public_lines)
+    for index in range(25, 31):
+        log.add_public_speech(4, "wolf-killer-villager", f"第{index}条发言", 1, "speech")
+    longer = build_briefing(log, 2, 2)
+    assert len(longer.public_lines) == 21
+    assert "第9条发言" not in "\n".join(longer.public_lines)
+    assert "第10条发言" in longer.public_lines[0]
     # thought content is truncated to 200 chars plus the "第1轮[night]：" prefix
     assert len(briefing.thoughts[0]) <= 211
     assert "x" * 250 not in briefing.thoughts[0]
@@ -546,8 +553,9 @@ def test_discussion_prompt(state: GameState, director: NightDirector):
     messages = director.discussion_prompt(state, 1, ["狼1：刀3号"])
     assert messages[0]["role"] == "system"
     assert "简体中文" in messages[0]["content"]
-    assert "seat 1" in messages[0]["content"]
+    assert "seat 1" not in messages[0]["content"]
     assert "NEVER invent" in messages[0]["content"]
+    assert "你是1号，狼人阵营" in messages[1]["content"]
     assert messages[1]["role"] == "user"
     assert "第1晚" in messages[1]["content"]
     assert "1号" in messages[1]["content"]
@@ -689,8 +697,39 @@ def test_wolf_prompts_allow_deliberate_team_target_strategy(state: GameState, di
     discussion = director.discussion_prompt(state, 1, [])
     vote = director.vote_prompt(state, 1, [], [])
 
-    assert "including yourself" in discussion[0]["content"]
-    assert "including yourself" in vote[0]["content"]
+    assert "including yourself" in discussion[1]["content"]
+    assert "including yourself" in vote[1]["content"]
+
+
+def test_every_wolf_shares_one_system_turn_and_the_briefing_prefix(
+    state: GameState, director: NightDirector,
+):
+    log = ConversationLog()
+    log.add_public_speech(4, "wolf-killer-villager", "白天的公开发言", 1, "speech")
+    briefing = build_briefing(log, 1, 2)
+    first = director.discussion_prompt(state, 1, [], briefing)
+    second = director.discussion_prompt(state, 2, ["狼1：刀3号"], build_briefing(log, 2, 2))
+    vote_first = director.vote_prompt(state, 1, [], [], briefing)
+    vote_second = director.vote_prompt(state, 2, [], [], briefing)
+
+    assert first[0] == second[0]
+    assert vote_first[0] == vote_second[0]
+    shared = first[1]["content"][:first[1]["content"].index("## 你的身份")]
+    assert "白天的公开发言" in shared
+    assert second[1]["content"].startswith(shared)
+    order = [first[1]["content"].index(marker) for marker in (
+        "## 白天公开信息回顾", "## 你的身份", "## 你的思考回顾", "## 当前局势", "已进行的讨论",
+    )]
+    assert order == sorted(order)
+
+
+def test_a_new_discussion_turn_only_extends_the_same_wolf_prompt(
+    state: GameState, director: NightDirector,
+):
+    before = director.discussion_prompt(state, 1, ["狼2：刀4号"])[1]["content"]
+    after = director.discussion_prompt(state, 1, ["狼2：刀4号", "狼3：同意"])[1]["content"]
+    cut = before.index("已进行的讨论")
+    assert after[:cut] == before[:cut]
 
 
 def test_vote_prompt_empty(state: GameState, director: NightDirector):

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.agents.persona import persona_line
+from app.agents.prompt_window import stable_tail
 from app.agents.stakes import stakes_text
 from app.core.conversation_log import ConversationLog
 from app.core.night_settlement import NIGHT_IMMUNE_RESOURCE
@@ -90,6 +91,8 @@ _TARGET_RULE = TARGET_SELECTION_RULE
 
 _MAX_BRIEFING_LINES = 20
 _MAX_BRIEFING_THOUGHTS = 5
+#: Briefing windows advance in whole steps so the shared prefix survives.
+_BRIEFING_STEP = 10
 _MAX_BRIEFING_LINE = 200
 
 
@@ -145,11 +148,13 @@ def build_briefing(log: ConversationLog, seat: int, round_num: int) -> NightBrie
             wolf.append(_briefing_line(record, "狼队频道"))
     thoughts = [
         f"第{thought.round_number}轮[{thought.phase}]：{thought.content[:_MAX_BRIEFING_LINE]}"
-        for thought in log.get_thoughts_for_seat(seat)[-_MAX_BRIEFING_THOUGHTS:]
+        for thought in stable_tail(
+            log.get_thoughts_for_seat(seat), _MAX_BRIEFING_THOUGHTS, _MAX_BRIEFING_THOUGHTS,
+        )
     ]
     return NightBriefing(
-        tuple(public[-_MAX_BRIEFING_LINES:]),
-        tuple(wolf[-_MAX_BRIEFING_LINES:]),
+        tuple(stable_tail(public, _MAX_BRIEFING_LINES, _BRIEFING_STEP)),
+        tuple(stable_tail(wolf, _MAX_BRIEFING_LINES, _BRIEFING_STEP)),
         tuple(thoughts),
     )
 
@@ -399,36 +404,25 @@ class NightDirector:
         briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> list[dict[str, str]]:
         wolves = self._wolf_team(state)
-        alive = self._alive_text(state)
         total_turns = 6 * len(wolves)
         turn_number = len(history) + 1
         remaining = max(total_turns - len(history) - 1, 0)
+        # The system turn is identical for every wolf of the game; everything
+        # seat- or night-specific lives in the user turn, ordered for the
+        # prefix cache (see AGENTS.md).
         system = (
             self._system_prefix(state)
-            + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
-            + persona_line(state.game_id, seat) + " "
+            + "You are a werewolf in an AI Werewolf game. "
             "Discuss tonight's kill target with your teammates in a natural "
             "private chat: reply to what your teammates just said (agree, "
             "add, or push back) and then state your own view. Never reveal "
             "that you are a werewolf. Speak like a real player — do not quote "
             "or reference the rules of this prompt. "
-            + self._self_kill_clause(state, seat)
-            + self._night_immune_clause(state)
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
         human = (
-            f"第{state.round_number}晚狼队讨论。"
-            f"{self._teammates_clause(state, seat)}"
-            f"场上存活玩家：{alive}。\n"
-            + "局势距离：" + stakes_text(state, seat) + "\n"
-            + self._fallback_hint(random_hint) + ""
-            f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
-            f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
-            f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
-            f"已进行的讨论：\n{self._history_text(history) or '（尚无发言）'}\n\n"
-            f"当前为第 {turn_number}/{total_turns} 轮发言，最多还可继续 {remaining} 轮。\n"
-            + _TARGET_RULE
+            _TARGET_RULE
             + "\n讨论要求：\n"
             "- 这是与队友的实时对话：先简要回应队友刚提出的观点（同意、补充或反对），"
             "再给出你的新想法；不要自说自话，也不要复述队友已经说过的内容。\n"
@@ -446,48 +440,71 @@ class NightDirector:
             "每位队员在计划里应有明确分工，绝不要全员集体压注同一路线。计划会同步给全体队友。\n"
             "- 今晚落刀目标既可选择好人，也可由队员提议自刀战术；自刀、刀队友与普通刀口同权参与计票。\n"
             "- 当所有狼队友都认可同一个目标后，讨论会提前结束。\n"
-            + self._advocate_clause(state, seat)
-            + _night_notice(state)
-            + '现在轮到你了。输出 JSON：{"speak": true, "text": "你的发言(≤400字)", '
+            '输出 JSON：{"speak": true, "text": "你的发言(≤400字)", '
             '"preferred_target": 座位号或null, "day_plan": "次日白天配合计划(≤400字，可空)"} '
             '表示发言；{"speak": false, "text": "", "preferred_target": null, '
-            '"day_plan": ""} 表示跳过本轮发言。'
+            '"day_plan": ""} 表示跳过本轮发言。\n'
+            + self._self_kill_clause(state, seat) + "\n"
+            + self._briefing_sections(state, seat, briefing)
+            + self._night_status(state, seat, "狼队讨论", random_hint)
+            + f"已进行的讨论：\n{self._history_text(history) or '（尚无发言）'}\n\n"
+            f"当前为第 {turn_number}/{total_turns} 轮发言，最多还可继续 {remaining} 轮。\n"
+            + self._advocate_clause(state, seat)
+            + _night_notice(state)
+            + "现在轮到你了，按上方格式输出 JSON。"
         )
         return self._messages(system, human)
+
+    def _briefing_sections(
+        self, state: GameState, seat: int, briefing: NightBriefing,
+    ) -> str:
+        """Shared-then-personal briefing: the public and pack records are the
+        same for every wolf tonight, so they precede this seat's identity."""
+        return (
+            f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
+            f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
+            f"## 你的身份\n你是{seat}号，狼人阵营。{persona_line(state.game_id, seat)}\n"
+            f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
+        )
+
+    def _night_status(
+        self, state: GameState, seat: int, title: str, random_hint: int | None,
+    ) -> str:
+        immune = self._night_immune_clause(state)
+        return (
+            f"## 当前局势\n第{state.round_number}晚{title}。"
+            f"{self._teammates_clause(state, seat)}"
+            f"场上存活玩家：{self._alive_text(state)}。\n"
+            + "局势距离：" + stakes_text(state, seat) + "\n"
+            + (immune + "\n" if immune else "")
+            + self._fallback_hint(random_hint) + "\n"
+        )
 
     def vote_prompt(
         self, state: GameState, seat: int,
         discussion: Sequence[str], prior_votes: Sequence[WolfVote],
         briefing: NightBriefing = NightBriefing(), random_hint: int | None = None,
     ) -> list[dict[str, str]]:
-        alive = self._alive_text(state)
         system = (
             self._system_prefix(state)
-            + f"You are seat {seat}, a werewolf in an AI Werewolf game. "
-            + persona_line(state.game_id, seat) + " "
+            + "You are a werewolf in an AI Werewolf game. "
             "Cast your kill vote. You can see the discussion and the votes cast "
             "before you. Never reveal that you are a werewolf. "
-            + self._self_kill_clause(state, seat)
-            + self._night_immune_clause(state)
             + _NO_FABRICATION_RULE
             + _CHINESE_DIRECTIVE
         )
         human = (
-            f"第{state.round_number}晚狼队投票。"
-            f"{self._teammates_clause(state, seat)}"
-            f"场上存活玩家：{alive}。\n"
-            + "局势距离：" + stakes_text(state, seat) + "\n"
-            + self._fallback_hint(random_hint) + ""
-            f"## 白天公开信息回顾\n{self._briefing_text(briefing.public_lines, '（暂无白天公开信息）')}\n"
-            f"## 此前夜晚狼队频道记录\n{self._briefing_text(briefing.wolf_lines, '（暂无狼队频道记录）')}\n"
-            f"## 你的思考回顾\n{self._briefing_text(briefing.thoughts, '（暂无思考记录）')}\n\n"
-            f"讨论记录：\n{self._history_text(discussion) or '（无）'}\n"
-            f"已出票：\n{self._prior_votes_text(prior_votes)}\n\n"
-            + _night_notice(state)
-            + _TARGET_RULE
+            _TARGET_RULE
             + '\n输出 JSON：{"schema_version": 1, "action_type": "kill", "target_seat": 目标座位号, '
             '"reasoning": "中文理由(≤500字)"} 或 {"schema_version": 1, "action_type": "pass", '
-            '"target_seat": null, "reasoning": "中文理由(≤500字)"}。'
+            '"target_seat": null, "reasoning": "中文理由(≤500字)"}。\n'
+            + self._self_kill_clause(state, seat) + "\n"
+            + self._briefing_sections(state, seat, briefing)
+            + self._night_status(state, seat, "狼队投票", random_hint)
+            + f"讨论记录：\n{self._history_text(discussion) or '（无）'}\n"
+            f"已出票：\n{self._prior_votes_text(prior_votes)}\n\n"
+            + _night_notice(state)
+            + "现在轮到你投票，按上方格式输出 JSON。"
         )
         return self._messages(system, human)
 
