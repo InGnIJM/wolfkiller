@@ -534,7 +534,36 @@ def test_native_metric_reliability_exposes_rule_rejections() -> None:
     empty = BenchmarkMetrics.compute(**facts, summaries=())
     assert empty["summary"]["reliability"] == {
         "rule_rejected": 0, "games": 0, "per_game": None,
-        "per_request": 0.0, "samples": {"games": 0, "requests": 4},
+        "per_request": 0.0, "by_contract": {}, "detailed_games": 0,
+        "samples": {"games": 0, "requests": 4},
+    }
+
+
+def test_native_metric_reliability_breaks_rejections_down_per_contract() -> None:
+    """按契约拆开规则拒绝：总数之外要能看出是哪个契约在丢答案。"""
+    from app.services.benchmark_metrics import BenchmarkMetrics
+
+    facts = _native_metric_facts()
+    first = _summary_g1()
+    first["rounds"]["1"]["rejected_actions"] = 3
+    first["rounds"]["1"]["rejected_action_details"] = [
+        {"contract_id": "dance_pool", "violation": "dance_mandatory"},
+        {"contract_id": "dance_pool", "violation": "dance_mandatory"},
+        {"contract_id": "werewolf_kill", "violation": "target_required"},
+    ]
+    second = _summary_g2()
+    # 旧 summary 只有整数计数：贡献总数，不进 by_contract 明细。
+    second["rounds"]["1"]["rejected_actions"] = 1
+
+    reliability = BenchmarkMetrics.compute(
+        **facts, summaries=[first, second],
+    )["summary"]["reliability"]
+
+    assert reliability["rule_rejected"] == 4
+    assert reliability["detailed_games"] == 1
+    assert reliability["by_contract"] == {
+        "dance_pool": {"rejected": 2, "violations": {"dance_mandatory": 2}},
+        "werewolf_kill": {"rejected": 1, "violations": {"target_required": 1}},
     }
 
 
@@ -585,7 +614,7 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
     facts = _native_metric_facts()
     report = BenchmarkMetrics.compute(**facts)
 
-    assert report["metric_version"] == "v5"
+    assert report["metric_version"] == "v6"
     assert len(report["input_digest"]) == 64
     summary = report["summary"]
     assert summary["games"] == {
@@ -604,15 +633,21 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
         },
         "average_rounds": 4.0,
         "average_duration_ms": 250.0,
+        "win_reason_distribution": {},
     }
     assert summary["requests"] == {
-        "total": 4, "successful": 2, "abstained": 1, "failed": 1,
+        "total": 4, "successful": 2, "voluntary_abstained": 1, "failed": 1,
         "pending": 0, "cancelled": 0, "eligible_terminal": 4,
         "unknown": 0, "valid": 3, "technical_abstained": 0,
         "terminal_votes": 0, "fallback": 1,
         "valid_rate": 0.75,
-        "success_rate": 0.5, "abstain_rate": 0.25, "failure_rate": 0.25,
+        "success_rate": 0.5, "voluntary_abstain_rate": 0.25,
+        "failure_rate": 0.25,
         "fallback_rate": 0.25, "technical_abstain_rate": None,
+        # r2 是自愿弃权且没有 action_position → 夜间可选技能桶。
+        "pass_breakdown": {
+            "sheriff_campaign": 0, "vote_abstain": 0, "night_optional": 1,
+        },
         # 两个票种各算各的：这些请求没有 action_position，所以两边都是空桶。
         "votes": {"exile": VOTE_BUCKET_EMPTY, "sheriff": VOTE_BUCKET_EMPTY},
         "logical_latency_ms": {
@@ -639,6 +674,12 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
     assert summary["requests"]["unknown"] == 0
     assert summary["attempts"]["executed_requests"] == 3
     assert summary["attempts"]["retried_requests"] == 1
+    assert summary["attempts"]["recovery_redispatches"] == 1
+    assert summary["attempts"]["tokens_per_attempt"] == 22.5
+    # 没传 summaries 时重试率无从统计，显式给 None/0 而不是编数。
+    assert summary["attempts"]["llm_calls"] is None
+    assert summary["attempts"]["retried_llm_calls"] == 0
+    assert summary["attempts"]["retry_rate"] is None
 
     performance = {
         (row["model"], row.get("role"), row.get("camp")):
@@ -768,8 +809,8 @@ def test_native_metrics_accept_legacy_player_and_request_shapes_without_inferenc
         "1": {"games": 1, "wins": 1, "win_rate": 1.0},
     }
     assert report["summary"]["requests"]["technical_abstained"] == 1
-    assert report["summary"]["requests"]["successful"] == 3
-    assert report["summary"]["requests"]["failed"] == 1
+    assert report["summary"]["requests"]["successful"] == 2
+    assert report["summary"]["requests"]["failed"] == 2
     assert report["summary"]["attempts"]["known_tokens"]["total_tokens"] == 0
 
 
@@ -1051,7 +1092,7 @@ def test_vote_metrics_split_the_two_ballots_and_read_the_vote_receipt() -> None:
     )["summary"]["requests"]
 
     assert report["votes"]["exile"] == {
-        "terminal": 4, "technical": 2, "voluntary": 1, "failed": 1,
+        "terminal": 4, "technical": 2, "voluntary": 1, "failed": 2,
         "technical_abstain_rate": 0.5, "voluntary_abstain_rate": 0.25,
     }
     assert report["votes"]["sheriff"] == {
@@ -1170,11 +1211,13 @@ def test_board_coverage_names_the_boards_and_whether_a_seer_played() -> None:
             {"role_counts": {"wolf-killer-villager": 1}, "games": 1},
         ],
         "seer_present": True,
+        "info_roles_present": ["wolf-killer-seer"],
     }
     # 多局同板型合并，且「没有预言家」是一等信号而不是靠读 role_counts 推断。
     assert compute_board_coverage([village_board, village_board]) == {
         "boards": [{"role_counts": {"wolf-killer-villager": 1}, "games": 2}],
         "seer_present": False,
+        "info_roles_present": [],
     }
 
 
@@ -1182,7 +1225,7 @@ def test_board_coverage_tolerates_junk_summaries() -> None:
     from app.benchmark.metrics import compute_board_coverage
 
     assert compute_board_coverage([None, "nope", {"roles": "junk"}, {"roles": {}}]) == {
-        "boards": [], "seer_present": False,
+        "boards": [], "seer_present": False, "info_roles_present": [],
     }
     # 半截的 role 行（没有 role 字段）不进板型，但同一局的其它行照常计数。
     assert compute_board_coverage([{"roles": {
@@ -1191,7 +1234,7 @@ def test_board_coverage_tolerates_junk_summaries() -> None:
         "3": 3,
     }}]) == {
         "boards": [{"role_counts": {"wolf-killer-villager": 1}, "games": 1}],
-        "seer_present": False,
+        "seer_present": False, "info_roles_present": [],
     }
 
 
@@ -1215,5 +1258,7 @@ def test_rule_rejection_metrics_ignore_malformed_summary_shapes() -> None:
         "games": 4,
         "per_game": 0.5,
         "per_request": 0.5,
+        "by_contract": {},
+        "detailed_games": 0,
         "samples": {"games": 4, "requests": 4},
     }

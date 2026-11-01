@@ -215,6 +215,46 @@ async def test_executor_times_out_from_live_clock_when_persisted_clock_is_stale(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"execution_status": "cancelled",
+          "recovery_block_code": "benchmark_game_timeout"},
+         ("existing", "cancelled", "benchmark_game_timeout")),
+        ({"execution_status": "cancelled", "recovery_block_code": None},
+         ("existing", "cancelled", "benchmark_runner_cancelled")),
+        ({"execution_status": "running", "recovery_block_code": None},
+         ("existing", "cancelled", "benchmark_runner_cancelled")),
+        (None, ("existing", "cancelled", "benchmark_runner_cancelled")),
+    ],
+)
+async def test_executor_surfaces_runner_cancellation_from_the_durable_row(
+    row, expected,
+) -> None:
+    """A runner cancelled underneath the wait (e.g. the armed-timeout
+    heartbeat) ends ``wait_game`` in ``CancelledError`` — the durable row, not
+    the exception, is the outcome. Re-raising would kill the worker and stall
+    the run with the item stuck ``running``."""
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {
+        "config": {"game_timeout_seconds": 3600},
+    }
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        row,
+    ]
+    game_service = MagicMock()
+    game_service.wait_game = AsyncMock(side_effect=asyncio.CancelledError())
+    executor = BenchmarkGameExecutor(
+        repository, game_service, timeout_poll_seconds=0,
+    )
+
+    assert await executor({
+        "run_id": "run", "item_index": 0, "game_id": "existing",
+    }) == expected
+
+
+@pytest.mark.asyncio
 async def test_executor_returns_existing_completed_game_without_waiting() -> None:
     repository = MagicMock()
     repository.get_benchmark_run.return_value = {
@@ -389,4 +429,191 @@ async def test_a_manual_pause_still_auto_resumes() -> None:
     result = await executor({"run_id": "run", "item_index": 1, "game_id": "game"})
 
     assert result == ("game", "completed", None)
+    game_service.resume_benchmark_game.assert_awaited_once_with("game")
+
+
+@pytest.mark.asyncio
+async def test_a_mid_flight_one_shot_pause_is_resumed_and_the_wait_continues() -> None:
+    """``wait_game`` re-raises the engine's ``DecisionPaused``: resume, keep waiting."""
+    from app.core.scheduler import DecisionPaused
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        {"execution_status": "paused", "pause_code": "one_shot_budget_exhausted",
+         "recovery_block_code": None},
+    ]
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(side_effect=[
+        DecisionPaused(
+            "one-shot budget spent", code="one_shot_budget_exhausted",
+            detail={"contract_id": "hunter_shoot"},
+        ),
+        {"execution_status": "completed"},
+    ])
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "completed", None)
+    game_service.resume_benchmark_game.assert_awaited_once_with("game")
+    assert game_service.wait_game.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_mid_flight_provider_outage_fails_the_item() -> None:
+    """A provider outage must not auto-resume — it would loop on the dead provider."""
+    from app.agents.model_health import HealthEvent
+    from app.core.model_health_guard import ProviderOutageFailed
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        {"execution_status": "failed",
+         "recovery_block_code": "provider_circuit_open"},
+    ]
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(side_effect=ProviderOutageFailed(HealthEvent(
+        provider_key="k", rule="provider_terminal",
+        failure_code="provider_auth_error", seats=(1, 2),
+        contracts=("night_action",), sample_count=2, reopen_count=0,
+    )))
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "failed", "provider_circuit_open")
+    game_service.resume_benchmark_game.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_mid_flight_systemic_pause_code_fails_the_item() -> None:
+    """A paused row with a systemic code fails instead of resuming, like dispatch."""
+    from app.agents.model_health import HealthEvent
+    from app.core.model_health_guard import ProviderOutagePaused
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        {"execution_status": "paused", "pause_code": "provider_circuit_open",
+         "recovery_block_code": None},
+    ]
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(side_effect=ProviderOutagePaused(HealthEvent(
+        provider_key="k", rule="provider_sustained",
+        failure_code="provider_server_error", seats=(1, 2, 3),
+        contracts=("night_action",), sample_count=5, reopen_count=0,
+    )))
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "failed", "provider_circuit_open")
+    game_service.resume_benchmark_game.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_decision_pause_that_never_becomes_paused_is_terminal() -> None:
+    """If the watcher could not land the pause, resuming a running row is a no-op."""
+    from app.core.scheduler import DecisionPaused
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        {"execution_status": "failed", "recovery_block_code": "crash"},
+        {"execution_status": "failed", "recovery_block_code": "crash"},
+    ]
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(side_effect=DecisionPaused("boom"))
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "failed", "crash")
+    game_service.resume_benchmark_game.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_that_never_lands_in_the_row_is_terminal() -> None:
+    """A row still ``running`` after the settle window has nothing to resume."""
+    from app.core.scheduler import DecisionPaused
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.return_value = {
+        "execution_status": "running", "recovery_block_code": None,
+    }
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(
+        side_effect=DecisionPaused("stuck", code="one_shot_budget_exhausted"),
+    )
+    executor = BenchmarkGameExecutor(
+        repository, game_service, pause_settle_polls=3, pause_settle_seconds=0,
+    )
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "failed", "one_shot_budget_exhausted")
+    game_service.resume_benchmark_game.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_whose_row_disappears_is_terminal() -> None:
+    """A vanished row has nothing to resume — the item fails with the pause code."""
+    from app.core.scheduler import DecisionPaused
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        None, None,
+    ]
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock()
+    game_service.wait_game = AsyncMock(
+        side_effect=DecisionPaused("gone", code="one_shot_budget_exhausted"),
+    )
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "failed", "one_shot_budget_exhausted")
+    game_service.resume_benchmark_game.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_whose_resume_raises_is_terminal() -> None:
+    """A failed resume has no fallback left — the item fails with the pause code."""
+    from app.core.scheduler import DecisionPaused
+
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {"config": {"scenario": {}}}
+    repository.get_game.side_effect = [
+        {"execution_status": "running", "recovery_block_code": None},
+        {"execution_status": "paused", "pause_code": "one_shot_budget_exhausted",
+         "recovery_block_code": None},
+        {"execution_status": "paused", "pause_code": "one_shot_budget_exhausted",
+         "recovery_block_code": None},
+    ]
+    game_service = MagicMock()
+    game_service.resume_benchmark_game = AsyncMock(
+        side_effect=RuntimeError("control busy"),
+    )
+    game_service.wait_game = AsyncMock(
+        side_effect=DecisionPaused("pause", code="one_shot_budget_exhausted"),
+    )
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    result = await executor({"run_id": "run", "item_index": 0, "game_id": "game"})
+
+    assert result == ("game", "failed", "one_shot_budget_exhausted")
     game_service.resume_benchmark_game.assert_awaited_once_with("game")

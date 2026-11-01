@@ -159,6 +159,109 @@ async def test_real_executor_creates_game_with_frozen_plan_and_checkpoint(tmp_pa
         repository.close()
 
 
+@pytest.mark.asyncio
+async def test_executor_resumes_a_mid_flight_one_shot_pause(tmp_path, monkeypatch):
+    """端到端：局中 DecisionPaused → paused → executor 自动续跑 → 完赛。
+
+    一次性契约耗尽必须暂停整局而不是判负：create 路径与恢复路径共用同一个
+    任务监听器，executor 的等待循环在 ``wait_game`` 抛出 ``DecisionPaused``
+    时续跑该点位。这里用真实的 GameService + repository + 检查点 codec 走完
+    整条链——若监听器或续跑任何一环缺失，item 会被记成 failed。
+    """
+    import app.services.game_service as module
+    from app.api.websocket.ws_handler import WSManager
+    from app.core.event_bus import EventBus
+    from app.core.game_engine import GameEngine
+    from app.core.scheduler import DecisionPaused
+    from app.models.game import GamePhase
+    from app.services.benchmark_game_executor import BenchmarkGameExecutor
+
+    class FakeClient:
+        def __init__(self, *, config, dedicated_http_clients: bool = False):
+            self.config = config
+
+        async def aclose(self):
+            pass
+
+    calls = {"n": 0}
+
+    async def pause_then_finish(engine):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise DecisionPaused(
+                "one-shot budget spent", code="one_shot_budget_exhausted",
+                detail={"contract_id": "hunter_shoot"},
+            )
+        engine.state.phase = GamePhase.GAME_OVER
+        engine._running = False
+
+    monkeypatch.setattr(module, "LLMClient", FakeClient)
+    monkeypatch.setattr(GameEngine, "_game_loop", pause_then_finish)
+    repository = GameRepository(tmp_path)
+    game_service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository)
+    benchmark = BenchmarkService(repository, item_executor=BenchmarkGameExecutor(repository, game_service))
+    try:
+        spec = _spec()
+        spec["scenario"]["role_counts"] = {"wolf-killer-villager": 1}
+        run_id = benchmark.create_run(spec)["run_id"]
+        await benchmark.start(run_id)
+        await benchmark.wait(run_id)
+        item = repository.list_benchmark_items(run_id)[0]
+        assert item["status"] == "completed", item["terminal_reason"]
+        assert calls["n"] == 2  # 暂停点重跑过一次，不是直接判负
+        row = repository.get_game(item["game_id"])
+        assert row["execution_status"] == "completed"
+        assert row["pause_code"] is None  # resume 清空暂停字段
+    finally:
+        await benchmark.aclose()
+        await game_service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_game_pauses_on_a_decision_pause(tmp_path, monkeypatch):
+    """create 路径共用监听器：一次性契约暂停落成 paused，不是 failed/ERROR。"""
+    import app.services.game_service as module
+    from app.api.websocket.ws_handler import WSManager
+    from app.core.event_bus import EventBus
+    from app.core.game_engine import GameEngine
+    from app.core.scheduler import DecisionPaused
+
+    class FakeClient:
+        def __init__(self, *, config, dedicated_http_clients: bool = False):
+            self.config = config
+
+        async def aclose(self):
+            pass
+
+    async def pause(engine):
+        raise DecisionPaused(
+            "one-shot budget spent", code="one_shot_budget_exhausted",
+            detail={"contract_id": "admirer_crush"},
+        )
+
+    monkeypatch.setattr(module, "LLMClient", FakeClient)
+    monkeypatch.setattr(GameEngine, "_game_loop", pause)
+    repository = GameRepository(tmp_path)
+    game_service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository)
+    try:
+        game_id = await game_service.create_game(
+            role_counts={"wolf-killer-villager": 1},
+            model_seat_assignments={1: None},
+            role_by_seat={1: "wolf-killer-villager"},
+        )
+        task = game_service._tasks[game_id]
+        with pytest.raises(DecisionPaused):
+            await task
+        await asyncio.sleep(0)
+        row = repository.get_game(game_id)
+        assert row["execution_status"] == "paused"
+        assert row["pause_code"] == "one_shot_budget_exhausted"
+    finally:
+        await game_service.aclose()
+        repository.close()
+
+
 def test_empty_speech_fallback_uses_game_rng():
     from app.models.game import GameConfig, GameState, PlayerState
     from app.roles.villager import Villager
