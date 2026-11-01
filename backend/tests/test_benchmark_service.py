@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.persistence.repository import GameRepository
+from app.persistence.repository import (
+    GameRepository, InvalidExecutionTransition,
+)
 from app.services.benchmark_service import BenchmarkService
 
 
@@ -530,10 +532,8 @@ async def test_start_and_resume_require_an_executor() -> None:
 async def test_pause_and_cancel_delegate_active_games_and_cancel_workers() -> None:
     repository = MagicMock()
     repository.transition_benchmark.return_value = {"run_id": "run", "status": "paused"}
-    repository.list_benchmark_items.return_value = [
-        {"status": "running", "game_id": "game"},
-        {"status": "running", "game_id": None},
-        {"status": "completed", "game_id": "done"},
+    repository.list_benchmark_games.side_effect = lambda run_id, statuses: [
+        {"game_id": "game", "execution_status": "running"},
     ]
     pauser = AsyncMock()
     canceller = AsyncMock()
@@ -611,7 +611,12 @@ async def test_run_handles_missing_run_and_nonterminal_work() -> None:
     repository.claim_next_benchmark_item.return_value = None
     service = BenchmarkService(repository, item_executor=AsyncMock())
     await service._run("run")
-    repository.transition_benchmark.assert_not_called()
+    # Workers drained while a pending item still exists: nothing is left to
+    # drive it, so the run must become honestly interrupted instead of a
+    # silent ``running`` zombie.
+    repository.transition_benchmark.assert_called_once_with(
+        "run", expected=("running",), target="interrupted",
+    )
 
     repository = MagicMock()
     repository.get_benchmark_run.side_effect = [
@@ -620,6 +625,141 @@ async def test_run_handles_missing_run_and_nonterminal_work() -> None:
     repository.list_benchmark_items.return_value = []
     repository.claim_next_benchmark_item.return_value = None
     await BenchmarkService(repository, item_executor=AsyncMock())._run("run")
+
+    # A control path racing the drain reconcile wins; the stale transition is
+    # swallowed instead of escaping the worker supervisor.
+    repository = MagicMock()
+    repository.get_benchmark_run.side_effect = [
+        {"run_id": "run", "status": "running", "config": None},
+        {"run_id": "run", "status": "running"},
+    ]
+    repository.list_benchmark_items.return_value = [{"status": "running"}]
+    repository.claim_next_benchmark_item.return_value = None
+    repository.transition_benchmark.side_effect = InvalidExecutionTransition(
+        "already cancelled",
+    )
+    await BenchmarkService(repository, item_executor=AsyncMock())._run("run")
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_a_failed_claim_and_keeps_processing() -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.side_effect = [
+        {"run_id": "run", "status": "running", "config": {"concurrency": 1}},
+        {"run_id": "run", "status": "running"},
+    ]
+    repository.list_benchmark_items.side_effect = [
+        [], [{"status": "completed"}],
+    ]
+    repository.claim_next_benchmark_item.side_effect = [
+        OSError("database is locked"),  # kickoff claim: logged and skipped
+        OSError("database is locked"),  # worker claim: logged and retried
+        {"item_index": 0, "game_id": None, "status": "running"},
+        None,
+    ]
+    repository.get_benchmark_item.return_value = {"game_id": None, "status": "running"}
+    service = BenchmarkService(
+        repository,
+        item_executor=AsyncMock(return_value=("game", "completed", None)),
+        claim_retry_seconds=0,
+    )
+    await service._run("run")
+    assert repository.claim_next_benchmark_item.call_count == 4
+    repository.finish_benchmark_item.assert_called_once_with(
+        "run", 0, status="completed", terminal_reason=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_survives_an_escape_from_the_item_handler() -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.side_effect = [
+        {"run_id": "run", "status": "running", "config": {"concurrency": 1}},
+        {"run_id": "run", "status": "running"},
+    ]
+    repository.list_benchmark_items.side_effect = [
+        [], [{"status": "completed"}],
+    ]
+    repository.claim_next_benchmark_item.side_effect = [
+        {"item_index": 0, "game_id": None, "status": "running"},
+        {"item_index": 1, "game_id": None, "status": "running"},
+        None,
+    ]
+    # A repository error inside ``_execute_item``'s own failure handler escapes
+    # the containment there; the worker must survive it and keep claiming.
+    def flaky_get(run_id, item_index):
+        if item_index == 0:
+            raise RuntimeError("db gone")
+        return {"game_id": None, "status": "running"}
+
+    repository.get_benchmark_item.side_effect = flaky_get
+    executor = AsyncMock()
+    executor.side_effect = [
+        ("gone", "failed", "x"),
+        ("kept", "completed", None),
+    ]
+    service = BenchmarkService(
+        repository, item_executor=executor, claim_retry_seconds=0,
+    )
+    await service._run("run")
+    assert executor.await_count == 2
+    repository.finish_benchmark_item.assert_called_once_with(
+        "run", 1, status="completed", terminal_reason=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_covers_games_committed_during_the_cancel_window() -> None:
+    """A game committed between the run transition and the item freeze used to
+    be missed by the item scan and survive as a zombie; the games-table scan
+    after worker join sees every committed game."""
+    repository = MagicMock()
+    repository.transition_benchmark.return_value = {"run_id": "run", "status": "cancelled"}
+    repository.list_benchmark_games.return_value = [
+        {"game_id": "attached", "execution_status": "running"},
+        {"game_id": "raced-in", "execution_status": "running"},
+    ]
+    order: list[str] = []
+
+    def freeze(run_id):
+        order.append("items")
+
+    async def canceller(game_id):
+        order.append(game_id)
+
+    repository.cancel_benchmark_items.side_effect = freeze
+    worker = asyncio.create_task(asyncio.Event().wait())
+    service = BenchmarkService(
+        repository, item_executor=AsyncMock(), game_canceller=canceller,
+    )
+    service._tasks["run"] = worker
+    await service.cancel("run")
+    assert order[:1] == ["items"]
+    assert sorted(order[1:]) == ["attached", "raced-in"]
+    assert worker.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_pause_parks_games_after_the_workers_are_joined() -> None:
+    repository = MagicMock()
+    repository.transition_benchmark.return_value = {"run_id": "run", "status": "paused"}
+    repository.list_benchmark_games.return_value = [
+        {"game_id": "straggler", "execution_status": "running"},
+    ]
+    worker = asyncio.create_task(asyncio.Event().wait())
+    seen_dead_worker = False
+
+    async def pauser(game_id):
+        nonlocal seen_dead_worker
+        seen_dead_worker = worker.cancelled()
+
+    service = BenchmarkService(
+        repository, item_executor=AsyncMock(), game_pauser=pauser,
+    )
+    service._tasks["run"] = worker
+    await service.pause("run")
+    assert seen_dead_worker is True
+    assert repository.list_benchmark_games.call_count == 1
 
 
 @pytest.mark.asyncio

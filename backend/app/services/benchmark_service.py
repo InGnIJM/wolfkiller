@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import random
 import uuid
@@ -18,6 +19,8 @@ from app.persistence.repository import (
 from app.services.benchmark_metrics import BenchmarkMetrics
 from app.services.game_summary import read_game_summary
 from app.stores.model_config_store import get_model_config_store
+
+logger = logging.getLogger(__name__)
 
 
 def _model_labels() -> dict[str, str]:
@@ -100,6 +103,7 @@ class BenchmarkService:
         game_canceller: GameControl | None = None,
         owned_game_deleter: OwnedGameDeleter | None = None,
         data_dir: str | None = None,
+        claim_retry_seconds: float = 1.0,
     ) -> None:
         self._repository = repository
         # Where the per-game ``summary.json`` files live. Explicit in production;
@@ -109,6 +113,7 @@ class BenchmarkService:
         self._game_pauser = game_pauser
         self._game_canceller = game_canceller
         self._owned_game_deleter = owned_game_deleter
+        self._claim_retry_seconds = claim_retry_seconds
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._control_locks: dict[str, asyncio.Lock] = {}
         self._report_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
@@ -298,20 +303,20 @@ class BenchmarkService:
         run = self._repository.transition_benchmark(
             run_id, expected=("running",), target="paused",
         )
-        active_games = [
-            str(item["game_id"])
-            for item in self._repository.list_benchmark_items(run_id)
-            if item["status"] == "running" and isinstance(item.get("game_id"), str)
-        ]
-        if self._game_pauser is not None and active_games:
+        # Stop the workers first: while they live, an in-flight ``create_game``
+        # can still commit a game that a pre-scan of live games would miss.
+        # After they are joined, the games table lists every game that exists.
+        await self._stop_run_task(run_id)
+        if self._game_pauser is not None:
             await asyncio.gather(
-                *(self._game_pauser(game_id) for game_id in active_games),
+                *(
+                    self._game_pauser(str(game["game_id"]))
+                    for game in self._repository.list_benchmark_games(
+                        run_id, ("running",),
+                    )
+                ),
                 return_exceptions=True,
             )
-        task = self._tasks.get(run_id)
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
         return run
 
     async def cancel(self, run_id: str) -> dict[str, object]:
@@ -323,22 +328,30 @@ class BenchmarkService:
             run_id, expected=("draft", "running", "paused", "interrupted"),
             target="cancelled",
         )
-        active_games = [
-            str(item["game_id"])
-            for item in self._repository.list_benchmark_items(run_id)
-            if item["status"] == "running" and isinstance(item.get("game_id"), str)
-        ]
-        if self._game_canceller is not None and active_games:
+        # Freeze the items first: ``create_game`` binds its game inside a
+        # transaction guarded by ``item.status='running' AND game_id IS NULL``,
+        # so once the items are cancelled no new game can ever commit for this
+        # run — the games-table scan below is then complete by construction.
+        self._repository.cancel_benchmark_items(run_id)
+        await self._stop_run_task(run_id)
+        if self._game_canceller is not None:
             await asyncio.gather(
-                *(self._game_canceller(game_id) for game_id in active_games),
+                *(
+                    self._game_canceller(str(game["game_id"]))
+                    for game in self._repository.list_benchmark_games(
+                        run_id,
+                        ("running", "paused", "interrupted", "recovery_blocked"),
+                    )
+                ),
                 return_exceptions=True,
             )
-        self._repository.cancel_benchmark_items(run_id)
+        return run
+
+    async def _stop_run_task(self, run_id: str) -> None:
         task = self._tasks.get(run_id)
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        return run
 
     async def delete_owned_game(self, run_id: str, game_id: str) -> None:
         if self._repository.get_benchmark_run(run_id) is None:
@@ -425,7 +438,17 @@ class BenchmarkService:
                 if item["status"] == "running":
                     recovered.put_nowait(item)
             if recovered.empty():
-                first = self._repository.claim_next_benchmark_item(run_id)
+                try:
+                    first = self._repository.claim_next_benchmark_item(run_id)
+                except Exception:
+                    # Kickoff convenience claim — the workers claim (and retry)
+                    # themselves, so a transient miss here must not kill the
+                    # supervisor before it even spawns them.
+                    logger.exception(
+                        "Benchmark kickoff claim failed; workers will retry run=%s",
+                        run_id,
+                    )
+                    first = None
                 if first is not None:
                     recovered.put_nowait(first)
 
@@ -434,12 +457,39 @@ class BenchmarkService:
                     try:
                         item = recovered.get_nowait()
                     except asyncio.QueueEmpty:
-                        item = self._repository.claim_next_benchmark_item(run_id)
+                        try:
+                            item = self._repository.claim_next_benchmark_item(
+                                run_id,
+                            )
+                        except Exception:
+                            # The claim is an atomic UPDATE, so retrying is
+                            # safe — and staying alive beats dying: an escaped
+                            # error here used to propagate through the gather
+                            # and kill every sibling worker, freezing the run.
+                            logger.exception(
+                                "Benchmark item claim failed; retrying run=%s",
+                                run_id,
+                            )
+                            await asyncio.sleep(self._claim_retry_seconds)
+                            continue
                     if item is None:
                         return
-                    await self._execute_item(run_id, item)
+                    try:
+                        await self._execute_item(run_id, item)
+                    except Exception:
+                        # ``_execute_item`` already contains its own failures;
+                        # this guard catches an exception raised inside its
+                        # handler (e.g. a repository error mid-bookkeeping) so
+                        # one bad item can never kill the worker.
+                        logger.exception(
+                            "Benchmark item execution escaped containment: "
+                            "run=%s item=%s",
+                            run_id, item.get("item_index"),
+                        )
 
-            await asyncio.gather(*(worker() for _ in range(concurrency)))
+            await asyncio.gather(
+                *(worker() for _ in range(concurrency)), return_exceptions=True,
+            )
             run = self._repository.get_benchmark_run(run_id)
             if run is not None and run["status"] == "running":
                 items = self._repository.list_benchmark_items(run_id)
@@ -447,6 +497,21 @@ class BenchmarkService:
                     self._repository.transition_benchmark(
                         run_id, expected=("running",), target="completed",
                     )
+                else:
+                    # Workers drained while items are still pending/running:
+                    # nothing is left to drive them, so make the run honestly
+                    # interrupted (restartable via ``start``) instead of a
+                    # silent ``running`` zombie.
+                    try:
+                        self._repository.transition_benchmark(
+                            run_id, expected=("running",), target="interrupted",
+                        )
+                        logger.error(
+                            "Benchmark run %s drained its workers with "
+                            "non-terminal items; marked interrupted", run_id,
+                        )
+                    except InvalidExecutionTransition:
+                        pass
         finally:
             if self._tasks.get(run_id) is asyncio.current_task():
                 self._tasks.pop(run_id, None)
