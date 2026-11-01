@@ -335,7 +335,7 @@ class GameEngine:
 
     async def run_schedule_points(self, points: tuple[SchedulePoint, ...]) -> PipelineResult:
         if self._pipeline_scheduler is None: raise ValueError("pipeline scheduler is required")
-        pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
+        pipeline = RolePipeline(self._pipeline_scheduler)
         result = await asyncio.to_thread(pipeline.run_points, self.state, points)
         if type(result) is not PipelineResult: raise TypeError("pipeline must return exact PipelineResult")
         await self._durable_checkpoint(
@@ -1064,7 +1064,7 @@ class GameEngine:
     async def _execute_v2_point(
         self, point: SchedulePoint, *, defer_event_types: tuple[str, ...] = (),
     ) -> PointResult:
-        pipeline = RolePipeline(PipelineMode.V2, None, self._pipeline_scheduler)
+        pipeline = RolePipeline(self._pipeline_scheduler)
         result = await asyncio.to_thread(
             pipeline.execute_v2_point, self.state, point,
             defer_event_types=defer_event_types,
@@ -2116,7 +2116,7 @@ class GameEngine:
         scheduler = self._pipeline_scheduler
         if scheduler is None:
             raise ValueError("pipeline scheduler is required")
-        pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+        pipeline = RolePipeline(scheduler)
         raw = await asyncio.to_thread(pipeline.execute_v2_point, self.state, point, slot=slot)
         self._log_hook_faults(point, raw.faults)
         observation = RolePipeline.observe_v2(raw)

@@ -184,5 +184,3 @@ WOLF_WITCH_SPEC = RoleSpec(
 class WolfWitch(Werewolf):
     """Wolf Witch: a werewolf whose nightly identity check is a pipeline contract."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "check"]

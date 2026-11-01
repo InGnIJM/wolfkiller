@@ -162,7 +162,6 @@ def test_knight_is_registered_in_both_registries() -> None:
     )
     assert any(isinstance(role, Knight) for role in roles.values())
     knight = next(role for role in roles.values() if isinstance(role, Knight))
-    assert knight.get_skills() == ["duel"]
 
 
 def _scheduler(provider) -> Scheduler:

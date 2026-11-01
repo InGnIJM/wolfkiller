@@ -177,7 +177,6 @@ def test_old_drunkard_is_registered_and_gets_its_marks(tmp_path) -> None:
         {DRUNKARD: 1, WOLF: 1}, 2, object(), lambda seat: object(),
     )
     drunkard = next(role for role in roles.values() if isinstance(role, OldDrunkard))
-    assert drunkard.get_skills() == []
     engine = _engine(tmp_path, "drunkard-marks")
     assert role_resource_view(engine.state, 1) == {"charm_immune": 1, "delayable": 1}
 

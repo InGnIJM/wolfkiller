@@ -174,8 +174,6 @@ def test_registered_on_both_sides() -> None:
     assert WEREWOLF_KILL_CONTRACT.to_json() == NIGHTMARE_SPEC.contracts[0].to_json()
 
 
-def test_the_daytime_nightmare_reports_both_skills() -> None:
-    assert object.__new__(Nightmare).get_skills() == ["kill", "fear"]
 
 
 def test_the_fear_is_issued_first_and_silences_the_guard_in_the_same_point() -> None:

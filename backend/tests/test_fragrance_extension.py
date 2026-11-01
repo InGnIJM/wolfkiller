@@ -563,9 +563,6 @@ def test_both_roles_are_registered_and_are_their_own_factories() -> None:
     assert snapshot.require(PHANTOM) is FRAGRANCE_PHANTOM_SPEC
     assert builtin_registry.require(SEER).role_factory.__name__ == "AwakenedSeer"
     assert builtin_registry.require(PHANTOM).role_factory.__name__ == "FragrancePhantom"
-    assert object.__new__(
-        builtin_registry.require(PHANTOM).role_factory
-    ).get_skills() == ["kill", "bond"]
 
 
 def test_a_bond_slot_nobody_declared_is_rejected() -> None:

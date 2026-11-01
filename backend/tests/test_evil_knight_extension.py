@@ -326,7 +326,6 @@ def test_registry_registers_both_the_pipeline_and_the_legacy_role() -> None:
 
 def test_legacy_evil_knight_is_a_werewolf_without_an_explode_skill() -> None:
     role = object.__new__(EvilKnight)
-    assert role.get_skills() == ["kill"]
 
 
 def test_seated_evil_knight_is_night_immune_in_a_real_state() -> None:

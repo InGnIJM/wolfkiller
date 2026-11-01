@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
 
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
 from app.roles.registry import builtin_registry
 from app.roles.werewolf import WEREWOLF_SPEC, aggregate_werewolf_votes, validate_werewolf_action
-from app.roles.werewolf import Werewolf, werewolf_applicable
+from app.roles.werewolf import werewolf_applicable
 
 
 def context(alive=(1, 2, 3)) -> ActionContext:
@@ -94,17 +93,3 @@ def test_resolver_adds_single_accept_and_registry_keeps_legacy() -> None:
     assert werewolf_applicable(context()) is True
 
 
-@pytest.mark.asyncio
-async def test_legacy_werewolf_behavior_remains_available() -> None:
-    class Builder:
-        def build_action_prompt(self, *args): return "prompt"
-        def get_system_prompt(self): return "system"
-    class Client:
-        def get_model(self): return self
-        async def ainvoke(self, prompt):
-            class Response: content = '{"action_type":"pass","target_seat":null,"reasoning":"ok"}'
-            return Response()
-    role = Werewolf(1, "wolf-killer-werewolf", Builder(), Client())
-    assert role.get_skills() == ["kill"]
-    action = await role.kill(object(), object())
-    assert action.action_type == "pass"

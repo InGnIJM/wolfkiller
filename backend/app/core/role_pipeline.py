@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
-from copy import deepcopy
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import ClassVar
 
 from app.config import PipelineMode
 from app.core.effect_applier import CommitResult
@@ -107,15 +107,11 @@ class PipelineResult(PipelineObservation):
 
 @dataclass(frozen=True)
 class RolePipeline:
-    mode: PipelineMode
-    v1_runner: Callable[[GameState, SchedulePoint], PipelineObservation] | None
     scheduler: object | None
+    mode: ClassVar[PipelineMode] = PipelineMode.V2
 
     def __post_init__(self) -> None:
-        if type(self.mode) is not PipelineMode: raise TypeError("mode must be a PipelineMode")
-        if self.v1_runner is not None and not callable(self.v1_runner): raise TypeError("v1_runner must be callable")
-        if self.mode is not PipelineMode.V2 and self.v1_runner is None: raise ValueError("v1 runner is required")
-        if self.mode is not PipelineMode.V1 and (self.scheduler is None or not callable(getattr(self.scheduler, "run_point", None))):
+        if self.scheduler is None or not callable(getattr(self.scheduler, "run_point", None)):
             raise ValueError("scheduler is required")
 
     def run_point(self, state: GameState, point: SchedulePoint) -> PipelineResult:
@@ -126,16 +122,7 @@ class RolePipeline:
         if type(points) is not tuple or not points or any(type(point) is not SchedulePoint for point in points):
             raise TypeError("points must be a nonempty tuple of SchedulePoint")
         if len(points) != len(set(points)): raise ValueError("points must be unique")
-        if self.mode is PipelineMode.V2:
-            return self._result(self._v2_points(state, points), None)
-        shadow = deepcopy(state) if self.mode is PipelineMode.SHADOW else None
-        first = self.v1_runner(state, points[0])
-        if type(first) is not PipelineObservation: raise TypeError("v1 runner must return PipelineObservation")
-        if shadow is None: return self._result(first, None)
-        second = self._v2_points(shadow, points)
-        names = tuple(name for name in ("accepted_actions", "effects", "state_digest", "public_events")
-                      if getattr(first, name) != getattr(second, name))
-        return self._result(first, PipelineDiff(not names, names))
+        return self._result(self._v2_points(state, points), None)
 
     def _v2_points(self, state: GameState, points: tuple[SchedulePoint, ...]) -> PipelineObservation:
         observations = tuple(self._v2(state, point) for point in points)
@@ -151,7 +138,6 @@ class RolePipeline:
 
     def execute_v2_point(self, state: GameState, point: SchedulePoint, *, slot: str = "",
                          defer_event_types: tuple[str, ...] = ()) -> PointResult:
-        if self.mode is PipelineMode.V1: raise ValueError("V2 execution is unavailable in V1 mode")
         if type(state) is not GameState: raise TypeError("state must be GameState")
         if type(point) is not SchedulePoint: raise TypeError("point must be SchedulePoint")
         if type(slot) is not str: raise TypeError("slot must be a string")

@@ -15,7 +15,7 @@ import pytest
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
-from app.core.effect_applier import EffectApplier, _Runtime, derive_effect_id, role_resource_view
+from app.core.effect_applier import EffectApplier, derive_effect_id, role_resource_view
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.game_engine import GameEngine
 from app.core.role_runtime import initialize_role_resources
@@ -25,7 +25,7 @@ from app.models.pipeline import ActionCommand, ActionContext, EffectKind, Schedu
 from app.roles.registry import builtin_registry
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC
 from app.roles.werewolf_king import (
-    WEREWOLF_KING_EXPLODE_CONTRACT, WEREWOLF_KING_SPEC, WerewolfKing,
+    WEREWOLF_KING_EXPLODE_CONTRACT, WEREWOLF_KING_SPEC,
     resolve_werewolf_king_action, validate_werewolf_king_action, werewolf_king_applicable,
 )
 from app.agents.game_rules import SHERIFF_GAME_RULES
@@ -116,9 +116,7 @@ def test_explode_consumes_the_card_and_interrupts_the_day() -> None:
 def test_werewolf_king_is_registered_in_both_registries() -> None:
     assert builtin_registry.freeze().require(KING) is WEREWOLF_KING_SPEC
     roles = builtin_registry.create_roles({KING: 1, VILLAGER: 1}, 2, object(), lambda seat: object())
-    king = next(role for role in roles.values() if role.role_name == KING)
-    assert isinstance(king, WerewolfKing) and king.get_skills() == ["kill", "explode"]
-    assert king.is_good is False
+    next(role for role in roles.values() if role.role_name == KING)
 
 
 def test_twelve_player_presets_create_roles_via_legacy_registry() -> None:

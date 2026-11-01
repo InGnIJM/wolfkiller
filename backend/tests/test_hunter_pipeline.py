@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
 
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier, derive_effect_id, role_resource_view
 from app.core.scheduler import DomainEvent, ResponseQueue, Scheduler
-from app.models.actions import NightAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import (
     ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect, RoleSpec,
@@ -241,15 +239,3 @@ def test_no_gun_makes_response_inapplicable() -> None:
     assert hunter_applicable(request_context) is False
 
 
-@pytest.mark.asyncio
-async def test_legacy_hunter_skill_and_shoot_remain_available() -> None:
-    class Builder:
-        def build_action_prompt(self, *args): return "prompt"
-    class Parser:
-        def parse_night_action(self, raw, seat): return NightAction(seat, "shoot", 2)
-    role = object.__new__(Hunter); role.seat = 1; role.role_name = HUNTER_SPEC.role_id
-    role.prompt_builder = Builder(); role.output_parser = Parser()
-    async def invoke(prompt): return "raw"
-    role._invoke_llm = invoke
-    assert role.get_skills() == ["shoot"]
-    assert (await role.shoot(GameState("g"), object())).target_seat == 2

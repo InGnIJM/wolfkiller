@@ -192,5 +192,3 @@ AWAKENED_WOLF_KING_SPEC = RoleSpec(
 class AwakenedWolfKing(Werewolf):
     """Legacy role object: the pipeline contracts carry the actual rules."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "claw", "explode"]

@@ -186,5 +186,3 @@ class Knight(BaseRole):
     """Knight role: the daytime duel is handled by the pipeline contract; the
     daytime instance only speaks and votes like a villager."""
 
-    def get_skills(self) -> list[str]:
-        return ["duel"]

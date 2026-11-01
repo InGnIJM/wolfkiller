@@ -288,5 +288,3 @@ class WolfBeauty(Werewolf):
     """Wolf Beauty: a werewolf whose charm and revenge are handled by the
     pipeline contracts; the daytime instance speaks and votes like a werewolf."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "charm"]

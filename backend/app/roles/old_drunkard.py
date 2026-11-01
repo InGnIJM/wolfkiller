@@ -45,8 +45,6 @@ class OldDrunkard(Villager):
     settlement and by Wolf Beauty's charm validation, so the role itself only
     speaks and votes like a villager."""
 
-    def get_skills(self) -> list[str]:
-        return []
 
 
 __all__ = ["OLD_DRUNKARD_SPEC", "OldDrunkard"]

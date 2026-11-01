@@ -170,5 +170,3 @@ TIME_WOLF_SPEC = RoleSpec(
 class TimeWolf(Werewolf):
     """Time Wolf: a werewolf whose nightly lock is a pipeline contract."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "lock"]

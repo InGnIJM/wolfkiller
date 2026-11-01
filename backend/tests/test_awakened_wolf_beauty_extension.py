@@ -314,7 +314,6 @@ def test_registered_on_both_sides_and_a_werewolf_by_factory() -> None:
     assert snapshot.require(BEAUTY) is AWAKENED_WOLF_BEAUTY_SPEC
     assert builtin_registry.require(BEAUTY).role_factory is AwakenedWolfBeauty
     assert issubclass(AwakenedWolfBeauty, builtin_registry.require(WOLF).role_factory)
-    assert object.__new__(AwakenedWolfBeauty).get_skills() == ["kill", "charm"]
 
 
 def test_the_badge_swallowing_move_is_not_offered_to_her() -> None:

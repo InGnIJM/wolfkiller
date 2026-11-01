@@ -15,8 +15,6 @@ from app.agents.llm_client import (
     TIMEOUT_ERRORS,
     TRANSIENT_PROVIDER_ERRORS,
     _content_text,
-    classify_provider_error,
-    extract_partial_speech,
     extract_usage,
     merge_usage,
 )
@@ -24,7 +22,6 @@ from app.agents.failure_taxonomy import normalize_failure_code
 from app.agents.output_parser import (
     OutputParser,
     StrictCapabilityError,
-    ToolCallError,
     ToolCallResult,
     extract_tool_call_xml,
 )
@@ -202,14 +199,6 @@ class BaseRole:
         # ``request_action`` so a later call can never inherit them.
         self._last_call_usage: LLMUsage | None = None
         self._last_attempt_usage: LLMUsage | None = None
-
-    @property
-    def is_good(self) -> bool:
-        return "werewolf" not in self.role_name
-
-    def get_skills(self) -> list[str]:
-        """Return list of skill names this role has. Override in subclasses."""
-        return []
 
     # ── Speech (with tool calling + validation) ─────────────────
 

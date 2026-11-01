@@ -288,9 +288,6 @@ def test_registry_registers_both_the_pipeline_and_the_legacy_role() -> None:
     assert snapshot.require(ROLE).tags == {"god"}
 
 
-def test_legacy_dream_weaver_has_no_daytime_skill() -> None:
-    """The weave is a pipeline contract, so the daytime role stays bare."""
-    assert object.__new__(DreamWeaver).get_skills() == []
 
 
 @pytest.mark.parametrize("kind", [EffectKind.SUBMIT_PROTECTION, EffectKind.SET_PRIVATE_DATA])

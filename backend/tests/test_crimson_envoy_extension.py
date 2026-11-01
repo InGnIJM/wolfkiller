@@ -249,8 +249,6 @@ def test_a_malformed_roster_keeps_the_linger_silent() -> None:
     assert react_crimson_linger(broken) == ()
 
 
-def test_the_daytime_envoy_reports_both_skills() -> None:
-    assert object.__new__(CrimsonEnvoy).get_skills() == ["kill", "explode"]
 
 
 def test_the_linger_survives_the_exile_and_schedules_the_death() -> None:

@@ -2057,31 +2057,7 @@ class TestPipelineSnapshotVersioning:
                 registry=registry,
             )
 
-    def test_v2_game_never_rolls_back_to_v1_after_effect_commit(self):
-        from app.models.game import SnapshotVersionError
-        from app.services.game_manifest import restore_snapshot
-        registry = self._registry()
-        with pytest.raises(SnapshotVersionError, match="cannot downgrade"):
-            restore_snapshot(
-                {"pipeline_version": "v2", "state_revision": 3},
-                registry=registry,
-                pipeline_mode="v1",
-            )
-        # A V2 archive with no committed effects may still be replayed.
-        assert restore_snapshot(
-            {"pipeline_version": "v2", "state_revision": 0},
-            registry=registry,
-            pipeline_mode="v1",
-        )["state_revision"] == 0
 
-    def test_restore_rejects_unknown_pipeline_versions(self):
-        from app.models.game import SnapshotVersionError
-        from app.services.game_manifest import restore_snapshot
-        registry = self._registry()
-        with pytest.raises(SnapshotVersionError, match="unknown pipeline version"):
-            restore_snapshot({"pipeline_version": "v3"}, registry=registry)
-        with pytest.raises(SnapshotVersionError, match="unknown pipeline version"):
-            restore_snapshot({}, registry=registry, pipeline_mode="v9")
 
     def test_legacy_manifest_entry_is_migrated_to_v2(self, tmp_path):
         manifest = GameManifest(str(tmp_path))
@@ -3098,6 +3074,8 @@ class TestManifestVersionEdgeCases:
             restore_snapshot(["not", "a", "mapping"], registry=registry)
         with pytest.raises(SnapshotVersionError, match="invalid spec versions"):
             restore_snapshot({"spec_versions": ["guard"]}, registry=registry)
+        with pytest.raises(SnapshotVersionError, match="unknown pipeline version"):
+            restore_snapshot({"pipeline_version": "v9"}, registry=registry)
         for bad_version in (0, True, "1"):
             with pytest.raises(SnapshotVersionError, match="missing role spec"):
                 restore_snapshot(

@@ -14,7 +14,7 @@ from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier
 from app.core.scheduler import Scheduler
 from app.models.contracts import RoleSpec
-from app.models.game import Camp, GamePhase, GameState, PlayerState
+from app.models.game import Camp, GameState, PlayerState
 from app.models.pipeline import (
     ActionCommand,
     ActionContext,
@@ -375,58 +375,9 @@ class TestRoleRegistry:
         assert len({id(client) for *_, client in calls}) == 3
         assert all(client is clients[seat] for _, seat, *_, client in calls)
 
-    def test_build_requests_only_for_alive_roles_with_current_phase_contracts(self):
-        state = GameState(game_id="contracts", phase=GamePhase.NIGHT, round_number=4)
-        state.players = {
-            1: PlayerState(1, "wolf-killer-werewolf", Camp.WEREWOLF.value),
-            2: PlayerState(2, "wolf-killer-seer", Camp.GOOD.value),
-            3: PlayerState(3, "wolf-killer-villager", Camp.GOOD.value),
-            4: PlayerState(4, "wolf-killer-witch", Camp.GOOD.value, is_alive=False),
-        }
-        roles = {
-            seat: StubRole(seat, player.role)
-            for seat, player in state.players.items()
-        }
 
-        requests = builtin_registry.build_requests(state, roles, GamePhase.NIGHT)
 
-        assert [(request.actor_seat, request.contract.contract_id) for request in requests] == [
-            (1, "werewolf_kill"),
-            (2, "seer_check"),
-        ]
-        assert all(request.round_id == 4 for request in requests)
 
-    def test_build_requests_skips_previously_accepted_idempotency_key(self):
-        state = GameState(game_id="contracts", phase=GamePhase.NIGHT, round_number=2)
-        state.players = {
-            1: PlayerState(1, "wolf-killer-werewolf", Camp.WEREWOLF.value),
-        }
-        roles = {1: StubRole(1, "wolf-killer-werewolf")}
-        state.accepted_action_keys = {"2:night:1:werewolf_kill"}
-
-        assert builtin_registry.build_requests(state, roles, GamePhase.NIGHT) == []
-
-    def test_build_requests_skips_contracts_from_other_phases(self):
-        state = GameState(game_id="contracts", phase=GamePhase.NIGHT, round_number=2)
-        state.players = {
-            1: PlayerState(1, "wolf-killer-hunter", Camp.GOOD.value),
-        }
-
-        assert builtin_registry.build_requests(
-            state, {1: StubRole(1, "wolf-killer-hunter")}, GamePhase.NIGHT
-        ) == []
-
-    def test_build_requests_returns_empty_for_a_phase_other_than_game_state(self):
-        state = GameState(
-            game_id="contracts", phase=GamePhase.VOTE_CASTING, round_number=2
-        )
-        state.players = {
-            1: PlayerState(1, "wolf-killer-werewolf", Camp.WEREWOLF.value),
-        }
-
-        assert builtin_registry.build_requests(
-            state, {1: StubRole(1, "wolf-killer-werewolf")}, GamePhase.NIGHT
-        ) == []
 
     def test_witch_has_one_combined_action_contract(self):
         contracts = builtin_registry.require("wolf-killer-witch").contracts

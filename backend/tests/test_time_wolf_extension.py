@@ -73,7 +73,6 @@ def test_the_card_is_a_pack_wolf_that_acts_before_every_good_skill() -> None:
     assert TIME_WOLF_SPEC.projected_facts == frozenset({"time_lock_spent"})
     assert TIME_WOLF_SPEC.opening_narration[0] == "蚀时狼妃请睁眼"
     assert builtin_registry.require(TIME_WOLF_ROLE).role_factory is TimeWolf
-    assert object.__new__(TimeWolf).get_skills() == ["kill", "lock"]
     assert TIME_LOCKED_STATUS in NIGHT_SCOPED_STATUSES
 
 

@@ -283,5 +283,3 @@ class FragrancePhantom(BaseRole):
     """Daytime instance: the bond and the chain are pipeline contracts, so the
     role itself only speaks and votes like the werewolf it counts as."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "bond"]

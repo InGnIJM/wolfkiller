@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 
 from app.agents.prompt_renderer import PromptRenderer
 from app.api.websocket.ws_handler import WSManager
-from app.config import PipelineMode
 from app.core.action_resolver import ActionResolver
 from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
@@ -201,7 +200,7 @@ def test_the_night_action_point_completes_with_the_live_board() -> None:
             snapshot, PromptRenderer(), lambda seat: llm, director,
         ),
     )
-    pipeline = RolePipeline(PipelineMode.V2, None, scheduler)
+    pipeline = RolePipeline(scheduler)
 
     result = pipeline.execute_v2_point(state, SchedulePoint.NIGHT_ACTION)
 

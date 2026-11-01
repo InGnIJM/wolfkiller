@@ -384,13 +384,6 @@ class TestBaseRoleSpeech:
 
 
 class TestBaseRoleProperties:
-    def test_is_good_and_skills(self):
-        good = BaseRole(1, "wolf-killer-villager", PromptBuilder(), ClientStub())
-        bad = BaseRole(1, "wolf-killer-werewolf", PromptBuilder(), ClientStub())
-        assert good.is_good is True
-        assert bad.is_good is False
-        assert good.get_skills() == []
-
     @pytest.mark.asyncio
     async def test_speak_plain_context_uses_text_model(self):
         client = ClientStub(plain=[AIMessage(content="这是普通发言，没有工具调用也可以。")])

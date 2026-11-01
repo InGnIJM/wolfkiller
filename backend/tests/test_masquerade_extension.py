@@ -194,8 +194,6 @@ def test_a_malformed_alive_list_is_a_programming_error() -> None:
         dancer_applicable(broken)
 
 
-def test_the_daytime_dancer_reports_no_skill() -> None:
-    assert object.__new__(Dancer).get_skills() == []
 
 
 def test_passing_only_records_a_reason() -> None:
@@ -607,7 +605,6 @@ def test_the_mask_runs_after_the_pool_and_flips_its_verdict() -> None:
     )
     # 1 good + (masked wolf counted good) + 1 good = single camp, nobody dies.
     assert deaths == ()
-    assert object.__new__(Mask).get_skills() == ["kill", "mask"]
 
 def test_the_dancer_and_the_mask_declare_their_opening_lines() -> None:
     from app.roles.mask import MASK_GRANT_CONTRACT, MASK_SPEC

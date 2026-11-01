@@ -171,5 +171,3 @@ WOLF_KING_SPEC = RoleSpec(
 class WolfKing(Werewolf):
     """Wolf King: a werewolf whose one-shot claw is handled by the pipeline."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "shoot"]

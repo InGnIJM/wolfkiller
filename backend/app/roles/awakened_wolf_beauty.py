@@ -329,5 +329,3 @@ class AwakenedWolfBeauty(Werewolf):
     """Werewolf whose illusion and replacement are handled by pipeline contracts;
     the daytime instance speaks and votes like any other werewolf."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "charm"]

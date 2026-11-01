@@ -209,5 +209,3 @@ MASK_SPEC = RoleSpec(
 class Mask(Werewolf):
     """Mask: a werewolf whose nightly mask is a pipeline contract."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "mask"]

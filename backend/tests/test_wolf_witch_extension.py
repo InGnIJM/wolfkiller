@@ -175,8 +175,6 @@ def test_missing_facts_are_programming_errors() -> None:
         resolve_wolf_witch_action(context(identity=None), command())
 
 
-def test_the_daytime_wolf_witch_reports_both_skills() -> None:
-    assert object.__new__(WolfWitch).get_skills() == ["kill", "check"]
 
 
 def test_mutual_checks_kill_both_sides_in_one_settlement() -> None:

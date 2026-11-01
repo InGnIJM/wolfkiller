@@ -172,5 +172,3 @@ NIGHTMARE_SPEC = RoleSpec(
 class Nightmare(Werewolf):
     """Nightmare: a werewolf whose nightly fear is a pipeline contract."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "fear"]

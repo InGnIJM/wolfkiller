@@ -69,5 +69,3 @@ class EvilKnight(Werewolf):
     "cannot self-destruct" true without any engine branch.
     """
 
-    def get_skills(self) -> list[str]:
-        return ["kill"]

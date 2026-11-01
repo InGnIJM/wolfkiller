@@ -185,5 +185,3 @@ class WerewolfKing(Werewolf):
     """Werewolf King: a werewolf whose daytime self-destruct is handled by the
     pipeline contract; the daytime instance speaks and votes like a werewolf."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "explode"]

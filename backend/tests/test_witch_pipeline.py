@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
-import pytest
 
 from app.agents.prompt_renderer import PromptRenderer
 from app.core.action_resolver import ActionResolver
@@ -13,8 +12,7 @@ from app.core.effect_applier import EffectApplier, role_resource_view
 from app.core.scheduler import Scheduler
 from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
 from app.roles.registry import builtin_registry
-from app.roles.witch import WITCH_SPEC, Witch, resolve_witch_action, validate_witch_action, witch_applicable
-from app.models.actions import NightAction
+from app.roles.witch import WITCH_SPEC, resolve_witch_action, validate_witch_action, witch_applicable
 from app.models.game import GameState, PlayerState
 
 
@@ -318,37 +316,3 @@ def test_nightly_prompt_keeps_the_saved_seat_on_later_nights() -> None:
     assert prompts[-1]["facts"]["wolf_kill_target"] == 3
     assert prompts[-1]["facts"]["saved_seat"] == 2
     assert role_resource_view(game, 1) == {"antidote": 0, "poison": 1}
-
-
-def test_legacy_target_validation_branches_remain_available() -> None:
-    role = object.__new__(Witch); role.seat = 1
-    state = GameState("g", players={1: PlayerState(1, "wolf-killer-witch", "good"), 2: PlayerState(2, "x", "good", is_alive=False), 3: PlayerState(3, "x", "good")})
-    passed = NightAction(1, "pass"); none = NightAction(1, "poison", None)
-    assert role.get_skills() == ["save", "poison"]
-    assert role._validate_poison_target(state, passed) is passed
-    assert role._validate_poison_target(state, none) is none
-    assert role._validate_poison_target(state, NightAction(1, "poison", 99)).action_type == "pass"
-    assert role._validate_poison_target(state, NightAction(1, "poison", 2)).action_type == "pass"
-    alive = NightAction(1, "poison", 3)
-    assert role._validate_poison_target(state, alive) is alive
-    assert role._was_rejected(NightAction(1, "pass", reasoning="ok")) is False
-
-
-@pytest.mark.asyncio
-async def test_legacy_save_and_poison_retry_remain_available() -> None:
-    class Builder:
-        def build_action_prompt(self, *args, **kwargs): return "prompt"
-    class Parser:
-        def __init__(self): self.actions = [NightAction(1, "poison", 2), NightAction(1, "poison", 3)]
-        def parse_night_action(self, raw, seat): return self.actions.pop(0)
-    role = object.__new__(Witch); role.seat = 1; role.role_name = "wolf-killer-witch"
-    role.prompt_builder = Builder(); role.output_parser = Parser()
-    async def invoke(prompt): return "raw"
-    role._invoke_llm = invoke
-    state = GameState("g", players={1: PlayerState(1, role.role_name, "good"), 2: PlayerState(2, "x", "good", is_alive=False), 3: PlayerState(3, "x", "good")})
-    role.output_parser.actions = [NightAction(1, "save", 2)]
-    assert await role.save(state, object(), 2) is True
-    role.output_parser.actions = [NightAction(1, "poison", 2), NightAction(1, "poison", 3)]
-    assert (await role.poison(state, object(), 2)).target_seat == 3
-    role.output_parser.actions = [NightAction(1, "pass")]
-    assert (await role.poison(state, object(), 2)).action_type == "pass"

@@ -270,24 +270,3 @@ def test_scheduler_dead_wolf_king_shoots_once_and_consumes_the_claw() -> None:
     assert len(calls) == 1
 
 
-@pytest.mark.asyncio
-async def test_legacy_wolf_king_keeps_kill_and_claw_skills() -> None:
-    """The claw needs no daytime method: the pipeline contract drives it."""
-    class Builder:
-        def build_action_prompt(self, *args): return "prompt"
-
-    class Parser:
-        def parse_night_action(self, raw, seat): return NightAction(seat, "kill", 2)
-
-    role = object.__new__(WolfKing)
-    role.seat = 1
-    role.role_name = WOLF_KING_SPEC.role_id
-    role.prompt_builder = Builder()
-    role.output_parser = Parser()
-
-    async def invoke(prompt): return "raw"
-
-    role._invoke_llm = invoke
-    assert role.get_skills() == ["kill", "shoot"]
-    # The inherited nightly kill path still works unchanged.
-    assert (await role.kill(GameState("g"), object())).target_seat == 2

@@ -21,7 +21,7 @@ from app.roles.awakened_witch import (
     ASSIST_HISTORY_KEY, AWAKENED_WITCH_ASSIST_VOTE_CONTRACT,
     AWAKENED_WITCH_BREW_CONTRACT, AWAKENED_WITCH_PICK_1_CONTRACT,
     AWAKENED_WITCH_PICK_2_CONTRACT, AWAKENED_WITCH_TALLY_CONTRACT,
-    AwakenedWitch, _command_targets, _kill_target, _pick_validate, _plan,
+    _command_targets, _kill_target, _pick_validate, _plan,
     _plan_assist_seats, _plan_target, _plan_use_index, _resolve_pick,
     _selected_labels, _selected_rows, _tally_votes, _vote_target,
     awakened_witch_assist_pick_applicable, resolve_awakened_witch_assist_tally,
@@ -29,13 +29,13 @@ from app.roles.awakened_witch import (
     validate_awakened_witch_assist_vote, validate_awakened_witch_brew,
 )
 from app.roles.awakened_wolf_king import (
-    AwakenedWolfKing, _identity, resolve_awakened_wolf_king_explode,
+    _identity, resolve_awakened_wolf_king_explode,
     validate_awakened_wolf_king_explode,
 )
 from app.roles.wolf_claw import (
     AWAKENED_CLAW_CONTRACT, AWAKENED_CLAW_GIFT_CONTRACT,
     AWAKENED_CLAW_GIFT_KEY, AWAKENED_CLAW_PASS_CONTRACT,
-    AWAKENED_CLAW_SWEEP_CONTRACT, _last_wolf_standing, _living_teammates,
+    _last_wolf_standing, _living_teammates,
     _selected_resource_labels, _thought_for,
     resolve_awakened_claw_action, resolve_awakened_claw_pass,
     resolve_awakened_claw_sweep, validate_awakened_claw_action,
@@ -259,7 +259,6 @@ def test_witch_vote_and_tally_edges() -> None:
             _ctx(AWAKENED_WITCH_TALLY_CONTRACT, facts={"brew_plan": "bad"}),
             _cmd("resolve"),
         )
-    assert AwakenedWitch(1, "wolf-killer-awakened-witch", object(), object()).get_skills() == ["save", "poison", "brew"]
 
 
 # ── Awakened Wolf King / claw defensive branches ───────────────────────────
@@ -306,7 +305,6 @@ def test_awk_explode_edges_and_legacy_class() -> None:
     assert _identity(
         replace(base, facts={"actor_identity": {"role_id": 1, "camp_id": 2}})
     ) == ("wolf-killer-awakened-witch", "werewolf")
-    assert AwakenedWolfKing(1, "wolf-killer-awakened-wolf-king", object(), object()).get_skills() == ["kill", "claw", "explode"]
 
 
 def test_claw_defensive_branches() -> None:

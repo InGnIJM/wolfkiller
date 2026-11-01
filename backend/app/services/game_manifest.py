@@ -46,30 +46,18 @@ def default_game_name(player_count: int, now: datetime | None = None) -> str:
 
 
 def restore_snapshot(
-    snapshot: Mapping, *, registry, pipeline_mode: str = "v2",
+    snapshot: Mapping, *, registry,
 ) -> dict:
     """Validate a persisted game snapshot against the running registry.
 
     Raises SnapshotVersionError for unknown pipeline versions, role specs the
-    running registry cannot serve, effect schemas without a migrator, and any
-    attempt to downgrade a V2 game with committed effects back to V1.
+    running registry cannot serve, and effect schemas without a migrator.
     """
     if not isinstance(snapshot, Mapping):
         raise SnapshotVersionError("invalid snapshot")
-    if pipeline_mode not in _VALID_PIPELINE_VERSIONS:
-        raise SnapshotVersionError("unknown pipeline version")
     pipeline = snapshot.get("pipeline_version")
     if pipeline not in (None, "", "v1", "v2"):
         raise SnapshotVersionError("unknown pipeline version")
-    state_revision = snapshot.get("state_revision", 0)
-    if (
-        pipeline_mode == "v1"
-        and pipeline == "v2"
-        and isinstance(state_revision, int)
-        and not isinstance(state_revision, bool)
-        and state_revision > 0
-    ):
-        raise SnapshotVersionError("cannot downgrade v2 game to v1")
     spec_versions = snapshot.get("spec_versions") or {}
     if not isinstance(spec_versions, Mapping):
         raise SnapshotVersionError("invalid spec versions")

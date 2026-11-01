@@ -354,5 +354,3 @@ class CrimsonEnvoy(Werewolf):
     """Crimson Envoy: the daytime self-destruct and the lasting exile are both
     pipeline contracts; the daytime instance speaks and votes like a werewolf."""
 
-    def get_skills(self) -> list[str]:
-        return ["kill", "explode"]

@@ -336,7 +336,6 @@ def test_wolf_beauty_is_registered_in_both_registries() -> None:
         {BEAUTY: 1, WOLF: 1}, 2, object(), lambda seat: object(),
     )
     beauty = next(role for role in roles.values() if isinstance(role, WolfBeauty))
-    assert beauty.get_skills() == ["kill", "charm"]
 
 
 def _scheduler(provider) -> Scheduler:

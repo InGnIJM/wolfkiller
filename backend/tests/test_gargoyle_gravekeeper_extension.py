@@ -304,8 +304,6 @@ def test_gravekeeper_instructions_state_every_rule() -> None:
         assert rule in text
 
 
-def test_gravekeeper_is_a_plain_daytime_role() -> None:
-    assert object.__new__(Gravekeeper).get_skills() == []
 
 
 # ── registration ──────────────────────────────────────────────────────────

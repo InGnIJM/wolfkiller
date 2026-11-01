@@ -790,5 +790,3 @@ AWAKENED_WITCH_SPEC = RoleSpec(
 class AwakenedWitch(Witch):
     """Legacy role object: the pipeline contracts carry the actual rules."""
 
-    def get_skills(self) -> list[str]:
-        return ["save", "poison", "brew"]

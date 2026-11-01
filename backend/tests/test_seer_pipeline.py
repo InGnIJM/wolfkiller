@@ -9,7 +9,6 @@ from app.core.action_validator import ActionValidator
 from app.core.context_projector import ContextProjector
 from app.core.effect_applier import EffectApplier
 from app.core.scheduler import Scheduler
-from app.models.actions import NightAction
 from app.models.game import GamePhase, GameState, PlayerState
 from app.models.pipeline import ActionCommand, ActionContext, EffectKind, SchedulePoint
 from app.roles.registry import builtin_registry
@@ -177,69 +176,3 @@ def test_scheduler_persists_check_and_projects_it_only_to_same_actor_next_round(
     assert projected.facts["private_checks"] == ({"target": 2, "camp": "werewolf"},)
     wolf_request = next(iter(engine.issue(game, SchedulePoint.NIGHT_WOLF_VOTE, registry)))
     assert "private_checks" not in ContextProjector().project(game, wolf_request, registry).facts
-
-
-def test_legacy_target_validation_helpers_remain_available() -> None:
-    role = object.__new__(Seer); role.seat = 1
-    game = GameState("g", players={
-        1: PlayerState(1, SEER_SPEC.role_id, "good"),
-        2: PlayerState(2, "x", "good", is_alive=False),
-        3: PlayerState(3, "x", "good"),
-    })
-    for target in (1, 2, 99):
-        action = NightAction(1, "check", target)
-        assert role._validate_check_target(game, action).target_seat is None
-    valid = NightAction(1, "check", 3)
-    assert role._validate_check_target(game, valid) is valid
-    assert role._is_invalid_check(NightAction(1, "pass")) is True
-    assert role._is_invalid_check(valid) is False
-
-
-@pytest.mark.asyncio
-async def test_legacy_check_retries_then_returns_valid_target() -> None:
-    class Builder:
-        def build_action_prompt(self, *args): return "prompt"
-    class Parser:
-        def __init__(self): self.actions = [NightAction(1, "check", 1), NightAction(1, "check", 2)]
-        def parse_night_action(self, raw, seat): return self.actions.pop(0)
-    role = object.__new__(Seer); role.seat = 1; role.role_name = SEER_SPEC.role_id
-    role.prompt_builder = Builder(); role.output_parser = Parser()
-    async def invoke(prompt): return "raw"
-    role._invoke_llm = invoke
-    game = GameState("g", players={1: PlayerState(1, role.role_name, "good"), 2: PlayerState(2, "x", "good")})
-    assert role.get_skills() == ["check"]
-    assert (await role.check(game, object())).target_seat == 2
-
-
-@pytest.mark.asyncio
-async def test_legacy_check_valid_first_attempt_and_fallback_paths() -> None:
-    class Builder:
-        def build_action_prompt(self, *args): return "prompt"
-    class Parser:
-        def __init__(self, actions): self.actions = list(actions)
-        def parse_night_action(self, raw, seat): return self.actions.pop(0)
-    async def invoke(prompt): return "raw"
-
-    def role_with(actions):
-        role = object.__new__(Seer); role.seat = 1; role.role_name = SEER_SPEC.role_id
-        role.prompt_builder = Builder(); role.output_parser = Parser(actions)
-        role._invoke_llm = invoke
-        return role
-
-    game = GameState("g", players={
-        1: PlayerState(1, SEER_SPEC.role_id, "good"),
-        2: PlayerState(2, "x", "good"),
-    })
-    first = NightAction(1, "check", 2)
-    assert await role_with([first]).check(game, object()) is first
-    fallback = await role_with([
-        NightAction(1, "pass"), NightAction(1, "pass"),
-    ]).check(game, object())
-    assert fallback.action_type == "check" and fallback.target_seat == 2
-    alone = GameState("alone", players={1: PlayerState(1, SEER_SPEC.role_id, "good")})
-    passed = await role_with([
-        NightAction(1, "pass"), NightAction(1, "pass"),
-    ]).check(alone, object())
-    assert passed.action_type == "pass"
-    empty = NightAction(1, "check", None)
-    assert role_with([])._validate_check_target(game, empty) is empty

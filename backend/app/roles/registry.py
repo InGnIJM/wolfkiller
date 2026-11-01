@@ -11,8 +11,8 @@ from threading import RLock
 from types import MappingProxyType
 from typing import get_type_hints
 
-from app.models.contracts import ActionContract, ActionRequest, RoleSpec as LegacyRoleSpec
-from app.models.game import Camp, GamePhase, GameState
+from app.models.contracts import ActionContract, RoleSpec as LegacyRoleSpec
+from app.models.game import Camp, GamePhase
 from app.models.pipeline import (
     ActionCommand as PipelineActionCommand,
     ActionContext as PipelineActionContext,
@@ -30,7 +30,7 @@ from app.roles.knight import KNIGHT_SPEC, Knight
 from app.roles.old_drunkard import OLD_DRUNKARD_SPEC, OldDrunkard
 from app.roles.seer import SEER_SPEC, Seer
 from app.roles.villager import VILLAGER_SPEC, Villager
-from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, WEREWOLF_SPEC, Werewolf
+from app.roles.werewolf import WEREWOLF_SPEC, Werewolf
 from app.roles.werewolf_king import WEREWOLF_KING_SPEC, WerewolfKing
 from app.roles.dream_weaver import DREAM_WEAVER_SPEC, DreamWeaver
 from app.roles.evil_knight import EVIL_KNIGHT_SPEC, EvilKnight
@@ -484,39 +484,6 @@ class RoleRegistry:
             )
             for seat, role_id in enumerate(role_ids, start=1)
         }
-
-    def build_requests(
-        self,
-        state: GameState,
-        roles: Mapping[int, object],
-        phase: GamePhase,
-    ) -> list[ActionRequest]:
-        if phase != state.phase:
-            return []
-        accepted_keys = getattr(state, "accepted_action_keys", set())
-        requests = []
-        for seat, player in state.players.items():
-            if not player.is_alive or seat not in roles:
-                continue
-            role_id = player.role
-            for contract in self.require(role_id).contracts:
-                if contract.phase != phase:
-                    continue
-                key = f"{state.round_number}:{phase.value}:{seat}:{contract.contract_id}"
-                if key in accepted_keys:
-                    continue
-                requests.append(
-                    ActionRequest(
-                        actor_seat=seat,
-                        role_id=role_id,
-                        contract=contract,
-                        phase=phase,
-                        round_id=state.round_number,
-                        idempotency_key=key,
-                    )
-                )
-        return sorted(requests, key=lambda request: request.contract.resolution_priority)
-
 
 def _contract(
     contract_id: str,
