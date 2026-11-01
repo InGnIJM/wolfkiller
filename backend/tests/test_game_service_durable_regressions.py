@@ -274,7 +274,9 @@ async def test_clock_heartbeat_tracks_only_active_time_and_exits(durable, monkey
         nonlocal ticks
         ticks += 1
         await real_sleep(0)
-        if mode == "failure":
+        if mode == "failure" and ticks == 1:
+            # A transient tick error is logged and swallowed: the heartbeat
+            # must keep ticking so the armed timeout keeps being enforced.
             raise OSError("clock unavailable")
         if ticks == 2:
             repository.transition_execution("game", expected=("running",), target="paused")
@@ -289,6 +291,9 @@ async def test_clock_heartbeat_tracks_only_active_time_and_exits(durable, monkey
     await first
     if mode == "normal":
         assert repository.get_runtime_clock("game")["active_elapsed_ms"] >= 0
+        assert ticks == 3
+    if mode == "failure":
+        assert repository.get_game("game")["execution_status"] == "failed"
         assert ticks == 3
 
 
@@ -318,6 +323,47 @@ async def test_clock_heartbeat_cancels_armed_benchmark_timeout(durable, monkeypa
     assert record["execution_status"] == "cancelled"
     assert record["recovery_block_code"] == "benchmark_game_timeout"
     assert "game" not in service._clock_tasks
+
+
+@pytest.mark.asyncio
+async def test_clock_heartbeat_survives_a_transient_tick_error(durable, monkeypatch):
+    """A repository error inside one tick is logged and swallowed; the next
+    tick still enforces the armed timeout."""
+    service, repository = durable
+    add_game(service, repository, benchmark=True)
+    repository.save_runtime_clock(
+        "game", active_elapsed_ms=0, remaining_window_ms=None, execution_generation=1,
+    )
+    service._clock_state["game"] = {
+        "active_elapsed_ms": 1500, "remaining_window_ms": None,
+        "running_since": 1.0,
+    }
+    service.arm_benchmark_timeout("game", 1)
+    real_sleep = asyncio.sleep
+
+    async def one_tick(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1.0)
+    monkeypatch.setattr(module.asyncio, "sleep", one_tick)
+    real_get = repository.get_game
+    reads = 0
+
+    def flaky_get(game_id, **kwargs):
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise OSError("database is locked")
+        return real_get(game_id, **kwargs)
+
+    monkeypatch.setattr(repository, "get_game", flaky_get)
+    service._start_clock_heartbeat("game")
+    heartbeat = service._clock_tasks["game"]
+    await asyncio.wait_for(heartbeat, timeout=1.0)
+    record = repository.get_game("game")
+    assert reads >= 2
+    assert record["execution_status"] == "cancelled"
+    assert record["recovery_block_code"] == "benchmark_game_timeout"
 
 
 @pytest.mark.asyncio
@@ -384,6 +430,30 @@ async def test_benchmark_cancel_tolerates_a_lost_transition_race(durable, monkey
     monkeypatch.setattr(repository, "transition_execution", lose_race)
     result = await service.cancel_benchmark_game("game")
     assert result["execution_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_benchmark_cancel_tolerates_a_completed_race(durable, monkeypatch):
+    """A runner that finishes on its own in the same tick the cancel fires is
+    already terminal — which is all canceling was meant to achieve."""
+    service, repository = durable
+    add_game(service, repository, status="running")
+    real_transition = repository.transition_execution
+    raced = False
+
+    def lose_race(*args, **kwargs):
+        nonlocal raced
+        if not raced:
+            raced = True
+            real_transition(
+                "game", expected=("running", "paused"), target="completed",
+            )
+            raise InvalidExecutionTransition("lost race")
+        return real_transition(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "transition_execution", lose_race)
+    result = await service.cancel_benchmark_game("game")
+    assert result["execution_status"] == "completed"
 
 
 @pytest.mark.asyncio

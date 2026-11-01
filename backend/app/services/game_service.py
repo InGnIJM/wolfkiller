@@ -1137,8 +1137,8 @@ class GameService:
             return
 
         async def heartbeat() -> None:
-            try:
-                while True:
+            while True:
+                try:
                     await asyncio.sleep(1)
                     record = None if self.repository is None else self.repository.get_game(game_id)
                     if record is None or record["execution_status"] not in {"running", "paused"}:
@@ -1157,10 +1157,16 @@ class GameService:
                                 recovery_block_code="benchmark_game_timeout",
                             )
                             return
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Runtime clock heartbeat failed for game=%s", game_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # One bad tick must not kill the heartbeat: it is the only
+                    # place that persists active time and enforces the armed
+                    # benchmark timeout, so a transient repository error used
+                    # to freeze the clock and disable the budget for good.
+                    logger.exception(
+                        "Runtime clock heartbeat failed for game=%s", game_id,
+                    )
 
         self._clock_tasks[game_id] = asyncio.create_task(heartbeat())
 
@@ -3529,9 +3535,14 @@ class GameService:
                 recovery_block_code=recovery_block_code,
             )
         except InvalidExecutionTransition:
-            # A concurrent cancel already landed: same outcome, not an error.
+            # A concurrent cancel already landed — or the runner completed on
+            # its own in the same tick this cancel fired. Either way the row is
+            # terminal, which is exactly what canceling was meant to achieve;
+            # failing here would misreport a finished game as a failed one.
             latest = self.repository.get_game(game_id)
-            if latest is None or str(latest["execution_status"]) != "cancelled":
+            if latest is None or str(
+                latest["execution_status"],
+            ) not in {"cancelled", "completed"}:
                 raise
             return self.get_execution_info(game_id)
         # Detach the clock task before killing the runner so the runner's
