@@ -53,7 +53,7 @@ export default function RoleRow({
       >
         <Box sx={{ minWidth: 0 }}>
           <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-            <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600, lineHeight: 1.35 }}>
               {role.name_zh}
             </Typography>
             {added && (
@@ -61,7 +61,7 @@ export default function RoleRow({
                 component="span"
                 sx={{
                   fontSize: 9, lineHeight: '14px', px: 0.5, borderRadius: 0.5,
-                  bgcolor: BLOOD_MOON.gold, color: CANVAS.bg, fontWeight: 700,
+                  bgcolor: BLOOD_MOON.gold, color: CANVAS.bg, fontWeight: 600,
                 }}
               >
                 {t('create.roleAdded')}
@@ -96,7 +96,7 @@ export default function RoleRow({
           </IconButton>
           <Typography
             sx={{
-              width: 26, textAlign: 'center', fontWeight: 700,
+              width: 26, textAlign: 'center', fontWeight: 600,
               fontVariantNumeric: 'tabular-nums',
             }}
           >

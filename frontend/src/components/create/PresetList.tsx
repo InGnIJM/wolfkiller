@@ -238,7 +238,7 @@ function PresetItem({
           variant="body2"
           title={displayName}
           sx={{
-            fontWeight: selected ? 700 : 400, color: selected ? INK.primary : INK.dim,
+            fontWeight: selected ? 600 : 400, color: selected ? INK.primary : INK.dim,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}
         >

@@ -382,7 +382,7 @@ function Stat({
         component="span"
         sx={{
           color: tone === 'plain' ? INK.primary : color,
-          fontWeight: 700,
+          fontWeight: 600,
           fontVariantNumeric: 'tabular-nums',
         }}
       >
