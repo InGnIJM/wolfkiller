@@ -45,7 +45,7 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
             sx={{ display: 'block', width: '100%', height: 96, objectFit: 'cover' }}
           />
         </Box>
-        <Typography component="span" variant="h6" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 8 }}>
+        <Typography component="span" variant="h6" sx={{ mt: 1.5, fontWeight: 600, letterSpacing: 8 }}>
           {t('game.gameOver')}
         </Typography>
       </DialogTitle>
@@ -56,13 +56,10 @@ export default function WinOverlay({ winResult, revealOnDeath }: Props) {
             variant="h5"
             sx={{
               display: 'block',
-              fontWeight: 900,
+              fontWeight: 700,
               mb: 0.5,
               letterSpacing: 4,
               color: CAMP_ACCENT[winResult.winning_camp],
-              textShadow: winResult.winning_camp === 'werewolf'
-                ? '0 0 30px rgba(201,86,107,0.35)'
-                : '0 0 30px rgba(212,168,83,0.3)',
             }}
           >
             {t('game.campWins', { camp: L.WINNING_CAMP_LABELS[winResult.winning_camp] || winResult.winning_camp })}

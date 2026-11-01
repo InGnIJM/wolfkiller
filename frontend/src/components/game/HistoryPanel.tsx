@@ -609,7 +609,6 @@ function EventCard({
           bgcolor: 'background.paper',
           border: '2px solid',
           borderColor: tone,
-          boxShadow: `0 0 7px ${tone}`,
           zIndex: 1,
           transition: 'transform 0.15s',
         }}
@@ -618,9 +617,9 @@ function EventCard({
         <Typography
           variant="caption"
           sx={{
-            fontSize: '0.56rem',
-            fontWeight: 800,
-            letterSpacing: 2,
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            letterSpacing: 1.5,
             lineHeight: 1.4,
             color: tone,
             border: '1px solid',
@@ -753,7 +752,7 @@ export default function HistoryPanel({ onClose }: Props) {
                 <Box key={`chronicle-${groupIndex}`} sx={{ mb: 0.5 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1.5, mb: 0.5 }}>
                     <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
-                    <Typography variant="caption" sx={{ color: 'secondary.dark', fontWeight: 700, letterSpacing: 3 }}>
+                    <Typography variant="caption" sx={{ color: 'secondary.dark', fontWeight: 600, letterSpacing: 1.5 }}>
                       {group.label}
                     </Typography>
                     <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />

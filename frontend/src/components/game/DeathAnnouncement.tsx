@@ -74,16 +74,15 @@ export default function DeathAnnouncement({ deaths, revealedRole }: Props) {
             color: ROLE_COLORS.werewolf.color,
             bgcolor: 'rgba(201,86,107,0.12)',
             border: '1px solid rgba(201,86,107,0.35)',
-            boxShadow: '0 0 24px rgba(201,86,107,0.25)',
           }}
         >
           <Icon sx={{ fontSize: 30 }} />
         </Box>
-        <Typography variant="h5" gutterBottom sx={{ fontWeight: 900, letterSpacing: 3 }}>
+        <Typography variant="h5" gutterBottom sx={{ fontWeight: 700, letterSpacing: 3 }}>
           {t('game.playerOut', { seat: latest.player_seat })}
         </Typography>
         {roleLabel && (
-          <Typography variant="body1" sx={{ fontWeight: 700, color: BLOOD_MOON.gold }}>
+          <Typography variant="body1" sx={{ fontWeight: 600, color: BLOOD_MOON.gold }}>
             {t('game.revealedRole', { role: roleLabel })}
           </Typography>
         )}
