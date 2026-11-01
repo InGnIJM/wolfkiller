@@ -25,7 +25,7 @@ from app.models.pipeline import ActionContext, EffectKind, GameEffect
 #: Declared by the bouncing seat, per skill it bounces.
 REFLECT_CHECK_RESOURCE = "reflect_check"
 REFLECT_POISON_RESOURCE = "reflect_poison"
-REFLECT_GUARD_RESOURCE = "reflect_guard"
+
 #: The one-shot marker: 0 while the bounce is still armed.
 REFLECT_USED_RESOURCE = "reflect_used"
 #: Death cause shared by every bounce, so the audience reads one label.

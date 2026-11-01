@@ -105,14 +105,6 @@ async def create_model(req: ModelConfigRequest):
     return _to_response(config)
 
 
-@router.get("/{config_id}", response_model=ModelConfigResponse)
-async def get_model(config_id: str):
-    config = get_model_config_store().get(config_id)
-    if config is None:
-        raise HTTPException(404, "model config not found")
-    return _to_response(config)
-
-
 def _endpoints_changed(
     existing: ModelConfig, *, base_url: str, strict_base_url: str | None,
 ) -> bool:

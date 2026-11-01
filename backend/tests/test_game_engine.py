@@ -1696,7 +1696,10 @@ def test_log_audience_events_writes_thought_and_werewolf_channel_sidecars(tmp_pa
     )
     engine._log_audience_events(result, "night")
 
-    thoughts = engine.conversation_log.get_all_thoughts()
+    thoughts = [
+        r for r in engine.conversation_log.get_all()
+        if r.scope == ConversationScope.THOUGHT
+    ]
     assert [(t.speaker_seat, t.speaker_role, t.content, t.phase) for t in thoughts] == [
         (1, "wolf-killer-witch", "决定使用解药救 2 号玩家：r", "night"),
     ]
@@ -1723,7 +1726,10 @@ def test_log_audience_events_skips_invalid_or_unknown_sidecars(tmp_path) -> None
     )
     engine._log_audience_events(result, "night")
 
-    assert engine.conversation_log.get_all_thoughts() == []
+    assert all(
+        r.scope != ConversationScope.THOUGHT
+        for r in engine.conversation_log.get_all()
+    )
     assert all(
         record.scope.value != "werewolf"
         for record in engine.conversation_log.get_all()

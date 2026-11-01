@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.local_access import LOCAL_ORIGINS, LocalAccessMiddleware
-from app.config import config as app_config
+
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.api.routes.game_routes import router as game_router
 from app.api.routes.model_routes import router as model_router
@@ -131,15 +131,6 @@ app.include_router(diagnostics_router)
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "service": "wolf-killer"}
-
-
-@app.get("/api/config")
-async def get_config():
-    return {
-        "llm_models": app_config.llm.models,
-        "debug": app_config.debug,
-        "active_games": game_service.list_games(),
-    }
 
 
 @app.websocket("/ws/game/{game_id}")

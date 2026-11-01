@@ -154,9 +154,6 @@ class PlayerState:
     def mark_dead(self, cause: str = "") -> None:
         self.is_alive = False
 
-    def reset_alive(self) -> None:
-        self.is_alive = True
-
 
 @dataclass
 class GameState:

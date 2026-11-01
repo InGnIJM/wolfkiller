@@ -12,17 +12,9 @@ class ConversationLog:
         self._logger = logger
         self._game_id = game_id
 
-    def set_persistence(self, logger, game_id: str) -> None:
-        self._logger = logger
-        self._game_id = game_id
-
     def _persist(self, record: Conversation) -> None:
         if self._logger and self._game_id:
             self._logger.log_conversation(self._game_id, record.to_dict())
-
-    def log_vote_telemetry(self, round_num: int, seat: int, **data: object) -> None:
-        if self._logger and self._game_id:
-            self._logger.log_vote_telemetry(self._game_id, round_num, seat, **data)
 
     def log_llm_call(
         self, round_num: int, seat: int, phase: str, **data: object,
@@ -205,10 +197,6 @@ class ConversationLog:
             if r.scope == ConversationScope.THOUGHT and r.speaker_seat == seat
         ]
 
-    def get_all_thoughts(self) -> list[Conversation]:
-        """Return all thought records (for audience/frontend view)."""
-        return [r for r in self.records if r.scope == ConversationScope.THOUGHT]
-
     # ── Query methods ─────────────────────────────────────────────
 
     def get_conversations_for_role(
@@ -238,6 +226,3 @@ class ConversationLog:
 
     def get_public(self) -> list[Conversation]:
         return [r for r in self.records if r.scope == ConversationScope.PUBLIC]
-
-    def get_by_round(self, round_num: int) -> list[Conversation]:
-        return [r for r in self.records if r.round_number == round_num]

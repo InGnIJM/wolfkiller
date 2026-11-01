@@ -134,13 +134,6 @@ class TestPlayerState:
         p.mark_dead("wolf_kill")
         assert p.is_alive is False
 
-    def test_reset_alive(self):
-        p = PlayerState(seat_number=1, role="wolf-killer-werewolf", camp="werewolf")
-        p.mark_dead("exile")
-        p.reset_alive()
-        assert p.is_alive is True
-
-
 class TestGameState:
     def test_default_tiebreak_state(self):
         state = GameState(game_id="test")

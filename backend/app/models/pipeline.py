@@ -48,8 +48,6 @@ class SchedulePoint(str, Enum):
     DAY_ACTION = "day_action"
     POST_SPEECH_ACTION = "post_speech_action"
     VOTE_ACTION = "vote_action"
-    ROUND_END = "round_end"
-    GAME_END = "game_end"
 
 
 class EffectKind(str, Enum):

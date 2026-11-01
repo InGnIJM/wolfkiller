@@ -274,11 +274,8 @@ async def test_update_duplicate_name_conflicts(store, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_update_delete_missing_returns_404(store, monkeypatch):
+async def test_update_delete_missing_returns_404(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    with pytest.raises(HTTPException) as exc:
-        await model_routes.get_model("nope")
-    assert exc.value.status_code == 404
     with pytest.raises(HTTPException) as exc:
         await model_routes.update_model(
             "nope", ModelConfigRequest(name="n", base_url="https://x", model_id="m"),
@@ -324,9 +321,9 @@ async def test_delete_rejects_config_referenced_by_unfinished_work(store, monkey
 @pytest.mark.asyncio
 async def test_key_invalid_marks_response(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    cfg = _stored(store, api_key_encrypted="garbage-not-a-token")
+    _stored(store, api_key_encrypted="garbage-not-a-token")
 
-    response = await model_routes.get_model(cfg.id)
+    response = (await model_routes.list_models()).configs[0]
 
     assert response.key_invalid is True
     assert response.api_key_masked is None
@@ -336,9 +333,9 @@ async def test_key_invalid_marks_response(store, monkeypatch):
 @pytest.mark.asyncio
 async def test_config_without_key_has_no_key(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
-    cfg = _stored(store, api_key_encrypted="")
+    _stored(store, api_key_encrypted="")
 
-    response = await model_routes.get_model(cfg.id)
+    response = (await model_routes.list_models()).configs[0]
 
     assert response.has_key is False
     assert response.api_key_masked is None
