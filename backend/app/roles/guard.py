@@ -1,4 +1,5 @@
 from app.core.effect_applier import derive_effect_id
+from app.roles.reasoning import reasoning_effect
 from app.core.time_lock import is_locked, lock_hit_effect
 from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind, GameEffect,
@@ -39,21 +40,9 @@ def _guard_reasoning_effect(
         thought = f"决定守护 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
     else:
         thought = f"决定今晚不守护：{command.reasoning or '无理由'}"
-    return GameEffect(
-        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
-        context.action_key,
-        payload={
-            "event_type": "GUARD_REASONING",
-            "payload": {
-                "seat": context.actor_seat,
-                "action_type": command.action_type,
-                "target_seat": command.target_seat,
-                "reasoning": command.reasoning,
-                "degraded": command.degraded,
-                "thought": thought,
-            },
-        },
-        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    return reasoning_effect(
+        context, command, ordinal, event_type="GUARD_REASONING",
+        thought=thought, **common,
     )
 
 

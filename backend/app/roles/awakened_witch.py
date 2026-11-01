@@ -19,9 +19,10 @@ through the Witch's prompt.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 from app.core.effect_applier import derive_effect_id
+from app.roles.reasoning import reasoning_effect
 from app.models.game import DEFAULT_WITCH_SELF_SAVE
 from app.roles.witch import Witch
 from app.models.pipeline import (
@@ -124,21 +125,11 @@ def _witch_reasoning(
     context: ActionContext, command: ActionCommand, ordinal: int,
     *, action_type: str, target: int | None, thought: str, **common: object,
 ) -> GameEffect:
-    return GameEffect(
-        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
-        context.action_key,
-        payload={
-            "event_type": "WITCH_REASONING",
-            "payload": {
-                "seat": context.actor_seat,
-                "action_type": action_type,
-                "target_seat": target,
-                "reasoning": command.reasoning,
-                "degraded": command.degraded,
-                "thought": thought,
-            },
-        },
-        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    return reasoning_effect(
+        context, command, ordinal, event_type="WITCH_REASONING",
+        thought=thought,
+        action_type=action_type,
+        target_seat=target, **common,
     )
 
 

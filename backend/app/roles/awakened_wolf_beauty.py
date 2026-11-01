@@ -32,7 +32,6 @@ from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
-from app.roles.base import BaseRole
 from app.roles.target_memory import target_memory
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 from app.roles.wolf_claw import (

@@ -22,6 +22,7 @@ sentence: a *model-submitted* ``pass`` is a rule violation
 from __future__ import annotations
 
 from app.core.effect_applier import derive_effect_id
+from app.roles.reasoning import reasoning_effect
 from app.core.night_settlement import DANCE_POOL_STATUS, POISON_IMMUNE_RESOURCE
 from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
@@ -99,21 +100,10 @@ def _reasoning_effect(
         )
     else:
         thought = f"决定今晚不发动起舞：{command.reasoning or '无理由'}"
-    return GameEffect(
-        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
-        context.action_key,
-        payload={
-            "event_type": "DANCER_REASONING",
-            "payload": {
-                "seat": context.actor_seat,
-                "action_type": command.action_type,
-                "target_seat": None,
-                "reasoning": command.reasoning,
-                "degraded": command.degraded,
-                "thought": thought,
-            },
-        },
-        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    return reasoning_effect(
+        context, command, ordinal, event_type="DANCER_REASONING",
+        thought=thought,
+        target_seat=None, **common,
     )
 
 

@@ -15,11 +15,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from app.core.effect_applier import derive_effect_id
+from app.roles.reasoning import reasoning_effect
 from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
     GameEffect, RoleSpec, RuleViolation, SchedulePoint,
 )
-from app.roles.base import BaseRole
 from app.roles.pure_white import ROLE_CHECK_NAMESPACE
 from app.roles.werewolf import WEREWOLF_KILL_CONTRACT, Werewolf
 from app.roles.wolf_claw import (
@@ -69,21 +69,9 @@ def _reasoning_effect(
         )
     else:
         thought = f"决定今晚不查验：{command.reasoning or '无理由'}"
-    return GameEffect(
-        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
-        context.action_key,
-        payload={
-            "event_type": "WOLF_WITCH_REASONING",
-            "payload": {
-                "seat": context.actor_seat,
-                "action_type": command.action_type,
-                "target_seat": command.target_seat,
-                "reasoning": command.reasoning,
-                "degraded": command.degraded,
-                "thought": thought,
-            },
-        },
-        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    return reasoning_effect(
+        context, command, ordinal, event_type="WOLF_WITCH_REASONING",
+        thought=thought, **common,
     )
 
 

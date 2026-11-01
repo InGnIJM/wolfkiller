@@ -28,7 +28,7 @@ from app.core.effect_applier import derive_effect_id
 from app.models.values import DeathCause
 from app.models.pipeline import (
     DEGRADED_THOUGHT, ActionCommand, ActionContext, ActionContract, EffectKind,
-    GameEffect, RoleSpec, RuleViolation, SchedulePoint,
+    GameEffect, RuleViolation, SchedulePoint,
 )
 from app.roles.base import BaseRole
 from app.roles.hidden_wolf import hidden_wolf_role_spec

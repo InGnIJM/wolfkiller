@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from app.roles.base import BaseRole
 from app.core.effect_applier import derive_effect_id
+from app.roles.reasoning import reasoning_effect
 from app.core.reflect import REFLECT_CHECK_RESOURCE, reflect_effects
 from app.core.time_lock import SELF_CHECK_CAMP, is_locked, lock_hit_effect
 from app.models.pipeline import (
@@ -30,21 +31,9 @@ def _seer_reasoning_effect(
         thought = f"决定查验 {command.target_seat} 号玩家：{command.reasoning or '无理由'}"
     else:
         thought = f"决定今晚不查验：{command.reasoning or '无理由'}"
-    return GameEffect(
-        derive_effect_id(context.action_key, ordinal), EffectKind.EMIT_EVENT,
-        context.action_key,
-        payload={
-            "event_type": "SEER_REASONING",
-            "payload": {
-                "seat": context.actor_seat,
-                "action_type": command.action_type,
-                "target_seat": command.target_seat,
-                "reasoning": command.reasoning,
-                "degraded": command.degraded,
-                "thought": thought,
-            },
-        },
-        visibility=("PUBLIC",), sort_key=(ordinal,), **common,
+    return reasoning_effect(
+        context, command, ordinal, event_type="SEER_REASONING",
+        thought=thought, **common,
     )
 
 
