@@ -6,6 +6,8 @@ import asyncio
 import uuid
 from collections.abc import Mapping
 
+from app.core.model_health_guard import ProviderOutageFailed
+from app.core.scheduler import DecisionPaused
 from app.models.game import (
     DEFAULT_VICTORY, DEFAULT_WITCH_SELF_SAVE, VICTORY_POLICIES, WITCH_SELF_SAVE_POLICIES,
 )
@@ -93,10 +95,14 @@ class BenchmarkGameExecutor:
     def __init__(
         self, repository: GameRepository, game_service: GameService, *,
         timeout_poll_seconds: float = 1.0,
+        pause_settle_polls: int = 40,
+        pause_settle_seconds: float = 0.05,
     ) -> None:
         self._repository = repository
         self._game_service = game_service
         self._timeout_poll_seconds = timeout_poll_seconds
+        self._pause_settle_polls = pause_settle_polls
+        self._pause_settle_seconds = pause_settle_seconds
 
     async def __call__(
         self, item: Mapping[str, object],
@@ -195,7 +201,26 @@ class BenchmarkGameExecutor:
                     (wait_task,), timeout=self._timeout_poll_seconds,
                 )
                 if done:
-                    return await wait_task
+                    try:
+                        return await wait_task
+                    except DecisionPaused as error:
+                        # ``wait_game`` re-raises the engine's terminal
+                        # exception, so a recoverable pause arrives here
+                        # mid-wait. Resuming it is the whole point of the
+                        # pause: the point re-runs and only degrades if it
+                        # exhausts a second time, so the card survives one
+                        # bad model streak instead of costing the game.
+                        resumed = await self._resume_decision_pause(
+                            game_id, error,
+                        )
+                        if resumed:
+                            wait_task = asyncio.create_task(
+                                self._game_service.wait_game(game_id),
+                            )
+                            continue
+                        return self._terminal_pause_info(game_id, error)
+                    except asyncio.CancelledError:
+                        return self._runner_cancelled_info(game_id)
                 active_elapsed_ms = self._active_elapsed_ms(game_id)
                 if (
                     type(active_elapsed_ms) is int
@@ -212,6 +237,82 @@ class BenchmarkGameExecutor:
             if not wait_task.done():
                 wait_task.cancel()
                 await asyncio.gather(wait_task, return_exceptions=True)
+
+    async def _resume_decision_pause(
+        self, game_id: str, error: DecisionPaused,
+    ) -> bool:
+        """Resume a recoverable in-flight pause; False when it is terminal."""
+        if type(error) is ProviderOutageFailed or _is_systemic_pause(
+            getattr(error, "code", None),
+        ):
+            return False
+        # The watcher flips the row to ``paused`` inside the engine task's
+        # done callback, which is already scheduled on this loop but is not
+        # guaranteed to have run yet — settle briefly instead of racing it.
+        # ``resume`` on a still-``running`` row is a no-op that would leave
+        # the wait loop parked on a dead engine, so only resume once the
+        # pause is durably visible.
+        record = None
+        for _ in range(self._pause_settle_polls):
+            record = self._repository.get_game(game_id)
+            if record is None or str(
+                record.get("execution_status"),
+            ) != "running":
+                break
+            await asyncio.sleep(self._pause_settle_seconds)
+        if record is None or str(record.get("execution_status")) != "paused":
+            return False
+        try:
+            await self._game_service.resume_benchmark_game(game_id)
+        except Exception:
+            return False
+        return True
+
+    def _runner_cancelled_info(
+        self, game_id: str,
+    ) -> dict[str, object]:
+        """Shape the outcome when the runner was cancelled underneath the wait.
+
+        ``cancel_benchmark_game`` commits the durable ``cancelled`` row before
+        the task dies — e.g. the runtime-clock heartbeat enforcing the armed
+        timeout — so the row, not the runner's ``CancelledError``, is the
+        authoritative outcome. Re-raising here would kill the worker and leave
+        the item ``running``, stalling the whole run.
+        """
+        record = self._repository.get_game(game_id) or {}
+        status = str(record.get("execution_status") or "")
+        if status in {"", "running", "paused"}:
+            status = "cancelled"
+        return {
+            "execution_status": status,
+            "recovery_block_code": (
+                record.get("recovery_block_code")
+                or "benchmark_runner_cancelled"
+            ),
+        }
+
+    def _terminal_pause_info(
+        self, game_id: str, error: DecisionPaused,
+    ) -> dict[str, object]:
+        """Shape the failure info for a pause that must not be resumed.
+
+        The item outcome is terminal regardless of the row's own status: a
+        systemic pause refuses to resume like the dispatch branch does, and a
+        one-shot pause whose resume already failed has no next step either.
+        """
+        record = self._repository.get_game(game_id) or {}
+        status = str(record.get("execution_status") or "failed")
+        if status in ("running", "paused"):
+            status = "failed"
+        return {
+            "execution_status": status,
+            "recovery_block_code": (
+                record.get("recovery_block_code")
+                or record.get("pause_code")
+                or getattr(error, "code", None)
+                or type(error).__name__
+            ),
+        }
 
     def _active_elapsed_ms(self, game_id: str) -> int | None:
         live = getattr(self._game_service, "live_active_elapsed_ms", None)

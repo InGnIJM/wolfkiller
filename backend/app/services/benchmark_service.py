@@ -17,6 +17,47 @@ from app.persistence.repository import (
 )
 from app.services.benchmark_metrics import BenchmarkMetrics
 from app.services.game_summary import read_game_summary
+from app.stores.model_config_store import get_model_config_store
+
+
+def _model_labels() -> dict[str, str]:
+    """Config id → display label, best-effort.
+
+    ``model_performance`` and ``mixed_uncertainty`` rows key on the config id;
+    the label adds the human-readable ``name (model_id)`` the store knows at
+    report-generation time. A missing store or deleted config just yields no
+    label and the raw id stays as the fallback.
+    """
+    labels: dict[str, str] = {}
+    try:
+        configs = get_model_config_store().list_all()
+    except Exception:
+        return labels
+    for config in configs:
+        label = config.name or config.model_id
+        if config.model_id and config.model_id not in label:
+            label = f"{label} ({config.model_id})"
+        labels[config.id] = label
+    return labels
+
+
+def _apply_model_labels(report: Mapping[str, Any]) -> None:
+    labels = _model_labels()
+    if not labels:
+        return
+    summary = report.get("summary")
+    if not isinstance(summary, Mapping):
+        return
+    for key in ("model_performance", "mixed_uncertainty"):
+        rows = summary.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            label = labels.get(row.get("model"))
+            if label:
+                row["model_label"] = label
 
 
 ItemExecutor = Callable[[Mapping[str, object]], Awaitable[tuple[str, str, str | None]]]
@@ -563,6 +604,7 @@ class BenchmarkService:
                 ["paired_latency_ms"]["excluded_incomplete_pairs"],
             },
         }
+        _apply_model_labels(report)
         self._repository.save_benchmark_report(
             run_id, metric_version=report["metric_version"],
             input_digest=report["input_digest"], report=report,
