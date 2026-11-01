@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 T = TypeVar("T")
 _FOLDER_NAME_MAX = 50
 
@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS model_attempts (
     prompt_tokens INTEGER CHECK(prompt_tokens IS NULL OR prompt_tokens >= 0),
     completion_tokens INTEGER CHECK(completion_tokens IS NULL OR completion_tokens >= 0),
     total_tokens INTEGER CHECK(total_tokens IS NULL OR total_tokens >= 0),
+    cached_prompt_tokens INTEGER CHECK(cached_prompt_tokens IS NULL OR cached_prompt_tokens >= 0),
     usage_known INTEGER NOT NULL DEFAULT 0 CHECK(usage_known IN (0, 1)),
     failure_code TEXT,
     FOREIGN KEY (game_id, request_id) REFERENCES model_requests(game_id, request_id) ON DELETE CASCADE,
@@ -424,6 +425,21 @@ class GameRepository:
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (5, _now()),
+                )
+            if current < 6:
+                tables = {
+                    row[0] for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                if "model_attempts" in tables:
+                    _ensure_column(
+                        connection, "model_attempts", "cached_prompt_tokens",
+                        "INTEGER CHECK(cached_prompt_tokens IS NULL OR cached_prompt_tokens >= 0)",
+                    )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (6, _now()),
                 )
 
     def _write(self, function: Callable[..., T], *args: object) -> T:
@@ -1422,10 +1438,12 @@ class GameRepository:
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE model_attempts SET status=?,finished_at=?,elapsed_ms=?,"
-                "prompt_tokens=?,completion_tokens=?,total_tokens=?,usage_known=?,failure_code=? "
+                "prompt_tokens=?,completion_tokens=?,total_tokens=?,cached_prompt_tokens=?,"
+                "usage_known=?,failure_code=? "
                 "WHERE attempt_id=?",
                 (status, _now(), elapsed_ms, values.get("prompt_tokens"),
                  values.get("completion_tokens"), values.get("total_tokens"),
+                 values.get("cached_prompt_tokens"),
                  int(usage is not None), failure_code, attempt_id),
             )
             if cursor.rowcount != 1:

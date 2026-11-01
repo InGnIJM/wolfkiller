@@ -270,9 +270,11 @@ class ModelInvocationService:
         if not isinstance(value, Mapping):
             raise TypeError("usage must be an object or null")
         names = {"prompt_tokens", "completion_tokens", "total_tokens"}
-        if set(value) != names or any(type(value[name]) is not int or value[name] < 0 for name in names):
+        # The prefix-cache hit count is optional: most providers never report it.
+        present = names | ({"cached_prompt_tokens"} & set(value))
+        if set(value) != present or any(type(value[name]) is not int or value[name] < 0 for name in present):
             raise ValueError("usage must contain non-negative token counts")
-        return {name: int(value[name]) for name in names}
+        return {name: int(value[name]) for name in present}
 
     @staticmethod
     def _failure_code(error: BaseException) -> str:

@@ -617,11 +617,14 @@ def _decode(adapter: CallAdapter, row: Mapping[str, object]):
 def _usage_row(usage: LLMUsage | None) -> Mapping[str, int] | None:
     if usage is None:
         return None
-    return {
+    row = {
         "prompt_tokens": usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
         "total_tokens": usage.total_tokens,
     }
+    if usage.cached_prompt_tokens is not None:
+        row["cached_prompt_tokens"] = usage.cached_prompt_tokens
+    return row
 
 
 def _failure_code(error: BaseException) -> str:
