@@ -113,6 +113,29 @@ class LLMUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    #: Prompt tokens served from the provider's prefix cache; ``None`` when the
+    #: provider did not report it (unknown is not zero).
+    cached_prompt_tokens: int | None = None
+
+
+#: Where each provider dialect reports prefix-cache hits, in precedence order:
+#: LangChain's normalized metadata, OpenAI ``prompt_tokens_details`` and
+#: DeepSeek's top-level ``prompt_cache_hit_tokens``.
+_CACHE_PATHS: tuple[tuple[str, str | None], ...] = (
+    ("input_token_details", "cache_read"),
+    ("prompt_tokens_details", "cached_tokens"),
+    ("prompt_cache_hit_tokens", None),
+)
+
+
+def _cached_from_map(mapping: Mapping, prompt_tokens: int) -> int | None:
+    for key, inner in _CACHE_PATHS:
+        value = mapping.get(key)
+        if inner is not None:
+            value = value.get(inner) if isinstance(value, Mapping) else None
+        if type(value) is int and value >= 0:
+            return min(value, prompt_tokens)
+    return None
 
 
 @dataclass(frozen=True)
@@ -144,20 +167,28 @@ def _usage_from_map(mapping: Any) -> LLMUsage | None:
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        cached_prompt_tokens=_cached_from_map(mapping, prompt_tokens),
     )
 
 
 def extract_usage(response: Any) -> LLMUsage | None:
     """Read token usage from a model response in either metadata dialect."""
     usage = _usage_from_map(getattr(response, "usage_metadata", None))
-    if usage is not None:
-        return usage
     response_metadata = getattr(response, "response_metadata", None)
     token_usage = (
         response_metadata.get("token_usage")
         if isinstance(response_metadata, Mapping) else None
     )
-    return _usage_from_map(token_usage)
+    if usage is None:
+        return _usage_from_map(token_usage)
+    if usage.cached_prompt_tokens is None and isinstance(token_usage, Mapping):
+        # LangChain only normalizes the OpenAI dialect; DeepSeek's top-level
+        # hit count survives in the raw token usage.
+        usage = replace(
+            usage,
+            cached_prompt_tokens=_cached_from_map(token_usage, usage.prompt_tokens),
+        )
+    return usage
 
 
 def merge_usage(first: LLMUsage | None, second: LLMUsage | None) -> LLMUsage | None:
@@ -170,6 +201,11 @@ def merge_usage(first: LLMUsage | None, second: LLMUsage | None) -> LLMUsage | N
         prompt_tokens=first.prompt_tokens + second.prompt_tokens,
         completion_tokens=first.completion_tokens + second.completion_tokens,
         total_tokens=first.total_tokens + second.total_tokens,
+        cached_prompt_tokens=(
+            None
+            if first.cached_prompt_tokens is None and second.cached_prompt_tokens is None
+            else (first.cached_prompt_tokens or 0) + (second.cached_prompt_tokens or 0)
+        ),
     )
 
 

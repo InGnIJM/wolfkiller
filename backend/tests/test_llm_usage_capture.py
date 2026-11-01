@@ -94,6 +94,83 @@ class TestUsageHelpers:
         assert merge_usage(None, None) is None
 
 
+class TestCachedPromptTokens:
+    """Prefix-cache hits ride in three provider dialects; all land in one field."""
+
+    def test_defaults_to_unknown(self):
+        assert LLMUsage(1, 2, 3).cached_prompt_tokens is None
+
+    def test_reads_langchain_input_token_details(self):
+        metadata = {**_usage_metadata(100, 4, 104), "input_token_details": {"cache_read": 64}}
+
+        usage = extract_usage(SimpleNamespace(usage_metadata=metadata))
+
+        assert usage == LLMUsage(100, 4, 104, cached_prompt_tokens=64)
+
+    def test_reads_openai_prompt_tokens_details(self):
+        token_usage = {**_token_usage(50, 3, 53), "prompt_tokens_details": {"cached_tokens": 32}}
+
+        usage = extract_usage(SimpleNamespace(
+            usage_metadata=None, response_metadata={"token_usage": token_usage},
+        ))
+
+        assert usage.cached_prompt_tokens == 32
+
+    def test_reads_deepseek_prompt_cache_hit_tokens(self):
+        token_usage = {**_token_usage(50, 3, 53), "prompt_cache_hit_tokens": 48}
+
+        usage = extract_usage(SimpleNamespace(
+            usage_metadata=None, response_metadata={"token_usage": token_usage},
+        ))
+
+        assert usage.cached_prompt_tokens == 48
+
+    def test_metadata_without_cache_borrows_it_from_token_usage(self):
+        usage = extract_usage(SimpleNamespace(
+            usage_metadata=_usage_metadata(80, 2, 82),
+            response_metadata={"token_usage": {"prompt_cache_hit_tokens": 16}},
+        ))
+
+        assert usage == LLMUsage(80, 2, 82, cached_prompt_tokens=16)
+
+    def test_metadata_without_cache_and_no_token_usage_stays_unknown(self):
+        usage = extract_usage(SimpleNamespace(
+            usage_metadata=_usage_metadata(80, 2, 82),
+            response_metadata={"token_usage": {"unrelated": 1}},
+        ))
+
+        assert usage.cached_prompt_tokens is None
+        assert extract_usage(SimpleNamespace(
+            usage_metadata=_usage_metadata(80, 2, 82), response_metadata="junk",
+        )).cached_prompt_tokens is None
+
+    @pytest.mark.parametrize("details", [
+        {"input_token_details": "junk"},
+        {"input_token_details": {"cache_read": None}},
+        {"input_token_details": {"cache_read": True}},
+        {"input_token_details": {"cache_read": -1}},
+        {"prompt_tokens_details": {"cached_tokens": 1.5}},
+    ])
+    def test_malformed_cache_counts_are_unknown(self, details):
+        metadata = {**_usage_metadata(10, 1, 11), **details}
+
+        assert extract_usage(SimpleNamespace(usage_metadata=metadata)).cached_prompt_tokens is None
+
+    def test_cache_hits_never_exceed_the_prompt(self):
+        metadata = {**_usage_metadata(10, 1, 11), "input_token_details": {"cache_read": 99}}
+
+        assert extract_usage(SimpleNamespace(usage_metadata=metadata)).cached_prompt_tokens == 10
+
+    def test_merge_sums_known_cache_counts(self):
+        known = LLMUsage(10, 1, 11, cached_prompt_tokens=8)
+        unknown = LLMUsage(5, 1, 6)
+
+        assert merge_usage(known, known).cached_prompt_tokens == 16
+        assert merge_usage(known, unknown).cached_prompt_tokens == 8
+        assert merge_usage(unknown, known).cached_prompt_tokens == 8
+        assert merge_usage(unknown, unknown).cached_prompt_tokens is None
+
+
 class _ScriptedModel:
     """Fake chat model returning queued responses or raising queued errors."""
 
