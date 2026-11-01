@@ -465,7 +465,7 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
     facts = _native_metric_facts()
     report = BenchmarkMetrics.compute(**facts)
 
-    assert report["metric_version"] == "v6"
+    assert report["metric_version"] == "v7"
     assert len(report["input_digest"]) == 64
     summary = report["summary"]
     assert summary["games"] == {
@@ -521,6 +521,10 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
         "known_completion_tokens": 15,
         "known_total_tokens": 45,
         "completeness_rate": 0.5,
+        "cache_known_attempts": 0,
+        "cache_known_prompt_tokens": 0,
+        "known_cached_prompt_tokens": 0,
+        "cache_hit_rate": None,
     }
     assert summary["requests"]["unknown"] == 0
     assert summary["attempts"]["executed_requests"] == 3
@@ -1113,3 +1117,31 @@ def test_rule_rejection_metrics_ignore_malformed_summary_shapes() -> None:
         "detailed_games": 0,
         "samples": {"games": 4, "requests": 4},
     }
+
+
+def test_cache_hit_rate_uses_only_attempts_that_reported_cache_hits() -> None:
+    from app.services.benchmark_metrics import _attempt_metrics
+
+    rows = [
+        {"game_id": "g", "request_id": "a", "usage_known": True,
+         "prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101,
+         "cached_prompt_tokens": 75},
+        {"game_id": "g", "request_id": "b", "usage_known": True,
+         "prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101,
+         "cached_prompt_tokens": 0},
+        {"game_id": "g", "request_id": "c", "usage_known": True,
+         "prompt_tokens": 900, "completion_tokens": 1, "total_tokens": 901,
+         "cached_prompt_tokens": None},
+        {"game_id": "g", "request_id": "d", "usage_known": True,
+         "prompt_tokens": 900, "completion_tokens": 1, "total_tokens": 901,
+         "cached_prompt_tokens": -3},
+        {"game_id": "g", "request_id": "e", "usage_known": False,
+         "cached_prompt_tokens": 5},
+    ]
+
+    usage = _attempt_metrics(rows)["token_usage"]
+
+    assert usage["cache_known_attempts"] == 2
+    assert usage["cache_known_prompt_tokens"] == 200
+    assert usage["known_cached_prompt_tokens"] == 75
+    assert usage["cache_hit_rate"] == 0.375

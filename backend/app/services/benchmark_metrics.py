@@ -47,7 +47,8 @@ from app.benchmark.metrics import (
 #: ``reliability.by_contract``, ``games.win_reason_distribution``,
 #: ``attempts.retry_rate``/``tokens_per_attempt``, ``info_roles_present`` and a
 #: Wilson interval for single-block runs.
-METRIC_VERSION = "v6"
+#: v7 adds the prefix-cache hit rate to ``attempts.token_usage``.
+METRIC_VERSION = "v7"
 _BOOTSTRAP_SEED = 1729
 _BOOTSTRAP_SAMPLES = 2000
 _CONFIDENCE = 0.95
@@ -656,6 +657,16 @@ def _attempt_metrics(
         _token_value(row, "completion_tokens") for row in known
     )
     total_tokens = sum(_token_value(row, "total_tokens") for row in known)
+    # Only attempts whose provider reported a cache count enter the hit rate;
+    # a provider that never reports one is unknown, not a 0% hit.
+    cache_known = [
+        row for row in known
+        if type(row.get("cached_prompt_tokens")) is int and row["cached_prompt_tokens"] >= 0
+    ]
+    cache_prompt_tokens = sum(_token_value(row, "prompt_tokens") for row in cache_known)
+    cached_prompt_tokens = sum(
+        _token_value(row, "cached_prompt_tokens") for row in cache_known
+    )
     unknown_count = len(attempts) - len(known)
     completeness_rate = _rate(len(known), len(attempts))
     # The truthful retry rate is in each game's ``summary.llm`` block, counted
@@ -697,6 +708,10 @@ def _attempt_metrics(
             "known_completion_tokens": completion_tokens,
             "known_total_tokens": total_tokens,
             "completeness_rate": completeness_rate,
+            "cache_known_attempts": len(cache_known),
+            "cache_known_prompt_tokens": cache_prompt_tokens,
+            "known_cached_prompt_tokens": cached_prompt_tokens,
+            "cache_hit_rate": _rate(cached_prompt_tokens, cache_prompt_tokens),
         },
         # Mean cost per provider attempt that reported usage. Unknown usage is
         # not zero, so the denominator is the known subset — dividing by every
