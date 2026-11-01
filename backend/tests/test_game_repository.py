@@ -29,7 +29,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
         assert repository.database_path == tmp_path / "wolfkiller.sqlite3"
-        assert repository.schema_version() == 5
+        assert repository.schema_version() == 6
         pragmas = repository.pragmas()
         assert pragmas == {
             "journal_mode": "wal",
@@ -226,6 +226,7 @@ def test_model_request_attempt_lifecycle_preserves_unknown_usage(tmp_path) -> No
         attempts = repository.list_model_attempts("game-1")
         assert attempts[0]["usage_known"] is False
         assert attempts[0]["total_tokens"] is None
+        assert attempts[0]["cached_prompt_tokens"] is None
     finally:
         repository.close()
 
@@ -539,7 +540,7 @@ def test_v3_database_gains_the_pause_columns(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 5
+        assert repository.schema_version() == 6
         row = repository.get_game("old")
         assert row["pause_code"] is None
         assert row["pause_detail"] == {}
@@ -565,7 +566,7 @@ def test_v4_database_gains_the_attempts_started_index(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 5
+        assert repository.schema_version() == 6
         with repository._connect() as connection:
             names = {
                 row[0] for row in connection.execute(
@@ -573,6 +574,37 @@ def test_v4_database_gains_the_attempts_started_index(tmp_path) -> None:
                 )
             }
         assert "idx_model_attempts_started_at" in names
+        with repository._connect() as connection:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")
+            }
+        assert "cached_prompt_tokens" in columns
+    finally:
+        repository.close()
+
+
+def test_model_attempt_records_prefix_cache_hits(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        repository.prepare_model_request(
+            game_id="game-1", request_id="request-1", actor_seat=2,
+            action_position="round:1:speech:seat:2", request_digest="digest",
+            provider_profile="openai", model_id="model-a",
+        )
+        attempt = repository.start_model_attempt(
+            game_id="game-1", request_id="request-1", execution_generation=1,
+        )
+        repository.finish_model_attempt(
+            attempt["attempt_id"], status="resolved", failure_code=None,
+            elapsed_ms=5, usage={
+                "prompt_tokens": 100, "completion_tokens": 5,
+                "total_tokens": 105, "cached_prompt_tokens": 64,
+            },
+        )
+        row = repository.list_model_attempts("game-1")[0]
+        assert row["cached_prompt_tokens"] == 64
+        assert row["prompt_tokens"] == 100
     finally:
         repository.close()
 

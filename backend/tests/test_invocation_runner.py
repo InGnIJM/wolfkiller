@@ -712,6 +712,10 @@ class TestPureHelpers:
         assert _usage_row(USAGE) == {
             "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
         }
+        assert _usage_row(LLMUsage(10, 5, 15, cached_prompt_tokens=8)) == {
+            "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+            "cached_prompt_tokens": 8,
+        }
 
     def test_the_failure_code_prefers_the_stable_token(self):
         assert _failure_code(UnusableModelOutput("x", code="response_no_tool_call")) == (

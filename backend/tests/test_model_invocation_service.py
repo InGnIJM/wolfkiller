@@ -273,6 +273,15 @@ def test_request_digest_and_result_usage_validation_reject_noncanonical_values()
     }) == {
         "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 4,
     }
+    cached = {
+        "prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11,
+        "cached_prompt_tokens": 8,
+    }
+    assert ModelInvocationService._normalize_usage(cached) == cached
+    with pytest.raises(ValueError, match="non-negative"):
+        ModelInvocationService._normalize_usage({**cached, "cached_prompt_tokens": -1})
+    with pytest.raises(ValueError, match="non-negative"):
+        ModelInvocationService._normalize_usage({**cached, "extra": 1})
 
 
 def test_sync_invocation_keeps_payload_when_usage_totals_include_thinking() -> None:
