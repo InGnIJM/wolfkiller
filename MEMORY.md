@@ -815,3 +815,11 @@
   pre-seeds model.__dict__ _client/_async_client with private SDK clients.
   discard_shared_http_clients() only protects models built later — it does
   not resurrect models already cached in LLMClient._built_models.
+
+## 前缀缓存：滑动窗口和 system 里的座位号是两大杀手
+
+- 触发条件：provider 控制台缓存命中率低 / 想降 prompt 成本。
+- 根因（2026-11-01 复盘）：自动前缀缓存只命中**从第一个 token 起**逐字相同的部分。旧布局把身份、回合、存活、`revision` 放在最前，整局不变的 `<public_role_rules>`（12 人板 7–8k 字）放在后面；狼队讨论在 system 第 766 字就插入 `seat` + `persona_line`；历史全是 `[-30:]` / `[-120:]` / `[-20000:]` 滑动窗口，每多一条记录起点就后移；白天三种 scope 共用一个 `[-30:]`，导致不同座位的公开历史不一致。统计侧 `LLMUsage` 根本没读 cached tokens，所以问题一直不可见。
+- 动作：按「整局不变 → 跨座位共享 → 座位不变 → 追加型 → 易变 → 任务」排列；截断用 `agents/prompt_window.stable_tail*`（整步前移）；不要为此改 system 文本（`prompt_drift`）。改完用 `scripts/prompt_size_report.py --prefix` 看理论上限、单局 summary `llm.cache` 看实测。
+- 坑：langchain-openai 只把 `prompt_tokens_details.cached_tokens` 归一到 `input_token_details.cache_read`，DeepSeek 的 `prompt_cache_hit_tokens` 要从 `response_metadata.token_usage` 补读；未报告缓存字段的调用必须排除出分母，否则命中率被稀释成假 0%。
+- 已知遗留（与本改动无关）：`tests/test_base_role.py` 的 5 条 vote telemetry 用例在 HEAD `1b771a3` 已失败（`ConversationLog` 不再转发 `log_vote_telemetry`）。
