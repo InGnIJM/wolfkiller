@@ -371,3 +371,48 @@ def test_model_latency_stats_window_and_sample_floor(tmp_path) -> None:
         ) == {}
     finally:
         repository.close()
+
+
+def test_list_benchmark_games_filters_status_and_skips_deleted(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        repository.create_benchmark_run(
+            run_id="run-1", client_request_id="client-1", request_digest="request",
+            name="A/B", mode="paired_regression", config={}, schedule=[],
+        )
+        for game_id, status in (
+            ("running-game", "running"),
+            ("paused-game", "paused"),
+            ("done-game", "completed"),
+            ("deleted-game", "running"),
+        ):
+            repository.create_game(
+                game_id=game_id, name=game_id, config={},
+                execution_status=status, source="benchmark", model_snapshot=[],
+                benchmark_run_id="run-1",
+            )
+        repository.create_game(
+            game_id="foreign-game", name="foreign", config={},
+            execution_status="running", source="benchmark", model_snapshot=[],
+            benchmark_run_id="run-2",
+        )
+        with repository._connect() as connection:
+            connection.execute(
+                "UPDATE games SET deleted_at=? WHERE game_id=?",
+                ("2026-01-01T00:00:00+00:00", "deleted-game"),
+            )
+
+        assert [
+            game["game_id"]
+            for game in repository.list_benchmark_games("run-1", ("running",))
+        ] == ["running-game"]
+        assert {
+            game["game_id"]
+            for game in repository.list_benchmark_games(
+                "run-1", ("running", "paused"),
+            )
+        } == {"running-game", "paused-game"}
+        assert repository.list_benchmark_games("run-1", ()) == []
+        assert repository.list_benchmark_games("run-missing", ("running",)) == []
+    finally:
+        repository.close()

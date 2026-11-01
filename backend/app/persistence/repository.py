@@ -1667,6 +1667,26 @@ class GameRepository:
                 (run_id,),
             )]
 
+    def list_benchmark_games(
+        self, run_id: str, statuses: tuple[str, ...],
+    ) -> list[dict[str, object]]:
+        """Games owned by a run, read from the games table itself.
+
+        ``benchmark_items.game_id`` is bound inside the same transaction that
+        inserts the game row, so this view sees every committed game — unlike
+        an item scan, which can miss a game committed mid-cancel.
+        """
+        if not statuses:
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(
+                f"SELECT game_id,execution_status FROM games "
+                f"WHERE benchmark_run_id=? AND deleted_at IS NULL "
+                f"AND execution_status IN ({placeholders}) ORDER BY game_id",
+                (run_id, *statuses),
+            )]
+
     def get_benchmark_item(
         self, run_id: str, item_index: int,
     ) -> dict[str, object] | None:
