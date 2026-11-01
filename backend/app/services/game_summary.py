@@ -84,6 +84,7 @@ def _round_bucket(rounds: dict, rnd: object) -> dict:
         bucket = {
             "speeches": [], "votes": [], "deaths": [], "night_actions": [],
             "technical_abstains": 0, "rejected_actions": 0,
+            "rejected_action_details": [],
             "sheriff_ballots": 0, "sheriff_abstains": 0,
             "sheriff_technical_abstains": 0, "degraded_actions": 0,
             "exiled": None, "tally": {},
@@ -229,8 +230,15 @@ def _summarize(
                     # The model answered something the rules forbid and the
                     # engine stood in with the contract's fallback. Counted per
                     # round so a report can tell a giving-up model from an
-                    # outage; the slow-rule bucket keeps only real timings.
-                    _round_bucket(rounds, rnd)["rejected_actions"] += 1
+                    # outage; the slow-rule bucket keeps only real timings. The
+                    # detail list keeps the contract and violation so a report
+                    # can break rejections down per contract.
+                    bucket = _round_bucket(rounds, rnd)
+                    bucket["rejected_actions"] += 1
+                    bucket["rejected_action_details"].append({
+                        "contract_id": data.get("contract_id"),
+                        "violation": data.get("violation"),
+                    })
                     continue
                 slow_rules.append({
                     "stage": data.get("stage"),

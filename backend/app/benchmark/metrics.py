@@ -16,6 +16,23 @@ from app.roles.registry import builtin_registry
 _WEREWOLF_CAMP = "werewolf"
 #: The one seat the Wolf Witch's check is aimed at (role ids are stable).
 PURE_WHITE_ROLE = "wolf-killer-pure-white"
+#: Roles whose nightly action learns another seat's hidden identity or camp —
+#: the "information" seats a board's decision metrics are actually about. A
+#: run whose boards carry none of these cannot answer the check questions at
+#: all, so coverage names which ones were present instead of asking only
+#: whether a literal ``wolf-killer-seer`` was dealt.
+INFO_ROLES = frozenset({
+    "wolf-killer-seer",
+    "wolf-killer-awakened-seer",
+    "wolf-killer-fool-seer",
+    "wolf-killer-pure-white",
+    "wolf-killer-mirror-girl",
+    "wolf-killer-wolf-witch",
+    "wolf-killer-gargoyle",
+    "wolf-killer-gravekeeper",
+    "wolf-killer-awakened-hidden-wolf",
+    "wolf-killer-demon-hunter",
+})
 _GOD_TAG = "god"
 _WOLF_TAG = "wolf"
 _ROUNDS_KEY = "rounds"
@@ -392,6 +409,7 @@ def compute_board_coverage(summaries: list[dict]) -> dict:
             continue
         key = tuple(sorted(counts.items()))
         boards[key] = boards.get(key, 0) + 1
+    dealt = {role for key in boards for role in dict(key)}
     return {
         "boards": [
             {"role_counts": dict(key), "games": games}
@@ -401,7 +419,11 @@ def compute_board_coverage(summaries: list[dict]) -> dict:
         ],
         # The seer is the one role the metric review called out by name: a run
         # without it cannot answer the seer questions at all.
-        "seer_present": any("wolf-killer-seer" in dict(key) for key in boards),
+        "seer_present": "wolf-killer-seer" in dealt,
+        # The generalised version: which information roles (any of the nightly
+        # check seats) this run's boards actually carried. An empty list means
+        # the pooled check hit-rates are all "no opportunity" by construction.
+        "info_roles_present": sorted(dealt & INFO_ROLES),
     }
 
 

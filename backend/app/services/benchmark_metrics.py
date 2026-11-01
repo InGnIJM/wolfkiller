@@ -12,7 +12,9 @@ never reads a database, clock, network, or model:
   or ``evaluation_camp``.  These fields may instead be inside ``assignment``
   or JSON-encoded ``assignment_json``.
 * ``model_requests``: terminal ``status`` and optional ``normalized_result``.
-  A resolved ``pass``/``abstain`` result is counted as an abstention.
+  A resolved ``pass``/``abstain`` result counts as a *voluntary* abstention;
+  an engine-substituted answer (``degraded`` marker, ``technical_failure_code``
+  or a ``technical_abstain`` payload) counts as a failure instead.
 * ``model_attempts``: ``elapsed_ms``, ``usage_known`` and token columns.
 
 The returned digest hashes canonical JSON with each fact table sorted, so
@@ -40,7 +42,12 @@ from app.benchmark.metrics import (
 #: v4 splits the vote metrics by ballot (exile / sheriff), reports the new roles'
 #: check hit rates, and stops printing a bootstrap sample count for runs that
 #: were never resampled.
-METRIC_VERSION = "v5"
+#: v6 splits abstentions into voluntary vs technical (the ``degraded`` marker
+#: was already in the ledger but never read), adds ``pass_breakdown``,
+#: ``reliability.by_contract``, ``games.win_reason_distribution``,
+#: ``attempts.retry_rate``/``tokens_per_attempt``, ``info_roles_present`` and a
+#: Wilson interval for single-block runs.
+METRIC_VERSION = "v6"
 _BOOTSTRAP_SEED = 1729
 _BOOTSTRAP_SAMPLES = 2000
 _CONFIDENCE = 0.95
@@ -88,7 +95,14 @@ class BenchmarkMetrics:
             "metric_version": METRIC_VERSION,
             "input_digest": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
             "summary": {
-                "games": _game_metrics(facts["games"]),
+                "games": {
+                    **_game_metrics(facts["games"]),
+                    # Victory attribution (屠神/屠民/狼数优势/屠城…) lives in
+                    # each game's ``summary.json`` ``reason`` field.
+                    "win_reason_distribution": _win_reason_distribution(
+                        facts["summaries"],
+                    ),
+                },
                 "decision": {
                     **compute_decision_metrics(facts["summaries"]),
                     "samples": compute_decision_samples(facts["summaries"]),
@@ -104,7 +118,9 @@ class BenchmarkMetrics:
                     facts["summaries"], requests["total"],
                 ),
                 "requests": requests,
-                "attempts": _attempt_metrics(facts["model_attempts"]),
+                "attempts": _attempt_metrics(
+                    facts["model_attempts"], facts["summaries"],
+                ),
                 "model_performance": _model_performance(
                     facts["games"], facts["items"],
                 ),
@@ -270,6 +286,26 @@ def _game_metrics(games: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _win_reason_distribution(summaries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """How games were actually won, pooled across summaries with a verdict.
+
+    The ``reason`` field distinguishes 屠神 (``all_gods_dead``), 屠民
+    (``all_villagers_dead``), number superiority (``wolves_outnumber_good``),
+    屠城 and third-party endings — the balance question a camp win rate alone
+    cannot answer.
+    """
+    counts: dict[str, int] = {}
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            continue
+        if not summary.get("winner"):
+            continue
+        reason = summary.get("reason")
+        reason = reason if isinstance(reason, str) and reason else "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _result(request: Mapping[str, Any]) -> Mapping[str, Any]:
     result = request.get("normalized_result")
     if isinstance(result, Mapping):
@@ -283,20 +319,45 @@ def _result(request: Mapping[str, Any]) -> Mapping[str, Any]:
     return {}
 
 
+def _is_technical(request: Mapping[str, Any], result: Mapping[str, Any]) -> bool:
+    """The request ended on an engine-produced answer, not a model decision.
+
+    Three durable markers exist and all of them count: the pipeline stamps
+    ``degraded: true`` on a fallback command, the exile ballot stores a
+    ``technical_failure_code`` next to the nested ``command``, and the vote
+    ladder can emit the literal ``technical_abstain`` action. A ``failed``
+    status is technical by definition.
+    """
+    receipt = _vote_receipt(request)
+    action = receipt.get("action_type")
+    action = action.lower() if isinstance(action, str) else ""
+    status = request.get("status")
+    return bool(
+        (isinstance(status, str) and status.lower() == "failed")
+        or result.get("technical_failure_code")
+        or result.get("degraded") is True
+        or receipt.get("degraded") is True
+        or action == "technical_abstain"
+    )
+
+
 def _request_class(request: Mapping[str, Any]) -> str:
     status = request.get("status")
     status = status.lower() if isinstance(status, str) else ""
     result = _result(request)
-    action = result.get("action_type")
-    action = action.lower() if isinstance(action, str) else ""
-    if status in _ABSTAIN_STATUSES or action in _ABSTAIN_ACTIONS:
-        return "abstained"
-    if status in _SUCCESS_STATUSES:
-        return "successful"
     if status in _PENDING_STATUSES:
         return "pending"
     if status in _CANCELLED_STATUSES:
         return "cancelled"
+    if _is_technical(request, result):
+        return "failed"
+    receipt = _vote_receipt(request)
+    action = receipt.get("action_type")
+    action = action.lower() if isinstance(action, str) else ""
+    if status in _ABSTAIN_STATUSES or action in _ABSTAIN_ACTIONS:
+        return "voluntary_abstained"
+    if status in _SUCCESS_STATUSES:
+        return "successful"
     return "failed"
 
 
@@ -355,13 +416,16 @@ def _vote_receipt(request: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def _is_fallback(request: Mapping[str, Any], category: str) -> bool:
     result = _result(request)
+    receipt = _vote_receipt(request)
     marker = result.get("fallback", result.get("system_fallback"))
     source = result.get("source")
-    action = result.get("action_type")
+    action = receipt.get("action_type")
     return (
         category == "failed"
         or marker is True
         or source == "system_fallback"
+        or result.get("degraded") is True
+        or receipt.get("degraded") is True
         or action == "technical_abstain"
     )
 
@@ -375,9 +439,17 @@ def _rule_rejection_metrics(
     the scheduler's ``action_rejected`` telemetry. The model request itself is
     ``consumed`` (the provider answered); only the rules rejected the answer,
     so this is deliberately separate from ``requests.failure_rate``.
+
+    ``by_contract`` breaks rejections down per contract and violation code,
+    read from ``rejected_action_details`` — the field that tells a prompt that
+    needs fixing from a model that cannot follow a schema. Summaries written
+    before the detail list existed only carry the integer total and contribute
+    to the pooled count, not to the breakdown.
     """
     rejected = 0
     games = 0
+    by_contract: dict[str, dict[str, Any]] = {}
+    detailed_games = 0
     for summary in summaries:
         if not isinstance(summary, Mapping):
             continue
@@ -385,26 +457,74 @@ def _rule_rejection_metrics(
         if not isinstance(rounds, Mapping):
             continue
         games += 1
+        game_has_detail = False
         for bucket in rounds.values():
             if not isinstance(bucket, Mapping):
                 continue
             value = bucket.get("rejected_actions")
             if type(value) is int and value > 0:
                 rejected += value
+            details = bucket.get("rejected_action_details")
+            if not isinstance(details, Sequence) or isinstance(
+                details, (str, bytes),
+            ):
+                continue
+            for detail in details:
+                if not isinstance(detail, Mapping):
+                    continue
+                game_has_detail = True
+                contract = detail.get("contract_id")
+                contract = contract if isinstance(contract, str) and contract else "unknown"
+                row = by_contract.setdefault(
+                    contract, {"rejected": 0, "violations": {}},
+                )
+                row["rejected"] += 1
+                violation = detail.get("violation")
+                violation = violation if isinstance(violation, str) and violation else "unknown"
+                violations = row["violations"]
+                violations[violation] = violations.get(violation, 0) + 1
+        detailed_games += int(game_has_detail)
     return {
         "rule_rejected": rejected,
         "games": games,
         "per_game": _rate(rejected, games),
         "per_request": _rate(rejected, requests_total),
+        "by_contract": {
+            contract: {
+                "rejected": row["rejected"],
+                "violations": dict(sorted(row["violations"].items())),
+            }
+            for contract, row in sorted(by_contract.items())
+        },
+        "detailed_games": detailed_games,
         "samples": {"games": games, "requests": requests_total},
     }
 
 
+def _pass_bucket(request: Mapping[str, Any]) -> str:
+    """Which kind of voluntary pass a request is, read from its position.
+
+    ``sheriff_campaign`` is the nightly "run for sheriff?" prompt — declining
+    is structural, not a decision quality signal. ``vote_abstain`` is a ballot
+    abstention. Everything else is an optional role ability the seat chose not
+    to use.
+    """
+    position = request.get("action_position")
+    if not isinstance(position, str):
+        return "night_optional"
+    if ":sheriff_campaign:" in position:
+        return "sheriff_campaign"
+    if ":vote_casting:" in position or ":night:sheriff_vote:seat:" in position:
+        return "vote_abstain"
+    return "night_optional"
+
+
 def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     counts = {
-        "successful": 0, "abstained": 0, "failed": 0,
+        "successful": 0, "voluntary_abstained": 0, "failed": 0,
         "pending": 0, "cancelled": 0,
     }
+    pass_breakdown = {"sheriff_campaign": 0, "vote_abstain": 0, "night_optional": 0}
     technical_abstained = 0
     terminal_votes = 0
     fallback = 0
@@ -416,14 +536,18 @@ def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     for request in requests:
         category = _request_class(request)
         counts[category] += 1
-        action = _result(request).get("action_type")
-        eligible = category in {"successful", "abstained", "failed"}
+        eligible = category in {"successful", "voluntary_abstained", "failed"}
+        if category == "voluntary_abstained":
+            pass_breakdown[_pass_bucket(request)] += 1
+        result = _result(request)
+        action = result.get("action_type")
         kind = _vote_kind(request.get("action_position"))
         # A technical abstention is a receipt, not a request status: the exile
-        # path stores the failure code next to the command, and a ballot the
-        # ledger never resolved is a failure too. Reading the request status
-        # alone missed 2864 of 2886 technical abstentions.
-        technical = bool(_result(request).get("technical_failure_code")) or category == "failed"
+        # path stores the failure code next to the command, the pipeline stamps
+        # ``degraded`` on substituted commands, and a ballot the ledger never
+        # resolved is a failure too. Reading the request status alone missed
+        # 2864 of 2886 technical abstentions.
+        technical = _is_technical(request, result)
         if eligible and kind is not None:
             bucket = votes[kind]
             bucket["terminal"] += 1
@@ -449,7 +573,7 @@ def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if latency is not None:
             latencies.append(latency)
     total = len(requests)
-    valid = counts["successful"] + counts["abstained"]
+    valid = counts["successful"] + counts["voluntary_abstained"]
     eligible_terminal = valid + counts["failed"]
     unknown = sum(
         isinstance(request.get("status"), str)
@@ -465,9 +589,12 @@ def _request_metrics(requests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "technical_abstained": technical_abstained,
         "terminal_votes": terminal_votes,
         "fallback": fallback,
+        "pass_breakdown": pass_breakdown,
         "valid_rate": _rate(valid, eligible_terminal),
         "success_rate": _rate(counts["successful"], eligible_terminal),
-        "abstain_rate": _rate(counts["abstained"], eligible_terminal),
+        "voluntary_abstain_rate": _rate(
+            counts["voluntary_abstained"], eligible_terminal,
+        ),
         "failure_rate": _rate(counts["failed"], eligible_terminal),
         "fallback_rate": _rate(fallback, eligible_terminal),
         "technical_abstain_rate": _rate(technical_abstained, terminal_votes),
@@ -509,7 +636,10 @@ def _token_value(attempt: Mapping[str, Any], key: str) -> int:
     return value
 
 
-def _attempt_metrics(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _attempt_metrics(
+    attempts: Sequence[Mapping[str, Any]],
+    summaries: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     elapsed = [
         value for attempt in attempts
         if (value := _nonnegative_number(attempt.get("elapsed_ms"))) is not None
@@ -528,6 +658,24 @@ def _attempt_metrics(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     total_tokens = sum(_token_value(row, "total_tokens") for row in known)
     unknown_count = len(attempts) - len(known)
     completeness_rate = _rate(len(known), len(attempts))
+    # The truthful retry rate is in each game's ``summary.llm`` block, counted
+    # from ``llm_calls.log``'s own ``retried`` flag. A logical request writes
+    # exactly one ``model_attempts`` row no matter how many provider calls its
+    # ladder made, so attempt rows cannot see retries at all.
+    llm_calls = 0
+    llm_retried = 0
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            continue
+        llm = summary.get("llm")
+        if not isinstance(llm, Mapping):
+            continue
+        calls = llm.get("calls")
+        retried = llm.get("retried")
+        if type(calls) is int:
+            llm_calls += calls
+        if type(retried) is int:
+            llm_retried += retried
     return {
         "total": len(attempts),
         "latency_ms": {
@@ -550,16 +698,23 @@ def _attempt_metrics(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "known_total_tokens": total_tokens,
             "completeness_rate": completeness_rate,
         },
+        # Mean cost per provider attempt that reported usage. Unknown usage is
+        # not zero, so the denominator is the known subset — dividing by every
+        # attempt would silently understate the cost.
+        "tokens_per_attempt": _rate(total_tokens, len(known)),
         "unknown_usage_count": unknown_count,
         "usage_completeness_rate": completeness_rate,
         "executed_requests": executed_requests,
+        "llm_calls": llm_calls if llm_calls else None,
+        "retried_llm_calls": llm_retried,
+        "retry_rate": _rate(llm_retried, llm_calls),
         # A request with more than one `model_attempts` row is a **recovery
         # re-dispatch**, not a ladder retry: every retry happens inside one
         # `provider_call`, so this count can never see them. The truthful retry
-        # rate lives in the `llm` block (`llm_retry_rate`), computed from
-        # `llm_calls.log`'s own `retried` flag. The old `retry_rate` key was
-        # removed rather than left as a structurally-zero number.
+        # rate is ``retry_rate`` above. ``retried_requests`` is kept for one
+        # version as the old (misread) name.
         "retried_requests": retried_requests,
+        "recovery_redispatches": retried_requests,
     }
 
 
@@ -759,6 +914,27 @@ def _bootstrap_block_ratio(
     )
 
 
+def _wilson_interval(wins: int, trials: int) -> tuple[float | None, float | None]:
+    """Wilson score interval for a binomial proportion at 95% confidence.
+
+    The block bootstrap needs at least two blocks to resample; a single-block
+    run would otherwise report a bare point estimate. Wilson gives an honest
+    small-sample interval for the same 95% confidence.
+    """
+    if trials <= 0:
+        return None, None
+    z_value = 1.96
+    p = wins / trials
+    denominator = 1.0 + z_value * z_value / trials
+    centre = (p + z_value * z_value / (2.0 * trials)) / denominator
+    margin = (
+        z_value / denominator
+        * (p * (1.0 - p) / trials + z_value * z_value / (4.0 * trials * trials))
+        ** 0.5
+    )
+    return _rounded(max(0.0, centre - margin)), _rounded(min(1.0, centre + margin))
+
+
 def _mixed_uncertainty(
     games: Sequence[Mapping[str, Any]], items: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -783,17 +959,26 @@ def _mixed_uncertainty(
         low, high, samples = _bootstrap_block_ratio(blocks)
         valid_seats = sum(counts[0] for counts in blocks.values())
         wins = sum(counts[1] for counts in blocks.values())
+        interval_method: str | None = None
+        if samples:
+            interval_method = "bootstrap"
+        elif valid_seats:
+            # One block cannot be resampled at all; fall back to a Wilson
+            # score interval over the pooled seats so the run still reports
+            # its (wide) uncertainty instead of a bare point estimate.
+            low, high = _wilson_interval(wins, valid_seats)
+            interval_method = "wilson"
         row = {
             "id": f"{model}:{dimension}:{group}", "model": model,
             "games": len(bucket["games"]), "valid_seats": valid_seats,
             "wins": wins, "win_rate": _rate(wins, valid_seats),
             "block_count": len(blocks), "confidence": _CONFIDENCE,
             "samples": samples, "seed": _BOOTSTRAP_SEED,
-            "low": low, "high": high,
+            "low": low, "high": high, "interval_method": interval_method,
         }
         if samples == 0:
-            # Say *why* the interval is absent: one block cannot be resampled at
-            # all, so nothing was drawn. A bare ``null`` next to
+            # Say *why* the bootstrap interval is absent: one block cannot be
+            # resampled at all, so nothing was drawn. A bare ``null`` next to
             # ``samples: 2000`` was read as a computed interval for months.
             row["insufficient_blocks"] = True
         row[dimension] = group
