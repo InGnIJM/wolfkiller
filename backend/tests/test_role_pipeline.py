@@ -246,3 +246,57 @@ def test_public_filter_accepts_multiple_valid_labels_and_nonmapping_is_dropped()
     assert len(RolePipeline(scheduler).run_point(
         GameState("g"), SchedulePoint.NIGHT_ACTION
     ).public_events) == 1
+
+
+def test_pipeline_requires_a_scheduler() -> None:
+    with pytest.raises(ValueError, match="scheduler is required"):
+        RolePipeline(None)
+    with pytest.raises(ValueError, match="scheduler is required"):
+        RolePipeline(object())
+
+
+def test_dtos_are_strict_deep_frozen_and_bounded() -> None:
+    from types import MappingProxyType
+
+    from app.config import PipelineMode
+    from app.core.role_pipeline import PipelineResult
+
+    raw = {"event_type": "E", "payload": {"items": [1]}}
+    value = observation(public_events=(raw,)); raw["payload"]["items"].append(2)
+    assert value.public_events[0]["payload"]["items"] == (1,)
+    with pytest.raises(TypeError): value.public_events[0]["payload"]["items"] += (2,)
+    with pytest.raises(TypeError): PipelineObservation(["a"], (), "d", ())
+    with pytest.raises(TypeError): PipelineObservation((), (1,), "d", ())
+    with pytest.raises(TypeError): PipelineObservation((), (), 1, ())
+    with pytest.raises(TypeError): PipelineObservation((), (), "d", [])
+    with pytest.raises(TypeError): PipelineObservation((), (), "d", (object(),))
+    with pytest.raises(TypeError): PipelineDiff(1, ())
+    with pytest.raises(TypeError): PipelineDiff(True, (1,))
+    with pytest.raises(TypeError): PipelineResult((), (), "d", (), "v2")
+    with pytest.raises(TypeError): PipelineResult((), (), "d", (), PipelineMode.V2, object())
+    cycle = {}; cycle["self"] = cycle
+    with pytest.raises(ValueError): observation(public_events=(cycle,))
+    with pytest.raises(ValueError): observation(public_events=({"n": float("nan")},))
+    assert observation(public_events=({"n": 1.5},)).public_events[0]["n"] == 1.5
+    with pytest.raises(TypeError): observation(public_events=(MappingProxyType({1: "bad"}),))
+    with pytest.raises(TypeError): observation(public_events=({"value": object()},))
+    for number in (-1, 2_147_483_648):
+        with pytest.raises(ValueError): observation(public_events=({"value": number},))
+    with pytest.raises(ValueError): observation(public_events=({"text": "\ud800"},))
+    with pytest.raises(ValueError): observation(public_events=({"text": "x" * 65_537},))
+    nested = {}; current = nested
+    for _ in range(65): current["next"] = {}; current = current["next"]
+    with pytest.raises(ValueError): observation(public_events=(nested,))
+    with pytest.raises(ValueError): observation(public_events=({"items": [None] * 10_001},))
+
+
+def test_run_points_and_observe_reject_inexact_inputs() -> None:
+    scheduler = FakeScheduler(point())
+    pipeline = RolePipeline(scheduler)
+    with pytest.raises(TypeError, match="GameState"):
+        pipeline.run_points(object(), (SchedulePoint.NIGHT_ACTION,))
+    subclass = type("SubPoint", (PointResult,), {})
+    for raw in (object(), subclass((), (), (), "d")):
+        with pytest.raises(TypeError, match="exact PointResult"):
+            RolePipeline.observe_v2(raw)
+    assert scheduler.calls == []
