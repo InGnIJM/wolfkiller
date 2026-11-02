@@ -16,6 +16,13 @@ class ConversationLog:
         if self._logger and self._game_id:
             self._logger.log_conversation(self._game_id, record.to_dict())
 
+    def log_vote_telemetry(self, round_num: int, seat: int, **data: object) -> None:
+        # Production path: ``BaseRole._vote_telemetry`` reaches it through
+        # ``getattr``, so a text search for callers finds none — removing it
+        # silently stops every vote_telemetry row in game.log.
+        if self._logger and self._game_id:
+            self._logger.log_vote_telemetry(self._game_id, round_num, seat, **data)
+
     def log_llm_call(
         self, round_num: int, seat: int, phase: str, **data: object,
     ) -> None:

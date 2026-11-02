@@ -3,6 +3,21 @@ from app.models.conversation import Conversation, ConversationScope
 
 
 class TestConversationLogLifecycle:
+    def test_vote_telemetry_is_forwarded_to_the_game_logger(self):
+        """BaseRole reaches this through getattr; without it no vote row is logged."""
+        from unittest.mock import MagicMock
+        logger = MagicMock()
+        ConversationLog(logger=logger, game_id="g").log_vote_telemetry(
+            2, 5, transport="strict", attempt=1,
+        )
+        logger.log_vote_telemetry.assert_called_once_with(
+            "g", 2, 5, transport="strict", attempt=1,
+        )
+
+        silent = MagicMock()
+        ConversationLog(logger=silent).log_vote_telemetry(2, 5, attempt=1)
+        silent.log_vote_telemetry.assert_not_called()
+
     def test_death_announcement_with_and_without_deaths(self):
         from app.models.actions import DeathReport
         log = ConversationLog()
