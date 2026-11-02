@@ -14,7 +14,7 @@ Cursor / Codex / Gemini 等编码助手的仓库入口。与 [CLAUDE.md](CLAUDE.
 # 后端（Python >= 3.11）
 cd backend
 pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
 python -m pytest tests app -q
 python -m pytest tests app --cov=app --cov-branch -q
 

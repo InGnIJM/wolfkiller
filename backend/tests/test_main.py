@@ -207,3 +207,49 @@ def test_repository_initialization_failure_releases_the_acquired_process_lock(mo
     with pytest.raises(RuntimeError, match="database unavailable"):
         runpy.run_path(str(Path(__file__).parents[1] / "app" / "main.py"))
     acquired.release.assert_called_once_with()
+
+
+# ── Startup warmups ─────────────────────────────────────────────
+
+def test_startup_warmups_are_disabled_by_environment(monkeypatch):
+    import app.main as main
+
+    monkeypatch.setenv("WOLFKILLER_PROVIDER_PREWARM", "0")
+
+    assert main._start_startup_warmups() is None
+
+
+def test_startup_warmups_start_a_daemon_thread(monkeypatch):
+    import app.main as main
+
+    started: list[str] = []
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self) -> None:
+            started.append("start")
+
+    monkeypatch.setenv("WOLFKILLER_PROVIDER_PREWARM", "1")
+    monkeypatch.setattr(main.threading, "Thread", FakeThread)
+
+    thread = main._start_startup_warmups()
+
+    assert isinstance(thread, FakeThread)
+    assert thread.daemon is True
+    assert started == ["start"]
+
+
+def test_warm_startup_caches_runs_latency_before_provider_prewarm(monkeypatch):
+    import app.main as main
+
+    calls: list[str] = []
+    monkeypatch.setattr(main, "warm_latency_cache", lambda: calls.append("latency"))
+    monkeypatch.setattr(main, "prewarm_providers", lambda: calls.append("providers"))
+
+    main._warm_startup_caches()
+
+    assert calls == ["latency", "providers"]

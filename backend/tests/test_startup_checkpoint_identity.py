@@ -160,6 +160,9 @@ def test_unexpected_decode_error_still_logs_exception(
     monkeypatch.setattr(
         "app.services.game_service.CheckpointCodec.decode", _raise_weird
     )
+    monkeypatch.setattr(
+        "app.services.game_service.CheckpointCodec.decode_summary", _raise_weird
+    )
     with caplog.at_level(logging.DEBUG, logger="app.services.game_service"):
         service = GameService(
             WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository

@@ -300,6 +300,32 @@ class CheckpointCodec:
         return self.decode(document)
 
     def decode(self, document: Mapping[str, object]) -> tuple[GameState, dict[str, object]]:
+        state, identity = self._decode_state_document(document)
+        runtime = self._decode_runtime(document["pipeline_runtime"])
+        setattr(state, "_pipeline_runtime", runtime)
+        entries = tuple(
+            self._decode_journal_entry(item, identity)
+            for item in _array(document["point_journal"], "point_journal")
+        )
+        point_journal(state).restore_entries(entries)
+        orchestration = _mapping(document["orchestration"], "orchestration")
+        return state, _plain(orchestration)  # type: ignore[return-value]
+
+    def decode_summary(self, document: Mapping[str, object]) -> GameState:
+        """Decode only the player-facing state of a terminal checkpoint.
+
+        Completed and cancelled games are restored for browsing, not for
+        resuming: no engine will touch their pipeline runtime or point journal.
+        Skipping both is what keeps startup proportional to *live* work; the
+        full :meth:`decode` (plus ``recovery_compat``) still guards every
+        resume, so a summary-decoded game is never resumed from this object.
+        """
+        state, _ = self._decode_state_document(document)
+        return state
+
+    def _decode_state_document(
+        self, document: Mapping[str, object],
+    ) -> tuple[GameState, str | None]:
         root = _exact(document, {
             "checkpoint_version", "registry_digest", "state",
             "pipeline_runtime", "point_journal", "orchestration",
@@ -309,22 +335,12 @@ class CheckpointCodec:
         raw_identity = _string(root["registry_digest"], "registry_digest")
         raw_state = dict(_mapping(root["state"], "state"))
         raw_state.setdefault("sheriff_office", dict(_DEFAULT_SHERIFF_OFFICE))
-        state_row = _exact(raw_state, _STATE_FIELDS, "state")
-        state = self._decode_state(state_row)
-        identity: str | None = None
+        state = self._decode_state(_exact(raw_state, _STATE_FIELDS, "state"))
         if raw_identity:
             if state.registry_digest != raw_identity:
                 raise CheckpointError("registry identity mismatch")
-            identity = raw_identity
-        runtime = self._decode_runtime(root["pipeline_runtime"])
-        setattr(state, "_pipeline_runtime", runtime)
-        entries = tuple(
-            self._decode_journal_entry(item, identity)
-            for item in _array(root["point_journal"], "point_journal")
-        )
-        point_journal(state).restore_entries(entries)
-        orchestration = _mapping(root["orchestration"], "orchestration")
-        return state, _plain(orchestration)  # type: ignore[return-value]
+            return state, raw_identity
+        return state, None
 
     def _decode_state(self, row: Mapping[str, object]) -> GameState:
         try:

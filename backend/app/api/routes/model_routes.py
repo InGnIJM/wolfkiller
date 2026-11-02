@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import sys
 from datetime import datetime, timedelta, timezone
@@ -18,9 +19,18 @@ from app.stores.model_key_crypto import (
 )
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+logger = logging.getLogger(__name__)
 
 # Latency history older than this says little about the endpoint as it is now.
 LATENCY_WINDOW_DAYS = 30
+
+#: The aggregate scans the attempts table for the whole window. A page refresh
+#: (or a remounting wizard) must not pay for it again: 60 s is short enough that
+#: an operator watching a fresh run sees it warm up, long enough that repeated
+#: page opens are free. Keyed by repository identity so tests and a replaced
+#: application instance never share a cache entry.
+LATENCY_CACHE_TTL_SECONDS = 60.0
+_latency_cache: tuple[object, float, dict[tuple[str, str], dict[str, int]]] | None = None
 
 
 def get_repository():
@@ -31,19 +41,35 @@ def get_repository():
 
 def _latency_stats() -> dict[tuple[str, str], dict[str, int]]:
     """Per (model_id, provider_profile) call latency, or empty when unknown."""
+    global _latency_cache
     repository = get_repository()
     if repository is None:
         return {}
+    now = time.monotonic()
+    cached = _latency_cache
+    if cached is not None and cached[0] is repository and now < cached[1]:
+        return cached[2]
     since = (
         datetime.now(timezone.utc) - timedelta(days=LATENCY_WINDOW_DAYS)
     ).isoformat()
-    return repository.model_latency_stats(since=since)
+    stats = repository.model_latency_stats(since=since)
+    _latency_cache = (repository, now + LATENCY_CACHE_TTL_SECONDS, stats)
+    return stats
+
+
+def warm_latency_cache() -> None:
+    """Populate the cache during startup; a failure must not break the boot."""
+    try:
+        _latency_stats()
+    except Exception:
+        logger.warning("Model latency cache warmup failed", exc_info=True)
 
 
 def _to_response(
     config: ModelConfig, latency: ModelLatencyStats | None = None,
+    crypto: ModelKeyCrypto | None = None,
 ) -> ModelConfigResponse:
-    crypto = ModelKeyCrypto()
+    crypto = crypto or ModelKeyCrypto()
     masked: str | None = None
     key_invalid = False
     if config.api_key_encrypted:
@@ -83,8 +109,12 @@ async def list_models():
     store = get_model_config_store()
     # The stats query scans the attempts table; keep it off the event loop.
     stats = await asyncio.to_thread(_latency_stats)
+    crypto = ModelKeyCrypto()
     return ModelListResponse(
-        configs=[_to_response(c, _latency_for(c, stats)) for c in store.list_all()],
+        configs=[
+            _to_response(c, _latency_for(c, stats), crypto)
+            for c in store.list_all()
+        ],
     )
 
 

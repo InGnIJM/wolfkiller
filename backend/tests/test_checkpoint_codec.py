@@ -422,3 +422,58 @@ def test_checkpoint_rejects_each_typed_corruption(mutation, message) -> None:
     mutation(document)
     with pytest.raises(CheckpointError, match=message):
         codec.decode(document)
+
+
+# ── decode_summary (terminal archives, browse-only) ────────────
+
+def test_decode_summary_skips_runtime_journal_and_orchestration() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(
+        _rich_state(), orchestration={"random_state": {"seed": 42}},
+    )
+
+    restored = codec.decode_summary(document)
+
+    assert restored.game_id == "game-checkpoint"
+    assert restored.phase is GamePhase.VOTE_CASTING
+    assert restored.tiebreak_candidates == {1, 2}
+    assert restored.players[1].check_results == [{"seat": 2, "camp": "good"}]
+    assert restored.speeches[0].text == "测试发言"
+    assert restored.votes[0].thinking == "思考"
+    assert restored.death_history[0].cause == "wolf_kill"
+    assert restored.state_revision == 7
+    assert restored.registry_digest == registry.digest
+    assert not hasattr(restored, "_pipeline_runtime")
+
+
+def test_decode_summary_defaults_a_missing_sheriff_office() -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(_rich_state(), orchestration={})
+    document["state"].pop("sheriff_office")
+
+    restored = codec.decode_summary(document)
+
+    assert restored.sheriff_office.badge_destroyed is False
+    assert restored.sheriff_office.step == ""
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda doc: doc.update(checkpoint_version=999), "checkpoint version"),
+        (lambda doc: doc["state"].pop("phase"), "state fields"),
+        (lambda doc: doc["state"].update(players="bad"), "players"),
+        (lambda doc: doc.pop("pipeline_runtime"), "checkpoint fields"),
+        (lambda doc: doc.update(registry_digest="c" * 64), "registry identity mismatch"),
+    ],
+)
+def test_decode_summary_rejects_corrupt_documents(mutate, message) -> None:
+    registry = builtin_registry.freeze()
+    codec = CheckpointCodec(registry)
+    document = codec.encode(_rich_state(), orchestration={})
+    mutate(document)
+
+    with pytest.raises(CheckpointError, match=message):
+        codec.decode_summary(document)

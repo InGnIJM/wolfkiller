@@ -69,7 +69,7 @@ WolfKiller/
 | 模块 | 唯一职责 |
 | --- | --- |
 | `models/pipeline.py` | 冻结核心值类型、Effect 代数、ActionContext/ActionContract/RoleSpec |
-| `roles/registry.py` | 角色/契约发现、静态验证、`freeze()` 不可变注册快照 |
+| `roles/registry.py` | 角色/契约发现、静态验证、`freeze()` 不可变注册快照（缓存到下一次角色注册，避免每个 catalog 请求/每次 prompt 渲染都重做校验与 digest） |
 | `core/context_projector.py` | 从 GameState 按可见性标签（PUBLIC/ACTOR/CAMP）生成最小冻结 ActionContext；`project_view()` 提供无契约观测投影 |
 | `core/action_validator.py` | 纯校验：Context/Contract/Command → RuleViolation，无任何状态读写 |
 | `core/action_resolver.py` | 调用纯 Hook（resolve/aggregate/react），产出确定性 GameEffect 批次（内置 ACCEPT_ACTION） |
@@ -176,6 +176,7 @@ WAITING → ROLE_DEAL → NIGHT → [SHERIFF_ELECTION] → DAWN → LAST_WORDS �
 - **兼容数据**：`GameLogger` 的 JSONL 日志、`GameManifest` 的 `games/index.json`、对话日志和逐座位记忆仍服务于旧格式/审计链。新运行时的恢复判断以 SQLite 检查点及其 SHA-256 digest 为准，不能用旧 JSON 文件覆盖数据库事实。
 - **训练语料采集**（默认开，见「应用设置」）：`data/games/<id>/llm_prompts.jsonl` 每行一条 `(prompt, completion)` 记录（`build_prompt_record` 的 `data.messages` 是模型真实收到的 system + user 原文），与 `game.log` / `llm_calls.log` 同目录、只追加、不自动清理；四条链路（speech / contract_action / pipeline_action / night）在耐久提交之后、且**只在本次不是重放**时 flush 一次，所以断点续跑不会重复写语料。落盘只有 prompt 正文与轮次/阶段/座位/模型名/请求 ID 等元数据，**API Key 与自定义请求头从不进入该文件**。`data/settings.json` 只存应用级开关的值，不进快照、不进任何 DTO。
 - **启动恢复**：进程启动会把原先 `running` 的执行标为 `interrupted`，把 `in_flight` 模型尝试标为 `unknown`；不会假定外部模型请求未执行。只有可恢复且版本兼容的对局/benchmark 才能通过显式 resume 继续，恢复重试也受持久化次数约束。
+- **启动加载分层**：`completed` / `cancelled` 的存档用 `CheckpointCodec.decode_summary()` 只还原玩家可见状态（不解码 pipeline runtime / point journal），因此浏览历史对局不会让启动随存档数线性变慢；可恢复状态仍完整解码并在损坏时隔离。恢复入口（`recover_game`）始终从 repository 完整 `decode()` 并过 `recovery_compat`，摘要态只服务列表/详情/日志/导出。provider SDK 与 transport 实现同样惰性导入，`main.py` 在就绪后用单个 daemon 线程预热（`WOLFKILLER_PROVIDER_PREWARM=0` 关闭）。
 - **软删除与迟到写**：`GameRepository._mark_game_deleted` 在同一事务里把仍为 `running` / `paused` 的执行置为 `cancelled`（`completed` / `failed` / `interrupted` 保留原结局），并清理该局的耐久载荷；`GameService._discard_game_runtime` 在 `shutil.rmtree` 成功后调用该局 `GameLogger.close()`，之后迟到完成的模型调用不会再 `_ensure_dir` 把 `games/<id>/` 复活。`close()` 幂等；若 `rmtree` 失败（目录被占用），logger 保持打开，维持「删除失败保留内存」的原有语义。
 - **恢复兼容性**（`persistence/recovery_compat.py`）：检查点里的 `registry_digest` 是**冻结身份**，不是"当前代码"的副本——journal 键（`PointKey`）、请求 token（`window_id` / `action_key`）与角色资源 setup marker 都用建局时的 digest 盖章（`core/registry_identity.py` 的 `frozen_registry_digest()`），所以之后新增或修改角色**不会**把已提交的工作重新编号。编解码器因此只校验文档**自洽**（根 digest 与 `state.registry_digest` 一致、每个 journal 键与根 digest 一致；不一致才是真损坏），"代码变了还算不算同一局"交给恢复入口一次性裁决 `assess(document, state, registry)`，四个等级：
   - `exact`：注册表与建局时一致。

@@ -494,3 +494,28 @@ def test_action_wall_clock_timeout_matches_the_action_call_budget():
             action_timeout_seconds=90.0, action_retry_timeout_seconds=60.0,
         )
     ) == 95.0
+
+
+def test_the_unpatched_chatopenai_seam_leaves_the_factory_to_the_transport():
+    """Production must not import langchain_openai just to build a client.
+
+    ``ChatOpenAI`` is a test seam only; with it unset ``_build`` passes
+    ``chat_model_factory=None`` and the lazy transport imports its own class.
+    """
+    from types import SimpleNamespace
+
+    import app.agents.llm_client as llm_client
+
+    assert llm_client.ChatOpenAI is None
+
+    client = llm_client.LLMClient(model="deepseek-chat")
+    seen: dict[str, object] = {}
+
+    def _build(*args, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace()
+
+    client._transport.build = _build
+    client.get_model()
+
+    assert seen["chat_model_factory"] is None

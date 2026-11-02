@@ -174,6 +174,13 @@ class RoleRegistry:
         self._specs: dict[str, LegacyRoleSpec] = {}
         self._pipeline_specs: dict[str, PipelineRoleSpec] = {}
         self._lock = RLock()
+        # ``freeze()`` is on the request path (/api/catalog/roles) and on every
+        # prompt render, so an unchanged registry must not redo validation and
+        # digest serialization each time. A pipeline registration invalidates it;
+        # the generation counter keeps a snapshot built while another thread was
+        # registering from being cached as if it covered that newer role.
+        self._frozen: RegistrySnapshot | None = None
+        self._generation = 0
 
     def register(self, spec: LegacyRoleSpec) -> None:
         if type(spec) is not LegacyRoleSpec:
@@ -194,6 +201,8 @@ class RoleRegistry:
             if spec.role_id in self._pipeline_specs:
                 raise ValueError(f"role already registered: {spec.role_id}")
             self._pipeline_specs[spec.role_id] = spec
+            self._frozen = None
+            self._generation += 1
 
     def pipeline_spec(self, role_id: str) -> PipelineRoleSpec | None:
         """The declared spec for ``role_id``, or None when it has none."""
@@ -202,16 +211,26 @@ class RoleRegistry:
 
     def freeze(self) -> RegistrySnapshot:
         with self._lock:
-            local_specs = dict(self._pipeline_specs)
+            if self._frozen is not None:
+                return self._frozen
+            # Copy first and validate outside the lock: a registration that
+            # lands while validation runs must not change this snapshot, and
+            # must prevent it from being cached (the next freeze rebuilds).
+            local_specs = dict(sorted(self._pipeline_specs.items()))
+            generation = self._generation
         contract_ids: dict[str, str] = {}
-        for spec in dict(sorted(local_specs.items())).values():
+        for spec in local_specs.values():
             self._validate_pipeline_spec(spec, contract_ids)
-        specs = MappingProxyType(dict(sorted(local_specs.items())))
+        specs = MappingProxyType(local_specs)
         digest_source = "[" + ",".join(
             PipelineRoleSpec.to_json(spec) for spec in specs.values()
         ) + "]"
         digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
-        return RegistrySnapshot(specs=specs, digest=digest)
+        snapshot = RegistrySnapshot(specs=specs, digest=digest)
+        with self._lock:
+            if self._generation == generation:
+                self._frozen = snapshot
+            return snapshot
 
     @staticmethod
     def _validate_pipeline_spec(

@@ -24,8 +24,8 @@ def _status(status_code):
     ],
 )
 def test_capability_rejections_cover_both_sdks(error):
-    assert isinstance(error, errors.CAPABILITY_REJECTION_ERRORS)
-    assert not isinstance(error, errors.TRANSIENT_PROVIDER_ERRORS)
+    assert isinstance(error, errors.capability_rejection_errors())
+    assert not isinstance(error, errors.transient_provider_errors())
 
 
 @pytest.mark.parametrize(
@@ -36,9 +36,9 @@ def test_capability_rejections_cover_both_sdks(error):
     ],
 )
 def test_rate_limits_are_transient(error):
-    assert isinstance(error, errors.RATE_LIMIT_ERRORS)
-    assert isinstance(error, errors.TRANSIENT_PROVIDER_ERRORS)
-    assert not isinstance(error, errors.SERVER_ERRORS)
+    assert isinstance(error, errors.rate_limit_errors())
+    assert isinstance(error, errors.transient_provider_errors())
+    assert not isinstance(error, errors.server_errors())
 
 
 @pytest.mark.parametrize(
@@ -51,9 +51,9 @@ def test_rate_limits_are_transient(error):
     ],
 )
 def test_server_faults_are_transient(error):
-    assert isinstance(error, errors.SERVER_ERRORS)
-    assert isinstance(error, errors.TRANSIENT_PROVIDER_ERRORS)
-    assert not isinstance(error, errors.RATE_LIMIT_ERRORS)
+    assert isinstance(error, errors.server_errors())
+    assert isinstance(error, errors.transient_provider_errors())
+    assert not isinstance(error, errors.rate_limit_errors())
 
 
 @pytest.mark.parametrize(
@@ -64,9 +64,9 @@ def test_server_faults_are_transient(error):
     ],
 )
 def test_timeouts_are_also_connection_errors(error):
-    assert isinstance(error, errors.TIMEOUT_ERRORS)
-    assert isinstance(error, errors.CONNECTION_ERRORS)
-    assert isinstance(error, errors.TRANSIENT_PROVIDER_ERRORS)
+    assert isinstance(error, errors.timeout_errors())
+    assert isinstance(error, errors.connection_errors())
+    assert isinstance(error, errors.transient_provider_errors())
 
 
 @pytest.mark.parametrize(
@@ -77,8 +77,8 @@ def test_timeouts_are_also_connection_errors(error):
     ],
 )
 def test_plain_connection_errors_are_not_timeouts(error):
-    assert isinstance(error, errors.CONNECTION_ERRORS)
-    assert not isinstance(error, errors.TIMEOUT_ERRORS)
+    assert isinstance(error, errors.connection_errors())
+    assert not isinstance(error, errors.timeout_errors())
 
 
 @pytest.mark.parametrize(
@@ -90,8 +90,8 @@ def test_plain_connection_errors_are_not_timeouts(error):
     ],
 )
 def test_auth_and_unrelated_errors_are_never_swallowed(error):
-    assert not isinstance(error, errors.CAPABILITY_REJECTION_ERRORS)
-    assert not isinstance(error, errors.TRANSIENT_PROVIDER_ERRORS)
+    assert not isinstance(error, errors.capability_rejection_errors())
+    assert not isinstance(error, errors.transient_provider_errors())
 
 
 class _BareStatusError(Exception):
@@ -285,3 +285,26 @@ def test_classify_provider_error_uses_one_vocabulary(error, expected):
 def test_a_capacity_status_beats_the_sdk_class(error, expected):
     assert errors.classify_provider_error(error) == expected
 
+
+# ── Lazy SDK groups ───────────────────────────────────────────
+
+def test_importing_the_module_does_not_bind_either_sdk():
+    """These groups sit in every role's import graph; importing them must not
+    pull the SDKs (that cost is what the startup prewarm thread exists for)."""
+    assert not hasattr(errors, "anthropic")
+    assert not hasattr(errors, "openai")
+
+
+def test_prewarm_builds_every_group_once():
+    errors.prewarm()
+    errors.prewarm()
+
+    for accessor in (
+        errors.capability_rejection_errors, errors.rate_limit_errors,
+        errors.server_errors, errors.timeout_errors,
+        errors.connection_errors, errors.transient_provider_errors,
+    ):
+        assert accessor.cache_info().currsize == 1
+
+    error = openai.BadRequestError("b", response=_status(400), body=None)
+    assert isinstance(error, errors.capability_rejection_errors())

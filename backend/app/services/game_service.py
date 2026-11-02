@@ -99,6 +99,12 @@ logger = logging.getLogger(__name__)
 # not a verdict — the user can fix the cause and retry.
 _RECOVERABLE_STATUSES = frozenset({"paused", "interrupted", "failed", "recovery_blocked"})
 
+#: Terminal archives only need their player-facing state; decoding the pipeline
+#: runtime and point journal for them made startup scale with every finished
+#: game (51 MB of checkpoints across 307 games on the reference machine).
+#: Everything that can still be resumed keeps the full decode below.
+_SUMMARY_ONLY_STATUSES = frozenset({"completed", "cancelled"})
+
 # Refusals the recovery path itself may produce once the checkpoint decoded and
 # the registry verdict was resumable. Anything else is reported as corruption.
 _RECOVERY_FAILURE_CODES = frozenset({
@@ -818,7 +824,9 @@ class GameService:
 
     Game metadata is persisted to data/games/index.json so the game list
     survives backend restarts.  Completed games can be browsed and their
-    logs replayed without the engine still running.
+    logs replayed without the engine still running: those archives are restored
+    as player-facing summaries (no pipeline runtime), while every resumable
+    game is still fully decoded.
     """
 
     def __init__(
@@ -889,9 +897,11 @@ class GameService:
         # ``loop.shutdown_default_executor`` can join them.
         self._closed = threading.Event()
 
-        # Restore completed games so list / detail endpoints still work
-        self._load_persisted_games()
+        # Native records are the source of truth, so restore them first; the
+        # legacy JSONL manifest then fills in only games the database is
+        # missing (JSONL-only archives, or a native game with no checkpoint).
         self._load_native_games()
+        self._load_persisted_games()
 
         self.event_bus.subscribe(BusEvent.PHASE_CHANGED, self._on_phase_changed)
         self.event_bus.subscribe(BusEvent.PLAYER_DIED, self._wake_v2)
@@ -906,45 +916,65 @@ class GameService:
     # ── Persistence helpers ────────────────────────────────────────
 
     def _load_persisted_games(self) -> None:
-        """Reconstruct lightweight GameState for every completed game on disk."""
+        """Reconstruct lightweight GameState for legacy games not in the DB.
+
+        The manifest also lists every native archive, so rebuilding its state
+        unconditionally re-read tens of megabytes of ``game.log`` for games the
+        native pass had already restored (and immediately overwritten). Only a
+        game that still has no in-memory state is rebuilt here: a JSONL-only
+        archive, or a native game whose checkpoint is missing/corrupt.
+        """
         entries = self._manifest.load_or_rebuild(registry=builtin_registry.freeze())
+        restored = 0
         for game_id, meta in entries.items():
+            if game_id in self._games:
+                continue
             # Skip games still running (engine will re-register them)
             if meta.get("phase") == "game_over" or meta.get("winner"):
                 state = self._reconstruct_state(game_id, meta)
                 if state is not None:
                     self._games[game_id] = state
-        logger.info(f"Restored {len(self._games)} completed games from disk")
+                    restored += 1
+        logger.info(f"Restored {restored} legacy games from disk")
 
     def _load_native_games(self) -> None:
         if self.repository is None:
             return
+        started = time.monotonic()
+        summary = full = 0
         for record in self.repository.list_games():
             game_id = str(record["game_id"])
+            status = record["execution_status"]
             try:
                 checkpoint = self.repository.load_checkpoint(game_id)
             except Exception:
                 logger.exception("Cannot read checkpoint for game %s", game_id)
-                if record["execution_status"] in {"paused", "interrupted", "failed"}:
+                if status in {"paused", "interrupted", "failed"}:
                     self._mark_recovery_blocked(game_id, "checkpoint_corrupt")
                 continue
             if checkpoint is None:
                 continue
             try:
-                state, _ = self._checkpoint_codec.decode(checkpoint["checkpoint"])
+                document = checkpoint["checkpoint"]
+                if status in _SUMMARY_ONLY_STATUSES:
+                    state = self._checkpoint_codec.decode_summary(document)
+                    summary += 1
+                else:
+                    state, _ = self._checkpoint_codec.decode(document)
+                    full += 1
             except CheckpointError as error:
                 # The codec only checks the document's internal consistency, so
                 # this is genuine corruption — a checkpoint written under an
                 # older role registry decodes and stays resumable.
                 logger.exception("Cannot decode checkpoint for game %s", game_id)
-                if record["execution_status"] in {"paused", "interrupted", "failed"}:
+                if status in {"paused", "interrupted", "failed"}:
                     self._mark_recovery_blocked(
                         game_id, _decode_failure_code(str(error)),
                     )
                 continue
             except Exception:
                 logger.exception("Cannot decode checkpoint for game %s", game_id)
-                if record["execution_status"] in {"paused", "interrupted", "failed"}:
+                if status in {"paused", "interrupted", "failed"}:
                     self._mark_recovery_blocked(game_id, "checkpoint_corrupt")
                 continue
             self._games[state.game_id] = state
@@ -956,6 +986,10 @@ class GameService:
                 "storage_revision": int(checkpoint["storage_revision"]),
                 "execution_generation": int(record["execution_generation"]),
             }
+        logger.info(
+            "Restored %d native games (%d summary, %d full) in %.1fs",
+            summary + full, summary, full, time.monotonic() - started,
+        )
 
     def get_execution_info(self, game_id: str) -> dict[str, object]:
         if self.repository is None:

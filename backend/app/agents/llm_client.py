@@ -11,7 +11,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 
 from app.config import config as app_config
@@ -29,18 +28,18 @@ from app.agents.providers.base import (
 # Re-exported so game code can classify provider failures without importing
 # the provider layer (architecture boundary: core/roles never import providers).
 from app.agents.providers.errors import (  # noqa: F401
-    CAPABILITY_REJECTION_ERRORS,
-    CONNECTION_ERRORS,
     FAILURE_REFUSED,
-    RATE_LIMIT_ERRORS,
     REFUSED_STATUS_CODES,
-    SERVER_ERRORS,
-    TIMEOUT_ERRORS,
-    TRANSIENT_PROVIDER_ERRORS,
     ProviderDeadlineTimeout,
+    capability_rejection_errors,
     classify_provider_error,
+    connection_errors,
     is_refused_error,
+    rate_limit_errors,
+    server_errors,
     status_code_of,
+    timeout_errors,
+    transient_provider_errors,
 )
 from app.agents.providers.registry import ProviderRegistry
 from app.agents.providers.transports import transport_for
@@ -49,6 +48,13 @@ from app.models.contracts import ActionContract
 
 _DEEPSEEK_STRICT_HOST = "api.deepseek.com"
 _ACTION_TEMPERATURE = 0.1
+
+#: Test seam for the chat-completions factory. Production leaves this ``None``:
+#: the real class lives in ``providers.openai_compatible`` and is imported on
+#: first use by ``providers.transports.transport_for``, so importing this module
+#: never loads ``langchain_openai``/``openai``. Tests patch this attribute and
+#: ``_build()`` passes the patched object through as the model factory.
+ChatOpenAI: Any = None
 _DEFAULT_CHAT_OPENAI = ChatOpenAI
 logger = logging.getLogger(__name__)
 
@@ -618,7 +624,7 @@ class LLMClient:
         current: BaseException | None = error
         while current is not None and id(current) not in seen:
             seen.add(id(current))
-            if isinstance(current, CAPABILITY_REJECTION_ERRORS):
+            if isinstance(current, capability_rejection_errors()):
                 response = getattr(current, "response", None)
                 status = getattr(current, "status_code", None)
                 if not isinstance(status, int):
@@ -817,7 +823,7 @@ class LLMClient:
                 result = self._structured_response(
                     response, contract.resolved_tool_name,
                 )
-            except (*CAPABILITY_REJECTION_ERRORS, ValueError) as error:
+            except (*capability_rejection_errors(), ValueError) as error:
                 logger.warning(
                     "Native action tool failed for provider=%s model=%s; "
                     "retrying as JSON (%s)",
@@ -878,7 +884,7 @@ class LLMClient:
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     llm_attempts=attempts,
                 )
-            except (*CAPABILITY_REJECTION_ERRORS, ValueError) as error:
+            except (*capability_rejection_errors(), ValueError) as error:
                 logger.warning(
                     "Native JSON tool failed for provider=%s model=%s; "
                     "retrying as JSON (%s)",
@@ -981,7 +987,7 @@ class LLMClient:
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     llm_attempts=attempts,
                 )
-            except (*CAPABILITY_REJECTION_ERRORS, ValueError) as error:
+            except (*capability_rejection_errors(), ValueError) as error:
                 logger.warning(
                     "Native async JSON tool failed for provider=%s model=%s; "
                     "retrying as JSON (%s)",

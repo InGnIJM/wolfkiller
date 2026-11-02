@@ -27,6 +27,7 @@
 | `WOLFKILLER_DATA_DIR` | `data` | SQLite、游戏日志、模型配置的数据根目录 |
 | `MODEL_CONFIG_PATH` | `{WOLFKILLER_DATA_DIR}/models.json` | 显式覆盖模型配置文件路径 |
 | `APP_SETTINGS_PATH` | `{WOLFKILLER_DATA_DIR}/settings.json` | 显式覆盖应用设置文件路径（训练语料采集开关） |
+| `WOLFKILLER_PROVIDER_PREWARM` | `1` | 启动完成后是否用后台 daemon 线程预热 provider SDK 与 `/api/models` 延迟缓存。`0` 关闭；关闭不改变功能，只把首次 LLM 调用/模型页首屏的成本移回请求路径 |
 | `PROMPT_CAPTURE_ENABLED` | 未设置（默认开） | 训练语料采集的进程级开关：`1` / `true` / `yes` / `on` 开，其他值一律关。界面设置优先于它；只在**建局**时解析，恢复路径不重读（见下文「数据存储」） |
 | `WOLFKILLER_API_URL` | `http://127.0.0.1:8000` | benchmark CLI 连接的后端地址 |
 | `DEBUG` | `false` | 调试模式 |
@@ -52,7 +53,7 @@ LOG_LEVEL=INFO
 ```bash
 cd backend
 pip install -r requirements.txt                              # 安装依赖
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动（开发模式）
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app   # 启动（开发模式）
 python -m pytest tests app -q                                # 全部测试（含 app/ 内嵌测试）
 python -m pytest tests app --cov=app --cov-branch --cov-fail-under=100 -q   # 覆盖率门禁
 python scripts/run_benchmark.py list                         # 查询已启动服务中的 benchmark
@@ -76,6 +77,19 @@ npm run test:e2e   # Playwright 浏览器验收
 npm run build      # 类型检查 + 生产构建
 npm run lint       # ESLint
 ```
+
+## 启动性能与排查
+
+后端启动（`import app.main`）的耗时被刻意拆成四块，改动后请保持这些量级；同一份 356 存档 / 307 个 DB 对局的数据副本，本机（Windows + Defender + 联想/火绒）从 **42.1 s 降到热启动约 6 s、冷启动约 14 s**（首次读盘/杀软扫描），空数据目录约 3.5 s：
+
+1. **模块导入**：`anthropic` / `openai` / `langchain_openai` / `langchain_anthropic` 全部惰性导入（`agents/providers/errors.py`、`providers/transports.py`、`agents/llm_client.py`）。启动只加载 `langchain_core` / FastAPI。**不要把 SDK 的 `import` 移回模块顶层**：`tests/test_startup_import_graph.py` 用 AST 门禁拦。本机单次文件打开约 2.6–3.8 ms（400 个已缓存 `.pyc` 约 1.1 s，而 `stat` 仅 0.1 ms），所以模块数就是秒数；给 Anaconda / Python / 仓库目录加杀软排除是环境侧最有效的一步。
+2. **存档恢复**：只有 `running / paused / interrupted / failed / recovery_blocked` 的 checkpoint 走完整 `CheckpointCodec.decode()`；`completed / cancelled` 走 `decode_summary()`，只还原玩家可见状态，不碰 pipeline runtime 与 point journal。启动日志会打印 `Restored N native games (M summary, K full) in Xs`。恢复一个对局仍从 repository 完整解码并过 `recovery_compat`，摘要态永远不进引擎。
+3. **清单补洞**：SQLite 与 `data/games/index.json` 高度重叠，`_load_persisted_games()` 只重建内存里还没有的局（纯 JSONL 老档，或 checkpoint 缺失/损坏的 native 局）；否则每次启动都会重读几十 MB `game.log`，随后被 native 结果覆盖。
+4. **后台预热**：`main.py` 在 repository 就绪后、加载存档之前启一个 daemon 线程，先预热 `/api/models` 的延迟统计缓存，再导入两个 provider SDK 栈（日志 `Provider SDK prewarm finished in Xs`），与存档加载重叠。`WOLFKILLER_PROVIDER_PREWARM=0` 关闭；测试由 `conftest.py` 关闭。
+
+接口侧的两个缓存：`RoleRegistry.freeze()` 结果缓存到下一次角色注册（`/api/catalog/roles` 从 ~80 ms 降到 ~3–5 ms，几乎全是 HTTP 往返；对局内每次 prompt 渲染也不再重复校验/哈希 42 个 spec）；`model_latency_stats()` 结果缓存 60 s（`/api/models` 从重启后首次 2.4 s / 稳定态 0.31 s 降到首次 ~0.13 s、稳定态 ~4 ms，首个请求由预热线程填）。
+
+开发模式务必用 `--reload-dir app`（`start.bat` 已改）：`--reload` 默认监视整个 `backend/`，`tests/`、`data/`、`scripts/` 里任何 `.py` 变更都会触发一整次重启；服务重启期间请求会挂起。
 
 ## 测试与门禁
 

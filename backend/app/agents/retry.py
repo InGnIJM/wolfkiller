@@ -28,20 +28,24 @@ from typing import Any, TypeVar
 from pydantic import ValidationError
 
 from app.agents.providers.errors import (
-    TIMEOUT_ERRORS,
-    TRANSIENT_PROVIDER_ERRORS,
     is_refused_error,
+    timeout_errors,
+    transient_provider_errors,
 )
 
 T = TypeVar("T")
 
-#: Everything worth another attempt: rate limits, server faults, transport
-#: failures and provider-side timeouts. Mirrors the classification the durable
-#: action gateway already applied to its own single retry.
-RETRYABLE_PROVIDER_ERRORS: tuple[type[Exception], ...] = (
-    *TRANSIENT_PROVIDER_ERRORS,
-    *TIMEOUT_ERRORS,
-)
+
+def retryable_provider_errors() -> tuple[type[Exception], ...]:
+    """Everything worth another attempt: rate limits, server faults, transport
+    failures and provider-side timeouts. Mirrors the classification the durable
+    action gateway already applied to its own single retry.
+
+    Built on demand: a ``RetryPolicy`` is created at module import time (for
+    example the speech ladder in ``roles/base.py``), while the SDK exception
+    groups are lazy so importing the module never loads either provider SDK.
+    """
+    return (*transient_provider_errors(), *timeout_errors())
 
 
 class UnusableModelOutput(ValueError):
@@ -91,7 +95,9 @@ class RetryPolicy:
     #: A provider answering ``429 Retry-After: 60`` is asking for a minute. Honour
     #: it, but cap it so one slow ballot cannot hold the vote window hostage.
     max_retry_after_seconds: float = 30.0
-    retry_on: tuple[type[Exception], ...] = RETRYABLE_PROVIDER_ERRORS
+    #: ``None`` means "use :func:`retryable_provider_errors`", resolved when a
+    #: decision is actually made so constructing a policy never imports the SDKs.
+    retry_on: tuple[type[Exception], ...] | None = None
     #: Errors meaning "the answer was unusable". Worth another attempt, but the
     #: request is re-asked with a repair instruction rather than resent verbatim.
     #: Empty for callers that only ever retry transport faults.
@@ -248,7 +254,10 @@ def classify_failure(policy: RetryPolicy, error: BaseException) -> FailureClass:
     """
     if is_refused_error(error):
         return FailureClass.REFUSED
-    if isinstance(error, policy.retry_on):
+    retry_on = policy.retry_on
+    if retry_on is None:
+        retry_on = retryable_provider_errors()
+    if isinstance(error, retry_on):
         return FailureClass.TRANSPORT
     if policy.repair_on and isinstance(error, policy.repair_on):
         return FailureClass.REPAIR

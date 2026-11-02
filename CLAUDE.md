@@ -15,7 +15,7 @@ Wolf Killer 是一个完全由 LLM 驱动的 AI 狼人杀游戏。所有玩家�
 ```bash
 cd backend
 pip install -r requirements.txt            # 安装依赖
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload   # 启动后端（开发模式）
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app   # 启动后端（开发模式）
 python -m pytest tests app -q              # 运行所有测试（含 app/ 内嵌测试目录）
 python -m pytest tests/test_xxx.py -q      # 运行单个测试文件
 python -m pytest tests app --cov=app --cov-branch -q   # 全量测试 + 覆盖率（覆盖率门禁 --cov-fail-under=100 要求 100% statement/branch 覆盖）

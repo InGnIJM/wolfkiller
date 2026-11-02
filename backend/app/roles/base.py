@@ -12,11 +12,11 @@ from app.core.conversation_log import ConversationLog
 from app.agents.llm_client import (
     LLMClient,
     LLMUsage,
-    TIMEOUT_ERRORS,
-    TRANSIENT_PROVIDER_ERRORS,
     _content_text,
     extract_usage,
     merge_usage,
+    timeout_errors,
+    transient_provider_errors,
 )
 from app.agents.failure_taxonomy import normalize_failure_code
 from app.agents.output_parser import (
@@ -120,13 +120,15 @@ _SPEECH_RETRY_POLICY = RetryPolicy(
 )
 
 
-#: Failures where waiting before the next attempt only wastes the turn. The
-#: provider was merely slow, not stuck in an outage window, so the retry fires
-#: immediately -- the same call the vote ladder makes for its own deadlines.
-#: (``asyncio.TimeoutError`` is ``TimeoutError`` on 3.11+, hence the union.)
-_IMMEDIATE_RETRY_ERRORS: tuple[type[BaseException], ...] = (
-    asyncio.TimeoutError, *TIMEOUT_ERRORS,
-)
+def _immediate_retry_errors() -> tuple[type[BaseException], ...]:
+    """Failures where waiting before the next attempt only wastes the turn.
+
+    The provider was merely slow, not stuck in an outage window, so the retry
+    fires immediately -- the same call the vote ladder makes for its own
+    deadlines. (``asyncio.TimeoutError`` is ``TimeoutError`` on 3.11+, hence the
+    union.) Built on demand because the SDK groups are lazy.
+    """
+    return (asyncio.TimeoutError, *timeout_errors())
 
 
 #: Appended to a speech request whose previous answer was unusable. Only ever
@@ -151,7 +153,7 @@ def _speech_failure_codes(error: BaseException) -> tuple[str, str | None]:
     """
     if isinstance(error, asyncio.TimeoutError):
         return "request_timeout", "local_deadline"
-    if isinstance(error, TIMEOUT_ERRORS):
+    if isinstance(error, timeout_errors()):
         return "request_timeout", "provider_timeout"
     return normalize_failure_code(error), None
 
@@ -321,7 +323,7 @@ class BaseRole:
                     )
                     break
                 kind, delay = plan
-                if isinstance(error, _IMMEDIATE_RETRY_ERRORS):
+                if isinstance(error, _immediate_retry_errors()):
                     delay = 0.0
                 await asyncio.sleep(delay)
                 if kind == KIND_REPAIR:
@@ -854,7 +856,7 @@ class BaseRole:
                     technical_failure_code="request_timeout",
                     timeout_type="local_deadline",
                 )
-            except TIMEOUT_ERRORS:
+            except timeout_errors():
                 should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
@@ -878,7 +880,7 @@ class BaseRole:
                     technical_failure_code="request_timeout",
                     timeout_type="provider_timeout",
                 )
-            except TRANSIENT_PROVIDER_ERRORS as error:
+            except transient_provider_errors() as error:
                 should_retry = attempt_number <= 2
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,

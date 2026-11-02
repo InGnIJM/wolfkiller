@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,8 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.local_access import LOCAL_ORIGINS, LocalAccessMiddleware
 
 from app.core.event_bus import EventBus, GameEvent as BusEvent
+from app.agents.providers.prewarm import prewarm_providers
 from app.api.routes.game_routes import router as game_router
-from app.api.routes.model_routes import router as model_router
+from app.api.routes.model_routes import router as model_router, warm_latency_cache
 from app.api.routes.catalog_routes import router as catalog_router
 from app.api.routes.benchmark_routes import router as benchmark_router
 from app.api.routes.folder_routes import router as folder_router
@@ -29,6 +31,29 @@ from app.services.game_service import GameService
 from app.services.memory_service import MemoryService
 from app.services.review_service import ReviewService
 
+# ── Startup warmups ─────────────────────────────────────
+# Neither the provider SDKs nor the latency aggregate are needed to answer the
+# first HTTP request, and both are expensive on a cold machine (the SDKs are
+# ~thousands of module files; the aggregate scans the attempts table). Pay them
+# on one daemon thread while the rest of the boot continues, so the first page
+# load and the first LLM call do not have to. The lazy imports in ``providers``
+# keep this optional: with the environment variable set to 0 the cost simply
+# moves to the first call that needs it.
+def _warm_startup_caches() -> None:
+    warm_latency_cache()
+    prewarm_providers()
+
+
+def _start_startup_warmups() -> threading.Thread | None:
+    if os.environ.get("WOLFKILLER_PROVIDER_PREWARM", "1") == "0":
+        return None
+    thread = threading.Thread(
+        target=_warm_startup_caches, name="startup-warmup", daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 # ── Initialize global services ──────────────────────────
 data_dir = Path(os.environ.get("WOLFKILLER_DATA_DIR", "data")).expanduser().resolve()
 process_lock = ProcessLock(data_dir).acquire()
@@ -42,6 +67,8 @@ except BaseException:
 # checkpoints into the in-memory browse/recovery facade.
 repository.interrupt_running_games()
 repository.interrupt_running_benchmarks()
+# The repository exists now; warm both caches while the archives load.
+_start_startup_warmups()
 event_bus = EventBus()
 ws_manager = WSManager()
 memory_service = MemoryService(data_dir=str(data_dir))

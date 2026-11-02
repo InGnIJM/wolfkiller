@@ -56,3 +56,18 @@ def test_unknown_api_mode_is_rejected():
 
     with pytest.raises(ValueError, match="unknown provider api_mode: responses"):
         transport_for(profile)
+
+
+def test_prewarm_imports_every_transport_implementation():
+    import sys
+
+    from app.agents.providers import transports
+
+    transports.prewarm()
+
+    for module_name in (
+        "app.agents.providers.openai_compatible",
+        "app.agents.providers.anthropic_messages",
+        "app.agents.providers.openai_responses",
+    ):
+        assert module_name in sys.modules

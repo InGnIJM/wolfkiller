@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -694,3 +695,116 @@ async def test_unreferenced_model_can_be_deleted_with_repository_attached(store,
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     await model_routes.delete_model(cfg.id)
     assert store.get(cfg.id) is None
+
+
+# ── Latency aggregate caching ─────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _clear_latency_cache():
+    model_routes._latency_cache = None
+    yield
+    model_routes._latency_cache = None
+
+
+@pytest.mark.asyncio
+async def test_list_models_caches_the_latency_aggregate(store, monkeypatch):
+    calls: list[str] = []
+
+    def _stats(*, since):
+        calls.append(since)
+        return {}
+
+    repository = SimpleNamespace(model_latency_stats=_stats)
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    monkeypatch.setattr(model_routes, "get_repository", lambda: repository)
+
+    await model_routes.list_models()
+    await model_routes.list_models()
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_latency_cache_expires_after_the_ttl(store, monkeypatch):
+    calls: list[str] = []
+    clock = [1000.0]
+
+    def _stats(*, since):
+        calls.append(since)
+        return {}
+
+    repository = SimpleNamespace(model_latency_stats=_stats)
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    monkeypatch.setattr(model_routes.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(model_routes, "get_repository", lambda: repository)
+
+    await model_routes.list_models()
+    clock[0] += model_routes.LATENCY_CACHE_TTL_SECONDS - 1
+    await model_routes.list_models()
+    assert len(calls) == 1
+
+    clock[0] += 2
+    await model_routes.list_models()
+    assert len(calls) == 2
+
+
+def test_the_latency_cache_is_scoped_to_one_repository(monkeypatch):
+    counters = {"a": 0, "b": 0}
+
+    def _repository(name):
+        def _stats(*, since):
+            counters[name] += 1
+            return {}
+        return SimpleNamespace(model_latency_stats=_stats)
+
+    current = {"repository": _repository("a")}
+    monkeypatch.setattr(model_routes, "get_repository", lambda: current["repository"])
+
+    model_routes._latency_stats()
+    model_routes._latency_stats()
+    current["repository"] = _repository("b")
+    model_routes._latency_stats()
+
+    assert counters == {"a": 1, "b": 1}
+
+
+def test_warm_latency_cache_fills_the_cache(monkeypatch):
+    calls: list[str] = []
+
+    def _stats(*, since):
+        calls.append(since)
+        return {}
+
+    monkeypatch.setattr(
+        model_routes, "get_repository",
+        lambda: SimpleNamespace(model_latency_stats=_stats),
+    )
+
+    model_routes.warm_latency_cache()
+
+    assert len(calls) == 1
+    assert model_routes._latency_cache is not None
+
+
+def test_warm_latency_cache_logs_and_swallows_failures(monkeypatch, caplog):
+    def _boom(*, since):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(
+        model_routes, "get_repository",
+        lambda: SimpleNamespace(model_latency_stats=_boom),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=model_routes.__name__):
+        model_routes.warm_latency_cache()  # must not raise
+
+    assert any("warmup failed" in record.getMessage() for record in caplog.records)
+
+
+def test_to_response_builds_its_own_crypto_when_not_supplied(store):
+    config = _stored(store)
+
+    response = model_routes._to_response(config)
+
+    assert response.id == config.id
+    assert response.latency is None

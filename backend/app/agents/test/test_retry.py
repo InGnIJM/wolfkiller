@@ -9,7 +9,6 @@ from app.agents.retry import (
     KIND_REPAIR,
     KIND_TRANSPORT,
     RETRYABLE_OUTPUT_ERRORS,
-    RETRYABLE_PROVIDER_ERRORS,
     RetryPolicy,
     UnusableModelOutput,
     acall_with_retry,
@@ -18,6 +17,7 @@ from app.agents.retry import (
     retry_after_seconds,
     retry_delay,
     retry_plan,
+    retryable_provider_errors,
 )
 
 
@@ -75,8 +75,12 @@ def test_policy_rejects_impossible_values(overrides, message):
 def test_policy_defaults_are_retryable_provider_failures():
     policy = RetryPolicy()
 
-    assert policy.retry_on == RETRYABLE_PROVIDER_ERRORS
+    # ``None`` defers the lookup so constructing a policy (module-level retry
+    # ladders do that at import) never imports either provider SDK.
+    assert policy.retry_on is None
     assert policy.attempts == 3
+    assert isinstance(connection_error(), retryable_provider_errors())
+    assert isinstance(rate_limit_error(), retryable_provider_errors())
 
 
 # ── retry_delay ─────────────────────────────────────────────────

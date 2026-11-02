@@ -2,35 +2,57 @@
 
 Each SDK (openai, anthropic) raises its own exception hierarchy. Callers that
 need to classify failures (capability rejection, rate limit, server error,
-connection, timeout) should catch these tuples instead of a single SDK's
-classes so every transport degrades the same way.
+connection, timeout) should ask the accessors below instead of catching a single
+SDK's classes, so every transport degrades the same way.
 """
 
-import anthropic
-import openai
+from functools import lru_cache
 
 
-# 400/422 from the provider: the request shape (usually a tool definition or
-# tool_choice) was rejected. Mapped to a JSON fallback, never retried as-is.
-CAPABILITY_REJECTION_ERRORS: tuple[type[Exception], ...] = (
-    openai.BadRequestError,
-    openai.UnprocessableEntityError,
-    anthropic.BadRequestError,
-    anthropic.UnprocessableEntityError,
-)
+# The SDKs are imported lazily. This module sits in the import graph of every
+# request and role module, and importing the anthropic + openai packages costs
+# seconds on machines where the antivirus scans each opened file (anthropic
+# alone imports 1,800+ modules). The exception groups are only needed once a
+# provider call fails, so they are built on first use; ``prewarm()`` lets the
+# startup thread pay that cost in the background instead of on the first
+# failure.
+@lru_cache(maxsize=1)
+def capability_rejection_errors() -> tuple[type[Exception], ...]:
+    """400/422 from the provider: the request shape (tool definition or
+    tool_choice) was rejected. Mapped to a JSON fallback, never retried as-is.
+    """
+    import anthropic
+    import openai
 
-RATE_LIMIT_ERRORS: tuple[type[Exception], ...] = (
-    openai.RateLimitError,
-    anthropic.RateLimitError,
-)
+    return (
+        openai.BadRequestError,
+        openai.UnprocessableEntityError,
+        anthropic.BadRequestError,
+        anthropic.UnprocessableEntityError,
+    )
 
-# 5xx and Anthropic's 529 "overloaded" both mean "the provider, not us".
-SERVER_ERRORS: tuple[type[Exception], ...] = (
-    openai.InternalServerError,
-    anthropic.InternalServerError,
-    anthropic.OverloadedError,
-    anthropic.ServiceUnavailableError,
-)
+
+@lru_cache(maxsize=1)
+def rate_limit_errors() -> tuple[type[Exception], ...]:
+    import anthropic
+    import openai
+
+    return (openai.RateLimitError, anthropic.RateLimitError)
+
+
+@lru_cache(maxsize=1)
+def server_errors() -> tuple[type[Exception], ...]:
+    """5xx and Anthropic's 529 "overloaded" both mean "the provider, not us"."""
+    import anthropic
+    import openai
+
+    return (
+        openai.InternalServerError,
+        anthropic.InternalServerError,
+        anthropic.OverloadedError,
+        anthropic.ServiceUnavailableError,
+    )
+
 
 class ProviderDeadlineTimeout(TimeoutError):
     """The whole streamed call exceeded its wall-clock budget.
@@ -44,26 +66,46 @@ class ProviderDeadlineTimeout(TimeoutError):
     """
 
 
-# Timeouts subclass connection errors in both SDKs; catch TIMEOUT_ERRORS
-# first when the two must be told apart.
-TIMEOUT_ERRORS: tuple[type[Exception], ...] = (
-    openai.APITimeoutError,
-    anthropic.APITimeoutError,
-    ProviderDeadlineTimeout,
-)
+# Timeouts subclass connection errors in both SDKs; check this group first when
+# the two must be told apart.
+@lru_cache(maxsize=1)
+def timeout_errors() -> tuple[type[Exception], ...]:
+    import anthropic
+    import openai
 
-CONNECTION_ERRORS: tuple[type[Exception], ...] = (
-    openai.APIConnectionError,
-    anthropic.APIConnectionError,
-)
+    return (
+        openai.APITimeoutError,
+        anthropic.APITimeoutError,
+        ProviderDeadlineTimeout,
+    )
 
-# Everything a transport may raise that warrants a retry-or-fallback rather
-# than a crash: rate limits, server faults and transport-level failures.
-TRANSIENT_PROVIDER_ERRORS: tuple[type[Exception], ...] = (
-    *RATE_LIMIT_ERRORS,
-    *SERVER_ERRORS,
-    *CONNECTION_ERRORS,
-)
+
+@lru_cache(maxsize=1)
+def connection_errors() -> tuple[type[Exception], ...]:
+    import anthropic
+    import openai
+
+    return (openai.APIConnectionError, anthropic.APIConnectionError)
+
+
+@lru_cache(maxsize=1)
+def transient_provider_errors() -> tuple[type[Exception], ...]:
+    """Everything a transport may raise that warrants a retry-or-fallback
+    rather than a crash: rate limits, server faults and transport failures.
+    """
+    return (*rate_limit_errors(), *server_errors(), *connection_errors())
+
+
+def prewarm() -> None:
+    """Populate every cached SDK group (called by the startup prewarm thread).
+
+    Idempotent: ``lru_cache`` makes later calls cheap.
+    """
+    for accessor in (
+        capability_rejection_errors, rate_limit_errors, server_errors,
+        timeout_errors, connection_errors, transient_provider_errors,
+    ):
+        accessor()
 
 
 #: HTTP status meaning "reachable, but it will not serve this request right
@@ -178,7 +220,7 @@ def classify_provider_error(error: BaseException) -> str:
     bucket. After that the HTTP status decides, because it is ground truth: a
     gateway answering 429 or 503 through whatever class the SDK happened to pick
     must still read as a rate limit or a refusal. There is deliberately no
-    ``RATE_LIMIT_ERRORS`` branch: both SDKs build that class from a 429 response,
+    ``rate_limit_errors()`` branch: both SDKs build that class from a 429 response,
     so the status check above always decides first. The remaining ``isinstance``
     buckets only fill in what no status can tell us.
 
@@ -218,9 +260,9 @@ def classify_provider_error(error: BaseException) -> str:
         if _mentions(error, _CONTEXT_HINTS):
             return FAILURE_CONTEXT_TOO_LARGE
         return "provider_bad_request"
-    if isinstance(error, SERVER_ERRORS):
+    if isinstance(error, server_errors()):
         return "provider_server_error"
-    if isinstance(error, CONNECTION_ERRORS):
+    if isinstance(error, connection_errors()):
         return "provider_connection_error"
     if status_code is not None and 500 <= status_code < 600:
         return "provider_server_error"
