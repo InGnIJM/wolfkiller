@@ -379,7 +379,8 @@ def _check_preconditions(effect: GameEffect, runtime: _Runtime, alive: dict[int,
         if actual is not present: raise EffectConflict("status precondition failed")
 def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime,
                alive: dict[int, bool], events: list[Mapping[str, object]],
-               preexisting_relations: Mapping[int, frozenset] | None = None) -> None:
+               preexisting_relations: Mapping[int, frozenset] | None = None,
+               *, round_number: int, death_history: list) -> None:
     kind = effect.kind
     if kind is EffectKind.ACCEPT_ACTION: return
     if kind is EffectKind.RECORD_VOTE:
@@ -425,7 +426,15 @@ def _apply_one(effect: GameEffect, payload: dict[str, object], runtime: _Runtime
     else:
         if not alive[target]: raise EffectConflict("player already dead")
         alive[target] = False
-        events.append({"event_type": "PLAYER_DIED", "payload": {"seat": target, "cause": payload["cause"]}, "visibility": effect.visibility})
+        from app.models.actions import DeathReport
+        # A react MARK_DEATH has no settlement batch to carry its DeathReport:
+        # record the ledger row here so the death reaches the morning batch,
+        # narration, summary and public death list.  ``alive`` already rejects
+        # the same seat twice, so the row cannot be duplicated by this path.
+        death_history.append(DeathReport(target, payload["cause"], round_number))
+        events.append({"event_type": "PLAYER_DIED", "payload": {
+            "seat": target, "cause": payload["cause"], "round_number": round_number,
+        }, "visibility": effect.visibility})
 class EffectApplier:
     def commit_night(self, state: GameState, *, round_number: int) -> CommitResult | None:
         """The night's single atomic closing batch.
@@ -585,7 +594,11 @@ class EffectApplier:
                     degraded=permission.degraded,
                 )
             _check_preconditions(effect, simulated, alive)
-            _apply_one(effect, payload, simulated, alive, generated_events, preexisting_relations)
+            _apply_one(
+                effect, payload, simulated, alive, generated_events,
+                preexisting_relations, round_number=state.round_number,
+                death_history=state.death_history,
+            )
         simulated.revision += 1
         simulated.events += tuple(_json(event, "event") for event in generated_events)
         digest = _digest(state, simulated, alive)

@@ -156,6 +156,12 @@ _MIN_DISCUSSION_ROUNDS = 2
 #: ``GameEngine._announce_pending_night_deaths``): the night-completion path
 #: parks the slot here when the sheriff election owes the announcement.
 _ANNOUNCE_STAGE = 10
+# Deaths a pure react contract can produce without a settlement row.  The
+# ledger merge below must not resurrect a stale settlement death just because
+# the current round number matches.
+_REACT_ONLY_DEATH_CAUSES = frozenset({
+    "bond_death", "love_death", "charm", "stand_in",
+})
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1118,27 @@ class GameEngine:
                 seen.add(seat); deaths.append(_PendingDeath(seat, cause, round_number))
         except (KeyError, TypeError, UnicodeError, ValueError):
             raise PipelinePaused("invalid pipeline night event") from None
+        # React-contract deaths (bond_death / love_death) are recorded in the
+        # death ledger by the write entry, but they do not travel through the
+        # night batch's PLAYER_DIED result events. Fold the current round's
+        # not-yet-seen ledger rows in, so the morning narration, summary and
+        # public death list include them.
+        ledger = (
+            item for item in self.state.death_history
+            if type(item) is DeathReport
+        )
+        for item in sorted(ledger, key=lambda death: death.player_seat):
+            if item.round_number != self.state.round_number:
+                continue
+            if item.cause not in _REACT_ONLY_DEATH_CAUSES:
+                continue
+            if item.player_seat in seen:
+                continue
+            player = self.state.players.get(item.player_seat)
+            if player is None or player.is_alive:
+                continue
+            seen.add(item.player_seat)
+            deaths.append(_PendingDeath(item.player_seat, item.cause, item.round_number))
         return tuple(deaths)
 
     def _audience_events_from(
@@ -1380,6 +1407,38 @@ class GameEngine:
         await self._run_response_point(SchedulePoint.DAWN_REACTION, commit)
         reaction = await self._settle_and_publish()
         reaction += await self._run_reaction_waves(slot_prefix="night_react")
+        # Pure react deaths (the scent phantom's bond, the cupid's love chain)
+        # are MARK_DEATH effects, not settlement rows: _settle_and_publish only
+        # publishes damage deaths, so without this pass their ledger rows never
+        # reach the morning log or summary.  Exclude the seats the settlement
+        # already published, and append the extra seats to the completion slot
+        # so a resume at this stage does not publish them twice.
+        settled = {death.player_seat for death in reaction}
+        before = {death.seat for death in pending.deaths}
+        extra = tuple(
+            death for death in sorted(
+                self.state.death_history, key=lambda item: item.player_seat,
+            )
+            if death.round_number == self.state.round_number
+            and death.player_seat not in before
+            and death.player_seat not in settled
+            and death.cause in _REACT_ONLY_DEATH_CAUSES
+        )
+        if extra:
+            await self._publish_deaths(extra)
+            self._announce_delayed_deaths(extra)
+            merged = tuple(
+                _PendingDeath(death.player_seat, death.cause, death.round_number)
+                for death in extra
+            )
+            self._pending_night_completion = replace(
+                self._pending_night_completion, deaths=pending.deaths + merged,
+                event_cursor=len(pending.deaths) + len(merged),
+            )
+            for death in extra:
+                await self._durable_checkpoint(
+                    f"react_death:{self.state.round_number}:{death.player_seat}"
+                )
         await self._durable_checkpoint(
             f"night_reaction:{self.state.round_number}:{self._seat_list(reaction)}"
         )

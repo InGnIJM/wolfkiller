@@ -1217,3 +1217,30 @@ def test_still_on_the_table_rejects_an_unknown_seat() -> None:
     engine = _night_engine()
     assert engine._still_on_the_table(99) is False
     assert engine._still_on_the_table(1) is True
+
+
+@pytest.mark.asyncio
+async def test_deferred_react_death_is_published_once_and_merged_into_the_slot() -> None:
+    engine = _night_engine()
+    engine.state.round_number = 1
+    engine.state.players[3].is_alive = False
+    engine.state.death_history = [DeathReport(3, "bond_death", 1)]
+    engine._pending_night_completion = game_engine_module._PendingNightCompletion(
+        PipelineResult((), (), "digest", (), PipelineMode.V2),
+        deaths=(game_engine_module._PendingDeath(2, "wolf_kill", 1),),
+    )
+    engine._run_response_point = AsyncMock()
+    engine._settle_and_publish = AsyncMock(return_value=())
+    engine._run_reaction_waves = AsyncMock(return_value=())
+    engine._publish_deaths = AsyncMock()
+    engine._announce_delayed_deaths = MagicMock()
+
+    await engine._run_deferred_night_reactions()
+
+    engine._publish_deaths.assert_awaited_once_with((DeathReport(3, "bond_death", 1),))
+    engine._announce_delayed_deaths.assert_called_once_with((DeathReport(3, "bond_death", 1),))
+    assert [death.seat for death in engine._pending_night_completion.deaths] == [2, 3]
+
+    engine._publish_deaths.reset_mock()
+    await engine._run_deferred_night_reactions()
+    engine._publish_deaths.assert_not_called()

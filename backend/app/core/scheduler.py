@@ -263,6 +263,11 @@ class ResponseQueue:
     def _open_new(self, state: GameState, event: DomainEvent, depth: int) -> tuple[ResponseWindow, ...]:
         if event.event_id in self._windows: return self._windows[event.event_id]
         target = event.payload.get("target_seat")
+        if target is None and event.event_type == "PLAYER_DIED":
+            # React-contract deaths (bond_death / love_death) emit the seat as
+            # ``seat`` in the death ledger event. Without the fallback their
+            # victim's own hunter/love/bond response window never opened.
+            target = event.payload.get("seat")
         player = state.players.get(target) if type(target) is int and target > 0 else None
         spec = None if player is None else self.registry.specs.get(player.role)
         windows = list(self._contract_windows(state, event, target, spec, depth))
