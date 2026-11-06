@@ -276,7 +276,7 @@ def test_report_uses_frozen_database_facts_and_is_reproducible(tmp_path) -> None
         report2 = service.generate_report(run["run_id"])
         assert report2 == report1
         assert report1["input_digest"] == report2["input_digest"]
-        assert report1["metric_version"] == "v7"
+        assert report1["metric_version"] == "v8"
         assert report1["planned_count"] == 1
         assert report1["terminal_count"] == 1
         assert report1["completed_count"] == 1
@@ -418,6 +418,8 @@ def test_report_digest_tracks_late_usage_and_recovery_quality(tmp_path) -> None:
             "known_total_tokens": 0, "completeness_rate": 0.0,
             "cache_known_attempts": 0, "cache_known_prompt_tokens": 0,
             "known_cached_prompt_tokens": 0, "cache_hit_rate": None,
+            "cache_known_seats": 0, "cache_cold_seats": 0,
+            "cache_hit_rate_excluding_cold_seats": None,
         }
 
         repository.finish_model_attempt(

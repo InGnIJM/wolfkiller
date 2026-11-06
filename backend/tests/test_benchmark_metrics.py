@@ -465,7 +465,7 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
     facts = _native_metric_facts()
     report = BenchmarkMetrics.compute(**facts)
 
-    assert report["metric_version"] == "v7"
+    assert report["metric_version"] == "v8"
     assert len(report["input_digest"]) == 64
     summary = report["summary"]
     assert summary["games"] == {
@@ -525,6 +525,9 @@ def test_native_benchmark_metrics_cover_outcomes_requests_and_attempts() -> None
         "cache_known_prompt_tokens": 0,
         "known_cached_prompt_tokens": 0,
         "cache_hit_rate": None,
+        "cache_known_seats": 0,
+        "cache_cold_seats": 0,
+        "cache_hit_rate_excluding_cold_seats": None,
     }
     assert summary["requests"]["unknown"] == 0
     assert summary["attempts"]["executed_requests"] == 3
@@ -1145,3 +1148,36 @@ def test_cache_hit_rate_uses_only_attempts_that_reported_cache_hits() -> None:
     assert usage["cache_known_prompt_tokens"] == 200
     assert usage["known_cached_prompt_tokens"] == 75
     assert usage["cache_hit_rate"] == 0.375
+
+
+def test_cold_seats_are_counted_and_excluded_from_the_hit_rate() -> None:
+    from app.services.benchmark_metrics import _attempt_metrics
+
+    summaries = [
+        {
+            "llm": {
+                "cache": {
+                    "by_seat": {
+                        "1": {"known_prompt": 1000, "cached_prompt": 800, "known_calls": 5},
+                        "2": {"known_prompt": 900, "cached_prompt": 0, "known_calls": 4},
+                        # Two calls is below the cold-seat threshold: unknown.
+                        "3": {"known_prompt": 500, "cached_prompt": 0, "known_calls": 2},
+                        "4": {"known_prompt": 0, "cached_prompt": 0, "known_calls": 0},
+                    },
+                },
+            },
+        },
+        # A summary written before the by_seat split contributes nothing.
+        {"llm": {"cache": {}}},
+        # Defensive shapes: non-mapping summary / llm / cache / seat entry.
+        None,
+        {"llm": "not-a-mapping"},
+        {"llm": {"cache": []}},
+        {"llm": {"cache": {"by_seat": {"1": "not-an-entry"}}}},
+    ]
+
+    usage = _attempt_metrics([], summaries)["token_usage"]
+
+    assert usage["cache_known_seats"] == 3
+    assert usage["cache_cold_seats"] == 1
+    assert usage["cache_hit_rate_excluding_cold_seats"] == round(800 / 1500, 6)

@@ -447,7 +447,8 @@ def test_cache_hit_rate_counts_only_calls_that_reported_cache_hits() -> None:
         {"data": {"call_kind": "speech", "prompt_tokens": 1000, "cached_prompt_tokens": 800}},
         {"data": {"call_kind": "speech", "prompt_tokens": 1000, "cached_prompt_tokens": 400}},
         {"data": {"call_kind": "night", "prompt_tokens": 500, "cached_prompt_tokens": 0}},
-        # No cache report: stays out of the denominator.
+        # No cache report: stays out of the known-only denominator, but it still
+        # counts in the all-call denominator and in the coverage denominator.
         {"data": {"call_kind": "action", "prompt_tokens": 9000}},
         {"data": {"prompt_tokens": 100, "cached_prompt_tokens": 50}},
     ])
@@ -456,10 +457,31 @@ def test_cache_hit_rate_counts_only_calls_that_reported_cache_hits() -> None:
     assert cache["known_prompt"] == 2600
     assert cache["cached_prompt"] == 1250
     assert cache["hit_rate"] == round(1250 / 2600, 4)
+    assert cache["prompt_tokens_all"] == 11600
+    assert cache["known_calls"] == 4
+    assert cache["coverage"] == 0.8
+    assert cache["hit_rate_all"] == round(1250 / 11600, 4)
     assert cache["by_kind"] == {
-        "night": {"known_prompt": 500, "cached_prompt": 0, "hit_rate": 0.0},
-        "speech": {"known_prompt": 2000, "cached_prompt": 1200, "hit_rate": 0.6},
-        "unknown": {"known_prompt": 100, "cached_prompt": 50, "hit_rate": 0.5},
+        "night": {
+            "known_prompt": 500, "cached_prompt": 0, "hit_rate": 0.0,
+            "prompt_tokens_all": 500, "known_calls": 1, "coverage": 1.0,
+            "hit_rate_all": 0.0,
+        },
+        "speech": {
+            "known_prompt": 2000, "cached_prompt": 1200, "hit_rate": 0.6,
+            "prompt_tokens_all": 2000, "known_calls": 2, "coverage": 1.0,
+            "hit_rate_all": 0.6,
+        },
+        "action": {
+            "known_prompt": 0, "cached_prompt": 0, "hit_rate": None,
+            "prompt_tokens_all": 9000, "known_calls": 0, "coverage": 0.0,
+            "hit_rate_all": 0.0,
+        },
+        "unknown": {
+            "known_prompt": 100, "cached_prompt": 50, "hit_rate": 0.5,
+            "prompt_tokens_all": 100, "known_calls": 1, "coverage": 1.0,
+            "hit_rate_all": 0.5,
+        },
     }
 
 
@@ -468,4 +490,66 @@ def test_cache_block_is_unknown_without_any_cache_report() -> None:
 
     cache = _llm_aggregate([{"data": {"call_kind": "speech", "prompt_tokens": 10}}])["cache"]
 
-    assert cache == {"known_prompt": 0, "cached_prompt": 0, "hit_rate": None, "by_kind": {}}
+    assert cache == {
+        "known_prompt": 0, "cached_prompt": 0, "hit_rate": None,
+        "prompt_tokens_all": 10, "known_calls": 0, "coverage": 0.0,
+        "hit_rate_all": 0.0,
+        "by_kind": {
+            "speech": {
+                "known_prompt": 0, "cached_prompt": 0, "hit_rate": None,
+                "prompt_tokens_all": 10, "known_calls": 0, "coverage": 0.0,
+                "hit_rate_all": 0.0,
+            },
+        },
+        "by_seat": {},
+    }
+
+
+def test_cache_block_is_empty_for_an_empty_log() -> None:
+    from app.services.game_summary import _llm_aggregate
+
+    cache = _llm_aggregate([])["cache"]
+
+    assert cache == {
+        "known_prompt": 0, "cached_prompt": 0, "hit_rate": None,
+        "prompt_tokens_all": 0, "known_calls": 0, "coverage": None,
+        "hit_rate_all": None, "by_kind": {}, "by_seat": {},
+    }
+
+
+def test_cache_coverage_denominator_includes_calls_without_prompt_tokens() -> None:
+    from app.services.game_summary import _llm_aggregate
+
+    cache = _llm_aggregate([
+        {"data": {"call_kind": "speech", "prompt_tokens": 100, "cached_prompt_tokens": 50}},
+        {"data": {"call_kind": "speech"}},
+    ])["cache"]
+
+    assert cache["known_calls"] == 1
+    assert cache["coverage"] == 0.5
+    assert cache["prompt_tokens_all"] == 100
+    assert cache["hit_rate_all"] == 0.5
+
+
+def test_cache_block_splits_known_calls_by_seat() -> None:
+    from app.services.game_summary import _llm_aggregate
+
+    cache = _llm_aggregate([
+        {"seat": 1, "data": {"call_kind": "speech", "prompt_tokens": 1000, "cached_prompt_tokens": 800}},
+        {"seat": 1, "data": {"call_kind": "speech", "prompt_tokens": 1000, "cached_prompt_tokens": 200}},
+        {"seat": 2, "data": {"call_kind": "speech", "prompt_tokens": 500, "cached_prompt_tokens": 0}},
+        {"seat": 2, "data": {"call_kind": "action", "prompt_tokens": 500}},
+    ])["cache"]
+
+    assert cache["by_seat"] == {
+        "1": {
+            "known_prompt": 2000, "cached_prompt": 1000, "hit_rate": 0.5,
+            "prompt_tokens_all": 2000, "known_calls": 2, "coverage": 1.0,
+            "hit_rate_all": 0.5,
+        },
+        "2": {
+            "known_prompt": 500, "cached_prompt": 0, "hit_rate": 0.0,
+            "prompt_tokens_all": 1000, "known_calls": 1, "coverage": 0.5,
+            "hit_rate_all": 0.0,
+        },
+    }
