@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -3495,6 +3496,66 @@ class TestGameEngine:
         await run
         assert [item.voter_seat for item in engine.state.votes] == [1, 2, 3]
         assert engine.state.voted_seats == {1, 2, 3}
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_wait_cap_releases_the_followers(self):
+        engine = GameEngine(
+            game_id="vote-warmup-cap", event_bus=EventBus(), vote_warmup=True,
+            vote_warmup_max_wait_seconds=0.05,
+        )
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2, 3)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        started: list[tuple[float, int]] = []
+        warmup_release = asyncio.Event()
+
+        async def vote(seat: int):
+            started.append((time.monotonic(), seat))
+            if seat == 1:
+                await warmup_release.wait()
+            return VoteAction(seat, 1)
+
+        engine.vote = vote
+        run = asyncio.create_task(engine._execute_vote_casting())
+        # The followers must not wait for the whole warmup ballot: the cap
+        # releases them while seat 1 is still in flight.
+        await asyncio.sleep(0.3)
+        assert sorted(seat for _, seat in started) == [1, 2, 3]
+        warmup_release.set()
+        await run
+        assert engine.state.voted_seats == {1, 2, 3}
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_no_cap_waits_for_the_whole_first_ballot(self):
+        engine = GameEngine(
+            game_id="vote-warmup-nocap", event_bus=EventBus(), vote_warmup=True,
+            vote_warmup_max_wait_seconds=None,
+        )
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        started: list[int] = []
+        warmup_release = asyncio.Event()
+
+        async def vote(seat: int):
+            started.append(seat)
+            if seat == 1:
+                await warmup_release.wait()
+            return VoteAction(seat, 1)
+
+        engine.vote = vote
+        run = asyncio.create_task(engine._execute_vote_casting())
+        await asyncio.sleep(0.1)
+        assert started == [1]
+        warmup_release.set()
+        await run
+        assert engine.state.voted_seats == {1, 2}
 
     @pytest.mark.asyncio
     async def test_vote_warmup_keeps_a_single_seat_on_the_normal_path(self):

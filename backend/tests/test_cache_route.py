@@ -12,6 +12,7 @@ from app.agents.cache_route import (
     MIN_CACHED_TOKENS,
     SharedSessionMode,
     apply_shared_session,
+    burst_warmup_max_wait_seconds,
     burst_warmup_mode,
     cache_route_mode,
     pin_cache_routes,
@@ -635,6 +636,25 @@ def test_burst_warmup_mode_defaults_and_validates(monkeypatch):
         burst_warmup_mode("ab")
 
 
+def test_burst_warmup_max_wait_defaults_to_three_seconds(monkeypatch):
+    monkeypatch.delenv("WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS", raising=False)
+    assert burst_warmup_max_wait_seconds() == 3.0
+    assert burst_warmup_max_wait_seconds("") == 3.0
+
+
+def test_burst_warmup_max_wait_parses_seconds_and_zero_disables():
+    assert burst_warmup_max_wait_seconds("1.5") == 1.5
+    assert burst_warmup_max_wait_seconds(" 0.25 ") == 0.25
+    # Zero or negative restores the old "wait for the whole first ballot".
+    assert burst_warmup_max_wait_seconds("0") is None
+    assert burst_warmup_max_wait_seconds("-2") is None
+
+
+def test_burst_warmup_max_wait_rejects_garbage():
+    with pytest.raises(ValueError, match="WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS"):
+        burst_warmup_max_wait_seconds("soon")
+
+
 @pytest.mark.asyncio
 async def test_create_game_enables_vote_warmup_with_the_flag(
     tmp_path, monkeypatch,
@@ -648,12 +668,14 @@ async def test_create_game_enables_vote_warmup_with_the_flag(
 
     monkeypatch.setattr(GameEngine, "start", noop)
     monkeypatch.setenv("WOLFKILLER_BURST_WARMUP", "on")
+    monkeypatch.setenv("WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS", "1.5")
 
     service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
     game_id = await service.create_game()
     await service._tasks[game_id]
 
     assert service._engines[game_id]._vote_warmup is True
+    assert service._engines[game_id]._vote_warmup_max_wait_seconds == 1.5
 
 
 @pytest.mark.asyncio
@@ -725,10 +747,14 @@ async def test_recovery_carries_vote_warmup_into_the_engine(
         lambda *_args: {1: config, 2: config},
     )
     monkeypatch.setenv("WOLFKILLER_BURST_WARMUP", "on")
+    # Zero disables the cap: recovery must hand ``None`` through, not the
+    # default.
+    monkeypatch.setenv("WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS", "0")
     try:
         service._build_recovered_engine(
             state, {"position": "night"}, {"config": {}},
         )
         assert captured["vote_warmup"] is True
+        assert captured["vote_warmup_max_wait_seconds"] is None
     finally:
         await service.aclose()
