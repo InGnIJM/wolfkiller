@@ -823,3 +823,10 @@
 - 动作：按「整局不变 → 跨座位共享 → 座位不变 → 追加型 → 易变 → 任务」排列；截断用 `agents/prompt_window.stable_tail*`（整步前移）；不要为此改 system 文本（`prompt_drift`）。改完用 `scripts/prompt_size_report.py --prefix` 看理论上限、单局 summary `llm.cache` 看实测。
 - 坑：langchain-openai 只把 `prompt_tokens_details.cached_tokens` 归一到 `input_token_details.cache_read`，DeepSeek 的 `prompt_cache_hit_tokens` 要从 `response_metadata.token_usage` 补读；未报告缓存字段的调用必须排除出分母，否则命中率被稀释成假 0%。
 - 已知遗留（与本改动无关）：`tests/test_base_role.py` 的 5 条 vote telemetry 用例在 HEAD `1b771a3` 已失败（`ConversationLog` 不再转发 `log_vote_telemetry`）。
+
+## 投票截断 + 紧凑重试 = 双重缓存损失（2026-11-06 复盘）
+
+- 触发条件：单局 `llm.cache` 命中率明显低于 `prompt_size_report.py --prefix` 给出的上限；或 `llm_calls.log` 里 `completion_tokens` 反复打满 `action_max_tokens`。
+- 根因：reasoning 模型把 4096 输出预算全花在推理上、正文为空（旧口径记 `action_response_not_text`）；失败后走 `build_vote_retry_prompt` 紧凑重试，开头就是座位私有内容，前缀缓存几乎全丢——一次截断付两遍钱。
+- 动作：① `finish_reason∈{length,max_tokens}` 且空响应要单独记 `action_response_truncated` 并进 `QUALITY_CODES`（tool 通道同理，别误判 `StrictCapabilityError` 降级传输）；② 投票重试**只有超时**才换紧凑 prompt，其余失败在原 messages 尾部追加一条提醒即可保住前缀；③ 投票指令直接要求「reasoning ≤100 字」并配足 `action_max_tokens`；④ `failure_taxonomy` 的 `test_source_code_literals_are_all_registered` 会拦住任何没注册的新 `code=` 字面量，先加进 `QUALITY_CODES`。
+- 预热：`WOLFKILLER_BURST_WARMUP` 等首票只对共享 session 有意义，且要用 `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS`（默认 3s）封顶——网关缓存写入延迟是秒级黑盒，等满一张票 15-30s 买不到更多缓存。

@@ -54,6 +54,35 @@
 - 若 action 无提升 → 写入延迟 > 单调用耗时（观测到 partner_age>100s 仍 2048 的案例，可能是分钟级落盘），方案改「错峰 stagger」或放弃；回退 = env 置 `off` + 重启
 - 副作用观察：投票阶段时长 +15~30s/轮（540s 预算内可吸收）；benchmark 时长口径注意
 
+## 追加修复：截断重试、夜晚重排、预热等待上限（2026-11-06）
+
+### 基线（对局 `53266566`，三开关全开）
+
+全局 `hit_rate_all` = 57.3%（action 55.1 / speech 65.4 / night 44.1），离线前缀上限 74.9%，实际约为上限的 79%。
+
+### 发现
+
+1. **放逐投票大量截断**：建局快照 `action_max_tokens=4096`（`games` 表持久化，不随 .env 更新），29 次首投中 11 次 `completion_tokens=4096`、空内容、`action_response_not_text`。每次浪费 ~8.7k prompt + 4096 completion + 30–50s。
+2. **重试全部打不中缓存**：`build_vote_retry_prompt` 以 `<authoritative_state>`+私有身份开头，和原 prompt 只共享 ~2.2k 字符 system；`.env` 已在赛后改为 `LLM_ACTION_MAX_TOKENS=8192`。
+3. **夜晚狼队前缀早分叉**：system 里拼了契约语句（讨论/投票不同）；user 里座位私有段（身份/自刀条款/RANDOM_HINT）排在讨论记录之前。
+
+### 修复（已实现）
+
+| 项 | 改动 |
+| --- | --- |
+| 简短推理 | `_vote_instruction` 尾部要求「先结论、reasoning ≤100 字、不展开长篇分析」 |
+| 截断分类 | `finish_reason∈{length,max_tokens}` 且空响应 → `ActionValidationError(code="action_response_truncated")`；tool 通道同因不再误判 `StrictCapabilityError` |
+| 重试吃缓存 | **仅超时**用紧凑 `build_vote_retry_prompt`；校验失败/截断/瞬时故障/能力降级均在原 messages 后追加一条提醒（截断时用专门的中文简短指令），第 3 次尝试同理（`_final_retry_messages(timed_out)`） |
+| 夜晚重排 | system 只剩全体狼共用前缀；user = `_TARGET_RULE` → 共享简报 → 当前局势 → 讨论记录 → 已出票(投票) → 契约说明+JSON → 座位私有尾（身份/思考/自刀/倡导者/轮次）；投票与讨论共用 `已进行的讨论` 标题，使首票能复用最后一次讨论的前缀 |
+| 预热等待 | `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS`：默认 3.0 秒后放行其余座位；`<=0` 恢复等首票全部完成；非法值建局时报错 |
+
+### 判定口径（下一局）
+
+- 全局 `hit_rate_all` ≥62%（目标 62–65）；`action.hit_rate_all` 提升
+- `exile_vote` 首投截断次数（`action_response_truncated` 或打满输出上限）≤2
+- 非超时重试 `cached/prompt` ≥70%；`night.hit_rate_all` ≥52%
+- 时间戳：跟随座位在首票发起 ≤3.x 秒内发出；若预热跟随者命中无改善 → `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS=0` 回退并在本 note 记录
+
 ## 关联
 
 - `2026-11-04-opencode-go-cache-routing.md`（路由黑盒实测、P2 探针、P0 直连建议——直连因成本放弃）
