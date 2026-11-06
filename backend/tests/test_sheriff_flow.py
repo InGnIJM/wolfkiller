@@ -290,7 +290,7 @@ def test_director_prompts_include_sheriff_rules_and_only_current_tools() -> None
     # 这次查验。现在两条都走 `_context_block`，并由
     # `test_every_sheriff_prompt_carries_identity_and_the_office_lists` 遍历把关。
     badge_human = director.badge_prompt(state, 2, (3, 4))[1]["content"]
-    assert "你是2号，身份：" in badge_human
+    assert "你的身份：2号" in badge_human
     assert "你的私有事实" in badge_human
 
 
@@ -761,7 +761,7 @@ def test_badge_prompt_shows_the_seer_own_last_check() -> None:
     EffectApplier().apply(state, effects, permission)
 
     human = Director().badge_prompt(state, 5, (1, 2, 3, 4, 6, 7, 8, 9))[1]["content"]
-    assert "你是5号，身份：" in human
+    assert "你的身份：5号" in human
     assert "查验9号：好人" in human
     # 交/撕徽的目标清单与工具约定不能被这次注入挤掉
     assert "9号" in human and "撕毁" in human and "target_seat" in human
@@ -804,10 +804,11 @@ def test_sheriff_prompts_put_shared_speeches_before_identity_and_rosters_last() 
     assert seven[0] == nine[0]
     human = nine[1]["content"]
     order = [human.index(marker) for marker in (
-        "警上已发言", "你是9号，身份", "你的私有事实", "已上警座位", "局势距离", "第1轮警长投票",
+        "历史与对话", "**你的身份：9号", "警上玩家（本局曾上警）",
+        "局势距离", "## 你的私有事实", "第1轮警长投票",
     )]
     assert order == sorted(order)
-    shared = human[:human.index("你是9号，身份")]
+    shared = human[:human.index("**你的身份：9号")]
     assert seven[1]["content"].startswith(shared)
 
 
@@ -1083,7 +1084,7 @@ def test_the_side_prompt_carries_the_anchor_the_alive_list_and_both_orders() -> 
 
     human = Director().side_prompt(state, 9, (DEATH_LEFT, DEATH_RIGHT))[1]["content"]
 
-    assert "你是9号，身份：" in human          # 身份/阵营
+    assert "你的身份：9号" in human          # 身份/阵营
     assert "你的私有事实" in human              # 私有事实（查验、药）
     assert "未上警座位" in human                # 警上/警下
     assert "昨夜死亡：6号" in human             # 锚点
@@ -1157,3 +1158,96 @@ def test_an_unknown_role_is_a_plain_pack_wolf_for_the_badge_move() -> None:
     state.players[1] = PlayerState(1, "unknown-role", Camp.WEREWOLF.value)
     assert SheriffDirector._may_explode(state, 1) is True
     assert SheriffDirector._may_explode(state, 99) is False
+
+
+def _fragrance_state() -> GameState:
+    """The fragrance board: awakened seer at 5, witch at 11, sheriff on."""
+    state = _rich_state()
+    state.config.role_counts.pop("wolf-killer-seer", None)
+    state.config.role_counts["wolf-killer-awakened-seer"] = 1
+    state.players[5].role = "wolf-killer-awakened-seer"
+    from app.core.role_runtime import initialize_role_resources
+    from app.roles.registry import builtin_registry
+    registry = builtin_registry.freeze()
+    initialize_role_resources(state, registry.specs, registry.digest)
+    return state
+
+
+def test_sheriff_vote_prompt_uses_the_shared_public_context() -> None:
+    """The voters must see the same role rules/gate as the candidates."""
+    from app.core.conversation_log import ConversationLog
+    from app.core.sheriff_flow import SheriffDirector as Director
+    state = _fragrance_state()
+    log = ConversationLog()
+    long_speech = "我是真觉醒预言家，" + "长" * 240
+    log.add_public_speech(
+        5, "wolf-killer-awakened-seer", long_speech, 1, "sheriff_election",
+    )
+    log.add_public_speech(
+        6, "wolf-killer-werewolf", "6号才是真预言家，昨晚查验8号。", 1,
+        "sheriff_election",
+    )
+    office = state.sheriff_office
+    office.candidates = {5, 6}
+    office.active = {5, 6}
+
+    human = Director(conversation_log=log).vote_prompt(state, 9, (5, 6))[1]["content"]
+
+    assert "<public_role_rules>" in human
+    assert "Awakened Seer" in human
+    assert "never told which" in human
+    assert "<decision_gate>" in human
+    assert "<untrusted_public_history>" in human
+    assert long_speech in human  # 200-char speeches are not cut at 160
+    assert "候选人：5号、6号" in human
+    assert "第1轮警长投票" in human
+
+
+def test_sheriff_run_prompt_shows_the_awakened_seer_own_pair_check() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+
+    state = _fragrance_state()
+    state._pipeline_runtime.private_facts.setdefault(5, []).append({
+        "namespace": "pair_checks",
+        "fact": {"seats": [1, 2], "has_wolf": True},
+    })
+    human = Director().campaign_prompt(state, 5, wolf=False)[1]["content"]
+    assert "觉醒预言家查验1号、2号：有狼" in human
+
+
+def test_sheriff_witch_prompt_has_the_kill_target_even_when_unannounced_dead() -> None:
+    from app.core.sheriff_flow import SheriffDirector as Director
+
+    state = _fragrance_state()
+    state.last_wolf_kill_target = 11
+    state.players[11].is_alive = False
+    state.death_history = [DeathReport(11, "wolf_kill", 1)]
+    office = state.sheriff_office
+    office.candidates = {5, 6}
+    office.active = {5, 6}
+
+    human = Director().vote_prompt(state, 11, (5, 6))[1]["content"]
+    assert "昨夜狼人袭击目标：11号" in human
+    assert "候选人：5号、6号" in human
+
+
+def test_the_pack_restriction_line_when_self_explode_is_closed() -> None:
+    from app.core.role_runtime import initialize_role_resources
+    from app.core.sheriff_flow import SheriffDirector as Director
+    from app.roles.registry import builtin_registry
+    state = _rich_state()
+    registry = builtin_registry.freeze()
+    initialize_role_resources(state, registry.specs, registry.digest)
+    state._pipeline_runtime.role_resources.setdefault(2, {})["no_self_explode"] = 1
+    line = Director._wolf_restriction_line(state, 2, True)
+    assert "不能自爆" in line and "吞警徽" in line
+
+
+def test_office_lists_render_no_off_badge_seats_when_everyone_ran() -> None:
+    state = _rich_state()
+    office = state.sheriff_office
+    office.step = "vote"
+    office.candidates = set(range(1, 13))
+    office.active = set(range(1, 13))
+    line = SheriffDirector._office_lists(state)
+    assert "未上警座位（警下，拥有警长投票权）：无。" in line

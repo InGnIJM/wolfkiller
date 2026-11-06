@@ -533,7 +533,7 @@ async def test_the_side_prompt_previews_the_order_the_engine_rotates_to() -> Non
     assert engine.state.sheriff_office.speech_side == DEATH_LEFT
     prompt = captured[0]
     assert "昨夜死亡：4号" in prompt
-    assert "你是2号，身份：" in prompt and "你的私有事实" in prompt
+    assert "你的身份：2号" in prompt and "你的私有事实" in prompt
     for side in (DEATH_LEFT, DEATH_RIGHT):
         expected = day_speech_order(engine.state, side)
         sequence = " → ".join(f"{seat}号" for seat in expected)
