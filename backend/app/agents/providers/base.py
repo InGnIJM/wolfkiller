@@ -132,6 +132,20 @@ ACTION_PURPOSES = frozenset({
 })
 
 
+class CacheMode(StrEnum):
+    """How a provider exposes prompt-prefix caching.
+
+    ``automatic`` means the provider matches an earlier prompt prefix for the
+    whole account (DeepSeek's own API). ``routing`` means a gateway routes each
+    session to an upstream backend and only that backend can serve the cache
+    (OpenCode Zen/Go), so an identical prefix from another session may miss.
+    """
+
+    AUTOMATIC = "automatic"
+    ROUTING = "routing"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class ModelCapabilities:
     tools: bool
@@ -157,6 +171,10 @@ class ProviderProfile:
     #: provider requires one. The value is minted per LLMClient, never here,
     #: so a frozen profile stays stateless and hashable.
     session_header: str | None = None
+    #: How the provider exposes prompt-prefix caching. Code metadata only: it
+    #: never reaches GameConfig, checkpoints or the model snapshot. The cache
+    #: route probe (``app.agents.cache_route``) only touches ROUTING profiles.
+    cache_mode: CacheMode = CacheMode.UNKNOWN
 
 
 @dataclass(frozen=True)
