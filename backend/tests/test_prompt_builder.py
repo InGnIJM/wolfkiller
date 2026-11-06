@@ -509,7 +509,7 @@ class TestPromptBuilder:
         prompt = builder.build_vote_prompt(
             state, 4, "wolf-killer-villager", make_log(), "exile_vote"
         )
-        assert "平票复投（第2轮）" in prompt
+        assert "平票复投（第1天第2轮）" in prompt
 
     def test_vote_prompt_lists_exile_immune_seats(self):
         from app.core.effect_applier import _Runtime
@@ -594,7 +594,7 @@ class TestPromptBuilderHelpers:
                 "wolf_kill_target": 9,
             },
         })
-        assert "wolf_kill_target" in block
+        assert "昨夜狼人袭击目标：9号" in block
         for key in ("public_role_rules", "speeches", "votes", "alive_seats",
                     "phase", "round_number"):
             assert f"- {key}：" not in block
@@ -929,3 +929,57 @@ class TestPromptBuilderHelpers:
         assert "5" in block
         assert "解药" in block or "银水" in block
 
+
+
+def test_sheriff_vote_task_lists_candidates_and_the_claim_check():
+    prompt = PromptBuilder().build_vote_prompt(
+        make_state(), 4, "wolf-killer-villager", make_log(),
+        "sheriff_vote", candidates=(1, 2),
+    )
+    assert "候选人：1号、2号" in prompt
+    assert "action_type=vote 时" in prompt
+    assert "觉醒预言家" in prompt
+
+
+def test_private_facts_block_renders_role_checks():
+    block = PromptBuilder._private_facts_block({
+        "facts": {"role_checks": ({"target": 7, "role": "mystery-role"},)},
+    })
+    assert "查验7号：mystery-role" in block
+
+
+def test_private_facts_block_skips_malformed_check_rows():
+    block = PromptBuilder._private_facts_block({
+        "facts": {
+            "private_checks": ("bad",),
+            "pair_checks": ("bad",),
+            "role_checks": ("bad",),
+            "wolf_kill_target": None,
+        },
+    })
+    assert "查验" not in block
+    assert "袭击目标" not in block
+
+
+def test_private_facts_block_labels_unknown_camp_and_clear_pair():
+    block = PromptBuilder._private_facts_block({
+        "facts": {
+            "private_checks": ({"target": 9, "camp": "third_party"},),
+            "pair_checks": ({"seats": (1, 2), "has_wolf": False},),
+        },
+    })
+    assert "查验9号：third_party" in block
+    assert "觉醒预言家查验1号、2号：无狼" in block
+
+
+def test_tiebreak_vote_prompt_mentions_revote_when_all_alive_are_candidates():
+    state = make_state()
+    state.vote_round = 2
+    state.is_tiebreak = True
+    state.tiebreak_candidates = set(state.alive_players())
+    state.supplemental_speakers = {1}
+    prompt = PromptBuilder().build_vote_prompt(
+        state, 4, "wolf-killer-villager", make_log(), "exile_vote",
+    )
+    assert "重新投票" in prompt
+    assert "上一轮投票已作废" in prompt

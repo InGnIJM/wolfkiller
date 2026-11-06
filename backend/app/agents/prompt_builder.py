@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from html import escape
 
 from app.agents.persona import persona_line
@@ -12,7 +13,7 @@ from app.core.sheriff_flow import off_badge_seats, public_alive_seats, public_de
 from app.core.vote_service import eligible_exile_targets
 from app.core.wolf_pack import in_wolf_pack
 from app.models.conversation import ConversationScope
-from app.models.game import GameState
+from app.models.game import Camp, GameState
 from app.roles.registry import builtin_registry
 
 
@@ -109,11 +110,38 @@ class PromptBuilder:
     def build_vote_prompt(
         self, state: GameState, seat: int, role_name: str,
         conversation_log: ConversationLog, context: str,
+        candidates: Sequence[int] | None = None,
     ) -> str:
         view = self.state_filter.filter_for_role(state, seat, role_name)
         prompt = self._build_base(state, seat, view, conversation_log)
         prompt += "\n\n" + self._decision_gate()
-        return prompt + "\n\n" + self._task_instruction(context, state) + "\n\n仅输出指定的JSON对象。"
+        return prompt + "\n\n" + self._task_instruction(
+            context, state, candidates=candidates,
+        ) + "\n\n仅输出指定的JSON对象。"
+
+    def build_sheriff_decision_prompt(
+        self, state: GameState, seat: int, role_name: str,
+        conversation_log: ConversationLog, task: str,
+        *, include_thoughts: bool = True,
+    ) -> str:
+        """Build a sheriff-office decision prompt from the shared base.
+
+        The sheriff election used to have its own small context block.  That
+        path omitted ``public_role_rules``, the decision gate and the role's
+        full private facts (the two-seat check and the kill-target fact), so
+        the voters could not apply the very rules the
+        candidates could use in their campaign speeches.  It now goes through
+        the same ``_build_base`` as the day speech/vote prompts.
+        """
+        view = self.state_filter.filter_for_role(state, seat, role_name)
+        return (
+            self._build_base(
+                state, seat, view, conversation_log,
+                include_thoughts=include_thoughts,
+            )
+            + "\n\n" + self._decision_gate()
+            + "\n\n" + task
+        )
 
     def build_vote_retry_prompt(
         self, state: GameState, seat: int, role_name: str,
@@ -389,6 +417,15 @@ class PromptBuilder:
         resources = view.get("resources") or {}
         resource_text = "、".join(f"{name}={amount}" for name, amount in resources.items()) or "无"
         lines = [f"- 可用资源：{resource_text}"]
+        resource_labels = []
+        if "antidote" in resources:
+            resource_labels.append("解药" + ("仍在手" if resources["antidote"] else "已用"))
+        if "poison" in resources:
+            resource_labels.append("毒药" + ("仍在手" if resources["poison"] else "已用"))
+        if "gun" in resources:
+            resource_labels.append("猎枪" + ("仍在手" if resources["gun"] else "已用"))
+        if resource_labels:
+            lines.append("- " + "；".join(resource_labels))
         facts = view.get("facts") or {}
         for key, value in facts.items():
             if key in _RENDERED_ELSEWHERE_FACT_KEYS:
@@ -400,6 +437,43 @@ class PromptBuilder:
             if key == "saved_seat":
                 if value is not None:
                     lines.append(f"- 解药救治目标（银水）：{value}号玩家（你曾在夜间对该玩家使用了解药）")
+                continue
+            # Check namespaces are structured facts, not opaque JSON: the same
+            # "查验X号：好人/狼人" shape the model already reads in the day
+            # prompt, plus the two-seat check answer and the kill target.
+            # Without this the badge/sheriff prompt showed
+            # ``private_checks：[{...}]`` and the model had to parse a blob.
+            if key == "private_checks":
+                for check in value:
+                    if not isinstance(check, dict):
+                        continue
+                    target, camp = check.get("target"), check.get("camp")
+                    label = (
+                        "好人" if camp == Camp.GOOD.value
+                        else ("狼人" if camp == Camp.WEREWOLF.value else str(camp))
+                    )
+                    lines.append(f"- 查验{target}号：{label}")
+                continue
+            if key == "pair_checks":
+                for check in value:
+                    if not isinstance(check, dict):
+                        continue
+                    seats = check.get("seats") or ()
+                    answer = "有狼" if check.get("has_wolf") else "无狼"
+                    looked = "、".join(f"{seat}号" for seat in seats)
+                    lines.append(f"- 觉醒预言家查验{looked}：{answer}")
+                continue
+            if key == "role_checks":
+                for check in value:
+                    if not isinstance(check, dict):
+                        continue
+                    lines.append(
+                        f"- 查验{check.get('target')}号：{check.get('role')}"
+                    )
+                continue
+            if key == "wolf_kill_target":
+                if value is not None:
+                    lines.append(f"- 昨夜狼人袭击目标：{value}号")
                 continue
             lines.append(f"- {key}：{json.dumps(value, ensure_ascii=False, sort_keys=True)}")
         if len(lines) > 1:
@@ -492,7 +566,10 @@ class PromptBuilder:
         )
 
     @staticmethod
-    def _task_instruction(context: str, state: GameState, seat: int | None = None) -> str:
+    def _task_instruction(
+        context: str, state: GameState, seat: int | None = None,
+        candidates: Sequence[int] | None = None,
+    ) -> str:
         if context == "day_speech":
             return (
                 "## 你的任务：白天发言\n"
@@ -526,6 +603,18 @@ class PromptBuilder:
             return "## 你的任务：遗言\n调用 `last_words` 函数提交5至200字的中文遗言；不要直接输出普通文本。"
         if context == "exile_vote":
             return PromptBuilder._vote_instruction(state)
+        if context == "sheriff_vote":
+            listed = "、".join(f"{item}号" for item in (candidates or ())) or "无"
+            return (
+                "## 你的任务：警长投票\n"
+                "结合警上发言判断谁更适合当警长。"
+                f"候选人：{listed}。\n"
+                "action_type=vote 时，target_seat 必须填候选人之一；"
+                "action_type=pass 时不填 target_seat（或填 null）。\n"
+                "判断提醒：觉醒预言家一次只能知道两人中是否有狼，不能直接知道是谁；"
+                "若某位候选人从一次双人查验直接断定某号是狼/好人，必须要求额外依据；"
+                "被点名的好人不应仅因自己在查验里没被验出就无条件站边。"
+            )
         return "请根据你的身份和当前局势做出合理决策。"
 
     @staticmethod
@@ -568,17 +657,22 @@ class PromptBuilder:
                 # Every living seat is a candidate: the table is re-voting from
                 # scratch (the earlier ballot was voided), not choosing between ties.
                 status = (
-                    f"本次为重新投票（第{state.vote_round}轮，上一轮投票已作废）。"
+                    f"本次为重新投票（第{state.round_number}天第{state.vote_round}轮，"
+                    "上一轮投票已作废）。"
                     f"补充发言座位：{speakers}。所有存活座位都可以作为投票目标，也可弃权。"
                 )
             else:
                 status = (
-                    f"本次为平票复投（第{state.vote_round}轮）。上一轮平票相关座位：{candidates}；"
+                    f"本次为平票复投（第{state.round_number}天第{state.vote_round}轮）。"
+                    f"上一轮平票相关座位：{candidates}；"
                     f"补充发言座位：{speakers}。复投只能在上轮平票的座位中投票，也可弃权；"
                     f"投给其他座位会被判为无效票。"
                 )
         else:
-            status = f"这是第{state.vote_round}轮放逐投票。可投任意存活座位，也可弃权。"
+            status = (
+                f"这是第{state.round_number}天第{state.vote_round}轮放逐投票。"
+                "可投任意存活座位，也可弃权。"
+            )
         immune = sorted(set(state.alive_players()) - eligible_exile_targets(state))
         if immune:
             seats = "、".join(f"{seat}号" for seat in immune)
@@ -604,6 +698,7 @@ class PromptBuilder:
         return (
             f"## 你的任务：放逐投票\n{status}\n"
             f"投票示例（仅示范格式，目标与理由按你的分析填写）：{vote_example}\n"
+            "投票示例中的座位号只示范格式，不是建议；请按你的分析选择目标。\n"
             f"弃权示例（仅在确实没有怀疑对象时使用）：{abstain_example}\n"
             "注意：action_type 为 vote 时必须给出 target_seat（一名存活玩家的座位号）；"
             "abstain 时 target_seat 必须为 null。"

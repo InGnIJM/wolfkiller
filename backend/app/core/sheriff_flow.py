@@ -500,6 +500,9 @@ class SheriffDirector:
             raise TypeError("conversation_log must be a ConversationLog")
         self._invoke = invoke
         self._conversation_log = conversation_log
+        # Lazy: prompt_builder imports this module at module level (for the
+        # badge rosters), so a top-level import here would be circular.
+        self._builder_instance = None
 
     @staticmethod
     def _messages(system: str, human: str) -> list[dict[str, str]]:
@@ -678,45 +681,136 @@ class SheriffDirector:
             return False
         return role_resource_view(state, seat).get(NO_SELF_EXPLODE_RESOURCE, 0) <= 0
 
+    def _builder(self):
+        if self._builder_instance is None:
+            from app.agents.prompt_builder import PromptBuilder
+            self._builder_instance = PromptBuilder()
+        return self._builder_instance
+
+    @staticmethod
+    def _system_prompt() -> str:
+        from app.agents.prompt_builder import PromptBuilder
+        return PromptBuilder.get_system_prompt()
+
+    def _sheriff_log(self) -> ConversationLog:
+        return self._conversation_log or ConversationLog()
+
+    def _prompt_for(
+        self, state: GameState, seat: int, task: str, *, wolf: bool = False,
+    ) -> str:
+        try:
+            player = state.players[seat]
+            return self._builder().build_sheriff_decision_prompt(
+                state, seat, player.role, self._sheriff_log(), task,
+            )
+        except Exception:
+            # The shared builder projects through the role registry; a corrupt
+            # runtime or an unknown role must not turn a sheriff decision into a
+            # crashed game. The legacy guarded context block is the fallback.
+            logger.warning(
+                "Sheriff prompt fell back to the legacy context: seat=%s", seat,
+                exc_info=True,
+            )
+            return self._context_block(state, seat, wolf=wolf) + task
+
+    @staticmethod
+    def _office_lists(state: GameState) -> str:
+        """Current run/vote rosters for the sheriff decision prompts.
+
+        ``PromptBuilder._format_badge_roster`` keeps the fixed "who ever ran"
+        roster; these two lines are the volatile "who is a candidate right now"
+        and "who still holds a badge vote" lists the old ``_context_block``
+        carried under the same names the tests pin.
+        """
+        office = state.sheriff_office
+        ran = "、".join(f"{item}号" for item in sorted(office.candidates)) or "无"
+        contesting = office.candidates if office.step == "run" else office.active
+        active = "、".join(f"{item}号" for item in sorted(contesting)) or "无"
+        off = "、".join(f"{item}号" for item in off_badge_seats(state)) or "无"
+        return (
+            f"已上警座位：{ran}；当前候选人：{active}。\n"
+            f"未上警座位（警下，拥有警长投票权）：{off}。\n"
+        )
+
+    @staticmethod
+    def _wolf_roster_line(state: GameState, seat: int) -> str:
+        if not actor_sees_pack(state, seat):
+            return ""
+        teammates = sorted(pack_seats(state))
+        return "狼队成员：" + "、".join(f"{item}号" for item in teammates) + "。\n"
+
+    @staticmethod
+    def _wolf_restriction_line(state: GameState, seat: int, wolf: bool) -> str:
+        if not wolf:
+            return ""
+        if not in_wolf_pack(state, seat):
+            return (
+                "你是狼人阵营，但你不属于狼窝：警上可起跳伪装、可冲锋带节奏，"
+                "但**不能自爆，也不能吞警徽**。\n"
+            )
+        if SheriffDirector._may_explode(state, seat):
+            return (
+                "你是狼人阵营：警上可起跳伪装、可冲锋带节奏，"
+                "也可自爆吞警徽（只死自己）。\n"
+            )
+        return (
+            "你是狼人阵营：警上可起跳伪装、可冲锋带节奏，"
+            "但**不能自爆，也不能吞警徽**。\n"
+        )
+
     def campaign_prompt(self, state: GameState, seat: int, *, wolf: bool) -> list[dict[str, str]]:
         explode = wolf and self._may_explode(state, seat)
         actions = [_RUN, _PASS] + ([_EXPLODE] if explode else [])
-        human = (
+        task = (
             "action_type=run 表示上警成为候选人（由从未上警的警下玩家投票，"
             "当选者白天放逐票计 1.5 票）；action_type=pass 表示不上警、"
             "保留警长投票权，白天仍可正常发言。"
             "退水或上警都会让你失去警长投票权，请结合自身身份与目标权衡。\n"
-            f"{self._context_block(state, seat, wolf=wolf)}"
-            f"第{state.round_number}轮警长竞选。请选择 action_type：{'、'.join(actions)}。"
+            + self._office_lists(state)
+            + self._wolf_roster_line(state, seat)
+            + self._wolf_restriction_line(state, seat, wolf)
+            + f"第{state.round_number}轮警长竞选。"
+            + f"请选择 action_type：{'、'.join(actions)}。\n"
+            + "仅输出符合当前动作契约的JSON对象。"
         )
-        return self._messages(self._system(), human)
+        return self._messages(self._system_prompt(), self._prompt_for(state, seat, task))
 
     def withdraw_prompt(self, state: GameState, seat: int, *, wolf: bool) -> list[dict[str, str]]:
         explode = wolf and self._may_explode(state, seat)
         actions = [_STAY, _WITHDRAW] + ([_EXPLODE] if explode else [])
-        human = (
+        task = (
             "action_type=stay 表示继续竞选；action_type=withdraw 表示退水，"
             "退水后不再竞争警徽，也将失去警长投票权。\n"
-            f"{self._context_block(state, seat, wolf=wolf)}"
-            f"第{state.round_number}轮警长竞选退水。你是{seat}号候选人。"
-            f"请选择 action_type：{'、'.join(actions)}。"
+            + self._office_lists(state)
+            + self._wolf_roster_line(state, seat)
+            + self._wolf_restriction_line(state, seat, wolf)
+            + f"第{state.round_number}轮警长竞选退水。你是{seat}号候选人。"
+            + f"请选择 action_type：{'、'.join(actions)}。\n"
+            + "仅输出符合当前动作契约的JSON对象。"
         )
-        return self._messages(self._system(), human)
+        return self._messages(self._system_prompt(), self._prompt_for(state, seat, task))
 
     def vote_prompt(
         self, state: GameState, seat: int, candidates: Sequence[int],
         *, wolf: bool = False,
     ) -> list[dict[str, str]]:
         listed = "、".join(f"{item}号" for item in candidates)
-        human = (
+        task = (
+            "## 你的任务：警长投票\n"
             "结合警上发言判断谁更适合当警长。"
-            "输出 action_type=vote 时**必须**把 target_seat 填为候选人座位号；"
-            "不投任何人时输出 action_type=pass，且**不要**填 target_seat。\n"
-            + self._context_block(state, seat, wolf=wolf)
-            + f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，因此拥有警长投票权，"
-            f"请在候选人中选择：{listed}。"
+            f"第{state.round_number}轮警长投票。你是{seat}号，从未上警，"
+            "因此拥有警长投票权。"
+            f"候选人：{listed}。\n"
+            "action_type=vote 时，target_seat 必须填候选人之一；"
+            "action_type=pass 时不填 target_seat（或填 null）。\n"
+            "判断提醒：觉醒预言家一次只能知道两人中是否有狼，不能直接知道是谁；"
+            "若某位候选人从一次双人查验直接断定某号是狼/好人，必须要求额外依据；"
+            "被点名的好人不应仅因自己在查验里没被验出就无条件站边。\n"
+            + self._office_lists(state)
+            + self._wolf_roster_line(state, seat)
+            + "仅输出指定的JSON对象。"
         )
-        return self._messages(self._system(), human)
+        return self._messages(self._system_prompt(), self._prompt_for(state, seat, task))
 
     def side_prompt(self, state: GameState, seat: int, sides: Sequence[str]) -> list[dict[str, str]]:
         """The sheriff picks where today's speaking starts.
@@ -745,26 +839,26 @@ class SheriffDirector:
             previews.append(
                 f"{side}（{_SIDE_HINTS.get(side, side)}）：{head}；顺序 {sequence}。"
             )
-        human = (
+        task = (
             "请选择今天的发言方向。\n"
-            f"{self._context_block(state, seat, wolf=False)}"
-            f"你是警长{seat}号。昨夜死亡：{dead_line}；存活玩家：{alive_line}。\n"
+            + self._office_lists(state)
+            + f"你是警长{seat}号。昨夜死亡：{dead_line}；存活玩家：{alive_line}。\n"
             + "\n".join(previews)
-            + f"\n请选择 side，只能是：{'、'.join(sides)}。"
+            + f"\n请选择 side，只能是：{'、'.join(sides)}。\n"
+            + "仅输出符合当前动作契约的JSON对象。"
         )
-        return self._messages(self._system(), human)
+        return self._messages(self._system_prompt(), self._prompt_for(state, seat, task))
 
     def badge_prompt(self, state: GameState, seat: int, targets: Sequence[int]) -> list[dict[str, str]]:
         listed = "、".join(f"{item}号" for item in targets) or "无"
-        human = (
-            "action_type 为 transfer 时必须给出 target_seat；tear 时省略 target_seat（或给 null）。\n"
-            # 出局警长拿到与其他警长提示词同样的私有事实：没有它们，预言家无从
-            # 知道自己刚验出的是金水还是查杀，也就无法用警徽去标记这次查验。
-            # wolf=False 是刻意的：狼人分支那句「可自爆吞警徽」只属于竞选期。
-            f"{self._context_block(state, seat, wolf=False)}"
-            f"你是即将出局的警长{seat}号。可移交警徽给：{listed}，或撕毁警徽。"
+        task = (
+            "action_type 为 transfer 时必须给出 target_seat；"
+            "tear 时省略 target_seat（或给 null）。\n"
+            + self._office_lists(state)
+            + f"你是即将出局的警长{seat}号。可移交警徽给：{listed}，或撕毁警徽。\n"
+            + "仅输出符合当前动作契约的JSON对象。"
         )
-        return self._messages(self._system(), human)
+        return self._messages(self._system_prompt(), self._prompt_for(state, seat, task))
 
     def _invoke_json(
         self, messages: list[dict[str, str]], *, tool_name: str,
