@@ -1,6 +1,6 @@
 from __future__ import annotations
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 import logging
 import random
@@ -95,6 +95,21 @@ class _ActionTransientRetry(_ActionTransportTimeout):
     nothing about the request *shape*, so switching to the JSON transport would
     only spend the retry budget on a different prompt for the same broken pipe.
     """
+
+
+#: ``finish_reason`` values meaning the answer was cut by the output budget.
+_TRUNCATED_FINISH_REASONS = frozenset({
+    "length", "max_tokens", "max_completion_tokens",
+})
+
+
+def _is_truncated_response(response) -> bool:
+    """Whether the provider cut the answer off at the output token limit."""
+    metadata = getattr(response, "response_metadata", None)
+    if not isinstance(metadata, dict) and not isinstance(metadata, Mapping):
+        return False
+    reason = metadata.get("finish_reason", metadata.get("stop_reason"))
+    return reason in _TRUNCATED_FINISH_REASONS
 
 
 #: Backoff before re-asking an action. The provider SDK has already spent its own
@@ -581,6 +596,8 @@ class BaseRole:
                     state, request, messages, self._invoke_json_action,
                     conversation_log, "json", 1, capture=capture,
                 )
+            except _ActionTransientRetry:
+                retry_messages = messages
             except _ActionTransportTimeout:
                 retry_messages = self._build_vote_retry_messages(
                     state, conversation_log,
@@ -590,10 +607,13 @@ class BaseRole:
                     state, request, retry_messages, self._invoke_json_action,
                     conversation_log, "json", 2, capture=capture,
                 )
+            except _ActionTransientRetry:
+                last_timed_out = False
             except _ActionTransportTimeout:
-                pass
+                last_timed_out = True
             return await self._request_action_with_transport(
-                state, request, self._final_retry_messages(state, conversation_log),
+                state, request,
+                self._final_retry_messages(state, conversation_log, messages, last_timed_out),
                 self._invoke_json_action, conversation_log, "json", 3, capture=capture,
             )
         tool_transport = "strict" if supports_strict else "tool"
@@ -615,9 +635,10 @@ class BaseRole:
                 conversation_log, retry_transport, 1, capture=capture,
             )
         except _ActionTransientRetry:
-            retry_messages = self._build_vote_retry_messages(
-                state, conversation_log,
-            )
+            # A broken pipe says nothing about the prompt: re-ask through the
+            # same transport with the same prefix, so the prefix cache and the
+            # retry's own latency both stay paid for.
+            retry_messages = messages
         except _ActionTransportTimeout:
             retry_invoke, retry_transport = self._invoke_json_action, "json"
             retry_messages = self._build_vote_retry_messages(
@@ -627,36 +648,54 @@ class BaseRole:
             # Either the provider rejected the tool schema (400/422) or it
             # answered in content instead of calling the tool. Both are
             # properties of the provider, not of this ballot, so remember it and
-            # let the rest of the game skip the discovery.
+            # let the rest of the game skip the discovery. The transport
+            # changes; the prompt stays the original so the prefix cache still
+            # serves it (the full prompt carries the JSON instruction anyway).
             note_unsupported = getattr(
                 self.llm_client, "note_action_tools_unsupported", None,
             )
             if callable(note_unsupported):
                 note_unsupported()
             retry_invoke, retry_transport = self._invoke_json_action, "json"
-            retry_messages = self._build_vote_retry_messages(
-                state, conversation_log,
-            )
+            retry_messages = messages
         try:
             return await self._request_action_with_transport(
                 state, request, retry_messages, retry_invoke,
                 conversation_log, retry_transport, 2, capture=capture,
             )
         except _ActionTransientRetry:
-            pass
+            last_timed_out = False
         except _ActionTransportTimeout:
             retry_invoke, retry_transport = self._invoke_json_action, "json"
+            last_timed_out = True
+        else:
+            raise AssertionError("unreachable")  # pragma: no cover
         return await self._request_action_with_transport(
-            state, request, self._final_retry_messages(state, conversation_log),
+            state, request,
+            self._final_retry_messages(
+                state, conversation_log, messages, last_timed_out,
+            ),
             retry_invoke, conversation_log, retry_transport, 3, capture=capture,
         )
 
     def _final_retry_messages(
         self, state: GameState, conversation_log: ConversationLog,
+        messages: list, last_timed_out: bool,
     ) -> list:
-        """Last-chance prompt: compact context plus a strict format reminder."""
+        """Last-chance prompt plus a strict format reminder.
+
+        A timeout is the one failure a *shorter* prompt helps: only then does
+        the last attempt rebuild the compact context. Every other failure mode
+        re-asks with the original exchange so the shared prefix cache still
+        serves the retry.
+        """
+        base = (
+            self._build_vote_retry_messages(state, conversation_log)
+            if last_timed_out
+            else messages
+        )
         return [
-            *self._build_vote_retry_messages(state, conversation_log),
+            *base,
             HumanMessage(content=(
                 "The previous attempts failed. Respond with exactly one JSON "
                 "object that matches the issued schema, and nothing else."
@@ -946,24 +985,18 @@ class BaseRole:
                         state, request, fallback,
                         technical_failure_code=_validation_failure_code(error),
                     )
-                if callable(getattr(
-                    self.prompt_builder, "build_vote_retry_prompt", None,
-                )):
-                    active_messages = [
-                        *self._build_vote_retry_messages(state, conversation_log),
-                        HumanMessage(content=(
-                            "The previous action was invalid. Submit the required "
-                            "action again using the issued schema."
-                        )),
-                    ]
-                else:
-                    active_messages = [
-                        *messages,
-                        HumanMessage(content=(
-                            "The previous action was invalid. Submit the required "
-                            "action again using the issued schema."
-                        )),
-                    ]
+                # Re-ask on the original exchange: the model just gave an
+                # unusable answer, not a reason to rebuild context. Appending
+                # the reminder keeps the whole shared prefix warm for the
+                # next ballot; the compact prompt stays reserved for timeouts.
+                reminder = (
+                    "上次推理超出输出上限、未能给出结果。"
+                    "请立即直接输出符合契约的JSON对象，不要再展开推理。"
+                    if _validation_failure_code(error) == "action_response_truncated"
+                    else "The previous action was invalid. Submit the required "
+                         "action again using the issued schema."
+                )
+                active_messages = [*messages, HumanMessage(content=reminder)]
             except Exception:
                 self._vote_telemetry(
                     conversation_log, request, transport=transport, attempt=attempt_number,
@@ -1081,6 +1114,15 @@ class BaseRole:
                 if callable(note_unsupported):
                     note_unsupported()
                 return salvaged
+            if _is_truncated_response(response):
+                # An answer cut at the output budget carries no tool call and
+                # reads as "ignored the tool" -- but it is the budget's fault,
+                # not the transport's, so it must not downgrade the transport
+                # or get mistaken for a capability rejection.
+                raise ActionValidationError(
+                    "action response exceeded the output token limit",
+                    code="action_response_truncated",
+                )
             # The provider ignored the action tool. Degrade to JSON instead
             # of retrying the same unsupported native-tool path.
             raise StrictCapabilityError(
@@ -1098,6 +1140,11 @@ class BaseRole:
         self._record_usage(extract_usage(response))
         content = _content_text(getattr(response, "content", ""))
         if not content:
+            if _is_truncated_response(response):
+                raise ActionValidationError(
+                    "action response exceeded the output token limit",
+                    code="action_response_truncated",
+                )
             raise ActionValidationError(
                 "JSON action response must be text", code="action_response_not_text",
             )

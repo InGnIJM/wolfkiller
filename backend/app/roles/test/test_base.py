@@ -115,7 +115,7 @@ async def test_json_vote_accepts_anthropic_thinking_and_text_blocks():
 
 
 @pytest.mark.asyncio
-async def test_invalid_vote_retry_uses_existing_compact_prompt():
+async def test_invalid_vote_retry_keeps_original_prompt_prefix():
     client = JsonClient([
         AIMessage(content="not json"),
         AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
@@ -125,13 +125,54 @@ async def test_invalid_vote_retry_uses_existing_compact_prompt():
 
     accepted = await role.request_action(state, make_log(), make_request(state))
 
-    first_chars = sum(len(message.content) for message in client.model.messages[0])
-    retry_chars = sum(len(message.content) for message in client.model.messages[1])
+    first, retry = client.model.messages[0], client.model.messages[1]
     assert accepted.command.target_seat == 2
-    assert "current-round-evidence" in client.model.messages[1][1].content
-    assert "old-history-0" not in client.model.messages[1][1].content
-    assert "previous action was invalid" in client.model.messages[1][-1].content
-    assert retry_chars < first_chars * 0.75
+    # The retry appends one reminder to the original exchange instead of
+    # rebuilding a compact prompt: every shared prefix byte stays warm.
+    assert retry[: len(first)] == first
+    assert len(retry) == len(first) + 1
+    assert "previous action was invalid" in retry[-1].content
+
+
+@pytest.mark.asyncio
+async def test_truncated_vote_is_classified_and_retried_with_brief_hint():
+    client = JsonClient([
+        AIMessage(content="", response_metadata={"finish_reason": "length"}),
+        AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
+    ])
+    logger = TelemetryLogger()
+    state = make_state()
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+
+    accepted = await role.request_action(state, make_log(logger), make_request(state))
+
+    assert accepted.command.target_seat == 2
+    assert logger.records[0]["failure_code"] == "action_response_truncated"
+    retry = client.model.messages[1]
+    assert retry[: len(client.model.messages[0])] == client.model.messages[0]
+    assert "直接" in retry[-1].content
+
+
+@pytest.mark.asyncio
+async def test_empty_vote_without_length_reason_keeps_not_text_code():
+    client = JsonClient([
+        AIMessage(content="", response_metadata={"finish_reason": "stop"}),
+        AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
+    ])
+    logger = TelemetryLogger()
+    state = make_state()
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), client)
+
+    await role.request_action(state, make_log(logger), make_request(state))
+
+    assert logger.records[0]["failure_code"] == "action_response_not_text"
+
+
+def test_vote_instruction_asks_for_brief_reasoning():
+    state = make_state()
+    instruction = PromptBuilder._vote_instruction(state)
+    assert "简短" in instruction
+    assert "reasoning" in instruction
 
 
 @pytest.mark.asyncio

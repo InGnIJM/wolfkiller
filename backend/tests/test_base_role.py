@@ -564,6 +564,23 @@ class TestBaseRoleProperties:
                 await role._invoke_strict_action([], object())
         mapped.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_invoke_strict_action_marks_budget_truncation_not_capability(self):
+        from app.core.action_validator import ActionValidationError
+        role = make_role()
+        response = MagicMock()
+        response.tool_calls = []
+        response.content = ""
+        response.response_metadata = {"finish_reason": "length"}
+        client = MagicMock()
+        client.get_model_with_action_tool.return_value.ainvoke = AsyncMock(
+            return_value=response,
+        )
+        role.llm_client = client
+        with pytest.raises(ActionValidationError) as caught:
+            await role._invoke_strict_action([], MagicMock())
+        assert caught.value.code == "action_response_truncated"
+
 
 class TestBaseRoleAccept:
     def _vote_request(self, state) -> ActionRequest:
