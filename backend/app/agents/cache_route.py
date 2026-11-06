@@ -45,6 +45,16 @@ SHARED_SESSION_ENV = "WOLFKILLER_SHARED_CACHE_SESSION"
 #: extra latency of one serial call.
 BURST_WARMUP_ENV = "WOLFKILLER_BURST_WARMUP"
 
+#: Seconds the rest of the ballot may wait for the warmup vote before being
+#: released anyway. The warmup only helps if the gateway commits the shared
+#: prefix quickly; a full ballot (15-30s) buys little more cache than a few
+#: seconds of head start. ``0`` or a negative value restores the old
+#: "wait for the whole first ballot" behaviour. Unset defaults to
+#: ``_BURST_WARMUP_DEFAULT_MAX_WAIT``; a non-numeric value fails loud like
+#: the other experiment switches.
+BURST_WARMUP_MAX_WAIT_ENV = "WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS"
+_BURST_WARMUP_DEFAULT_MAX_WAIT = 3.0
+
 #: One probe = two identical calls; the second one is the measurement.
 PROBE_TIMEOUT_SECONDS = 5.0
 PROBE_MAX_ATTEMPTS = 2
@@ -113,6 +123,29 @@ def burst_warmup_mode(env_value: str | None = None) -> BurstWarmupMode:
             f"{', '.join(mode.value for mode in BurstWarmupMode)} "
             f"(got {raw!r})"
         ) from None
+
+
+def burst_warmup_max_wait_seconds(
+    env_value: str | None = None,
+) -> float | None:
+    """Resolve the warmup wait cap; ``None`` means wait for the whole ballot.
+
+    Unset or blank returns the default cap. A non-positive number explicitly
+    restores the pre-cap behaviour (the followers wait for the first ballot
+    to finish). A non-numeric value fails at the next game creation instead
+    of silently changing the schedule.
+    """
+    raw = os.getenv(BURST_WARMUP_MAX_WAIT_ENV) if env_value is None else env_value
+    if raw is None or not raw.strip():
+        return _BURST_WARMUP_DEFAULT_MAX_WAIT
+    try:
+        seconds = float(raw.strip())
+    except ValueError:
+        raise ValueError(
+            f"{BURST_WARMUP_MAX_WAIT_ENV} must be a number of seconds "
+            f"(got {raw!r})"
+        ) from None
+    return seconds if seconds > 0 else None
 
 
 def shared_session_id(game_id: str, session_header: str) -> str:

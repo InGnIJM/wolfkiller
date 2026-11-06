@@ -39,7 +39,8 @@ from app.agents.retry import (
 from app.agents.failure_taxonomy import normalize_failure_code
 from app.agents.cache_route import (
     BurstWarmupMode, CacheRouteMode, SharedSessionMode, apply_shared_session,
-    burst_warmup_mode, cache_route_mode, pin_cache_routes, shared_session_mode,
+    burst_warmup_max_wait_seconds, burst_warmup_mode, cache_route_mode,
+    pin_cache_routes, shared_session_mode,
 )
 from app.agents.model_health import AbortPolicy, HealthEvent, resolve_abort_policy
 from app.agents.providers.registry import ProviderRegistry
@@ -1632,6 +1633,7 @@ class GameService:
         cache_route = cache_route_mode()
         shared_session = shared_session_mode()
         burst_warmup = burst_warmup_mode()
+        warmup_max_wait = burst_warmup_max_wait_seconds()
         game_id = game_id_override or (
             str(uuid.uuid4()) if self.repository is not None
             else str(uuid.uuid4())[:8]
@@ -1907,6 +1909,7 @@ class GameService:
                 director=director,
                 health_guard=health_guard,
                 vote_warmup=burst_warmup is BurstWarmupMode.ON,
+                vote_warmup_max_wait_seconds=warmup_max_wait,
             )
             self._attach_health_sink(game_id, health_guard, engine)
             engine_ref = engine
@@ -2863,6 +2866,7 @@ class GameService:
         # here, because the engine binds the live specs for the remaining game.
         affinity_mode = session_affinity_mode()
         vote_warmup = burst_warmup_mode() is BurstWarmupMode.ON
+        warmup_max_wait = burst_warmup_max_wait_seconds()
         seat_configs = self._resolve_recovery_model_configs(state, record)
         _log_session_affinity(state.game_id, len(state.players), affinity_mode)
         clients: dict[int, LLMClient] = {}
@@ -3008,6 +3012,7 @@ class GameService:
             pipeline_scheduler=scheduler, director=director,
             health_guard=health_guard,
             vote_warmup=vote_warmup,
+            vote_warmup_max_wait_seconds=warmup_max_wait,
         )
         self._attach_health_sink(state.game_id, health_guard, engine)
         engine_box["engine"] = engine

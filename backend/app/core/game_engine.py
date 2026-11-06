@@ -265,6 +265,7 @@ class GameEngine:
         fault_injector=None,
         health_guard=None,
         vote_warmup: bool = False,
+        vote_warmup_max_wait_seconds: float | None = 3.0,
     ):
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
@@ -297,9 +298,21 @@ class GameEngine:
             else 500.0
         )
         # Routing-cache experiment (WOLFKILLER_BURST_WARMUP): the first ballot
-        # of a casting phase runs alone so the parallel rest can reuse the
-        # prefix it just committed on the shared backend.
+        # of a casting phase runs ahead so the parallel rest can reuse the
+        # prefix it just committed on the shared backend. The head start is
+        # capped: the gateway either commits the prefix within a few seconds
+        # or the extra wait buys nothing more (WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS,
+        # ``None`` waits for the whole first ballot).
         self._vote_warmup = bool(vote_warmup)
+        self._vote_warmup_max_wait_seconds = (
+            vote_warmup_max_wait_seconds
+            if vote_warmup_max_wait_seconds is None
+            or (
+                type(vote_warmup_max_wait_seconds) in (int, float)
+                and vote_warmup_max_wait_seconds > 0
+            )
+            else 3.0
+        )
         self._running = False
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
@@ -2387,10 +2400,20 @@ class GameEngine:
 
         async def collect_all() -> None:
             if warmup_seat is not None:
-                await collect_vote(warmup_seat)
-            await asyncio.gather(
-                *(collect_vote(seat) for seat in seats if seat != warmup_seat)
-            )
+                warmup_task = asyncio.create_task(collect_vote(warmup_seat))
+                # Release the rest once the warmup has had its head start —
+                # or finished early — whichever comes first. Its own outcome
+                # is awaited below with the others, never swallowed.
+                await asyncio.wait(
+                    {warmup_task},
+                    timeout=self._vote_warmup_max_wait_seconds,
+                )
+                await asyncio.gather(
+                    warmup_task,
+                    *(collect_vote(seat) for seat in seats if seat != warmup_seat)
+                )
+            else:
+                await asyncio.gather(*(collect_vote(seat) for seat in seats))
 
         try:
             await asyncio.wait_for(
