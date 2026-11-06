@@ -3444,6 +3444,131 @@ class TestGameEngine:
         assert engine.state.voted_seats == {1, 2}
         assert engine.sm.get_state() is GamePhase.VOTE_RESOLUTION
 
+    def test_vote_warmup_defaults_to_off(self):
+        engine = GameEngine(game_id="vote-warmup-default")
+
+        assert engine._vote_warmup is False
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_finishes_the_first_seat_before_the_rest(self):
+        engine = GameEngine(
+            game_id="vote-warmup", event_bus=EventBus(), vote_warmup=True,
+        )
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2, 3)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        events: list[tuple[str, int]] = []
+        warmup_started = asyncio.Event()
+        warmup_gate = asyncio.Event()
+        follower_gate = asyncio.Event()
+
+        async def vote(seat: int):
+            events.append(("start", seat))
+            if seat == 1:
+                warmup_started.set()
+                await warmup_gate.wait()
+            else:
+                await follower_gate.wait()
+            events.append(("end", seat))
+            return VoteAction(seat, 1)
+
+        engine.vote = vote
+        run = asyncio.create_task(engine._execute_vote_casting())
+        await asyncio.wait_for(warmup_started.wait(), timeout=1.0)
+        await asyncio.sleep(0.02)
+
+        # While the first ballot is still in flight nothing else may start.
+        assert events == [("start", 1)]
+
+        warmup_gate.set()
+        await asyncio.sleep(0.02)
+        # The followers launch only after the warmup vote fully completed,
+        # and they still run as one parallel batch.
+        assert ("end", 1) in events
+        assert sorted(seat for kind, seat in events if kind == "start") == [1, 2, 3]
+        assert ("end", 2) not in events and ("end", 3) not in events
+
+        follower_gate.set()
+        await run
+        assert [item.voter_seat for item in engine.state.votes] == [1, 2, 3]
+        assert engine.state.voted_seats == {1, 2, 3}
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_keeps_a_single_seat_on_the_normal_path(self):
+        engine = GameEngine(
+            game_id="vote-warmup-single", event_bus=EventBus(), vote_warmup=True,
+        )
+        engine.state.players = {
+            1: PlayerState(1, "wolf-killer-villager", "good"),
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        engine.vote = AsyncMock(return_value=VoteAction(1, 1))
+
+        await engine._execute_vote_casting()
+
+        assert engine.state.voted_seats == {1}
+        assert engine.sm.get_state() is GamePhase.VOTE_RESOLUTION
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_timeout_abstains_the_whole_phase(self):
+        engine = GameEngine(
+            game_id="vote-warmup-timeout", event_bus=EventBus(), vote_warmup=True,
+        )
+        engine._vote_phase_timeout_seconds = 0.1
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2, 3)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        never = asyncio.Event()
+
+        async def vote(seat: int):
+            await never.wait()
+
+        engine.vote = vote
+
+        await asyncio.wait_for(engine._execute_vote_casting(), timeout=1.0)
+
+        assert [(item.voter_seat, item.target_seat) for item in engine.state.votes] == [
+            (1, None), (2, None), (3, None),
+        ]
+        assert engine.state.voted_seats == {1, 2, 3}
+        assert engine.sm.get_state() is GamePhase.VOTE_RESOLUTION
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_preserves_the_finished_vote_when_the_batch_times_out(self):
+        engine = GameEngine(
+            game_id="vote-warmup-batch-timeout",
+            event_bus=EventBus(), vote_warmup=True,
+        )
+        engine._vote_phase_timeout_seconds = 0.1
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2, 3)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        never = asyncio.Event()
+
+        async def vote(seat: int):
+            if seat == 1:
+                return VoteAction(1, 2)
+            await never.wait()
+
+        engine.vote = vote
+
+        await asyncio.wait_for(engine._execute_vote_casting(), timeout=1.0)
+
+        assert [(item.voter_seat, item.target_seat) for item in engine.state.votes] == [
+            (1, 2), (2, None), (3, None),
+        ]
+        assert engine.state.voted_seats == {1, 2, 3}
+
     @pytest.mark.asyncio
     async def test_tiebreak_skips_completed_speech_and_vote_steps(self):
         roles = {
