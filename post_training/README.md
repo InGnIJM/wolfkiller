@@ -10,8 +10,10 @@ post_training/
   export_dataset.py   # llm_prompts.jsonl x model_requests -> SFT JSONL 导出器
   tokenize_report.py  # Qwen3 tokenizer 实测长度分布 -> tokenize_report.json
   prepare_dataset.py  # 12k 窗口应用：history 块保尾截头 -> *_final.jsonl
-  train_sft.py        # WSL 内跑的 Unsloth QLoRA 训练入口（含 --smoke）
+  train_sft.py        # WSL 内跑的 Unsloth QLoRA 训练入口（含 --smoke / --adapter 续训）
   eval_student.py     # 留出集评估：completion NLL + 结构化生成比对
+  prepare_round2.py   # round-2 speech 定向清洗（泄露过滤/去重/模板封顶）
+  speech_quality.py   # 发言质量评测：泄露模式 + 开头模板 + 长度（teacher gold 同口径基线）
   serve_student.py    # OpenAI 兼容推理服务（引擎 benchmark 用，含 speech tool_calls）
   REPORT.md           # 后训练完整报告（数据/训练/离线评估/真实对局）
   test/               # pytest 单测（各模块 --cov 100%）
@@ -46,6 +48,17 @@ python -m pytest test/ -q                # 全部测试
 # WSL 内（venv 在 ~/sft，模型在 /mnt/e/models/）：
 ~/sft/bin/python train_sft.py --smoke    # 显存冒烟
 ~/sft/bin/python train_sft.py            # 正式训练
+
+# round-2 speech 定向续训（lora_final 之上，lr 2e-5，~130 步）：
+~/sft/bin/python prepare_round2.py --in data/train_final.jsonl \
+  --out data/train_round2.jsonl --model /mnt/e/models/Qwen3-4B-Instruct-2507
+~/sft/bin/python train_sft.py --data data/train_round2.jsonl \
+  --adapter ckpt/wolfkiller-sft-strong/lora_final \
+  --out ckpt/wolfkiller-sft-round2 --lr 2e-5 --batch-size 1 --grad-accum 16 \
+  --save-steps 1 --auto-resume
+# 评测：先跑 eval_student.py 生成新 rows，再对学生/teacher 两侧同口径打分
+python speech_quality.py --rows data/eval_report.rows.jsonl --field prediction
+python speech_quality.py --rows data/eval_final.jsonl --field assistant
 ```
 
 ## 样本格式
