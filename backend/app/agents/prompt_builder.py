@@ -703,6 +703,8 @@ class PromptBuilder:
             "注意：action_type 为 vote 时必须给出 target_seat（一名存活玩家的座位号）；"
             "abstain 时 target_seat 必须为 null。"
             "弃票等于把放逐权让给狼人，除非真的没有依据，否则请给出明确的投票目标。"
+            "推理务必简短：先形成结论，reasoning 只用一句话概括依据（≤100字），"
+            "不要展开长篇分析。"
             "仅输出符合当前动作契约的JSON对象。"
         )
 

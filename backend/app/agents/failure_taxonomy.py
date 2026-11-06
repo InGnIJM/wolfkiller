@@ -90,6 +90,7 @@ QUALITY_CODES = frozenset({
     "action_payload_wrong_type",
     "action_payload_schema_invalid",
     "action_response_not_text",
+    "action_response_truncated",
     "action_type_not_permitted",
     "target_required",
     "reasoning_too_long",
