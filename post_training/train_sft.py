@@ -18,6 +18,9 @@ Design pins (all load-bearing at 8GB):
 * Dataset is converted to TRL conversational ``prompt``/``completion`` pairs
   (our ``messages`` list minus/plus the final assistant turn) so TRL can mask
   the prompt side for completion-only loss.
+* ``--adapter`` continues training an existing LoRA (round-2 targeted runs):
+  the adapter is loaded with ``is_trainable=True`` instead of creating a
+  fresh one; optimizer/scheduler/data cursor still start fresh.
 * Checkpoints are written every ``--save-steps`` optimizer steps; ``--resume``
   continues from the newest ``checkpoint-*`` under ``--out`` (or an explicit
   path), restoring model/optimizer/scheduler/RNG and the data cursor.
@@ -69,7 +72,26 @@ def smoke(args) -> None:
         load_in_4bit=True,
         dtype=None,
     )
-    model = FastLanguageModel.get_peft_model(
+    model = _attach_adapter(model, args)
+    model.train()
+    ids = tokenizer("smoke " * 64, return_tensors="pt").input_ids.cuda()
+    # Pad to the full training window — VRAM at seq_len is what we are probing.
+    seq = ids.repeat(1, args.seq_len // ids.shape[1] + 1)[:, : args.seq_len]
+    out = model(input_ids=seq, labels=seq)
+    out.loss.backward()
+    peak = torch.cuda.max_memory_allocated() / 1024**3
+    print(f"loss={out.loss.item():.3f}  peak_vram={peak:.2f} GiB")
+
+
+def _attach_adapter(model, args):
+    """Load ``--adapter`` as a trainable LoRA, or create a fresh one."""
+    if args.adapter:
+        from peft import PeftModel
+
+        return PeftModel.from_pretrained(model, args.adapter, is_trainable=True)
+    from unsloth import FastLanguageModel
+
+    return FastLanguageModel.get_peft_model(
         model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
@@ -81,14 +103,6 @@ def smoke(args) -> None:
         use_gradient_checkpointing="unsloth",
         random_state=42,
     )
-    model.train()
-    ids = tokenizer("smoke " * 64, return_tensors="pt").input_ids.cuda()
-    # Pad to the full training window — VRAM at seq_len is what we are probing.
-    seq = ids.repeat(1, args.seq_len // ids.shape[1] + 1)[:, : args.seq_len]
-    out = model(input_ids=seq, labels=seq)
-    out.loss.backward()
-    peak = torch.cuda.max_memory_allocated() / 1024**3
-    print(f"loss={out.loss.item():.3f}  peak_vram={peak:.2f} GiB")
 
 
 def train(args) -> None:
@@ -101,18 +115,7 @@ def train(args) -> None:
         load_in_4bit=True,
         dtype=None,
     )
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ],
-        lora_dropout=0,
-        use_gradient_checkpointing="unsloth",
-        random_state=42,
-    )
+    model = _attach_adapter(model, args)
     dataset = load_pairs(args.data)
     trainer = SFTTrainer(
         model=model,
@@ -155,6 +158,9 @@ def main() -> int:
         default="/mnt/e/code/WolfKiller/post_training/data/train_final.jsonl",
     )
     parser.add_argument("--seq-len", type=int, default=8192)
+    parser.add_argument("--adapter", default=None,
+                        help="existing LoRA dir to continue training (round-2+); "
+                             "unset creates a fresh adapter from --model")
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-4)

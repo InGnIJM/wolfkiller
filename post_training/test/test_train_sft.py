@@ -60,6 +60,7 @@ def test_main_defaults_and_flags(monkeypatch):
     assert args.seq_len == 8192 and args.epochs == 1.0
     assert args.batch_size == 2 and args.grad_accum == 8
     assert args.save_steps == 50 and args.resume is None and not args.auto_resume
+    assert args.adapter is None
 
     seen.clear()
     monkeypatch.setattr(sys, "argv", ["train_sft.py", "--smoke"])
@@ -89,6 +90,7 @@ def test_train_resume_resolution(monkeypatch, tmp_path):
         model="m", seq_len=8192, lora_r=16, lora_alpha=32,
         data="d", out=str(tmp_path), batch_size=2, grad_accum=8, epochs=1.0,
         lr=1e-4, save_steps=50, resume=None, auto_resume=False, smoke=False,
+        adapter=None,
     )
     train_sft.train(args)
     assert calls["resume"] is None
@@ -101,3 +103,28 @@ def test_train_resume_resolution(monkeypatch, tmp_path):
     args.resume = "/explicit/path"
     train_sft.train(args)
     assert calls["resume"] == "/explicit/path"
+
+
+def test_attach_adapter_fresh_lora(monkeypatch):
+    calls = {}
+    monkeypatch.setitem(sys.modules, "unsloth", types.SimpleNamespace(
+        FastLanguageModel=types.SimpleNamespace(
+            get_peft_model=lambda m, **kw: (calls.__setitem__("peft", (m, kw)), m)[1])))
+    args = types.SimpleNamespace(adapter=None, lora_r=16, lora_alpha=32)
+    assert train_sft._attach_adapter("BASE", args) == "BASE"
+    assert calls["peft"][1]["r"] == 16
+
+
+def test_attach_adapter_continue(monkeypatch):
+    calls = {}
+
+    class FakePeft:
+        @staticmethod
+        def from_pretrained(model, adapter, is_trainable=False):
+            calls["adapter"] = (model, adapter, is_trainable)
+            return "PEFT"
+
+    monkeypatch.setitem(sys.modules, "peft", types.SimpleNamespace(PeftModel=FakePeft))
+    args = types.SimpleNamespace(adapter="ckpt/lora_final")
+    assert train_sft._attach_adapter("BASE", args) == "PEFT"
+    assert calls["adapter"] == ("BASE", "ckpt/lora_final", True)
