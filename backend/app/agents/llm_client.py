@@ -24,6 +24,7 @@ from app.agents.output_parser import (
 from app.agents.retry import UnusableModelOutput
 from app.agents.providers.base import (
     API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS, CallPurpose,
+    new_session_id,
 )
 # Re-exported so game code can classify provider failures without importing
 # the provider layer (architecture boundary: core/roles never import providers).
@@ -552,6 +553,51 @@ class LLMClient:
         """Invoke a minimal text request and return this profile's capabilities."""
         self._complete(self.get_model(), [HumanMessage(content="ping")])
         return asdict(self.provider_profile.capabilities)
+
+    async def probe_cache(
+        self, messages, *, timeout: float | None = None,
+    ) -> int | None:
+        """Return cached prompt tokens for a repeated, tiny request.
+
+        Two identical calls are sent and the second one is the measurement.
+        This is a diagnostic used by ``app.agents.cache_route``: it bypasses the
+        durable ledger and the per-call telemetry, and a failure is never fatal
+        to the game that is starting.
+        """
+        model = self._build(CallPurpose.TEXT)
+        await self._acomplete(model, messages, timeout=timeout)
+        response = await self._acomplete(model, messages, timeout=timeout)
+        usage = extract_usage(response)
+        return None if usage is None else usage.cached_prompt_tokens
+
+    @property
+    def session_id(self) -> str | None:
+        """The transport's provider session id, when the profile uses one."""
+        return getattr(self._transport, "session_id", None)
+
+    async def set_session_id(self, session_id: str) -> None:
+        """Point this client at a caller-chosen provider session.
+
+        Same close-then-swap as ``reset_session``, but with an explicit id:
+        shared-session experiments need several clients on one id, which a
+        self-minted value cannot express. Transports without a session keep
+        their original ``None``.
+        """
+        if not getattr(self._transport, "session_id", None):
+            return
+        await self.aclose()
+        self._transport.session_id = session_id
+
+    async def reset_session(self) -> None:
+        """Drop built models and mint a fresh provider session id.
+
+        Only routing gateways (a profile with a ``session_header``) have a
+        session to rotate; other providers keep the transport's original one.
+        The next model build carries the new id.
+        """
+        if not getattr(self._transport, "session_id", None):
+            return
+        await self.set_session_id(new_session_id())
 
     @staticmethod
     def _complete(model, messages, *, timeout: float | None = None):

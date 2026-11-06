@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 from .base import (
     API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS,
-    API_MODE_OPENAI_RESPONSES, ModelCapabilities, ProviderProfile,
+    API_MODE_OPENAI_RESPONSES, CacheMode, ModelCapabilities, ProviderProfile,
     is_responses_endpoint,
 )
 
@@ -45,6 +45,7 @@ def _opencode_profile(profile_id: str) -> ProviderProfile:
         ),
         default_action_max_tokens=2048,
         session_header=_OPENCODE_SESSION_HEADER,
+        cache_mode=CacheMode.ROUTING,
     )
 
 
@@ -64,6 +65,7 @@ class ProviderRegistry:
             capabilities=ModelCapabilities(True, True, True, True, True),
             default_action_max_tokens=2048,
             strict_endpoint=True,
+            cache_mode=CacheMode.AUTOMATIC,
         ),
         "openrouter": ProviderProfile(
             profile_id="openrouter",

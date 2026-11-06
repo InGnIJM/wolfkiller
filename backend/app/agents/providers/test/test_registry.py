@@ -61,6 +61,22 @@ def test_deepseek_enables_strict_endpoint():
     assert profile.strict_endpoint is True
 
 
+def test_cache_mode_is_declared_per_profile():
+    registry = ProviderRegistry()
+    assert registry.resolve(
+        "deepseek", "https://api.deepseek.com", "deepseek-chat",
+    ).cache_mode == "automatic"
+    assert registry.resolve(
+        "opencode-go", "https://opencode.ai/zen/go/v1", "deepseek-v4.1-flash",
+    ).cache_mode == "routing"
+    assert registry.resolve(
+        "opencode", "https://opencode.ai/zen/v1", "deepseek-v4.1-flash",
+    ).cache_mode == "routing"
+    assert registry.resolve(
+        "openai", "https://api.openai.com/v1", "gpt",
+    ).cache_mode == "unknown"
+
+
 def test_deepseek_like_hostname_does_not_match():
     profile = ProviderRegistry().resolve("auto", "https://deepseek.example.com/v1", "model")
     assert profile.profile_id == "custom-openai"
