@@ -437,11 +437,15 @@ def test_the_bond_reaction_dies_once() -> None:
         ),
     )
     assert state.players[3].is_alive is False
-    # 写入口只负责「标记死 + 发 PLAYER_DIED」；death_history 是引擎的账
-    # （`log_deaths`），这里断言事件本身。
-    assert [(event["payload"]["seat"], event["payload"]["cause"])
-            for event in result.events if event["event_type"] == "PLAYER_DIED"] == [
-        (3, BOND_CAUSE),
+    # The write entry records the ledger row too: a react MARK_DEATH has no
+    # settlement batch to carry its DeathReport, and a ledger-less death never
+    # reached the morning narration/summary.
+    assert [(item.player_seat, item.cause, item.round_number)
+            for item in state.death_history] == [(3, BOND_CAUSE, state.round_number)]
+    died = [event for event in result.events if event["event_type"] == "PLAYER_DIED"]
+    assert [(event["payload"]["seat"], event["payload"]["cause"],
+             event["payload"]["round_number"]) for event in died] == [
+        (3, BOND_CAUSE, state.round_number),
     ]
     assert state._pipeline_runtime.role_resources[1][BOND_MARKER] == 0
 
@@ -641,3 +645,77 @@ def _bond_context() -> ActionContext:
         actor_role_id=PHANTOM, actor_alive=True, resources={BOND_MARKER: 1},
         action_key="bond:1",
     )
+
+
+def test_a_react_death_event_with_seat_opens_the_victims_own_window() -> None:
+    """The queue used to read only ``target_seat``; react deaths carry ``seat``."""
+    from app.core.scheduler import ResponseQueue
+    from app.roles.registry import builtin_registry
+    state = GameState(
+        "react-window", phase=GamePhase.NIGHT, round_number=2,
+        players={3: PlayerState(3, "wolf-killer-hunter", "good")},
+    )
+    event = DomainEvent(
+        event_id="event:0000000000000003",
+        event_type="PLAYER_DIED",
+        payload={"seat": 3, "cause": "wolf_kill", "round_number": 2},
+        reason="wolf_kill",
+    )
+    windows = ResponseQueue(builtin_registry.freeze()).open(state, event, depth=1)
+    assert [(window.contract_id, window.actor_seat) for window in windows] == [
+        ("hunter_shoot", 3),
+    ]
+
+
+def test_a_react_death_folds_into_the_night_batch() -> None:
+    """The morning batch must include ledger deaths that bypass the result rows."""
+    from types import SimpleNamespace
+    from app.core.game_engine import GameEngine
+    from app.core.role_pipeline import PipelineMode, PipelineResult
+    from app.models.actions import DeathReport
+    state = _pairs_state()
+    state.players[3].is_alive = False
+    state.death_history = [DeathReport(3, BOND_CAUSE, state.round_number)]
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    deaths = GameEngine._pipeline_night_deaths(SimpleNamespace(state=state), result)
+    assert [(death.seat, death.cause, death.round_number) for death in deaths] == [
+        (3, BOND_CAUSE, state.round_number),
+    ]
+
+
+def test_pipeline_night_deaths_skips_stale_malformed_and_alive_ledger_rows() -> None:
+    from types import SimpleNamespace
+    from app.core.game_engine import GameEngine
+    from app.core.role_pipeline import PipelineMode, PipelineResult
+    from app.models.actions import DeathReport
+    state = _pairs_state()
+    state.players[3].is_alive = False
+    state.death_history = [
+        "malformed",
+        DeathReport(3, BOND_CAUSE, state.round_number + 1),
+        DeathReport(2, "wolf_kill", state.round_number),
+        DeathReport(1, BOND_CAUSE, state.round_number),
+        DeathReport(99, BOND_CAUSE, state.round_number),
+        DeathReport(3, BOND_CAUSE, state.round_number),
+    ]
+    result = PipelineResult((), (), "digest", (), PipelineMode.V2)
+    deaths = GameEngine._pipeline_night_deaths(SimpleNamespace(state=state), result)
+    assert [(death.seat, death.cause) for death in deaths] == [(3, BOND_CAUSE)]
+
+
+def test_pipeline_night_deaths_does_not_duplicate_a_result_death() -> None:
+    from types import SimpleNamespace
+    from app.core.game_engine import GameEngine
+    from app.core.role_pipeline import PipelineMode, PipelineResult
+    from app.models.actions import DeathReport
+    state = _pairs_state()
+    state.players[3].is_alive = False
+    state.death_history = [DeathReport(3, BOND_CAUSE, state.round_number)]
+    event = {
+        "event_type": "PLAYER_DIED",
+        "payload": {"seat": 3, "cause": BOND_CAUSE, "round_number": state.round_number},
+        "visibility": ("PUBLIC",),
+    }
+    result = PipelineResult((), (), "digest", (event,), PipelineMode.V2)
+    deaths = GameEngine._pipeline_night_deaths(SimpleNamespace(state=state), result)
+    assert [(death.seat, death.cause) for death in deaths] == [(3, BOND_CAUSE)]

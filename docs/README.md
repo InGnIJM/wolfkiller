@@ -20,6 +20,7 @@ Wolf Killer 的文档库。新手从根目录 [README](../README.md) 开始；�
 | [notes/2026-10-10-game-review-five-fixes.md](notes/2026-10-10-game-review-five-fixes.md) | 2026-10-10 对局复盘修掉的五项（含死亡批次与回归门禁） | 查对局内缺陷修复 |
 | [notes/2026-10-20-role-portrait-inventory.md](notes/2026-10-20-role-portrait-inventory.md) | 2026-10-20 角色立绘盘点与替换记录（2026-10-21 已补齐 40/40） | 查立绘替换过程与历史缺口 |
 | [notes/2026-10-20-role-portrait-prompts.md](notes/2026-10-20-role-portrait-prompts.md) | 40 角色统一风格立绘的生成提示词与逐角色变量表 | 重绘或新增角色立绘 |
+| [notes/2026-11-03-fragrance-review.md](notes/2026-11-03-fragrance-review.md) | 2026-11-03 寻香识命 10 局 70% 狼胜复盘：警长提示词与 React 死亡修复、控制实验计划 | 查本次修复证据与板子归因 |
 | [project-analysis.md](project-analysis.md) | **2026-08-31 的历史快照**，不是当前状态 | 只作当时记录 |
 | [superpowers/plans/](superpowers/plans/) | 历史功能实施计划（按日期归档） | 想了解功能演进的人 |
 | [superpowers/specs/](superpowers/specs/) | 历史功能设计稿（按日期归档） | 想了解设计取舍的人 |
