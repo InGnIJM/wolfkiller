@@ -29,6 +29,10 @@
 | `APP_SETTINGS_PATH` | `{WOLFKILLER_DATA_DIR}/settings.json` | 显式覆盖应用设置文件路径（训练语料采集开关） |
 | `WOLFKILLER_PROVIDER_PREWARM` | `1` | 启动完成后是否用后台 daemon 线程预热 provider SDK 与 `/api/models` 延迟缓存。`0` 关闭；关闭不改变功能，只把首次 LLM 调用/模型页首屏的成本移回请求路径 |
 | `PROMPT_CAPTURE_ENABLED` | 未设置（默认开） | 训练语料采集的进程级开关：`1` / `true` / `yes` / `on` 开，其他值一律关。界面设置优先于它；只在**建局**时解析，恢复路径不重读（见下文「数据存储」） |
+| `WOLFKILLER_SESSION_AFFINITY` | `off` | 会话亲和实验开关（仅 `custom-openai` 网关）：`off` / `on` / `ab`。进程级配置，建局与恢复各解析一次，不进 checkpoint；`ab` 按 `game_id` 取一半座位为 treatment，treatment 座位带稳定 `x-session-id: wk-{game_id}-s{seat}`，用于验证上游前缀缓存 |
+| `WOLFKILLER_CACHE_ROUTE_PIN` | `off` | 路由型前缀缓存实验开关（仅 `cache_mode=routing` 的 provider，如 `opencode` / `opencode-go`）：`off` / `on` / `ab`。进程级，建局时解析一次，不进 checkpoint；开时用固定短 prompt 连发两次，第二次无缓存命中就轮换该座位的 `x-opencode-session`（最多 2 次），结果写 `data/games/<id>/cache_route.jsonl`。默认 `off`，正式评测不要开 |
+| `WOLFKILLER_SHARED_CACHE_SESSION` | `off` | 共享缓存会话开关（仅 `cache_mode=routing` 的 provider）：`off` / `on`。进程级，建局与恢复各解析一次，不进 checkpoint/snapshot；开时同局所有 routing 座位共用一个确定性 `x-opencode-session`（`ses_`+`sha256(session_header, game_id)` 截断 26 hex），把整局流量收敛到一台上游后端以集中前缀缓存；与 `CACHE_ROUTE_PIN` 组合时探测按 session 组进行、判冷整组轮换。首局开启后盯 `model_errors.log` 确认网关无单 session 限流 |
+| `WOLFKILLER_BURST_WARMUP` | `off` | 投票预热首发开关：`off` / `on`。进程级，建局与恢复各解析一次，不进 checkpoint；开时放逐投票首座位（`seats[0]`）先串行完成、其余座位再按 `game.vote_concurrency` 并行——让后续同契约调用吃到首发刚提交的缓存前缀。仅与 `WOLFKILLER_SHARED_CACHE_SESSION=on` 组合有意义（非共享后端时 followers 吃不到暖，白付一次串行延迟 ~15-30s/轮）；投票阶段预算、超时、技术弃权语义不变 |
 | `WOLFKILLER_API_URL` | `http://127.0.0.1:8000` | benchmark CLI 连接的后端地址 |
 | `DEBUG` | `false` | 调试模式 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
