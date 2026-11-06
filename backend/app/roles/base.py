@@ -1057,7 +1057,7 @@ class BaseRole:
                 except ActionValidationError:
                     pass
             # A gateway that binds the tool without forcing it (``forced_tool_choice``
-            # is off for opencode-go/Zen) leaves the model free to answer in the
+            # is off for opencode Zen/custom-openai) leaves the model free to answer in the
             # content block. Parsing that content here is what the JSON transport
             # would do next anyway, so salvage it before paying a whole extra
             # round-trip: go-deepseek otherwise burned p50 28s per salvaged call.

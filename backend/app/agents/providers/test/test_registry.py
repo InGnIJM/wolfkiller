@@ -120,14 +120,21 @@ def test_opencode_profiles_request_the_session_header(profile_id):
     assert profile.session_header == "x-opencode-session"
 
 
-@pytest.mark.parametrize("profile_id", ["opencode", "opencode-go"])
-def test_opencode_profiles_stay_conservative_about_forced_tool_choice(profile_id):
-    """Unverified gateway behaviour must not become a hard 400 on every call."""
+@pytest.mark.parametrize(
+    ("profile_id", "forced"),
+    [("opencode", False), ("opencode-go", True)],
+)
+def test_opencode_profiles_declare_measured_forced_tool_choice(profile_id, forced):
+    """Unverified gateway behaviour must not become a hard 400 on every call.
+
+    Go was relaxed after a live probe verified ``required`` and named
+    ``tool_choice`` (2026-11-06); Zen stays conservative until measured.
+    """
     profile = ProviderRegistry().resolve(profile_id, "https://x.test/v1", "m")
 
     assert profile.capabilities.tools is True
     assert profile.capabilities.strict_tools is False
-    assert profile.capabilities.forced_tool_choice is False
+    assert profile.capabilities.forced_tool_choice is forced
 
 
 def test_only_opencode_profiles_carry_a_session_header():

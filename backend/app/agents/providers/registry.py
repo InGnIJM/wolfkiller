@@ -28,13 +28,20 @@ def _opencode_profile(profile_id: str) -> ProviderProfile:
     Capabilities deliberately mirror ``custom-openai``: the gateways are
     OpenAI-compatible relays whose strict-schema and forced-tool-choice
     behaviour has not been verified on a real endpoint, and guessing wrong
-    turns every action call into a hard 400. Relax these once measured.
+    turns every action call into a hard 400. Go's ``forced_tool_choice``
+    was relaxed after a 2026-11-06 live probe against
+    ``/zen/go/v1/chat/completions`` returned clean tool calls for both
+    ``required`` and named ``tool_choice``; Zen remains unverified.
+    ``strict_tools`` stays off: one upstream route accepted the flag, but
+    Go routes across upstreams and the payload is re-validated locally
+    anyway.
     """
     return ProviderProfile(
         profile_id=profile_id,
         api_mode=API_MODE_CHAT_COMPLETIONS,
         capabilities=ModelCapabilities(
-            True, False, True, False, True, forced_tool_choice=False,
+            True, False, True, False, True,
+            forced_tool_choice=profile_id == "opencode-go",
         ),
         default_action_max_tokens=2048,
         session_header=_OPENCODE_SESSION_HEADER,
