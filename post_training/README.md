@@ -11,6 +11,9 @@ post_training/
   tokenize_report.py  # Qwen3 tokenizer 实测长度分布 -> tokenize_report.json
   prepare_dataset.py  # 12k 窗口应用：history 块保尾截头 -> *_final.jsonl
   train_sft.py        # WSL 内跑的 Unsloth QLoRA 训练入口（含 --smoke）
+  eval_student.py     # 留出集评估：completion NLL + 结构化生成比对
+  serve_student.py    # OpenAI 兼容推理服务（引擎 benchmark 用，含 speech tool_calls）
+  REPORT.md           # 后训练完整报告（数据/训练/离线评估/真实对局）
   test/               # pytest 单测（各模块 --cov 100%）
   data/               # 导出产物（已 gitignore）
     train.jsonl       # 训练集（按 game_id 切分，防同局泄漏）
@@ -21,6 +24,8 @@ post_training/
     report.json       # 分布统计
     tokenize_report.json
     prepare_report.json
+    eval_report.json  # eval_student.py 产出（逐行指标 + 汇总）
+    eval_report.md    # 同一份结果的速读卡
 ```
 
 ## 用法
@@ -31,6 +36,12 @@ python export_dataset.py                 # 默认读 ../backend/data，全部开
 python tokenize_report.py                # 实测 token 分布
 python prepare_dataset.py                # 应用 12k 窗口（保尾截头）
 python -m pytest test/ -q                # 全部测试
+
+# 留出集评估（GPU；loss 全量 + 生成抽样，避免 8GB 机器跑一整夜）：
+~/sft/bin/python eval_student.py --mode both --gen-sample 150
+~/sft/bin/python eval_student.py --mode loss          # 只测完成度 loss
+~/sft/bin/python eval_student.py --mode both --gen-sample 150 --resume   # 中断后接着跑
+```
 
 # WSL 内（venv 在 ~/sft，模型在 /mnt/e/models/）：
 ~/sft/bin/python train_sft.py --smoke    # 显存冒烟
