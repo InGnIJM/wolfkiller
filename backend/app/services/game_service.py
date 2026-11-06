@@ -37,6 +37,10 @@ from app.agents.retry import (
     retry_plan,
 )
 from app.agents.failure_taxonomy import normalize_failure_code
+from app.agents.cache_route import (
+    BurstWarmupMode, CacheRouteMode, SharedSessionMode, apply_shared_session,
+    burst_warmup_mode, cache_route_mode, pin_cache_routes, shared_session_mode,
+)
 from app.agents.model_health import AbortPolicy, HealthEvent, resolve_abort_policy
 from app.agents.providers.registry import ProviderRegistry
 from app.stores.app_settings_store import get_app_settings_store
@@ -45,6 +49,10 @@ from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 from app.agents.prompt_builder import PromptBuilder
 from app.agents.prompt_renderer import PromptRenderer
 from app.agents.prompt_window import stable_tail
+from app.agents.session_affinity import (
+    SessionAffinityMode, apply_session_affinity, session_affinity_mode,
+    session_affinity_plan,
+)
 from app.agents.output_parser import coerce_payload_to_schema
 from app.agents.game_rules import NIGHT_SYSTEM_PROMPT as _SYSTEM_PROMPT
 from app.core.action_resolver import ActionResolver
@@ -708,10 +716,43 @@ _MODEL_PARAMETER_FIELDS = (
 )
 
 
-def _model_parameters(config: LLMClientConfig) -> dict[str, object]:
-    profile = ProviderRegistry().resolve(
+def _resolved_profile_id(config: LLMClientConfig) -> str:
+    return ProviderRegistry().resolve(
         config.provider_profile, config.base_url, config.model_id,
     ).profile_id
+
+
+def _seat_client_config(
+    config: LLMClientConfig, *, game_id: str, seat: int,
+    total_players: int, mode: SessionAffinityMode,
+) -> LLMClientConfig:
+    """Stamp this seat's session header when the experiment treats it.
+
+    The caller keeps the unmodified ``seat_configs`` for the frozen model
+    runtime; only the per-seat client config carries the extra header.
+    """
+    return apply_session_affinity(
+        config,
+        game_id=game_id,
+        seat=seat,
+        total_players=total_players,
+        mode=mode,
+        profile_id=_resolved_profile_id(config),
+    )
+
+
+def _log_session_affinity(
+    game_id: str, total_players: int, mode: SessionAffinityMode,
+) -> None:
+    plan = session_affinity_plan(game_id, total_players, mode)
+    logger.info(
+        "session affinity mode=%s game=%s treatment=%s",
+        plan["mode"], game_id, plan["treatment_seats"],
+    )
+
+
+def _model_parameters(config: LLMClientConfig) -> dict[str, object]:
+    profile = _resolved_profile_id(config)
     values = {name: getattr(config, name) for name in _MODEL_PARAMETER_FIELDS}
     values["provider_profile"] = profile
     return values
@@ -1397,6 +1438,9 @@ class GameService:
                 code = "checkpoint_corrupt"
             self._mark_recovery_blocked(game_id, code)
             raise ValueError(code) from error
+        await self._share_cache_session(
+            state.game_id, clients, shared_session_mode(),
+        )
 
         updated = self.repository.transition_execution(
             game_id, expected=expected_statuses, target="running",
@@ -1582,6 +1626,12 @@ class GameService:
             raise ValueError("benchmark_item_index requires benchmark_run_id")
         if benchmark_run_id is not None and source != "benchmark":
             raise ValueError("benchmark games must use benchmark source")
+        # Process-level experiment switch, read once per game and never
+        # persisted; an invalid value fails here, before any side effect.
+        affinity_mode = session_affinity_mode()
+        cache_route = cache_route_mode()
+        shared_session = shared_session_mode()
+        burst_warmup = burst_warmup_mode()
         game_id = game_id_override or (
             str(uuid.uuid4()) if self.repository is not None
             else str(uuid.uuid4())[:8]
@@ -1660,6 +1710,7 @@ class GameService:
             "enabled": bool(commentary_enabled),
             "commentary_config_id": commentary_config_id,
         }
+        _log_session_affinity(game_id, config.total_players, affinity_mode)
         clients_by_seat: dict[int, LLMClient] = {}
         self._llm_clients[game_id] = clients_by_seat
         try:
@@ -1667,11 +1718,26 @@ class GameService:
                 # Seats share LangChain's httpx pool otherwise: closing them
                 # at game end would kill a sibling game's live connections.
                 clients_by_seat[seat] = LLMClient(
-                    config=client_config, dedicated_http_clients=True,
+                    config=_seat_client_config(
+                        client_config,
+                        game_id=game_id,
+                        seat=seat,
+                        total_players=config.total_players,
+                        mode=affinity_mode,
+                    ),
+                    dedicated_http_clients=True,
                 )
         except BaseException:
             await self._close_game_clients(game_id)
             raise
+
+        await self._share_cache_session(
+            game_id, clients_by_seat, shared_session,
+        )
+        if cache_route is not CacheRouteMode.OFF:
+            await self._pin_cache_routes(
+                game_id, config.total_players, cache_route, clients_by_seat,
+            )
 
         def client_provider(seat: int) -> LLMClient:
             try:
@@ -1840,6 +1906,7 @@ class GameService:
                 pipeline_scheduler=scheduler,
                 director=director,
                 health_guard=health_guard,
+                vote_warmup=burst_warmup is BurstWarmupMode.ON,
             )
             self._attach_health_sink(game_id, health_guard, engine)
             engine_ref = engine
@@ -2794,12 +2861,22 @@ class GameService:
         # Registry compatibility is settled once in ``_recover_game`` (see
         # recovery_compat); a role-declaration change must not stop the resume
         # here, because the engine binds the live specs for the remaining game.
+        affinity_mode = session_affinity_mode()
+        vote_warmup = burst_warmup_mode() is BurstWarmupMode.ON
         seat_configs = self._resolve_recovery_model_configs(state, record)
+        _log_session_affinity(state.game_id, len(state.players), affinity_mode)
         clients: dict[int, LLMClient] = {}
         try:
             for seat, client_config in sorted(seat_configs.items()):
                 clients[seat] = LLMClient(
-                    config=client_config, dedicated_http_clients=True,
+                    config=_seat_client_config(
+                        client_config,
+                        game_id=state.game_id,
+                        seat=seat,
+                        total_players=len(state.players),
+                        mode=affinity_mode,
+                    ),
+                    dedicated_http_clients=True,
                 )
         except BaseException:
             # LLMClient construction is synchronous, so close any partially
@@ -2930,6 +3007,7 @@ class GameService:
             memory_service=self.memory_service, data_dir=self.data_dir,
             pipeline_scheduler=scheduler, director=director,
             health_guard=health_guard,
+            vote_warmup=vote_warmup,
         )
         self._attach_health_sink(state.game_id, health_guard, engine)
         engine_box["engine"] = engine
@@ -3734,6 +3812,71 @@ class GameService:
                 await client.aclose()
             except Exception:
                 logger.debug("Failed to close LLM client", exc_info=True)
+
+    async def _share_cache_session(
+        self,
+        game_id: str,
+        clients: dict[int, LLMClient],
+        mode: SharedSessionMode,
+    ) -> None:
+        """Point routing-cache clients at one session; best-effort, never blocks.
+
+        Runs before the route probe on creation so the probe measures the
+        shared session, and on resume so a recovered game rejoins its
+        deterministic backend.
+        """
+        try:
+            seats = await apply_shared_session(
+                clients, game_id=game_id, mode=mode,
+            )
+        except Exception:  # noqa: BLE001 - telemetry must not block a game
+            logger.warning(
+                "shared cache session failed for game %s", game_id,
+                exc_info=True,
+            )
+            return
+        if seats:
+            logger.info(
+                "shared cache session game=%s seats=%s", game_id, seats,
+            )
+
+    async def _pin_cache_routes(
+        self,
+        game_id: str,
+        total_players: int,
+        mode: CacheRouteMode,
+        clients: dict[int, LLMClient],
+    ) -> None:
+        """Probe routing-cache sessions once and log the experiment result.
+
+        Best-effort: any failure leaves the original clients in place, so game
+        creation never depends on the gateway experiment. The probe requests
+        are diagnostics, not turns: they never enter the durable ledger, the
+        summary or ``llm_calls.log``.
+        """
+        try:
+            results = await pin_cache_routes(
+                clients,
+                game_id=game_id,
+                total_players=total_players,
+                mode=mode,
+            )
+        except Exception:  # noqa: BLE001 - telemetry must not block a game
+            logger.warning(
+                "cache route probe failed for game %s", game_id, exc_info=True,
+            )
+            return
+        if not results:
+            return
+        game_dir = os.path.join(self.data_dir, "games", game_id)
+        os.makedirs(game_dir, exist_ok=True)
+        path = os.path.join(game_dir, "cache_route.jsonl")
+        with open(path, "a", encoding="utf-8") as handle:
+            for seat in sorted(results):
+                handle.write(
+                    json.dumps({"seat": seat, **results[seat]}, ensure_ascii=False)
+                    + "\n"
+                )
 
     async def _close_game_clients(self, game_id: str) -> None:
         """Atomically forget and close a game's clients exactly once.

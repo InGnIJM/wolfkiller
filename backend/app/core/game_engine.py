@@ -264,6 +264,7 @@ class GameEngine:
         checkpoint_hook=None,
         fault_injector=None,
         health_guard=None,
+        vote_warmup: bool = False,
     ):
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
@@ -295,6 +296,10 @@ class GameEngine:
             if type(vote_phase_timeout) in (int, float) and vote_phase_timeout > 0
             else 500.0
         )
+        # Routing-cache experiment (WOLFKILLER_BURST_WARMUP): the first ballot
+        # of a casting phase runs alone so the parallel rest can reuse the
+        # prefix it just committed on the shared backend.
+        self._vote_warmup = bool(vote_warmup)
         self._running = False
         self._paused = False
         self._last_words_given: set[tuple[int, int]] = set()
@@ -2371,9 +2376,25 @@ class GameEngine:
             eligible_voters=sorted(window.eligible_voters),
             timeout_seconds=self._vote_phase_timeout_seconds,
         )
+        warmup_seat = (
+            seats[0] if self._vote_warmup and len(seats) > 1 else None
+        )
+        if warmup_seat is not None:
+            logger.info(
+                "Vote warmup: seat %s casts first for game=%s round=%s",
+                warmup_seat, self.game_id, self.state.round_number,
+            )
+
+        async def collect_all() -> None:
+            if warmup_seat is not None:
+                await collect_vote(warmup_seat)
+            await asyncio.gather(
+                *(collect_vote(seat) for seat in seats if seat != warmup_seat)
+            )
+
         try:
             await asyncio.wait_for(
-                asyncio.gather(*(collect_vote(seat) for seat in seats)),
+                collect_all(),
                 timeout=self._vote_phase_timeout_seconds,
             )
         except asyncio.TimeoutError:
