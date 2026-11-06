@@ -277,23 +277,81 @@ def _summarize(
     }
 
 
-def _cache_entry(prompt: int, cached: int) -> dict:
+def _cache_entry(
+    prompt: int, cached: int, *, prompt_all: int, known_calls: int, calls: int,
+) -> dict:
+    """One cache row.
+
+    ``hit_rate`` keeps its historical known-only meaning: the denominator is
+    the prompt tokens of calls that actually reported a cache count, so it must
+    never be read as the game's overall hit rate.  ``hit_rate_all`` divides the
+    same cached tokens by every prompt token of the game (a provider that omits
+    the field on a miss therefore counts as 0), and ``coverage`` says how many
+    calls could enter the known-only rate at all.
+    """
     return {
         "known_prompt": prompt,
         "cached_prompt": cached,
         "hit_rate": round(cached / prompt, 4) if prompt else None,
+        "prompt_tokens_all": prompt_all,
+        "known_calls": known_calls,
+        "coverage": round(known_calls / calls, 4) if calls else None,
+        "hit_rate_all": round(cached / prompt_all, 4) if prompt_all else None,
     }
 
 
-def _cache_block(by_kind: dict[str, list[int]]) -> dict:
-    """Prefix-cache hit rate, overall and per call kind."""
-    prompt = sum(bucket[0] for bucket in by_kind.values())
-    cached = sum(bucket[1] for bucket in by_kind.values())
+def _cache_block(
+    by_kind: dict[str, list[int]],
+    prompt_all_by_kind: dict[str, int],
+    calls_by_kind: dict[str, int],
+    by_seat: dict[int, list[int]] | None = None,
+    prompt_all_by_seat: dict[int, int] | None = None,
+    calls_by_seat: dict[int, int] | None = None,
+) -> dict:
+    """Prefix-cache hit rate, known-only and all-call, overall, per kind and per seat.
+
+    Every call kind that produced a call is listed — including kinds that never
+    reported a cache count (``coverage`` 0) — so "no cache telemetry" cannot be
+    mistaken for "no such calls". The per-seat split exists because a routing
+    gateway can pin one seat to an upstream backend without a cache: that seat
+    then reports 0% for the whole game while its neighbours hit normally.
+    """
+    kinds = sorted(set(by_kind) | set(prompt_all_by_kind) | set(calls_by_kind))
+    entries = {}
+    for kind in kinds:
+        known_calls, prompt, cached = by_kind.get(kind, [0, 0, 0])
+        entries[kind] = _cache_entry(
+            prompt, cached,
+            prompt_all=prompt_all_by_kind.get(kind, 0),
+            known_calls=known_calls,
+            calls=calls_by_kind.get(kind, 0),
+        )
+    seat_entries: dict[str, dict] = {}
+    seat_ids = (
+        set(by_seat or {})
+        | set(prompt_all_by_seat or {})
+        | set(calls_by_seat or {})
+    )
+    for seat in sorted(seat_ids):
+        known_calls, prompt, cached = (by_seat or {}).get(seat, [0, 0, 0])
+        seat_entries[str(seat)] = _cache_entry(
+            prompt, cached,
+            prompt_all=(prompt_all_by_seat or {}).get(seat, 0),
+            known_calls=known_calls,
+            calls=(calls_by_seat or {}).get(seat, 0),
+        )
+    prompt = sum(entry["known_prompt"] for entry in entries.values())
+    cached = sum(entry["cached_prompt"] for entry in entries.values())
+    prompt_all = sum(prompt_all_by_kind.values())
+    known_calls = sum(entry["known_calls"] for entry in entries.values())
+    calls = sum(calls_by_kind.values())
     return {
-        **_cache_entry(prompt, cached),
-        "by_kind": {
-            kind: _cache_entry(*bucket) for kind, bucket in sorted(by_kind.items())
-        },
+        **_cache_entry(
+            prompt, cached,
+            prompt_all=prompt_all, known_calls=known_calls, calls=calls,
+        ),
+        "by_kind": entries,
+        "by_seat": seat_entries,
     }
 
 
@@ -305,23 +363,52 @@ def _llm_aggregate(records: list[dict]) -> dict:
     fallbacks = 0
     tool_content_fallbacks = 0
     retried = 0
-    # [prompt tokens, cached prompt tokens] over calls that reported both, per
-    # call kind: a provider that never reports cache hits must not dilute the rate.
+    # [known calls, prompt tokens, cached prompt tokens] over calls that
+    # reported both counts, per call kind: a provider that never reports cache
+    # hits must not dilute the known-only rate.  ``prompt_all_by_kind`` and
+    # ``all_calls_by_kind`` cover every call, so the block can also publish the
+    # end-to-end rate and the coverage of the cache telemetry itself.
     cache_by_kind: dict[str, list[int]] = {}
+    prompt_all_by_kind: dict[str, int] = {}
+    all_calls_by_kind: dict[str, int] = {}
+    # Same shape per seat. ``record["seat"]`` is on the llm_calls envelope, not
+    # inside ``data``; records without an integer seat stay in the game totals
+    # but cannot be attributed to a player.
+    cache_by_seat: dict[int, list[int]] = {}
+    prompt_all_by_seat: dict[int, int] = {}
+    all_calls_by_seat: dict[int, int] = {}
 
     for record in records:
         data = record.get("data") if isinstance(record.get("data"), dict) else {}
         kind = data.get("call_kind")
+        kind_key = kind if isinstance(kind, str) else "unknown"
+        all_calls_by_kind[kind_key] = all_calls_by_kind.get(kind_key, 0) + 1
+        seat = record.get("seat")
+        seat_key = seat if type(seat) is int else None
+        if seat_key is not None:
+            all_calls_by_seat[seat_key] = all_calls_by_seat.get(seat_key, 0) + 1
         if isinstance(kind, str):
             by_kind[kind] = by_kind.get(kind, 0) + 1
         cached = data.get("cached_prompt_tokens")
         prompt = data.get("prompt_tokens")
-        if type(cached) is int and type(prompt) is int:
-            bucket = cache_by_kind.setdefault(
-                kind if isinstance(kind, str) else "unknown", [0, 0],
+        if type(prompt) is int:
+            prompt_all_by_kind[kind_key] = (
+                prompt_all_by_kind.get(kind_key, 0) + prompt
             )
-            bucket[0] += prompt
-            bucket[1] += cached
+            if seat_key is not None:
+                prompt_all_by_seat[seat_key] = (
+                    prompt_all_by_seat.get(seat_key, 0) + prompt
+                )
+        if type(cached) is int and type(prompt) is int:
+            bucket = cache_by_kind.setdefault(kind_key, [0, 0, 0])
+            bucket[0] += 1
+            bucket[1] += prompt
+            bucket[2] += cached
+            if seat_key is not None:
+                seat_bucket = cache_by_seat.setdefault(seat_key, [0, 0, 0])
+                seat_bucket[0] += 1
+                seat_bucket[1] += prompt
+                seat_bucket[2] += cached
         for field, target in (
             ("prompt_tokens", "prompt"),
             ("completion_tokens", "completion"),
@@ -356,7 +443,10 @@ def _llm_aggregate(records: list[dict]) -> dict:
         "tool_content_fallbacks": tool_content_fallbacks,
         "retried": retried,
         "tokens": tokens,
-        "cache": _cache_block(cache_by_kind),
+        "cache": _cache_block(
+            cache_by_kind, prompt_all_by_kind, all_calls_by_kind,
+            cache_by_seat, prompt_all_by_seat, all_calls_by_seat,
+        ),
         "elapsed_ms": {
             "p50": _percentile(elapsed, 50),
             "p95": _percentile(elapsed, 95),

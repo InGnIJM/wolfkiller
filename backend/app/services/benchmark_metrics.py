@@ -48,7 +48,7 @@ from app.benchmark.metrics import (
 #: ``attempts.retry_rate``/``tokens_per_attempt``, ``info_roles_present`` and a
 #: Wilson interval for single-block runs.
 #: v7 adds the prefix-cache hit rate to ``attempts.token_usage``.
-METRIC_VERSION = "v7"
+METRIC_VERSION = "v8"
 _BOOTSTRAP_SEED = 1729
 _BOOTSTRAP_SAMPLES = 2000
 _CONFIDENCE = 0.95
@@ -637,6 +637,60 @@ def _token_value(attempt: Mapping[str, Any], key: str) -> int:
     return value
 
 
+#: A seat needs at least this many cache-reporting calls before an all-miss
+#: game is called "cold": one unlucky first call is not a routing failure.
+_COLD_SEAT_MIN_CALLS = 3
+
+
+def _cache_seat_metrics(
+    summaries: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Per-(game, seat) cache availability, aggregated over the run.
+
+    A routing gateway can pin a whole seat to an upstream backend without a
+    prompt cache: the seat reports 0% for every call while its neighbours hit.
+    ``cache_cold_seats`` counts those (game, seat) pairs so the failure is
+    visible instead of being averaged away. Summaries written before the
+    ``by_seat`` split simply do not contribute (unknown, not cold).
+    """
+    known_seats = 0
+    cold_seats = 0
+    prompt_tokens = 0
+    cached_tokens = 0
+    cold_prompt = 0
+    cold_cached = 0
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            continue
+        llm = summary.get("llm")
+        cache = llm.get("cache") if isinstance(llm, Mapping) else None
+        by_seat = cache.get("by_seat") if isinstance(cache, Mapping) else None
+        if not isinstance(by_seat, Mapping):
+            continue
+        for entry in by_seat.values():
+            if not isinstance(entry, Mapping):
+                continue
+            known_calls = entry.get("known_calls")
+            if type(known_calls) is not int or known_calls <= 0:
+                continue
+            known_seats += 1
+            prompt = _token_value(entry, "known_prompt")
+            cached = _token_value(entry, "cached_prompt")
+            prompt_tokens += prompt
+            cached_tokens += cached
+            if known_calls >= _COLD_SEAT_MIN_CALLS and cached == 0:
+                cold_seats += 1
+                cold_prompt += prompt
+                cold_cached += cached
+    return {
+        "cache_known_seats": known_seats,
+        "cache_cold_seats": cold_seats,
+        "cache_hit_rate_excluding_cold_seats": _rate(
+            cached_tokens - cold_cached, prompt_tokens - cold_prompt,
+        ),
+    }
+
+
 def _attempt_metrics(
     attempts: Sequence[Mapping[str, Any]],
     summaries: Sequence[Mapping[str, Any]] = (),
@@ -712,6 +766,7 @@ def _attempt_metrics(
             "cache_known_prompt_tokens": cache_prompt_tokens,
             "known_cached_prompt_tokens": cached_prompt_tokens,
             "cache_hit_rate": _rate(cached_prompt_tokens, cache_prompt_tokens),
+            **_cache_seat_metrics(summaries),
         },
         # Mean cost per provider attempt that reported usage. Unknown usage is
         # not zero, so the denominator is the known subset — dividing by every
