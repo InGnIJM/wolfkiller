@@ -704,6 +704,9 @@ def test_wolf_prompts_allow_deliberate_team_target_strategy(state: GameState, di
 def test_every_wolf_shares_one_system_turn_and_the_briefing_prefix(
     state: GameState, director: NightDirector,
 ):
+    # Two pack wolves: only pack members ever see these prompts for real.
+    state.players[2].role = "wolf-killer-werewolf"
+    state.players[2].camp = "werewolf"
     log = ConversationLog()
     log.add_public_speech(4, "wolf-killer-villager", "白天的公开发言", 1, "speech")
     briefing = build_briefing(log, 1, 2)
@@ -712,15 +715,41 @@ def test_every_wolf_shares_one_system_turn_and_the_briefing_prefix(
     vote_first = director.vote_prompt(state, 1, [], [], briefing)
     vote_second = director.vote_prompt(state, 2, [], [], briefing)
 
-    assert first[0] == second[0]
-    assert vote_first[0] == vote_second[0]
-    shared = first[1]["content"][:first[1]["content"].index("## 你的身份")]
+    # One system turn serves both contracts: the pack's prefix cache should
+    # not split on which stage of the night a call belongs to.
+    assert first[0] == second[0] == vote_first[0] == vote_second[0]
+    shared = first[1]["content"][:first[1]["content"].index("已进行的讨论")]
     assert "白天的公开发言" in shared
     assert second[1]["content"].startswith(shared)
     order = [first[1]["content"].index(marker) for marker in (
-        "## 白天公开信息回顾", "## 你的身份", "## 你的思考回顾", "## 当前局势", "已进行的讨论",
+        "## 白天公开信息回顾", "## 此前夜晚狼队频道记录", "## 当前局势",
+        "已进行的讨论", "## 你的身份", "## 你的思考回顾",
     )]
     assert order == sorted(order)
+
+
+def test_a_vote_reuses_the_discussion_and_prior_ballot_prefix(
+    state: GameState, director: NightDirector,
+):
+    state.players[2].role = "wolf-killer-werewolf"
+    state.players[2].camp = "werewolf"
+    log = ConversationLog()
+    discussion = ["2号：刀4号", "5号：同意"]
+    first_vote = director.vote_prompt(
+        state, 1, discussion, [], build_briefing(log, 1, 1),
+    )[1]["content"]
+    second_vote = director.vote_prompt(
+        state, 2, discussion, [WolfVote(1, "kill", 4, "可疑")],
+        build_briefing(log, 2, 1),
+    )[1]["content"]
+
+    # Everything before the running ballot is identical for the next wolf:
+    # briefing, status and the full discussion are shared context, the seat's
+    # own identity and reminders all live behind the records.
+    cut = first_vote.index("已出票")
+    assert second_vote[:cut] == first_vote[:cut]
+    assert first_vote.index("## 你的身份") > first_vote.index("已出票")
+    assert first_vote.index("## 你的思考回顾") > first_vote.index("已出票")
 
 
 def test_a_new_discussion_turn_only_extends_the_same_wolf_prompt(
