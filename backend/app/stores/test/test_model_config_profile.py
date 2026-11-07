@@ -25,6 +25,28 @@ def test_profile_round_trip(tmp_path):
     assert store.get(config.id).provider_profile == "openrouter"
 
 
+def test_old_json_without_reasoning_effort_loads_as_none(tmp_path):
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps({"version": 1, "configs": [{
+        "id": "old", "name": "Old", "base_url": "https://openrouter.ai/api/v1",
+        "model_id": "model", "created_at": "t", "updated_at": "t",
+    }]}), encoding="utf-8")
+
+    assert JsonModelConfigStore(str(path)).get("old").reasoning_effort is None
+
+
+def test_reasoning_effort_round_trip(tmp_path):
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    config = ModelConfig.new(
+        "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat",
+        reasoning_effort="none",
+    )
+
+    store.upsert(config)
+
+    assert store.get(config.id).reasoning_effort == "none"
+
+
 def test_old_entry_is_not_mutated_when_default_profile_is_added(tmp_path, monkeypatch):
     entry = {
         "id": "old", "name": "Old", "base_url": "https://example.com",

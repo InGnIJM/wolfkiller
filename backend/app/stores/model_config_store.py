@@ -25,6 +25,9 @@ class ModelConfig:
     created_at: str = ""
     updated_at: str = ""
     provider_profile: str = "auto"
+    #: ``reasoning_effort`` is sent verbatim on chat-completions calls; ``None``
+    #: means the parameter is not sent and the provider default applies.
+    reasoning_effort: Optional[str] = None
     #: Extra request headers sent with every call (may carry relay-specific
     #: values, so they are never copied into public snapshots or game logs).
     headers: dict[str, str] = field(default_factory=dict)
@@ -35,6 +38,7 @@ class ModelConfig:
         api_key_encrypted: str = "", temperature: Optional[float] = None,
         strict_base_url: Optional[str] = None,
         provider_profile: str = "auto",
+        reasoning_effort: Optional[str] = None,
         headers: Optional[dict[str, str]] = None,
     ) -> "ModelConfig":
         now = datetime.now(timezone.utc).isoformat()
@@ -44,6 +48,7 @@ class ModelConfig:
             api_key_encrypted=api_key_encrypted,
             temperature=temperature, strict_base_url=strict_base_url,
             provider_profile=provider_profile,
+            reasoning_effort=reasoning_effort,
             headers=dict(headers) if headers else {},
             created_at=now, updated_at=now,
         )
