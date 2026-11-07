@@ -630,6 +630,8 @@ export interface ModelConfig {
   name: string;
   base_url: string;
   model_id: string;
+  /** 该供应商可提供的全部模型；首个即默认。旧响应或测试 mock 可能没有。 */
+  model_ids?: string[];
   has_key: boolean;
   api_key_masked: string | null;
   key_invalid: boolean;
@@ -649,6 +651,7 @@ export interface ModelConfigInput {
   name: string;
   base_url: string;
   model_id: string;
+  model_ids?: string[];
   api_key?: string;
   temperature?: number | null;
   strict_base_url?: string | null;

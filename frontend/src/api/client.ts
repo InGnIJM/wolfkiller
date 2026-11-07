@@ -365,8 +365,19 @@ export async function updateAutoReviewSetting(
   return res.json();
 }
 
-export async function fetchModelCatalog(configId: string): Promise<ModelCatalog> {
-  const res = await fetch(`${getApiBase()}/api/models/${configId}/catalog`);
+export async function fetchModelCatalog(input: {
+  config_id?: string | null;
+  base_url?: string;
+  api_key?: string;
+  provider_profile?: ProviderProfileId;
+  strict_base_url?: string | null;
+  headers?: Record<string, string> | null;
+}): Promise<ModelCatalog> {
+  const res = await fetch(`${getApiBase()}/api/models/catalog`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
   if (!res.ok) throw new Error(`Fetch model catalog failed: ${res.status}`);
   return res.json();
 }
