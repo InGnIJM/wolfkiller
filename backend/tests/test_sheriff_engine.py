@@ -1271,3 +1271,262 @@ async def test_deferred_react_death_is_published_once_and_merged_into_the_slot()
     await engine._run_deferred_night_reactions()
     engine._publish_deaths.assert_not_called()
 
+
+# ── Parallel decision collection ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_collect_sheriff_decisions_runs_calls_concurrently() -> None:
+    """A barrier that needs all three workers proves the calls overlap."""
+    engine = _engine()
+    barrier = threading.Barrier(3)
+
+    def decide(seat: int) -> str:
+        barrier.wait(timeout=5)  # a sequential stage would break the barrier
+        return "stay"
+
+    results, timed_out = await engine._collect_sheriff_decisions(
+        [1, 2, 3], decide, timeout_result="stay",
+    )
+    assert results == {1: "stay", 2: "stay", 3: "stay"}
+    assert timed_out == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_collect_sheriff_decisions_with_no_seats() -> None:
+    engine = _engine()
+    results, timed_out = await engine._collect_sheriff_decisions(
+        [], lambda seat: seat, timeout_result="stay",
+    )
+    assert results == {}
+    assert timed_out == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_collect_sheriff_decisions_marks_unanswered_seats_timed_out() -> None:
+    engine = _engine()
+    engine._vote_phase_timeout_seconds = 0.05
+
+    def decide(seat: int) -> str:
+        if seat == 2:
+            time.sleep(2)
+        return "stay"
+
+    results, timed_out = await engine._collect_sheriff_decisions(
+        [1, 2], decide, timeout_result="stay",
+    )
+    assert timed_out == frozenset({2})
+    assert results == {1: "stay", 2: "stay"}
+
+
+@pytest.mark.asyncio
+async def test_collect_sheriff_decisions_warmup_runs_the_first_seat_first() -> None:
+    engine = _engine()
+    engine._vote_warmup = True
+    engine._vote_warmup_max_wait_seconds = 1.0
+    order: list[int] = []
+
+    def decide(seat: int) -> int:
+        order.append(seat)
+        return seat
+
+    results, timed_out = await engine._collect_sheriff_decisions(
+        [1, 2, 3], decide, timeout_result=None,
+    )
+    assert order[0] == 1
+    assert sorted(order) == [1, 2, 3]
+    assert results == {1: 1, 2: 2, 3: 3}
+    assert timed_out == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_the_lowest_exploding_seat_wins_not_the_first_to_finish() -> None:
+    """Two wolves both answer explode; seat order — not completion order —
+    picks whose explode the election honours. Seat 3's answer is collected
+    but discarded when seat 2's is applied first."""
+    engine = _engine(wolves=3)
+    engine._sheriff_director = ScriptedSheriff(
+        campaign=["run", "run", "run"],
+        withdraw={1: ["stay"], 2: ["explode"], 3: ["explode"]},
+    )
+    engine.speak = AsyncMock(return_value="先听我竞选，再决定是否退水。")
+    await engine._execute_sheriff_election()
+    assert engine.state.players[2].is_alive is False
+    assert engine.state.players[3].is_alive is True
+    assert engine.state.sheriff_office.skip_remaining_day is True
+
+
+@pytest.mark.asyncio
+async def test_a_paused_decision_reraises_at_its_seat_in_order() -> None:
+    """A provider pause is a control signal, not a fallback: the seat-order
+    pass commits earlier seats, then re-raises at the paused seat."""
+    engine = _engine()
+    engine.state.sheriff_office.step = "withdraw"
+    engine.state.sheriff_office.candidates = {2, 3}
+
+    class PausingSheriff(ScriptedSheriff):
+        def withdraw_turn(self, state, seat, *, wolf):
+            if seat == 3:
+                raise PipelinePaused("provider down")
+            return "withdraw"
+
+    engine._sheriff_director = PausingSheriff()
+    labels: list[str] = []
+    engine._checkpoint_hook = labels.append
+
+    with pytest.raises(PipelinePaused):
+        await engine._execute_sheriff_election()
+
+    assert any(
+        label.endswith("sheriff_withdraw:1:2:withdraw") for label in labels
+    )
+    assert not any("sheriff_withdraw:1:3" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_withdraw_timeout_defaults_to_stay(tmp_path) -> None:
+    """A candidate whose model never answers stays on the badge: the stage
+    fallback is ``stay``, same as the sequential exception path."""
+    engine = _engine(data_dir=str(tmp_path))
+    engine._vote_phase_timeout_seconds = 0.05
+
+    class SlowWithdraw(ScriptedSheriff):
+        def withdraw_turn(self, state, seat, *, wolf):
+            if seat == 3:
+                time.sleep(2)
+            return super().withdraw_turn(state, seat, wolf=wolf)
+
+    engine._sheriff_director = SlowWithdraw(
+        campaign=["pass", "run", "run", "pass"],
+        withdraw={2: ["withdraw"], 3: ["stay"]},
+    )
+    engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
+
+    await engine._execute_sheriff_election()
+
+    assert engine.state.sheriff == 3
+    rows = [
+        json.loads(line)
+        for line in (
+            tmp_path / "games" / "sheriff-engine" / "game.log"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    timeouts = [row for row in rows if row["operation"] == "sheriff_phase_timeout"]
+    assert len(timeouts) == 1
+    assert timeouts[0]["phase"] == "sheriff_election"
+    assert timeouts[0]["data"]["kind"] == "withdraw"
+    assert timeouts[0]["data"]["completed_seats"] == [2]
+    assert timeouts[0]["data"]["missing_seats"] == [3]
+    audience = [row for row in rows if row["operation"] == "audience_action"]
+    withdraws = [
+        row["data"]["payload"] for row in audience
+        if row["data"]["event_type"] == "SHERIFF_WITHDRAW"
+    ]
+    assert [(row["seat"], row["choice"]) for row in withdraws] == [
+        (2, "withdraw"), (3, "stay"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sheriff_vote_timeout_is_a_technical_abstain(tmp_path) -> None:
+    """A missing sheriff ballot falls back to the technical abstain with a
+    ``request_timeout`` failure code — not a voluntary pass."""
+    engine = _engine(data_dir=str(tmp_path))
+    engine._vote_phase_timeout_seconds = 0.05
+
+    class SlowVote(ScriptedSheriff):
+        def vote_turn(self, state, seat, candidates, *, wolf):
+            if seat == 4:
+                time.sleep(2)
+            return super().vote_turn(state, seat, candidates, wolf=wolf)
+
+    engine._sheriff_director = SlowVote(
+        campaign=["pass", "run", "run", "pass"],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [2], 4: [2]},
+    )
+    engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
+
+    await engine._execute_sheriff_election()
+
+    assert engine.state.sheriff == 2
+    rows = [
+        json.loads(line)
+        for line in (
+            tmp_path / "games" / "sheriff-engine" / "game.log"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    timeouts = [row for row in rows if row["operation"] == "sheriff_phase_timeout"]
+    assert len(timeouts) == 1
+    assert timeouts[0]["data"]["kind"] == "vote"
+    assert timeouts[0]["data"]["completed_seats"] == [1]
+    assert timeouts[0]["data"]["missing_seats"] == [4]
+    audience = [row for row in rows if row["operation"] == "audience_action"]
+    ballots = {
+        row["data"]["payload"]["voter_seat"]: row["data"]["payload"]["target_seat"]
+        for row in audience if row["data"]["event_type"] == "SHERIFF_VOTE"
+    }
+    assert ballots == {1: 2, 4: None}
+    technical = [
+        row for row in rows
+        if row["operation"] == "sheriff_vote_technical_abstain"
+    ]
+    assert [(row["seat"], row["data"]["failure_code"]) for row in technical] == [
+        (4, "request_timeout"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_withdraw_skips_a_candidate_who_dies_mid_collection() -> None:
+    """A candidate killed while the answers were in flight is not recorded
+    as staying: the seat-order pass re-checks the table before applying
+    each answer, so seat 3 leaves no ``sheriff_withdraw`` row and does not
+    land in ``remaining``."""
+    engine = _engine()
+
+    class KillCandidate(ScriptedSheriff):
+        def withdraw_turn(self, state, seat, *, wolf):
+            if seat == 2:
+                state.players[3].is_alive = False
+            return super().withdraw_turn(state, seat, wolf=wolf)
+
+    engine._sheriff_director = KillCandidate(
+        campaign=["pass", "run", "run", "pass"],
+        withdraw={2: ["stay"], 3: ["stay"]},
+    )
+    engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
+    labels: list[str] = []
+    engine._checkpoint_hook = labels.append
+
+    await engine._execute_sheriff_election()
+
+    assert engine.state.sheriff == 2
+    assert not any("sheriff_withdraw:1:3" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_a_paused_vote_reraises_at_its_seat_in_order() -> None:
+    """The ballot stage's seat-order pass commits earlier ballots, then
+    re-raises the paused seat's error — the pause is not downgraded into a
+    technical abstain."""
+    engine = _engine()
+    engine.state.sheriff_office.step = "vote"
+    engine.state.sheriff_office.candidates = {2, 3}
+    engine.state.sheriff_office.active = {2, 3}
+
+    class PausingVote(ScriptedSheriff):
+        def vote_turn(self, state, seat, candidates, *, wolf):
+            if seat == 4:
+                raise PipelinePaused("provider down")
+            return 2
+
+    engine._sheriff_director = PausingVote()
+    labels: list[str] = []
+    engine._checkpoint_hook = labels.append
+
+    with pytest.raises(PipelinePaused):
+        await engine._execute_sheriff_election()
+
+    assert any(
+        label.endswith("sheriff_vote:1:vote:1:2") for label in labels
+    )
+    assert not any("sheriff_vote:1:vote:4" in label for label in labels)
