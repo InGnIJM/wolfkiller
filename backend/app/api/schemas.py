@@ -3,7 +3,9 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.api.model_schemas import ModelAssignment, ModelSnapshotEntry
+from app.api.model_schemas import (
+    ModelAssignment, ModelSnapshotEntry, ReasoningEffortId,
+)
 
 
 class CreateGameRequest(BaseModel):
@@ -21,6 +23,8 @@ class CreateGameRequest(BaseModel):
     commentary_enabled: bool = False
     commentary_config_id: Optional[str] = None
     vote_model_config_id: Optional[str] = None
+    vote_model_id: Optional[str] = None
+    vote_reasoning_effort: Optional[ReasoningEffortId] = None
 
     @model_validator(mode="after")
     def reject_mixed_role_count_formats(self):

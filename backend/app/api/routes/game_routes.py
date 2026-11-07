@@ -148,6 +148,8 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 victory=req.victory,
                 model_assignments=assignments,
                 vote_model_config_id=req.vote_model_config_id,
+                vote_model_id=req.vote_model_id,
+                vote_reasoning_effort=req.vote_reasoning_effort,
                 **comm_kwargs,
             )
         else:
@@ -163,6 +165,8 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 victory=req.victory,
                 model_assignments=assignments,
                 vote_model_config_id=req.vote_model_config_id,
+                vote_model_id=req.vote_model_id,
+                vote_reasoning_effort=req.vote_reasoning_effort,
                 **comm_kwargs,
             )
     except ValueError as error:

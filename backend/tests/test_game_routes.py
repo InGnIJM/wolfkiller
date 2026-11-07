@@ -176,6 +176,8 @@ async def test_create_game_passes_dynamic_role_counts_and_returns_canonical_conf
         role_counts=counts, reveal_on_death=False, enable_sheriff=False,
         witch_self_save="first_night_only", victory="edge", model_assignments=None,
         vote_model_config_id=None,
+        vote_model_id=None,
+        vote_reasoning_effort=None,
     )
     assert response.config == {
         "role_counts": counts,
@@ -223,6 +225,8 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
         victory="edge",
         model_assignments=None,
         vote_model_config_id=None,
+        vote_model_id=None,
+        vote_reasoning_effort=None,
     )
     assert response.config["role_counts"] == counts
 
@@ -2815,7 +2819,40 @@ async def test_create_game_with_commentary_options_forwards_only_when_set(monkey
         victory="edge",
         model_assignments=None,
         vote_model_config_id=None,
+        vote_model_id=None,
+        vote_reasoning_effort=None,
         commentary_enabled=True,
         commentary_config_id="cfg-1",
     )
 
+
+
+@pytest.mark.asyncio
+async def test_create_game_passes_vote_model_overrides(monkeypatch):
+    service = MagicMock()
+    service.create_game = AsyncMock(return_value="game-1")
+    service.get_game_state.return_value = SimpleNamespace(
+        players={1: object()},
+        config=SimpleNamespace(
+            role_counts={"wolf-killer-villager": 1},
+            reveal_on_death=False, enable_sheriff=False,
+        ),
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    await game_routes.create_game(CreateGameRequest(
+        role_counts={"wolf-killer-villager": 1},
+        vote_model_config_id="cfg-9",
+        vote_model_id="mimo-v2.6-flash",
+        vote_reasoning_effort="none",
+    ))
+
+    service.create_game.assert_awaited_once_with(
+        role_counts={"wolf-killer-villager": 1},
+        reveal_on_death=False, enable_sheriff=False,
+        witch_self_save="first_night_only", victory="edge",
+        model_assignments=None,
+        vote_model_config_id="cfg-9",
+        vote_model_id="mimo-v2.6-flash",
+        vote_reasoning_effort="none",
+    )
