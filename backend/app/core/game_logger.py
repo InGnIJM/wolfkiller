@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Optional
@@ -34,6 +35,12 @@ class GameLogger:
         #: directory with a stray ``llm_calls.log``. ``close`` is idempotent; a
         #: fresh engine always gets a fresh logger.
         self._closed = False
+        #: Sheriff decisions run on worker threads now, so a JSONL row can be
+        #: written concurrently. A line larger than the buffer splits into
+        #: several ``write()`` calls, and without a lock two threads would
+        #: interleave them into corrupt records — the same reason
+        #: ``PromptCapture`` carries one.
+        self._write_lock = threading.Lock()
 
     def close(self) -> None:
         """Stop accepting writes for a deleted game (idempotent)."""
@@ -49,7 +56,7 @@ class GameLogger:
             return
         dir_path = self._ensure_dir(game_id)
         filepath = os.path.join(dir_path, filename)
-        with open(filepath, "a", encoding="utf-8") as f:
+        with self._write_lock, open(filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # ── Game operation log ────────────────────────────────────────
@@ -345,6 +352,27 @@ class GameLogger:
         self.log_operation(
             game_id, "sheriff_vote_technical_abstain", round_num,
             "sheriff_election", seat=seat, data={"failure_code": failure_code},
+        )
+
+    def log_sheriff_phase_timeout(
+        self, game_id: str, round_num: int, *, kind: str,
+        timeout_seconds: float, completed_seats: list[int],
+        missing_seats: list[int],
+    ) -> None:
+        """A sheriff decision window closed on its deadline, not on answers.
+
+        ``kind`` is the decision stage (``withdraw`` / ``vote`` / ``pk``); the
+        seats listed under ``missing_seats`` were given the stage's fallback
+        (``stay`` / technical abstain) by the engine, not by their models.
+        """
+        self.log_operation(
+            game_id, "sheriff_phase_timeout", round_num, "sheriff_election",
+            data={
+                "kind": kind,
+                "timeout_seconds": timeout_seconds,
+                "completed_seats": completed_seats,
+                "missing_seats": missing_seats,
+            },
         )
 
     def log_vote_result(

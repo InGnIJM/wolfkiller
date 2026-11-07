@@ -7,7 +7,7 @@ import random
 import re
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Optional
 
@@ -1561,16 +1561,32 @@ class GameEngine:
                 )
             office.step = "withdraw"
         if office.step == "withdraw":
-            remaining: set[int] = set()
-            for seat in sorted(office.candidates):
-                player = self.state.players.get(seat)
-                if player is None or not self._still_on_the_table(seat):
-                    continue
-                wolf = player.camp == Camp.WEREWOLF
-                self._guard_turn(seat)
-                choice = await asyncio.to_thread(
-                    director.withdraw_turn, self.state, seat, wolf=wolf,
+            withdraw_seats = [
+                seat for seat in sorted(office.candidates)
+                if self.state.players.get(seat) is not None
+                and self._still_on_the_table(seat)
+            ]
+
+            def decide_withdraw(seat: int) -> str:
+                player = self.state.players[seat]
+                return director.withdraw_turn(
+                    self.state, seat, wolf=player.camp == Camp.WEREWOLF,
                 )
+
+            choices, timed_out = await self._collect_sheriff_decisions(
+                withdraw_seats, decide_withdraw, timeout_result="stay",
+            )
+            if timed_out:
+                self._log_sheriff_collect_timeout(
+                    "withdraw", withdraw_seats, timed_out,
+                )
+            remaining: set[int] = set()
+            for seat in withdraw_seats:
+                if not self._still_on_the_table(seat):
+                    continue
+                choice = choices[seat]
+                if isinstance(choice, BaseException):
+                    raise choice
                 if choice == "explode":
                     await self._election_explode(seat)
                     return
@@ -1614,6 +1630,99 @@ class GameEngine:
             )
         await self._sheriff_vote_round(office.pk_seats, "pk", final_tie=True)
 
+    async def _collect_sheriff_decisions(
+        self,
+        seats: Sequence[int],
+        decide: Callable[[int], object],
+        *,
+        timeout_result: object,
+    ) -> tuple[dict[int, object], frozenset[int]]:
+        """Ask every seat its sheriff decision concurrently.
+
+        Mirrors the vote-casting window: the model calls run in parallel under
+        ``_vote_concurrency`` — with the same optional warmup head start —
+        and the whole stage is bounded by ``_vote_phase_timeout_seconds``.
+        Everything the calls produce is a *value*: logs, state changes and
+        checkpoints are applied by the caller in seat order, so the durable
+        stream keeps the deterministic seat ordering it had when the stage
+        was sequential. A seat that never answered is reported as
+        ``timeout_result`` and listed in the returned ``timed_out`` set; a
+        raised exception is stored as the seat's result and re-raised by the
+        caller when it reaches that seat in order.
+        """
+        if not seats:
+            return {}, frozenset()
+        semaphore = asyncio.Semaphore(self._vote_concurrency)
+
+        async def ask(seat: int) -> object:
+            async with semaphore:
+                self._guard_turn(seat)
+                return await asyncio.to_thread(decide, seat)
+
+        tasks: dict[int, asyncio.Task[object]] = {}
+        # The phase budget covers the warmup head start too — same contract as
+        # ``wait_for(collect_all)`` in the casting phase: a warmup that hangs
+        # cannot stall the stage past the deadline.
+        deadline = (
+            asyncio.get_running_loop().time()
+            + float(self._vote_phase_timeout_seconds)
+        )
+
+        def budget() -> float:
+            return max(0.0, deadline - asyncio.get_running_loop().time())
+
+        warmup_seat = (
+            seats[0] if self._vote_warmup and len(seats) > 1 else None
+        )
+        if warmup_seat is not None:
+            tasks[warmup_seat] = asyncio.create_task(ask(warmup_seat))
+            # Same head-start contract as the casting phase: the warmup either
+            # commits the shared prefix within a few seconds or the extra wait
+            # buys nothing more (``None`` waits for the whole first call, still
+            # bounded by the phase budget).
+            head_start = self._vote_warmup_max_wait_seconds
+            await asyncio.wait(
+                {tasks[warmup_seat]},
+                timeout=(
+                    budget() if head_start is None
+                    else min(float(head_start), budget())
+                ),
+            )
+        for seat in seats:
+            if seat != warmup_seat:
+                tasks[seat] = asyncio.create_task(ask(seat))
+        await asyncio.wait(set(tasks.values()), timeout=budget())
+        results: dict[int, object] = {}
+        timed_out: set[int] = set()
+        for seat, task in tasks.items():
+            if task.done():
+                error = task.exception()
+                results[seat] = error if error is not None else task.result()
+            else:
+                # A to_thread worker cannot be interrupted, but cancelling
+                # drops its result here; the durable model request still
+                # completes and is reused if this seat is asked again on a
+                # resume with the identical prompt.
+                task.cancel()
+                timed_out.add(seat)
+                results[seat] = timeout_result
+        return results, frozenset(timed_out)
+
+    def _log_sheriff_collect_timeout(
+        self, kind: str, seats: Sequence[int], timed_out: frozenset[int],
+    ) -> None:
+        missing = sorted(timed_out)
+        logger.warning(
+            "Sheriff %s decisions timed out after %.1fs; fallback applies to %s",
+            kind, self._vote_phase_timeout_seconds, missing,
+        )
+        self.game_logger.log_sheriff_phase_timeout(
+            self.game_id, self.state.round_number, kind=kind,
+            timeout_seconds=self._vote_phase_timeout_seconds,
+            completed_seats=[seat for seat in seats if seat not in timed_out],
+            missing_seats=missing,
+        )
+
     async def _sheriff_vote_round(
         self, candidates: set[int], step: str, *, final_tie: bool = False,
     ) -> bool:
@@ -1626,19 +1735,39 @@ class GameEngine:
         counts: dict[int, int] = {}
         ballots: dict[int, int | None] = {}
         legal = set(candidates)
-        for seat in sorted(voters):
-            player = self.state.players.get(seat)
-            if player is None or not self._still_on_the_table(seat):
-                continue
-            wolf = player.camp == Camp.WEREWOLF
-            self._guard_turn(seat)
-            choice = await asyncio.to_thread(
-                director.vote_turn, self.state, seat, tuple(sorted(legal)), wolf=wolf,
+        ballot_targets = tuple(sorted(legal))
+        voter_seats = [
+            seat for seat in sorted(voters)
+            if self.state.players.get(seat) is not None
+            and self._still_on_the_table(seat)
+        ]
+
+        def decide_vote(seat: int) -> int | str | None:
+            player = self.state.players[seat]
+            return director.vote_turn(
+                self.state, seat, ballot_targets,
+                wolf=player.camp == Camp.WEREWOLF,
             )
+
+        choices, timed_out = await self._collect_sheriff_decisions(
+            voter_seats, decide_vote, timeout_result=SHERIFF_TECHNICAL_ABSTAIN,
+        )
+        if timed_out:
+            self._log_sheriff_collect_timeout(step, voter_seats, timed_out)
+        for seat in voter_seats:
+            if not self._still_on_the_table(seat):
+                continue
+            choice = choices[seat]
+            if isinstance(choice, BaseException):
+                raise choice
             if choice == "explode":
                 await self._election_explode(seat)
                 return True
             technical = choice == SHERIFF_TECHNICAL_ABSTAIN
+            failure_code = (
+                "request_timeout" if seat in timed_out
+                else SHERIFF_VOTE_FAILURE_CODE
+            )
             target = choice if type(choice) is int and choice in legal else None
             if target is not None:
                 counts[target] = counts.get(target, 0) + 1
@@ -1659,12 +1788,11 @@ class GameEngine:
                 # view the emptiness was the engine, not a voluntary pass.
                 self.game_logger.log_sheriff_vote_technical_abstain(
                     self.game_id, self.state.round_number, seat,
-                    failure_code=SHERIFF_VOTE_FAILURE_CODE,
+                    failure_code=failure_code,
                 )
                 await self._durable_checkpoint(
                     f"sheriff_vote_technical_abstain:"
-                    f"{self.state.round_number}:{step}:{seat}:"
-                    f"{SHERIFF_VOTE_FAILURE_CODE}"
+                    f"{self.state.round_number}:{step}:{seat}:{failure_code}"
                 )
         self.conversation_log.add_sheriff_ballot(ballots, self.state.round_number, step)
         winner, tied = decide_tally(counts)
