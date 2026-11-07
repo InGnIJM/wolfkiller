@@ -5,6 +5,7 @@ import pytest
 from app.agents.providers.anthropic_messages import AnthropicMessagesTransport
 from app.agents.providers.openai_compatible import OpenAICompatibleTransport
 from app.agents.providers.openai_responses import OpenAIResponsesTransport
+from app.agents.providers.system_one import SystemOneTransport
 from app.agents.providers.registry import ProviderRegistry
 from app.agents.providers.transports import transport_for
 
@@ -21,6 +22,8 @@ from app.agents.providers.transports import transport_for
         ("anthropic", AnthropicMessagesTransport),
         ("custom-anthropic", AnthropicMessagesTransport),
         ("openai-responses", OpenAIResponsesTransport),
+        ("jev", SystemOneTransport),
+        ("custom-system-one", SystemOneTransport),
     ],
 )
 def test_transport_matches_profile_api_mode(profile_id, transport_cls):
@@ -69,5 +72,6 @@ def test_prewarm_imports_every_transport_implementation():
         "app.agents.providers.openai_compatible",
         "app.agents.providers.anthropic_messages",
         "app.agents.providers.openai_responses",
+        "app.agents.providers.system_one",
     ):
         assert module_name in sys.modules
