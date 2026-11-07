@@ -58,6 +58,19 @@ class ModelConfigRequest(BaseModel):
     provider_profile: ProviderProfileId = "auto"
     reasoning_effort: Optional[ReasoningEffortId] = None
     headers: dict[str, str] = Field(default_factory=dict)
+    #: Full model list this provider serves; ``model_ids[0]`` is the stored
+    #: default. ``None`` keeps the single-model shape (``[model_id]``).
+    model_ids: Optional[list[str]] = None
+
+    @field_validator("model_ids")
+    @classmethod
+    def _check_model_ids(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        if value is None:
+            return None
+        ids = [item.strip() for item in value if item.strip()]
+        if not ids:
+            raise ValueError("model_ids must contain at least one model")
+        return list(dict.fromkeys(ids))
 
     @field_validator("name")
     @classmethod
@@ -98,6 +111,7 @@ class ModelConfigResponse(BaseModel):
     name: str
     base_url: str
     model_id: str
+    model_ids: list[str] = Field(default_factory=list)
     has_key: bool
     api_key_masked: Optional[str]
     key_invalid: bool
@@ -189,6 +203,26 @@ class ModelAssignment(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("model_id must be a non-empty string")
         return value.strip() if value is not None else None
+
+
+class ModelCatalogRequest(BaseModel):
+    """Pull a provider's ``/models`` listing for a stored config (``config_id``)
+    or an unsaved dialog (inline ``base_url``/``api_key``), mirroring the
+    ``/test`` override rules so a stored key never reaches a changed endpoint."""
+
+    config_id: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    provider_profile: Optional[ProviderProfileId] = None
+    strict_base_url: Optional[str] = None
+    headers: Optional[dict[str, str]] = None
+
+    @field_validator("headers")
+    @classmethod
+    def _check_headers(
+        cls, value: Optional[dict[str, str]],
+    ) -> Optional[dict[str, str]]:
+        return None if value is None else validated_headers(value)
 
 
 class ModelCatalogResponse(BaseModel):

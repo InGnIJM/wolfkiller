@@ -18,8 +18,14 @@ class ModelConfig:
     id: str
     name: str
     base_url: str
+    #: Default model — always equal to ``model_ids[0]``; kept as a flat field
+    #: so every consumer that predates the list keeps working.
     model_id: str
     api_key_encrypted: str = ""
+    #: Every model this provider may serve; the wizard's per-selection
+    #: dropdowns are constrained to it. ``model_ids[0]`` is the default that
+    #: connection tests probe and blank selections fall back to.
+    model_ids: list[str] = field(default_factory=list)
     temperature: Optional[float] = None
     strict_base_url: Optional[str] = None
     created_at: str = ""
@@ -40,11 +46,14 @@ class ModelConfig:
         provider_profile: str = "auto",
         reasoning_effort: Optional[str] = None,
         headers: Optional[dict[str, str]] = None,
+        model_ids: Optional[list[str]] = None,
     ) -> "ModelConfig":
         now = datetime.now(timezone.utc).isoformat()
+        ids = list(model_ids) if model_ids else [model_id]
         return cls(
             id=uuid.uuid4().hex,
-            name=name, base_url=base_url, model_id=model_id,
+            name=name, base_url=base_url, model_id=ids[0],
+            model_ids=ids,
             api_key_encrypted=api_key_encrypted,
             temperature=temperature, strict_base_url=strict_base_url,
             provider_profile=provider_profile,
@@ -80,6 +89,16 @@ class JsonModelConfigStore:
                 entry = entry.copy()
                 entry.setdefault("provider_profile", "auto")
                 entry.setdefault("headers", {})
+                ids = [
+                    str(item).strip()
+                    for item in entry.get("model_ids") or []
+                    if str(item).strip()
+                ]
+                if not ids and str(entry.get("model_id") or "").strip():
+                    ids = [str(entry["model_id"]).strip()]
+                entry["model_ids"] = ids
+                if ids:
+                    entry["model_id"] = ids[0]
                 configs.append(ModelConfig(**entry))
             return configs
 
