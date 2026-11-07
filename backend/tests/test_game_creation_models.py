@@ -314,8 +314,35 @@ async def test_create_game_route_passes_assignments_and_returns_snapshot(monkeyp
         witch_self_save="first_night_only",
         victory="edge",
         model_assignments=[{"config_id": None, "count": 2}],
+        vote_model_config_id=None,
     )
     assert [entry.model_dump() for entry in response.model_snapshot] == expected_snapshot
+
+
+@pytest.mark.asyncio
+async def test_create_game_route_passes_vote_model_config_id(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.api.routes import game_routes
+    from app.api.schemas import CreateGameRequest
+
+    service = MagicMock()
+    service.create_game = AsyncMock(return_value="game-123")
+    service.get_game_state.return_value = MagicMock(
+        players={1: object()},
+        config=MagicMock(role_counts={"wolf-killer-villager": 1}),
+    )
+    service.get_game_model_snapshot.return_value = []
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    await game_routes.create_game(CreateGameRequest(
+        role_counts={"wolf-killer-villager": 1},
+        vote_model_config_id="vote-cfg-1",
+    ))
+
+    assert service.create_game.await_args.kwargs["vote_model_config_id"] == (
+        "vote-cfg-1"
+    )
 
 
 @pytest.mark.asyncio
