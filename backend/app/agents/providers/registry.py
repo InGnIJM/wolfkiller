@@ -3,8 +3,8 @@ from urllib.parse import urlparse
 
 from .base import (
     API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS,
-    API_MODE_OPENAI_RESPONSES, CacheMode, ModelCapabilities, ProviderProfile,
-    is_responses_endpoint,
+    API_MODE_OPENAI_RESPONSES, API_MODE_SYSTEM_ONE, CacheMode,
+    ModelCapabilities, ProviderProfile, is_responses_endpoint,
 )
 
 
@@ -113,6 +113,27 @@ class ProviderRegistry:
             capabilities=ModelCapabilities(True, False, True, False, True),
             default_action_max_tokens=2048,
         ),
+        # TypeSafe Jev: the System One decision API. It has no chat surface —
+        # every chat-era capability is off — so a configuration built on it can
+        # only serve ``LLMClient.ainvoke_system_one`` (today: the ballot path).
+        "jev": ProviderProfile(
+            profile_id="jev",
+            api_mode=API_MODE_SYSTEM_ONE,
+            capabilities=ModelCapabilities(
+                False, False, False, False, False, forced_tool_choice=False,
+            ),
+            default_action_max_tokens=512,
+        ),
+        # Relays speaking the same ``/systemone`` dialect (e.g. DigitalOcean's
+        # inference.do-ai.run); their hostnames cannot be recognised.
+        "custom-system-one": ProviderProfile(
+            profile_id="custom-system-one",
+            api_mode=API_MODE_SYSTEM_ONE,
+            capabilities=ModelCapabilities(
+                False, False, False, False, False, forced_tool_choice=False,
+            ),
+            default_action_max_tokens=512,
+        ),
     }
 
     _HOST_PROFILES = {
@@ -120,6 +141,8 @@ class ProviderRegistry:
         "api.deepseek.com": "deepseek",
         "openrouter.ai": "openrouter",
         "api.anthropic.com": "anthropic",
+        "api.typesafe.ai": "jev",
+        "inference.do-ai.run": "jev",
     }
 
     @staticmethod
