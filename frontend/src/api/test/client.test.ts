@@ -95,6 +95,18 @@ describe('model config api', () => {
     });
   });
 
+  it('createGame forwards the vote model config id', async () => {
+    const fetchFn = mockFetch({ game_id: 'g', model_snapshot: [] });
+    await createGame({
+      role_counts: { 'wolf-killer-werewolf': 1 },
+      vote_model_config_id: 'vote-cfg-1',
+    });
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
+      role_counts: { 'wolf-killer-werewolf': 1 },
+      vote_model_config_id: 'vote-cfg-1',
+    });
+  });
+
   it('renames a game with PATCH', async () => {
     const fetchFn = mockFetch({ game_id: 'g1', name: '新名字' });
     const result = await renameGame('g1', '新名字');

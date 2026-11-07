@@ -25,6 +25,7 @@ export async function createGame(config?: {
   model_assignments?: ModelAssignment[];
   commentary_enabled?: boolean;
   commentary_config_id?: string | null;
+  vote_model_config_id?: string | null;
 }): Promise<{ game_id: string; model_snapshot?: ModelSnapshotEntry[] }> {
   const res = await fetch(`${getApiBase()}/api/games`, {
     method: 'POST',
