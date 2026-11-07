@@ -369,6 +369,7 @@ export async function testModelConnection(input: {
   api_key?: string;
   model_id?: string;
   provider_profile?: ProviderProfileId;
+  reasoning_effort?: string | null;
   headers?: Record<string, string> | null;
   strict_base_url?: string | null;
 }): Promise<ModelTestResult> {

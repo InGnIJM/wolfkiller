@@ -634,6 +634,8 @@ export interface ModelConfig {
   temperature: number | null;
   strict_base_url: string | null;
   provider_profile: ProviderProfileId;
+  /** 旧响应或测试 mock 可能没有这个字段。 */
+  reasoning_effort?: string | null;
   headers: Record<string, string>;
   /** 旧响应或测试 mock 可能没有这个字段。 */
   latency?: ModelLatencyStats | null;
@@ -649,6 +651,7 @@ export interface ModelConfigInput {
   temperature?: number | null;
   strict_base_url?: string | null;
   provider_profile?: ProviderProfileId;
+  reasoning_effort?: string | null;
   headers?: Record<string, string>;
 }
 

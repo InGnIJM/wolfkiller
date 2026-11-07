@@ -69,6 +69,9 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   const [temperature, setTemperature] = useState(
     initial?.temperature != null ? String(initial.temperature) : '',
   );
+  const [reasoningEffort, setReasoningEffort] = useState(
+    initial?.reasoning_effort ?? '',
+  );
   const [strictUrl, setStrictUrl] = useState(initial?.strict_base_url ?? '');
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => headerRowsFrom(initial?.headers));
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -144,6 +147,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
       temperature: temperature.trim() ? Number(temperature) : null,
       strict_base_url: strictUrl.trim() || null,
       provider_profile: providerProfile,
+      reasoning_effort: reasoningEffort || null,
       headers: headersPayload(),
     });
     setSaving(false);
@@ -163,6 +167,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
         strict_base_url: strictUrl.trim(),
         api_key: apiKey,
         provider_profile: providerProfile,
+        reasoning_effort: reasoningEffort,
         headers: headersPayload(),
       };
       const result = initial
@@ -274,6 +279,25 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                 size="small"
                 fullWidth
               />
+              <TextField
+                select
+                label={t('models.reasoningEffortLabel')}
+                value={reasoningEffort}
+                onChange={(e) => {
+                  setReasoningEffort(e.target.value);
+                  invalidateTest();
+                }}
+                slotProps={{ select: { native: true } }}
+                helperText={t('models.reasoningEffortHint')}
+                size="small"
+                fullWidth
+              >
+                {['', 'none', 'low', 'medium', 'high', 'max'].map((level) => (
+                  <option key={level || 'default'} value={level}>
+                    {t(`models.reasoningEffortOption.${level || 'default'}`)}
+                  </option>
+                ))}
+              </TextField>
               <TextField
                 label={t('models.strictUrlLabel')}
                 value={strictUrl}
