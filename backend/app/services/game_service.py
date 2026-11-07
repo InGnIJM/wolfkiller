@@ -80,7 +80,7 @@ from app.core.model_health_guard import (
     CIRCUIT_OPEN_CODE, ModelHealthGuard, ProviderOutageFailed, ProviderOutagePaused,
 )
 from app.core.scheduler import DecisionPaused, Scheduler
-from app.core.sheriff_flow import ballot_weight
+from app.core.sheriff_flow import ballot_weight, sheriff_vote_decision
 from app.models.pipeline import (
     DEGRADED_REASONING, ActionCommand as PipelineActionCommand, ActionContract,
     SchedulePoint,
@@ -560,6 +560,94 @@ def _night_turn(
         elapsed_ms=int((time.monotonic() - started) * 1000),
         attempts=attempts,
     )
+
+
+def _system_one_turn(
+    llm_client, messages, *, tool_name: str,
+    questions: dict, answer_map: dict,
+) -> _NightTurn:
+    """Ask a System One decision model for one ballot, backing off on transients.
+
+    Mirrors ``_night_turn``: the durable ledger still sees one logical call
+    because retries stay inside the provider call. A decision endpoint has no
+    chat surface, so the repair re-ask is the same question with a sharper
+    instruction appended to the prompt text — the options themselves cannot
+    change mid-window. ``answer_map`` translates the picked option back into
+    the JSON payload the sheriff parser already reads.
+    """
+    started = time.monotonic()
+    attempts = 0
+    repair_suffix = "\n\n【系统提示】上一次回复未选中任何合法选项，请重新作答。"
+    active_messages = messages
+
+    def call(kind: str):
+        nonlocal attempts, active_messages
+        attempts += 1
+        if kind == KIND_REPAIR:
+            active_messages = _with_repair_reminder(messages, repair_suffix)
+        state_text = "\n\n".join(
+            str(message.get("content") or "") for message in active_messages
+        )
+        produced = llm_client.invoke_system_one(state_text, questions)
+        answers = getattr(produced, "answers", None)
+        answer = answers.get(tool_name) if isinstance(answers, Mapping) else None
+        choice = answer.get("choice") if isinstance(answer, Mapping) else None
+        payload = answer_map.get(choice) if type(choice) is str else None
+        if payload is None:
+            raise UnusableModelOutput(
+                "system-one answer did not pick a declared option",
+            )
+        label = questions[tool_name]["criteria"].get(choice, choice)
+        confidence = answer.get("confidence")
+        reasoning = (
+            f"JEV 决策：{label}（置信度 {confidence:.0%}）"
+            if isinstance(confidence, (int, float))
+            else "JEV 决策"
+        )
+        return produced, {**payload, "reasoning": reasoning}
+
+    produced, payload = call_with_retry(call, _NIGHT_RETRY_POLICY)
+    return _NightTurn(
+        payload=payload,
+        usage=getattr(produced, "usage", None),
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+        attempts=attempts,
+    )
+
+
+def _invoke_turn(
+    llm_client, messages, *, tool_name: str, schema: dict[str, object],
+    decision: dict | None,
+) -> _NightTurn:
+    """One night-turn call on whichever transport the routed client speaks."""
+    if decision is not None:
+        return _system_one_turn(
+            llm_client, messages, tool_name=tool_name, **decision,
+        )
+    return _night_turn(llm_client, messages, tool_name=tool_name, schema=schema)
+
+
+def _sheriff_vote_route(vote_client, seat_client, state, seat: int):
+    """Which client serves a ``sheriff_vote`` call, and on which transport.
+
+    A configured vote model owns every ballot: a chat one answers the usual
+    ``night_json`` tool call, while a System One decision model needs the
+    ballot rewritten as a ``choice`` question whose options come from the
+    office state itself. An underivable option set falls back to the seat
+    client rather than guessing.
+    """
+    if vote_client is None:
+        return seat_client, None
+    if getattr(vote_client, "is_system_one", False) is not True:
+        # ``is True`` rather than truthiness: test doubles are often
+        # MagicMocks, and a bare getattr() on one is always truthy.
+        return vote_client, None
+    decision = (
+        sheriff_vote_decision(state, seat) if state is not None else None
+    )
+    if decision is None:
+        return seat_client, None
+    return vote_client, decision
 
 
 VALID_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "max"})
@@ -1919,11 +2007,18 @@ class GameService:
                 )
                 meta_state = engine_ref.state if engine_ref is not None else None
                 call_kind, phase = _night_call_meta(meta_state, tool_name)
+                active_client, decision = llm_client, None
+                if tool_name == "sheriff_vote":
+                    active_client, decision = _sheriff_vote_route(
+                        vote_client, llm_client, meta_state, seat,
+                    )
+                transport = "system_one" if decision is not None else "night_json"
                 try:
                     result = None
                     if self._model_invocations is None:
-                        result = _night_turn(
-                            llm_client, messages, tool_name=tool_name, schema=schema,
+                        result = _invoke_turn(
+                            active_client, messages, tool_name=tool_name,
+                            schema=schema, decision=decision,
                         )
                         payload = result.payload
                     else:
@@ -1938,9 +2033,10 @@ class GameService:
                         generation = self._durable_contexts[game_id]["execution_generation"]
 
                         def provider_call():
-                            turn = _night_turn(
-                                llm_client, messages,
+                            turn = _invoke_turn(
+                                active_client, messages,
                                 tool_name=tool_name, schema=schema,
+                                decision=decision,
                             )
                             nonlocal result
                             result = turn
@@ -1952,8 +2048,8 @@ class GameService:
                             actor_seat=seat,
                             action_position=f"round:{round_number}:night:{tool_name}:seat:{seat}",
                             frozen_request=frozen_request,
-                            provider_profile=self._client_identity(llm_client)[0],
-                            model_id=self._client_identity(llm_client)[1],
+                            provider_profile=self._client_identity(active_client)[0],
+                            model_id=self._client_identity(active_client)[1],
                             execution_generation=generation,
                             provider_call=provider_call, recovery=generation > 1,
                         )
@@ -1971,8 +2067,8 @@ class GameService:
                                 ),
                                 call_kind=call_kind, round_number=round_number,
                                 phase=phase, seat=seat, contract_id=tool_name,
-                                transport="night_json", attempt=1,
-                                model_id=self._client_identity(llm_client)[1],
+                                transport=transport, attempt=1,
+                                model_id=self._client_identity(active_client)[1],
                                 # The only digest that covers the messages, which
                                 # is what makes this record independently verifiable.
                                 request_digest=digest, sink=sink,
@@ -2000,7 +2096,7 @@ class GameService:
                                 contract_id=tool_name,
                                 schedule_point=schedule_point,
                                 attempt=0,
-                                **_model_error_diagnostics(error, llm_client),
+                                **_model_error_diagnostics(error, active_client),
                             )
                         except Exception:
                             logger.exception(
@@ -2011,11 +2107,11 @@ class GameService:
                             engine_ref.game_logger, game_id,
                             engine_ref.state.round_number, seat,
                             tool_name=tool_name,
-                            model_id=getattr(llm_client, "model_name", None),
+                            model_id=getattr(active_client, "model_name", None),
                             prompt_chars=prompt_chars,
                             parse_result="error",
                             failure_code=normalize_failure_code(error),
-                            call_kind=call_kind, phase=phase,
+                            call_kind=call_kind, phase=phase, transport=transport,
                         )
                     raise
                 if engine_ref is not None:
@@ -2023,13 +2119,13 @@ class GameService:
                         engine_ref.game_logger, game_id,
                         engine_ref.state.round_number, seat,
                         tool_name=tool_name,
-                        model_id=getattr(llm_client, "model_name", None),
+                        model_id=getattr(active_client, "model_name", None),
                         prompt_chars=prompt_chars,
                         elapsed_ms=(result.elapsed_ms if result is not None else 0),
                         usage=(result.usage if result is not None else None),
                         attempts=(result.attempts if result is not None else 1),
                         parse_result="ok",
-                        call_kind=call_kind, phase=phase,
+                        call_kind=call_kind, phase=phase, transport=transport,
                     )
                 return json.dumps(dict(payload), ensure_ascii=False)
 
@@ -3158,6 +3254,12 @@ class GameService:
         def night_invoke(messages, tool_name, schema, seat):
             client = client_provider(seat)
             call_kind, phase = _night_call_meta(state, tool_name)
+            active_client, decision = client, None
+            if tool_name == "sheriff_vote":
+                active_client, decision = _sheriff_vote_route(
+                    vote_client, client, state, seat,
+                )
+            transport = "system_one" if decision is not None else "night_json"
             frozen_request = {
                 "kind": "night_json", "round_number": state.round_number,
                 "tool_name": tool_name, "seat": seat,
@@ -3169,8 +3271,9 @@ class GameService:
             turn_box: dict[str, _NightTurn] = {}
 
             def provider_call():
-                turn = _night_turn(
-                    client, messages, tool_name=tool_name, schema=schema,
+                turn = _invoke_turn(
+                    active_client, messages, tool_name=tool_name,
+                    schema=schema, decision=decision,
                 )
                 turn_box["turn"] = turn
                 return turn.payload, _usage_mapping(turn.usage)
@@ -3185,8 +3288,8 @@ class GameService:
                     f"round:{state.round_number}:night:{tool_name}:seat:{seat}"
                 ),
                 frozen_request=frozen_request,
-                provider_profile=self._client_identity(client)[0],
-                model_id=self._client_identity(client)[1],
+                provider_profile=self._client_identity(active_client)[0],
+                model_id=self._client_identity(active_client)[1],
                 execution_generation=generation,
                 provider_call=provider_call, recovery=True,
             )
@@ -3204,8 +3307,8 @@ class GameService:
                     ),
                     call_kind=call_kind, round_number=state.round_number,
                     phase=phase, seat=seat, contract_id=tool_name,
-                    transport="night_json", attempt=1,
-                    model_id=self._client_identity(client)[1],
+                    transport=transport, attempt=1,
+                    model_id=self._client_identity(active_client)[1],
                     request_digest=digest, sink=sink,
                 ))
             if not isinstance(payload, Mapping):
@@ -3216,7 +3319,7 @@ class GameService:
                 _log_llm_telemetry(
                     engine.game_logger, state.game_id, state.round_number, seat,
                     tool_name=tool_name,
-                    model_id=getattr(client, "model_name", None),
+                    model_id=getattr(active_client, "model_name", None),
                     prompt_chars=sum(
                         len(str(item.get("content") or "")) for item in messages
                     ),
@@ -3224,7 +3327,7 @@ class GameService:
                     usage=(turn.usage if turn is not None else None),
                     attempts=(turn.attempts if turn is not None else 1),
                     parse_result="ok",
-                    call_kind=call_kind, phase=phase,
+                    call_kind=call_kind, phase=phase, transport=transport,
                 )
             return json.dumps(dict(payload), ensure_ascii=False)
 

@@ -830,6 +830,168 @@ def test_night_turn_reports_the_attempts_and_usage_it_used(monkeypatch):
     assert turn.elapsed_ms >= 0
 
 
+def _sheriff_decision() -> dict:
+    """A ballot decision in the shape ``sheriff_vote_decision`` emits."""
+    return {
+        "questions": {
+            "sheriff_vote": {
+                "type": "choice",
+                "instructions": "在下列选项中选一个作为警长投票结果",
+                "criteria": {
+                    "2": "投2号当选警长",
+                    "pass": "弃权，不投给任何候选人",
+                },
+            },
+        },
+        "answer_map": {
+            "2": {"action_type": "vote", "target_seat": 2},
+            "pass": {"action_type": "pass", "target_seat": None},
+        },
+    }
+
+
+class _SystemOneClient:
+    """System-one double: ``invoke_system_one`` replays canned results."""
+
+    def __init__(self, produced):
+        self._produced = list(produced)
+        self.calls: list[tuple[str, dict]] = []
+
+    def invoke_system_one(self, state, questions):
+        self.calls.append((state, questions))
+        item = self._produced.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def test_system_one_turn_maps_a_choice_back_into_the_sheriff_payload():
+    from app.services.game_service import _system_one_turn
+
+    client = _SystemOneClient([SimpleNamespace(
+        answers={"sheriff_vote": {"choice": "2", "confidence": 0.62}},
+        usage=None,
+    )])
+
+    turn = _system_one_turn(
+        client,
+        [{"role": "user", "content": "投警长票。"}],
+        tool_name="sheriff_vote",
+        **_sheriff_decision(),
+    )
+
+    assert turn.payload == {
+        "action_type": "vote",
+        "target_seat": 2,
+        "reasoning": "JEV 决策：投2号当选警长（置信度 62%）",
+    }
+    state_text, questions = client.calls[0]
+    assert "投警长票。" in state_text
+    assert set(questions["sheriff_vote"]["criteria"]) == {"2", "pass"}
+
+
+def test_system_one_turn_uses_plain_reasoning_without_confidence():
+    from app.services.game_service import _system_one_turn
+
+    client = _SystemOneClient([SimpleNamespace(
+        answers={"sheriff_vote": {"choice": "pass"}},
+        usage=None,
+    )])
+
+    turn = _system_one_turn(
+        client, [], tool_name="sheriff_vote", **_sheriff_decision(),
+    )
+
+    # Mirrors BaseRole._system_one_reasoning: no calibrated confidence means
+    # the stand-in reasoning carries the label only.
+    assert turn.payload == {
+        "action_type": "pass",
+        "target_seat": None,
+        "reasoning": "JEV 决策",
+    }
+
+
+@pytest.mark.parametrize("produced", [
+    SimpleNamespace(answers=None, usage=None),
+    SimpleNamespace(answers={"sheriff_vote": None}, usage=None),
+    SimpleNamespace(answers={"sheriff_vote": {"choice": 7}}, usage=None),
+    SimpleNamespace(answers={"sheriff_vote": {"choice": "9"}}, usage=None),
+])
+def test_system_one_turn_rejects_undeclared_or_malformed_answers(
+    monkeypatch, produced,
+):
+    """Any answer outside the declared criteria is an unusable output.
+
+    A JEV seat string that was never offered (``"9"``), a non-string choice,
+    or a missing answer envelope must all take the repair path rather than
+    being coerced into a vote — the parser gate downstream stays the last
+    word, so silent coercion here would only hide prompt drift.
+    """
+    from app.services.game_service import _system_one_turn
+
+    _no_wait(monkeypatch)
+    client = _SystemOneClient([produced, produced])
+
+    with pytest.raises(ValueError, match="did not pick a declared option"):
+        _system_one_turn(
+            client, [{"content": "x"}],
+            tool_name="sheriff_vote", **_sheriff_decision(),
+        )
+    assert len(client.calls) == 2
+
+
+def test_system_one_turn_repairs_an_undeclared_choice_then_uses_the_answer(
+    monkeypatch,
+):
+    from app.services.game_service import _system_one_turn
+
+    _no_wait(monkeypatch)
+    client = _SystemOneClient([
+        SimpleNamespace(
+            answers={"sheriff_vote": {"choice": "9"}}, usage=None,
+        ),
+        SimpleNamespace(
+            answers={"sheriff_vote": {"choice": "2"}}, usage=None,
+        ),
+    ])
+
+    turn = _system_one_turn(
+        client, [{"content": "投警长票。"}],
+        tool_name="sheriff_vote", **_sheriff_decision(),
+    )
+
+    assert turn.payload["target_seat"] == 2
+    assert len(client.calls) == 2
+    # The re-ask carries the repair reminder inside the flattened state text.
+    assert "未选中任何合法选项" in client.calls[1][0]
+
+
+def test_system_one_turn_reports_attempts_and_usage(monkeypatch):
+    from app.services.game_service import _system_one_turn
+
+    _no_wait(monkeypatch)
+    usage = SimpleNamespace(prompt_tokens=1, completion_tokens=0, total_tokens=1)
+    client = _SystemOneClient([
+        _transient_error(),
+        SimpleNamespace(
+            answers={"sheriff_vote": {"choice": "pass"}}, usage=usage,
+        ),
+    ])
+
+    turn = _system_one_turn(
+        client, [{"content": "投警长票。"}],
+        tool_name="sheriff_vote", **_sheriff_decision(),
+    )
+
+    assert turn.payload["action_type"] == "pass"
+    assert turn.usage is usage
+    assert turn.attempts == 2
+    assert turn.elapsed_ms >= 0
+    # A transport fault retries verbatim; the repair reminder is only for
+    # unusable outputs.
+    assert "无法解析" not in client.calls[1][0]
+
+
 @pytest.mark.asyncio
 async def test_invalid_tool_xml_falls_back_to_json_instead_of_accepting_bad_action():
     from langchain_core.messages import AIMessage

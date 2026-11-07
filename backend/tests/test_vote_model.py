@@ -9,6 +9,7 @@ must leave every existing behaviour untouched.
 import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -531,4 +532,323 @@ async def test_create_game_rejects_invalid_vote_overrides(
             )
     finally:
         await service.aclose()
+        repository.close()
+
+
+# ── sheriff_vote routing ──────────────────────────────────────────────
+#
+# The shared vote client also owns ``sheriff_vote``: a chat model answers the
+# usual night_json tool call, a System One decision model gets the ballot
+# rewritten as a ``choice`` question, and the seat client keeps the seat-model
+# fallback whenever no ballot spec can be derived.
+
+
+class _DualClient:
+    """Client double speaking both surfaces; flips on the jev profile."""
+
+    instances = []
+    next_answer = {"sheriff_vote": {"choice": "2", "confidence": 0.8}}
+
+    def __init__(self, *, config, dedicated_http_clients: bool = False):
+        self.config = config
+        self.model_name = config.model_id
+        self.provider_profile = SimpleNamespace(
+            profile_id=config.provider_profile or "custom-openai",
+        )
+        self.is_system_one = config.provider_profile == "jev"
+        self.json_calls: list = []
+        self.system_one_calls: list = []
+        type(self).instances.append(self)
+
+    async def aclose(self):
+        return None
+
+    def invoke_json(self, messages, *, tool_name, schema):
+        self.json_calls.append((tool_name, schema))
+        return SimpleNamespace(
+            payload={"action_type": "pass", "reasoning": "chat"}, usage=None,
+        )
+
+    def invoke_system_one(self, state, questions):
+        self.system_one_calls.append((state, questions))
+        return SimpleNamespace(answers=type(self).next_answer, usage=None)
+
+
+@pytest.fixture
+def dual_clients(monkeypatch):
+    _DualClient.instances = []
+    _DualClient.next_answer = {
+        "sheriff_vote": {"choice": "2", "confidence": 0.8},
+    }
+    monkeypatch.setattr(service_module, "LLMClient", _DualClient)
+    monkeypatch.setattr(GameEngine, "start", _noop_start)
+    return _DualClient
+
+
+def _office_ballot(state: GameState, candidates: set[int]) -> None:
+    office = state.sheriff_office
+    office.step = "vote"
+    office.active = set(candidates)
+
+
+def test_sheriff_vote_route_prefers_the_seat_client_without_a_vote_model():
+    from app.services.game_service import _sheriff_vote_route
+
+    seat = SimpleNamespace()
+    assert _sheriff_vote_route(None, seat, GameState(game_id="g"), 2) == (
+        seat, None,
+    )
+
+
+def test_sheriff_vote_route_sends_a_chat_vote_client_down_night_json():
+    from app.services.game_service import _sheriff_vote_route
+
+    vote, seat = SimpleNamespace(is_system_one=False), SimpleNamespace()
+    assert _sheriff_vote_route(vote, seat, None, 2) == (vote, None)
+
+
+def test_sheriff_vote_route_treats_a_mock_is_system_one_as_chat():
+    """A bare MagicMock attribute is truthy but never ``True``.
+
+    Test doubles land here constantly; reading the property with truthiness
+    would send a chat double down the system-one path and lose the ballot.
+    """
+    from app.services.game_service import _sheriff_vote_route
+
+    vote, seat = MagicMock(), SimpleNamespace()
+    assert _sheriff_vote_route(vote, seat, None, 2) == (vote, None)
+
+
+def test_sheriff_vote_route_falls_back_when_the_ballot_is_underivable():
+    from app.services.game_service import _sheriff_vote_route
+
+    vote, seat = SimpleNamespace(is_system_one=True), SimpleNamespace()
+    # Missing state → nothing to derive criteria from.
+    assert _sheriff_vote_route(vote, seat, None, 2) == (seat, None)
+    # A non-ballot office step → same fallback.
+    assert _sheriff_vote_route(vote, seat, GameState(game_id="g"), 2) == (
+        seat, None,
+    )
+
+
+def test_sheriff_vote_route_hands_a_jev_client_a_ballot_decision():
+    from app.services.game_service import _sheriff_vote_route
+
+    vote, seat = SimpleNamespace(is_system_one=True), SimpleNamespace()
+    state = _state_with_players()
+    _office_ballot(state, {1})
+
+    client, decision = _sheriff_vote_route(vote, seat, state, 2)
+
+    assert client is vote
+    criteria = decision["questions"]["sheriff_vote"]["criteria"]
+    assert set(criteria) == {"1", "pass"}
+    assert decision["answer_map"]["1"] == {
+        "action_type": "vote", "target_seat": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sheriff_vote_uses_the_jev_vote_client(
+    tmp_path, monkeypatch, dual_clients,
+):
+    cfg, _ = _store_with(tmp_path, monkeypatch, provider_profile="jev")
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+    try:
+        game_id = await service.create_game(
+            role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+            vote_model_config_id=cfg.id,
+        )
+        engine = service._engines[game_id]
+        _office_ballot(engine.state, {1, 2})
+        # The engine only seats players inside ``start``; a good-camp voter is
+        # all ``sheriff_vote_decision`` needs to keep ``explode`` out.
+        engine.state.players[3] = PlayerState(3, "wolf-killer-villager", "good")
+        vote_client = service._vote_llm_clients[game_id]
+        seat_client = service._llm_clients[game_id][3]
+        assert vote_client.is_system_one is True
+
+        payload = json.loads(engine._director._invoke(
+            [{"role": "user", "content": "投警长票"}],
+            "sheriff_vote", {"type": "object"}, 3,
+        ))
+
+        assert payload["action_type"] == "vote"
+        assert payload["target_seat"] == 2
+        assert payload["reasoning"].startswith("JEV 决策")
+        state_text, questions = vote_client.system_one_calls[0]
+        assert "投警长票" in state_text
+        assert set(questions["sheriff_vote"]["criteria"]) == {"1", "2", "pass"}
+        assert seat_client.json_calls == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sheriff_vote_uses_a_chat_vote_client_over_night_json(
+    tmp_path, monkeypatch, dual_clients,
+):
+    """A non-Jev vote model still owns the ballot, just on the chat tool."""
+    cfg, _ = _store_with(tmp_path, monkeypatch)
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+    try:
+        game_id = await service.create_game(
+            role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+            vote_model_config_id=cfg.id,
+        )
+        engine = service._engines[game_id]
+        _office_ballot(engine.state, {1, 2})
+        vote_client = service._vote_llm_clients[game_id]
+        seat_client = service._llm_clients[game_id][3]
+        assert vote_client.is_system_one is False
+
+        payload = json.loads(engine._director._invoke(
+            [{"role": "user", "content": "投警长票"}],
+            "sheriff_vote", {"type": "object"}, 3,
+        ))
+
+        assert payload == {"action_type": "pass", "reasoning": "chat"}
+        assert vote_client.json_calls[0][0] == "sheriff_vote"
+        assert vote_client.system_one_calls == []
+        assert seat_client.json_calls == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sheriff_vote_without_a_vote_model_stays_on_the_seat(
+    tmp_path, monkeypatch, dual_clients,
+):
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+    try:
+        game_id = await service.create_game(
+            role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+        )
+        engine = service._engines[game_id]
+        _office_ballot(engine.state, {1, 2})
+        seat_client = service._llm_clients[game_id][3]
+
+        payload = json.loads(engine._director._invoke(
+            [{"role": "user", "content": "投警长票"}],
+            "sheriff_vote", {"type": "object"}, 3,
+        ))
+
+        assert payload == {"action_type": "pass", "reasoning": "chat"}
+        assert seat_client.json_calls[0][0] == "sheriff_vote"
+        assert seat_client.system_one_calls == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sheriff_vote_falls_back_to_the_seat_off_the_ballot_step(
+    tmp_path, monkeypatch, dual_clients,
+):
+    """A jev vote client cannot guess an option set the office never produced.
+
+    Any ``sheriff_vote`` arriving outside the vote/pk steps (or before the
+    engine bound one) has no declared criteria, so the seat model keeps the
+    call rather than letting Jev invent candidates.
+    """
+    cfg, _ = _store_with(tmp_path, monkeypatch, provider_profile="jev")
+    service = GameService(WSManager(), EventBus(), data_dir=str(tmp_path))
+    try:
+        game_id = await service.create_game(
+            role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+            vote_model_config_id=cfg.id,
+        )
+        engine = service._engines[game_id]
+        vote_client = service._vote_llm_clients[game_id]
+        seat_client = service._llm_clients[game_id][3]
+
+        payload = json.loads(engine._director._invoke(
+            [{"role": "user", "content": "投警长票"}],
+            "sheriff_vote", {"type": "object"}, 3,
+        ))
+
+        assert payload == {"action_type": "pass", "reasoning": "chat"}
+        assert seat_client.json_calls[0][0] == "sheriff_vote"
+        assert vote_client.system_one_calls == []
+    finally:
+        await service.aclose()
+
+
+def test_recovered_sheriff_vote_rides_the_durable_ledger(
+    tmp_path, monkeypatch, dual_clients,
+):
+    """The recovery ``night_invoke`` routes ``sheriff_vote`` the same way.
+
+    Same client, same decision spec, same durable attempt — a resumed sheriff
+    election must not re-implement the route, or a crash mid-ballot would
+    come back on a different model than the one that asked the question.
+    """
+    repository = GameRepository(tmp_path / "repo")
+    repository.create_game(
+        game_id="game", name="game", config={},
+        execution_status="running", source="native", model_snapshot=[],
+    )
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    service._durable_contexts["game"] = {
+        "storage_revision": 1,
+        "execution_generation": repository.get_game("game")[
+            "execution_generation"
+        ],
+    }
+    monkeypatch.setattr(service, "_prompt_capture", lambda *_args: None)
+    state = _state_with_players()
+    _office_ballot(state, {1})
+    env = env_default_client_config()
+    monkeypatch.setattr(
+        service, "_resolve_recovery_model_configs",
+        lambda *_args: {1: env, 2: env},
+    )
+    cfg, _ = _store_with(tmp_path, monkeypatch, provider_profile="jev")
+    record = _vote_model_record(tmp_path, monkeypatch)
+    record["config"]["vote_model"]["config_id"] = cfg.id
+    vote_config, _ = service_module._saved_client_config(cfg.id, env)
+    parameters = _model_parameters(vote_config)
+    record["config"]["vote_model"]["parameters"] = parameters
+    record["config"]["vote_model"]["parameters_digest"] = _parameter_digest(
+        parameters,
+    )
+
+    class Engine:
+        def __init__(self, **kwargs):
+            self.roles = kwargs["roles"]
+            self._director = kwargs["director"]
+            self._rng = service_module.random.Random(7)
+            self.game_logger = SimpleNamespace(
+                log_llm_call=lambda *args, **kwargs: None,
+            )
+
+        def load_restored_state(self, state, orchestration, codec):
+            self.loaded = (state, orchestration, codec)
+
+    monkeypatch.setattr(service_module, "GameEngine", Engine)
+    dual_clients.next_answer = {
+        "sheriff_vote": {"choice": "1", "confidence": 0.9},
+    }
+    try:
+        engine, clients = service._build_recovered_engine(state, {}, record)
+        vote_client = service._vote_llm_clients[state.game_id]
+        assert vote_client.is_system_one is True
+
+        raw = engine._director._invoke(
+            [{"role": "user", "content": "投警长票"}],
+            "sheriff_vote", {"type": "object"}, 2,
+        )
+
+        payload = json.loads(raw)
+        assert payload["action_type"] == "vote"
+        assert payload["target_seat"] == 1
+        assert vote_client.system_one_calls
+        requests = repository.list_model_requests("game")
+        assert len(requests) == 1
+        assert requests[0]["status"] == "resolved"
+        assert requests[0]["provider_profile"] == "jev"
+        assert requests[0]["model_id"] == "vote-model"
+    finally:
+        asyncio.run(service.aclose())
         repository.close()
