@@ -104,10 +104,10 @@ class LLMClientConfig:
     temperature: float
     max_tokens: int
     strict_base_url: str
-    action_max_tokens: int = 2048
-    action_timeout_seconds: float = 90.0
-    action_retry_timeout_seconds: float = 120.0
-    action_final_retry_timeout_seconds: float = 30.0
+    action_max_tokens: int = 16384
+    action_timeout_seconds: float = 180.0
+    action_retry_timeout_seconds: float = 240.0
+    action_final_retry_timeout_seconds: float = 120.0
     provider_profile: str = "auto"
     #: Sent verbatim as ``reasoning_effort`` on chat-completions calls; ``None``
     #: means the parameter is not sent and the provider default applies.
@@ -230,13 +230,13 @@ def env_default_client_config() -> LLMClientConfig:
         temperature=llm_cfg.temperature,
         max_tokens=llm_cfg.max_tokens,
         strict_base_url=llm_cfg.strict_base_url,
-        action_max_tokens=getattr(llm_cfg, "action_max_tokens", 2048),
-        action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 90.0),
+        action_max_tokens=getattr(llm_cfg, "action_max_tokens", 16384),
+        action_timeout_seconds=getattr(llm_cfg, "action_timeout_seconds", 180.0),
         action_retry_timeout_seconds=getattr(
-            llm_cfg, "action_retry_timeout_seconds", 120.0,
+            llm_cfg, "action_retry_timeout_seconds", 240.0,
         ),
         action_final_retry_timeout_seconds=getattr(
-            llm_cfg, "action_final_retry_timeout_seconds", 30.0,
+            llm_cfg, "action_final_retry_timeout_seconds", 120.0,
         ),
         provider_profile=getattr(llm_cfg, "provider_profile", "auto"),
         reasoning_effort=getattr(llm_cfg, "reasoning_effort", None) or None,
@@ -904,9 +904,9 @@ class LLMClient:
         ``_complete``/``_acomplete`` as a total deadline, not as an httpx
         per-read timeout.
         """
-        first = float(getattr(self, "action_timeout_seconds", 90.0) or 90.0)
+        first = float(getattr(self, "action_timeout_seconds", 180.0) or 180.0)
         retry = float(
-            getattr(self, "action_retry_timeout_seconds", 120.0) or 120.0
+            getattr(self, "action_retry_timeout_seconds", 240.0) or 240.0
         )
         return max(first, retry) + 5.0
 

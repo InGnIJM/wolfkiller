@@ -95,12 +95,12 @@ def test_get_model_configures_action_timeout():
     assert mock_chat.call_args.kwargs["timeout"] == 90
 
 
-def test_vote_timeout_defaults_are_90_seconds_then_120_seconds():
+def test_vote_timeout_defaults_are_180_seconds_then_240_seconds():
     client = LLMClient(config=_config())
 
-    assert client.action_timeout_seconds == 90.0
-    assert client.action_retry_timeout_seconds == 120.0
-    assert client.action_max_tokens == 2048
+    assert client.action_timeout_seconds == 180.0
+    assert client.action_retry_timeout_seconds == 240.0
+    assert client.action_max_tokens == 16384
 
 
 def test_get_action_model_uses_action_token_budget_without_changing_plain_model():
@@ -111,7 +111,7 @@ def test_get_action_model_uses_action_token_budget_without_changing_plain_model(
         client.get_model()
         plain_kwargs = mock_chat.call_args.kwargs
 
-    assert action_kwargs["max_tokens"] == 2048
+    assert action_kwargs["max_tokens"] == 16384
     assert action_kwargs["temperature"] == 0.1
     assert plain_kwargs["max_tokens"] == 768
 
@@ -178,7 +178,7 @@ def test_get_model_with_action_tool_uses_strict_base_url():
         client.get_model_with_action_tool(contract)
     kwargs = mock_chat.call_args.kwargs
     assert kwargs["base_url"] == "https://api.deepseek.com/beta"
-    assert kwargs["max_tokens"] == 2048
+    assert kwargs["max_tokens"] == 16384
     assert kwargs["temperature"] == 0.1
     tool = mock_chat.return_value.bind_tools.call_args.args[0][0]
     assert tool["function"]["name"] == "night_check"

@@ -29,7 +29,7 @@ def test_json_action_client_timeout_has_guard_above_retry_budget():
 
     assert chat.call_args.kwargs["timeout"] == 125
     assert chat.call_args.kwargs["temperature"] == 0.1
-    assert chat.call_args.kwargs["max_tokens"] == 2048
+    assert chat.call_args.kwargs["max_tokens"] == 16384
 
 
 def test_strict_action_client_timeout_has_guard_above_retry_budget():
@@ -48,7 +48,7 @@ def test_strict_action_client_timeout_has_guard_above_retry_budget():
 
     assert chat.call_args.kwargs["timeout"] == 125
     assert chat.call_args.kwargs["temperature"] == 0.1
-    assert chat.call_args.kwargs["max_tokens"] == 2048
+    assert chat.call_args.kwargs["max_tokens"] == 16384
 
 
 def test_vote_tool_is_forced_under_cast_vote_name():

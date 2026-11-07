@@ -27,6 +27,8 @@ def anthropic_config():
         max_tokens=512,
         strict_base_url="https://api.anthropic.com",
         action_max_tokens=2048,
+        action_timeout_seconds=90,
+        action_retry_timeout_seconds=120,
     )
 
 
