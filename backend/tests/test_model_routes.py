@@ -8,8 +8,8 @@ from pydantic import ValidationError
 
 from app.agents.providers.registry import ProviderRegistry
 from app.api.model_schemas import (
-    ModelAssignment, ModelConfigRequest, ModelConfigResponse,
-    ModelListResponse, ModelTestRequest,
+    ModelAssignment, ModelCatalogRequest, ModelConfigRequest,
+    ModelConfigResponse, ModelListResponse, ModelTestRequest,
 )
 from app.api.routes import model_routes
 from app.stores.model_config_store import JsonModelConfigStore, ModelConfig
@@ -932,7 +932,9 @@ async def test_catalog_lists_upstream_model_ids(store, monkeypatch):
         return ["deepseek-v4.1-flash", "mimo-v2.6-flash"]
 
     monkeypatch.setattr(model_routes, "_fetch_model_ids", fake_fetch)
-    response = await model_routes.model_catalog(cfg.id)
+    response = await model_routes.model_catalog(
+        ModelCatalogRequest(config_id=cfg.id),
+    )
 
     assert response.model_ids == ["deepseek-v4.1-flash", "mimo-v2.6-flash"]
     assert response.error is None
@@ -954,7 +956,9 @@ async def test_catalog_decrypts_the_stored_key(store, monkeypatch):
         return []
 
     monkeypatch.setattr(model_routes, "_fetch_model_ids", fake_fetch)
-    response = await model_routes.model_catalog(cfg.id)
+    response = await model_routes.model_catalog(
+        ModelCatalogRequest(config_id=cfg.id),
+    )
 
     assert calls["api_key"] == "sk-live"
     assert response.error is None
@@ -964,7 +968,7 @@ async def test_catalog_decrypts_the_stored_key(store, monkeypatch):
 async def test_catalog_unknown_config_returns_404(store, monkeypatch):
     monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
     with pytest.raises(HTTPException) as exc:
-        await model_routes.model_catalog("missing")
+        await model_routes.model_catalog(ModelCatalogRequest(config_id="missing"))
     assert exc.value.status_code == 404
 
 
@@ -977,7 +981,7 @@ async def test_catalog_undecryptable_key_returns_400(store, monkeypatch):
     )
     store.upsert(cfg)
     with pytest.raises(HTTPException) as exc:
-        await model_routes.model_catalog(cfg.id)
+        await model_routes.model_catalog(ModelCatalogRequest(config_id=cfg.id))
     assert exc.value.status_code == 400
 
 
@@ -989,7 +993,9 @@ async def test_catalog_system_one_reports_no_listing(store, monkeypatch):
         model_id="jev-latest", provider_profile="jev",
     )
     store.upsert(cfg)
-    response = await model_routes.model_catalog(cfg.id)
+    response = await model_routes.model_catalog(
+        ModelCatalogRequest(config_id=cfg.id),
+    )
 
     assert response.model_ids == []
     assert response.error
@@ -1007,7 +1013,9 @@ async def test_catalog_upstream_failure_is_reported_not_raised(
         raise TimeoutError("connect timeout")
 
     monkeypatch.setattr(model_routes, "_fetch_model_ids", boom)
-    response = await model_routes.model_catalog(cfg.id)
+    response = await model_routes.model_catalog(
+        ModelCatalogRequest(config_id=cfg.id),
+    )
 
     assert response.model_ids == []
     assert "TimeoutError" in response.error
@@ -1112,3 +1120,130 @@ async def test_fetch_model_ids_rejects_an_unexpected_payload(monkeypatch):
         await model_routes._fetch_model_ids(
             "https://x/v1", "", {}, "chat_completions",
         )
+
+
+@pytest.mark.asyncio
+async def test_catalog_ad_hoc_uses_inline_credentials(store, monkeypatch):
+    """An unsaved dialog can still pull a listing by sending base_url/api_key
+    the way ``/test`` does."""
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    calls = {}
+
+    async def fake_fetch(base_url, api_key, headers, api_mode):
+        calls.update(base_url=base_url, api_key=api_key)
+        return ["m-a"]
+
+    monkeypatch.setattr(model_routes, "_fetch_model_ids", fake_fetch)
+    response = await model_routes.model_catalog(ModelCatalogRequest(
+        base_url="https://x/v1", api_key="sk-inline",
+    ))
+
+    assert response.model_ids == ["m-a"]
+    assert calls == {"base_url": "https://x/v1", "api_key": "sk-inline"}
+
+
+@pytest.mark.asyncio
+async def test_catalog_refuses_stored_key_for_changed_endpoint(
+    store, monkeypatch,
+):
+    """Same rule as ``/test``: a stored key never travels to an endpoint it
+    was not stored for."""
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(
+        name="Keyed", base_url="https://x/v1", model_id="m",
+        api_key_encrypted=ModelKeyCrypto().encrypt("sk-live"),
+    )
+    store.upsert(cfg)
+    with pytest.raises(HTTPException) as exc:
+        await model_routes.model_catalog(ModelCatalogRequest(
+            config_id=cfg.id, base_url="https://evil/v1",
+        ))
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_model_round_trips_model_ids(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    req = ModelConfigRequest(
+        name="Go", base_url="https://opencode.ai/zen/go/v1",
+        model_id="deepseek-v4.1-flash", api_key="sk",
+        model_ids=["deepseek-v4.1-flash", "mimo-v2.6-flash"],
+    )
+
+    response = await model_routes.create_model(req)
+
+    assert response.model_id == "deepseek-v4.1-flash"
+    assert response.model_ids == ["deepseek-v4.1-flash", "mimo-v2.6-flash"]
+    assert store.get(response.id).model_ids == [
+        "deepseek-v4.1-flash", "mimo-v2.6-flash",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_without_model_ids_defaults_to_single(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    req = ModelConfigRequest(
+        name="DS", base_url="https://api.deepseek.com/v1",
+        model_id="deepseek-v4-pro", api_key="sk",
+    )
+
+    response = await model_routes.create_model(req)
+
+    assert response.model_ids == ["deepseek-v4-pro"]
+
+
+@pytest.mark.asyncio
+async def test_update_model_replaces_model_ids(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store)
+    req = ModelConfigRequest(
+        name=cfg.name, base_url=cfg.base_url, model_id="m-a",
+        model_ids=["m-a", "m-b", "m-c"],
+    )
+
+    response = await model_routes.update_model(cfg.id, req)
+
+    assert response.model_id == "m-a"
+    assert response.model_ids == ["m-a", "m-b", "m-c"]
+    assert store.get(cfg.id).model_ids == ["m-a", "m-b", "m-c"]
+
+
+def test_request_model_ids_strips_dedupes_and_drops_blanks():
+    req = ModelConfigRequest(
+        name="p", base_url="https://x/v1", model_id="m-a",
+        model_ids=[" m-a ", "", "m-b", "m-a", "  "],
+    )
+
+    assert req.model_ids == ["m-a", "m-b"]
+
+
+def test_request_model_ids_rejects_all_blank_list():
+    with pytest.raises(ValidationError):
+        ModelConfigRequest(
+            name="p", base_url="https://x/v1", model_id="m-a",
+            model_ids=["", "   "],
+        )
+
+
+def test_request_model_ids_none_stays_unset():
+    req = ModelConfigRequest(
+        name="p", base_url="https://x/v1", model_id="m-a", model_ids=None,
+    )
+    assert req.model_ids is None
+
+
+def test_catalog_request_headers_validated_or_none():
+    assert ModelCatalogRequest(headers=None).headers is None
+    assert ModelCatalogRequest(
+        headers={"X-Relay": "on"},
+    ).headers == {"X-Relay": "on"}
+    with pytest.raises(ValidationError):
+        ModelCatalogRequest(headers={"bad header": "v"})
+
+
+@pytest.mark.asyncio
+async def test_catalog_ad_hoc_requires_base_url(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    with pytest.raises(HTTPException) as exc:
+        await model_routes.model_catalog(ModelCatalogRequest())
+    assert exc.value.status_code == 422

@@ -12,7 +12,8 @@ from app.agents.llm_client import LLMClient, LLMClientConfig, derive_strict_base
 from app.agents.providers.base import API_MODE_ANTHROPIC_MESSAGES, API_MODE_SYSTEM_ONE
 from app.agents.providers.registry import ProviderRegistry
 from app.api.model_schemas import (
-    ModelCatalogResponse, ModelConfigRequest, ModelConfigResponse,
+    ModelCatalogRequest, ModelCatalogResponse, ModelConfigRequest,
+    ModelConfigResponse,
     ModelListResponse, ModelCapabilitiesResponse, ModelLatencyStats,
     ModelTestRequest, ModelTestResponse,
 )
@@ -82,7 +83,9 @@ def _to_response(
             key_invalid = True
     return ModelConfigResponse(
         id=config.id, name=config.name, base_url=config.base_url,
-        model_id=config.model_id, has_key=bool(config.api_key_encrypted),
+        model_id=config.model_id,
+        model_ids=list(config.model_ids) or [config.model_id],
+        has_key=bool(config.api_key_encrypted),
         api_key_masked=masked, key_invalid=key_invalid,
         temperature=config.temperature, strict_base_url=config.strict_base_url,
         provider_profile=config.provider_profile,
@@ -128,8 +131,10 @@ async def create_model(req: ModelConfigRequest):
     if any(c.name == req.name for c in store.list_all()):
         raise HTTPException(409, "model config name already exists")
     crypto = ModelKeyCrypto()
+    model_ids = req.model_ids or [req.model_id]
     config = ModelConfig.new(
-        name=req.name, base_url=req.base_url, model_id=req.model_id,
+        name=req.name, base_url=req.base_url, model_id=model_ids[0],
+        model_ids=model_ids,
         api_key_encrypted=crypto.encrypt(req.api_key) if req.api_key else "",
         temperature=req.temperature, strict_base_url=req.strict_base_url,
         provider_profile=req.provider_profile,
@@ -174,9 +179,11 @@ async def update_model(config_id: str, req: ModelConfigRequest):
         raise HTTPException(400, "Changing model endpoints requires re-entering the API key")
     if req.api_key:
         encrypted = crypto.encrypt(req.api_key)
+    model_ids = req.model_ids or [req.model_id]
     updated = ModelConfig(
         id=existing.id, name=req.name, base_url=req.base_url,
-        model_id=req.model_id, api_key_encrypted=encrypted,
+        model_id=model_ids[0], model_ids=model_ids,
+        api_key_encrypted=encrypted,
         temperature=req.temperature, strict_base_url=req.strict_base_url,
         provider_profile=req.provider_profile,
         reasoning_effort=req.reasoning_effort,
@@ -236,35 +243,60 @@ async def _fetch_model_ids(
     })
 
 
-@router.get("/{config_id}/catalog", response_model=ModelCatalogResponse)
-async def model_catalog(config_id: str):
-    """List the models a stored provider config can serve.
+@router.post("/catalog", response_model=ModelCatalogResponse)
+async def model_catalog(req: ModelCatalogRequest):
+    """List the models a provider can serve.
 
-    The game wizard offers the ids as suggestions for the per-selection
-    model field; a failed or missing listing is reported in ``error`` so the
-    field degrades to free text instead of blocking game creation.
+    Works for a stored config (``config_id``) or an unsaved dialog (inline
+    ``base_url``/``api_key``); the override and endpoint-change rules mirror
+    ``/test`` so a stored key never travels to an endpoint it was not saved
+    for. Failures come back in ``error`` so the dialog can keep manual entry.
     """
-    config = get_model_config_store().get(config_id)
-    if config is None:
-        raise HTTPException(404, "model config not found")
-    api_key = ""
-    if config.api_key_encrypted:
-        try:
-            api_key = ModelKeyCrypto().decrypt(config.api_key_encrypted)
-        except KeyDecryptionError:
+    crypto = ModelKeyCrypto()
+    if req.config_id is not None:
+        config = get_model_config_store().get(req.config_id)
+        if config is None:
+            raise HTTPException(404, "model config not found")
+        base_url = req.base_url or config.base_url
+        api_key = req.api_key or ""
+        explicit_strict_base_url = (
+            config.strict_base_url if req.strict_base_url is None else req.strict_base_url
+        )
+        provider_profile = req.provider_profile or config.provider_profile
+        if config.api_key_encrypted and not req.api_key and (
+            provider_profile != config.provider_profile
+            or _endpoints_changed(
+                config, base_url=base_url, strict_base_url=explicit_strict_base_url,
+            )
+        ):
             raise HTTPException(
-                400, "stored api key cannot be decrypted",
-            ) from None
-    profile = ProviderRegistry().resolve(
-        config.provider_profile, config.base_url, config.model_id,
-    )
+                400, "Changing model endpoints requires re-entering the API key",
+            )
+        if config.api_key_encrypted and not api_key:
+            try:
+                api_key = crypto.decrypt(config.api_key_encrypted)
+            except KeyDecryptionError:
+                raise HTTPException(
+                    400, "stored api key cannot be decrypted",
+                ) from None
+        headers = dict(config.headers) if req.headers is None else req.headers
+        model_id = config.model_id
+    else:
+        if not req.base_url:
+            raise HTTPException(422, "base_url is required")
+        base_url = req.base_url
+        api_key = req.api_key or ""
+        provider_profile = req.provider_profile or "auto"
+        headers = req.headers or {}
+        model_id = ""
+    profile = ProviderRegistry().resolve(provider_profile, base_url, model_id)
     if profile.api_mode == API_MODE_SYSTEM_ONE:
         return ModelCatalogResponse(
             model_ids=[], error="provider does not expose a model listing",
         )
     try:
         model_ids = await _fetch_model_ids(
-            config.base_url, api_key, dict(config.headers), profile.api_mode,
+            base_url, api_key, headers, profile.api_mode,
         )
     except Exception as error:
         return ModelCatalogResponse(
