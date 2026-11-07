@@ -25,6 +25,10 @@ interface Props {
   onCommentaryEnabledChange?: (enabled: boolean) => void;
   commentaryConfigId?: string | null;
   onCommentaryConfigIdChange?: (configId: string | null) => void;
+  commentaryModelId?: string | null;
+  onCommentaryModelIdChange?: (modelId: string | null) => void;
+  commentaryReasoningEffort?: string | null;
+  onCommentaryReasoningEffortChange?: (effort: string | null) => void;
   voteConfigId?: string | null;
   onVoteConfigIdChange?: (configId: string | null) => void;
   voteModelId?: string | null;
@@ -225,6 +229,10 @@ export default function ModelStep({
   commentaryEnabled = false,
   onCommentaryEnabledChange,
   commentaryConfigId = null,
+  commentaryModelId = null,
+  onCommentaryModelIdChange,
+  commentaryReasoningEffort = null,
+  onCommentaryReasoningEffortChange,
   onCommentaryConfigIdChange,
   voteConfigId = null,
   onVoteConfigIdChange,
@@ -688,6 +696,55 @@ export default function ModelStep({
                 </Select>
               )}
             </Stack>
+            {commentaryEnabled && commentaryConfigId && (
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                useFlexGap
+                sx={{ alignItems: 'center', flexWrap: 'wrap', mt: 2 }}
+              >
+                <TextField
+                  select
+                  size="small"
+                  disabled={disabled}
+                  label={t('create.modelFieldLabel')}
+                  value={commentaryModelId ?? ''}
+                  onChange={(e) => {
+                    onCommentaryModelIdChange?.(e.target.value || null);
+                  }}
+                  slotProps={{
+                    select: {
+                      native: true,
+                      inputProps: {
+                        'aria-label': t('create.commentaryModelIdAria'),
+                      },
+                    },
+                    inputLabel: { shrink: true },
+                  }}
+                  sx={{ minWidth: 200, flex: 1 }}
+                >
+                  <option value="">
+                    {t('create.groupModelDefault', { id: modelDefaultFor(commentaryConfigId) })}
+                  </option>
+                  {(modelListFor(commentaryConfigId) ?? []).map((id) => (
+                    <option key={id} value={id}>{id}</option>
+                  ))}
+                </TextField>
+                <Select
+                  size="small"
+                  displayEmpty
+                  disabled={disabled}
+                  value={commentaryReasoningEffort ?? ''}
+                  inputProps={{ 'aria-label': t('create.commentaryEffortAria') }}
+                  onChange={(e) => {
+                    onCommentaryReasoningEffortChange?.(e.target.value || null);
+                  }}
+                  sx={{ minWidth: 200 }}
+                >
+                  {effortMenuItems(t)}
+                </Select>
+              </Stack>
+            )}
           </Box>
         )}
 

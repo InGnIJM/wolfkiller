@@ -29,6 +29,8 @@ export default function CreateGameWizard() {
   const [victory, setVictory] = useState<VictoryPolicy>('edge');
   const [commentaryEnabled, setCommentaryEnabled] = useState(false);
   const [commentaryConfigId, setCommentaryConfigId] = useState<string | null>(null);
+  const [commentaryModelId, setCommentaryModelId] = useState<string | null>(null);
+  const [commentaryEffort, setCommentaryEffort] = useState<string | null>(null);
   const [voteConfigId, setVoteConfigId] = useState<string | null>(null);
   const [voteModelId, setVoteModelId] = useState<string | null>(null);
   const [voteEffort, setVoteEffort] = useState<string | null>(null);
@@ -90,6 +92,8 @@ export default function CreateGameWizard() {
           ? {
               commentary_enabled: commentaryEnabled,
               commentary_config_id: commentaryConfigId,
+              commentary_model_id: commentaryConfigId ? commentaryModelId : null,
+              commentary_reasoning_effort: commentaryConfigId ? commentaryEffort : null,
             }
           : {}),
         vote_model_config_id: voteConfigId,
@@ -141,7 +145,15 @@ export default function CreateGameWizard() {
           commentaryEnabled={commentaryEnabled}
           onCommentaryEnabledChange={setCommentaryEnabled}
           commentaryConfigId={commentaryConfigId}
-          onCommentaryConfigIdChange={setCommentaryConfigId}
+          onCommentaryConfigIdChange={(id) => {
+            setCommentaryConfigId(id);
+            setCommentaryModelId(null);
+            setCommentaryEffort(null);
+          }}
+          commentaryModelId={commentaryModelId}
+          onCommentaryModelIdChange={setCommentaryModelId}
+          commentaryReasoningEffort={commentaryEffort}
+          onCommentaryReasoningEffortChange={setCommentaryEffort}
           voteConfigId={voteConfigId}
           onVoteConfigIdChange={(id) => {
             setVoteConfigId(id);

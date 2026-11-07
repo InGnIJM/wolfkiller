@@ -25,6 +25,8 @@ export async function createGame(config?: {
   model_assignments?: ModelAssignment[];
   commentary_enabled?: boolean;
   commentary_config_id?: string | null;
+  commentary_model_id?: string | null;
+  commentary_reasoning_effort?: string | null;
   vote_model_config_id?: string | null;
   vote_model_id?: string | null;
   vote_reasoning_effort?: string | null;
