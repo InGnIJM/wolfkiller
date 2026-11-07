@@ -287,7 +287,12 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
                   setReasoningEffort(e.target.value);
                   invalidateTest();
                 }}
-                slotProps={{ select: { native: true } }}
+                slotProps={{
+                  select: { native: true },
+                  // The '' option renders visible text, so the label must
+                  // stay shrunk or it paints on top of the selection.
+                  inputLabel: { shrink: true },
+                }}
                 helperText={t('models.reasoningEffortHint')}
                 size="small"
                 fullWidth

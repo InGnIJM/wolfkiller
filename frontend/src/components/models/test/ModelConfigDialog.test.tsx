@@ -99,6 +99,17 @@ describe('ModelConfigDialog connection test payload', () => {
     );
   });
 
+  it('shrinks the label so it never overlaps the default option text', async () => {
+    renderDialog(stored);
+
+    fireEvent.click(screen.getByText('▸ 高级选项（可选）'));
+    // The select's empty option carries visible text, so a floating label
+    // that stays inside the field would paint on top of it.
+    expect(
+      screen.getByText('思考强度', { selector: 'label' }),
+    ).toHaveClass('MuiInputLabel-shrink');
+  });
+
   it('prefills a stored effort and sends an empty value when it is cleared', async () => {
     vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
     renderDialog({ ...stored, reasoning_effort: 'high' });
