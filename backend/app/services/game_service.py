@@ -889,6 +889,9 @@ class GameService:
         self._tasks: dict[str, asyncio.Task] = {}
         self._model_snapshots: dict[str, list[dict]] = {}
         self._llm_clients: dict[str, dict[int, LLMClient]] = {}
+        # One shared exile-vote client per game that asked for a dedicated
+        # vote model; seats keep their own clients for every other contract.
+        self._vote_llm_clients: dict[str, LLMClient] = {}
         self._manifest = GameManifest(data_dir=data_dir)
         self.repository = repository
         self._registry_snapshot = builtin_registry.freeze()
@@ -1439,8 +1442,12 @@ class GameService:
                 code = "checkpoint_corrupt"
             self._mark_recovery_blocked(game_id, code)
             raise ValueError(code) from error
+        vote_client = self._vote_llm_clients.get(game_id)
+        session_clients = (
+            {**clients, 0: vote_client} if vote_client is not None else clients
+        )
         await self._share_cache_session(
-            state.game_id, clients, shared_session_mode(),
+            state.game_id, session_clients, shared_session_mode(),
         )
 
         updated = self.repository.transition_execution(
@@ -1615,6 +1622,7 @@ class GameService:
         *,
         commentary_enabled: bool = False,
         commentary_config_id: str | None = None,
+        vote_model_config_id: str | None = None,
         game_id_override: str | None = None,
         source: str = "native",
         benchmark_run_id: str | None = None,
@@ -1705,9 +1713,15 @@ class GameService:
         frozen_model_runtime = _freeze_model_runtime(
             seat_configs, model_snapshot,
         )
+        env_cfg = replace(env_default_client_config(), provider_profile="auto")
         if commentary_config_id is not None:
-            env_cfg = replace(env_default_client_config(), provider_profile="auto")
             _saved_client_config(commentary_config_id, env_cfg)
+        vote_client_config: LLMClientConfig | None = None
+        vote_client_meta: dict | None = None
+        if vote_model_config_id is not None:
+            vote_client_config, vote_client_meta = _saved_client_config(
+                vote_model_config_id, env_cfg,
+            )
         commentary_meta = {
             "enabled": bool(commentary_enabled),
             "commentary_config_id": commentary_config_id,
@@ -1715,6 +1729,7 @@ class GameService:
         _log_session_affinity(game_id, config.total_players, affinity_mode)
         clients_by_seat: dict[int, LLMClient] = {}
         self._llm_clients[game_id] = clients_by_seat
+        vote_client: LLMClient | None = None
         try:
             for seat, client_config in sorted(seat_configs.items()):
                 # Seats share LangChain's httpx pool otherwise: closing them
@@ -1729,12 +1744,24 @@ class GameService:
                     ),
                     dedicated_http_clients=True,
                 )
+            if vote_client_config is not None:
+                # One client for every seat's exile vote. It carries no seat
+                # identity, so session affinity never applies to it.
+                vote_client = LLMClient(
+                    config=vote_client_config, dedicated_http_clients=True,
+                )
+                self._vote_llm_clients[game_id] = vote_client
         except BaseException:
             await self._close_game_clients(game_id)
             raise
 
+        session_clients = (
+            {**clients_by_seat, 0: vote_client}
+            if vote_client is not None
+            else clients_by_seat
+        )
         await self._share_cache_session(
-            game_id, clients_by_seat, shared_session,
+            game_id, session_clients, shared_session,
         )
         if cache_route is not CacheRouteMode.OFF:
             await self._pin_cache_routes(
@@ -1756,6 +1783,9 @@ class GameService:
             if role_by_seat is not None or runtime_rng is not None:
                 role_options = {"role_by_seat": role_by_seat, "rng": runtime_rng}
             roles = self._create_roles(config, prompt_builder, client_provider, **role_options)
+            if vote_client is not None:
+                for role in roles.values():
+                    role.vote_llm_client = vote_client
             self._instrument_roles(game_id, roles)
 
             # Build the registry-driven pipeline scheduler for night actions and
@@ -1945,33 +1975,44 @@ class GameService:
                 model_snapshot_version=2,
                 name=default_game_name(config.total_players),
             )
+            assignment_audit: dict[str, object] = {
+                "model_snapshot_version": 2,
+                "model_snapshot": model_snapshot,
+            }
+            if vote_client_meta is not None:
+                assignment_audit["vote_model"] = vote_client_meta
             engine.game_logger.log_operation(
                 game_id,
                 "model_assignment",
                 0,
                 "waiting",
-                data={
-                    "model_snapshot_version": 2,
-                    "model_snapshot": model_snapshot,
-                },
+                data=assignment_audit,
             )
 
             if self.repository is not None:
+                config_doc: dict[str, object] = {
+                    "role_counts": dict(config.role_counts),
+                    "reveal_on_death": config.reveal_on_death,
+                    "enable_sheriff": config.enable_sheriff,
+                    "witch_self_save": config.witch_self_save,
+                    "victory": config.victory,
+                    "commentary": commentary_meta,
+                    "model_runtime_version": 1,
+                    "model_runtime": frozen_model_runtime,
+                    "prompt_digest": _prompt_digest(),
+                    "engine_recovery_version": 1,
+                }
+                if vote_client_config is not None:
+                    vote_parameters = _model_parameters(vote_client_config)
+                    config_doc["vote_model"] = {
+                        "config_id": vote_model_config_id,
+                        "parameters": vote_parameters,
+                        "parameters_digest": _parameter_digest(vote_parameters),
+                    }
                 self.repository.create_game(
                     game_id=game_id,
                     name=default_game_name(config.total_players),
-                    config={
-                        "role_counts": dict(config.role_counts),
-                        "reveal_on_death": config.reveal_on_death,
-                        "enable_sheriff": config.enable_sheriff,
-                        "witch_self_save": config.witch_self_save,
-                        "victory": config.victory,
-                        "commentary": commentary_meta,
-                        "model_runtime_version": 1,
-                        "model_runtime": frozen_model_runtime,
-                        "prompt_digest": _prompt_digest(),
-                        "engine_recovery_version": 1,
-                    },
+                    config=config_doc,
                     execution_status="running", source=source,
                     model_snapshot=model_snapshot,
                     benchmark_run_id=benchmark_run_id,
@@ -2555,27 +2596,7 @@ class GameService:
                 # ``api_key`` and ``headers`` are read live, because they cannot
                 # be stored); the difference is recorded, not enforced.
                 self._note_recovery_warning(state.game_id, "model_drift")
-            try:
-                frozen = LLMClientConfig(
-                    api_key=current.api_key,
-                    base_url=str(parameters["base_url"]),
-                    model_id=str(parameters["model_id"]),
-                    temperature=float(parameters["temperature"]),
-                    max_tokens=int(parameters["max_tokens"]),
-                    strict_base_url=str(parameters["strict_base_url"]),
-                    action_max_tokens=int(parameters["action_max_tokens"]),
-                    action_timeout_seconds=float(parameters["action_timeout_seconds"]),
-                    action_retry_timeout_seconds=float(parameters["action_retry_timeout_seconds"]),
-                    action_final_retry_timeout_seconds=float(parameters["action_final_retry_timeout_seconds"]),
-                    provider_profile=str(parameters["provider_profile"]),
-                    # Taken from the live config, exactly like ``api_key``:
-                    # headers may carry relay credentials, so they stay out of
-                    # the checkpoint and its digest, and a resumed game picks
-                    # up whatever the model config currently holds.
-                    headers=current.headers,
-                )
-            except (KeyError, TypeError, ValueError) as error:
-                raise ValueError("checkpoint_corrupt") from error
+            frozen = self._frozen_client_config(current, parameters)
             for seat in seats:
                 if type(seat) is not int or seat not in state.players or seat in result:
                     raise ValueError("checkpoint_corrupt")
@@ -2583,6 +2604,82 @@ class GameService:
         if set(result) != set(state.players):
             raise ValueError("model_config_missing")
         return result
+
+    @staticmethod
+    def _frozen_client_config(
+        current: LLMClientConfig, parameters: Mapping[str, object],
+    ) -> LLMClientConfig:
+        """Rebuild the client config a game was created with.
+
+        Only ``api_key`` and ``headers`` are read live, because they cannot be
+        stored; every other field is the checkpoint's frozen copy.
+        """
+        try:
+            return LLMClientConfig(
+                api_key=current.api_key,
+                base_url=str(parameters["base_url"]),
+                model_id=str(parameters["model_id"]),
+                temperature=float(parameters["temperature"]),
+                max_tokens=int(parameters["max_tokens"]),
+                strict_base_url=str(parameters["strict_base_url"]),
+                action_max_tokens=int(parameters["action_max_tokens"]),
+                action_timeout_seconds=float(parameters["action_timeout_seconds"]),
+                action_retry_timeout_seconds=float(parameters["action_retry_timeout_seconds"]),
+                action_final_retry_timeout_seconds=float(parameters["action_final_retry_timeout_seconds"]),
+                provider_profile=str(parameters["provider_profile"]),
+                # Taken from the live config, exactly like ``api_key``:
+                # headers may carry relay credentials, so they stay out of
+                # the checkpoint and its digest, and a resumed game picks
+                # up whatever the model config currently holds.
+                headers=current.headers,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("checkpoint_corrupt") from error
+
+    def _resolve_recovery_vote_model(
+        self, state: GameState, record: Mapping[str, object],
+    ) -> LLMClientConfig | None:
+        """The frozen vote-model config a recovered game was created with.
+
+        ``None`` means the game never opted into a dedicated vote model;
+        anything malformed is judged with the same vocabulary as the seat
+        runtime (``model_config_missing`` / ``checkpoint_corrupt`` /
+        ``model_key_unavailable``).
+        """
+        config_doc = record.get("config")
+        # The seat runtime resolver already judged a missing or malformed
+        # config doc; running after it, a non-mapping doc simply cannot carry
+        # a vote_model entry.
+        entry = (
+            config_doc.get("vote_model")
+            if isinstance(config_doc, Mapping) else None
+        )
+        if entry is None:
+            return None
+        if not isinstance(entry, Mapping):
+            raise ValueError("model_config_missing")
+        config_id = entry.get("config_id")
+        parameters = entry.get("parameters")
+        if (
+            config_id is not None and type(config_id) is not str
+        ) or not isinstance(parameters, Mapping):
+            raise ValueError("model_config_missing")
+        if entry.get("parameters_digest") != _parameter_digest(parameters):
+            raise ValueError("checkpoint_corrupt")
+        env_config = replace(env_default_client_config(), provider_profile="auto")
+        if config_id is None:
+            current = env_config
+        else:
+            try:
+                current, _ = _saved_client_config(config_id, env_config)
+            except ValueError as error:
+                message = str(error)
+                if "unknown" in message:
+                    raise ValueError("model_config_missing") from error
+                raise ValueError("model_key_unavailable") from error
+        if _model_parameters(current) != dict(parameters):
+            self._note_recovery_warning(state.game_id, "model_drift")
+        return self._frozen_client_config(current, parameters)
 
     @staticmethod
     def _client_identity(client: object) -> tuple[str, str]:
@@ -2868,8 +2965,10 @@ class GameService:
         vote_warmup = burst_warmup_mode() is BurstWarmupMode.ON
         warmup_max_wait = burst_warmup_max_wait_seconds()
         seat_configs = self._resolve_recovery_model_configs(state, record)
+        vote_client_config = self._resolve_recovery_vote_model(state, record)
         _log_session_affinity(state.game_id, len(state.players), affinity_mode)
         clients: dict[int, LLMClient] = {}
+        vote_client: LLMClient | None = None
         try:
             for seat, client_config in sorted(seat_configs.items()):
                 clients[seat] = LLMClient(
@@ -2882,6 +2981,11 @@ class GameService:
                     ),
                     dedicated_http_clients=True,
                 )
+            if vote_client_config is not None:
+                vote_client = LLMClient(
+                    config=vote_client_config, dedicated_http_clients=True,
+                )
+                self._vote_llm_clients[state.game_id] = vote_client
         except BaseException:
             # LLMClient construction is synchronous, so close any partially
             # created transports on the caller's event loop before surfacing.
@@ -2920,6 +3024,9 @@ class GameService:
                 raise ValueError("registry_incompatible") from error
             except KeyError as error:
                 raise ValueError("registry_incompatible") from error
+        if vote_client is not None:
+            for role in roles.values():
+                role.vote_llm_client = vote_client
         self._instrument_roles(state.game_id, roles)
 
         snapshot = self._registry_snapshot
@@ -3890,7 +3997,11 @@ class GameService:
         idempotent. The shared close routine also handles repeated identities.
         """
         clients = self._llm_clients.pop(game_id, {})
-        await self._close_clients(clients)
+        vote_client = self._vote_llm_clients.pop(game_id, None)
+        all_clients = list(clients.values())
+        if vote_client is not None:
+            all_clients.append(vote_client)
+        await self._close_clients(all_clients)
 
     async def _discard_game_runtime(self, game_id: str) -> None:
         engine = self._engines.get(game_id)
