@@ -633,6 +633,14 @@ class BaseRole:
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
+        if getattr(self._client(), "is_system_one", False):
+            # A decision model cannot answer chat prompts at all: the ballot
+            # becomes one Choice question whose options are exactly the seats
+            # the validator accepts, plus abstain. The same ladder still
+            # provides timeout/transient retries and the abstain fallback.
+            return await self._request_action_system_one(
+                state, request, messages, conversation_log, capture=capture,
+            )
         supports_strict = getattr(
             self._client(), "supports_strict_actions", True,
         )
@@ -726,6 +734,96 @@ class BaseRole:
             ),
             retry_invoke, conversation_log, retry_transport, 3, capture=capture,
         )
+
+    async def _request_action_system_one(
+        self, state, request, messages, conversation_log: ConversationLog,
+        *, capture=None,
+    ) -> AcceptedAction:
+        """Run the ballot through a System One (Jev) decide call.
+
+        Retries ask the identical question — there is no transport to degrade
+        to and the options cannot change mid-window — so the three-attempt
+        ladder is just the shared ``_request_action_with_transport`` driver.
+        """
+        async def invoke(active_messages, req):
+            return await self._invoke_system_one_action(
+                state, active_messages, req,
+            )
+
+        try:
+            return await self._request_action_with_transport(
+                state, request, messages, invoke,
+                conversation_log, "system_one", 1, capture=capture,
+            )
+        except _ActionTransportTimeout:
+            # Covers the transient subclass too: the question is the same.
+            pass
+        try:
+            return await self._request_action_with_transport(
+                state, request, messages, invoke,
+                conversation_log, "system_one", 2, capture=capture,
+            )
+        except _ActionTransportTimeout:
+            pass
+        return await self._request_action_with_transport(
+            state, request, messages, invoke,
+            conversation_log, "system_one", 3, capture=capture,
+        )
+
+    async def _invoke_system_one_action(self, state, messages, request):
+        """Map one ballot to a typed Choice question and back.
+
+        ``criteria`` enumerates the contract's legal options only, so the
+        returned choice is always playable; ``_accept_command`` still validates
+        it as the final gate. ``reasoning`` is synthesized from Jev's
+        calibrated confidence — the model produces no text of its own.
+        """
+        client = self._client()
+        abstain = request.contract.fallback_action_type
+        criteria = {
+            str(seat): f"放逐{seat}号玩家"
+            for seat in sorted(eligible_exile_targets(state))
+        }
+        criteria[abstain] = "弃权：不投票放逐任何人"
+        questions = {
+            request.contract.contract_id: {
+                "type": "choice",
+                "instructions": (
+                    "狼人杀放逐投票：根据局势选出要放逐出局的玩家座位号；"
+                    "没有明确判断时选择弃权。"
+                ),
+                "criteria": criteria,
+            },
+        }
+        state_text = "\n\n".join(str(message.content) for message in messages)
+        response = await client.ainvoke_system_one(state_text, questions)
+        self._record_usage(response.usage)
+        answer = response.answers.get(request.contract.contract_id) or {}
+        choice = answer.get("choice")
+        reasoning = self._system_one_reasoning(choice, answer)
+        if choice == abstain:
+            return ActionCommand(
+                action_type=abstain, target_seat=None, reasoning=reasoning,
+            )
+        try:
+            target = int(choice)
+        except (TypeError, ValueError):
+            raise ActionValidationError(
+                "system-one answer did not pick a declared option",
+                code="action_validation_error",
+            ) from None
+        return ActionCommand(
+            action_type="vote", target_seat=target, reasoning=reasoning,
+        )
+
+    @staticmethod
+    def _system_one_reasoning(choice, answer: dict) -> str:
+        """Readable stand-in for the ``reasoning`` field Jev cannot write."""
+        confidence = answer.get("confidence")
+        if not isinstance(confidence, (int, float)):
+            return "JEV 决策"
+        label = "弃权" if choice == "abstain" else f"{choice}号"
+        return f"JEV 决策：{label}（置信度 {confidence:.0%}）"
 
     def _final_retry_messages(
         self, state: GameState, conversation_log: ConversationLog,
