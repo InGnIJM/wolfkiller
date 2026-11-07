@@ -1678,6 +1678,8 @@ class GameService:
         *,
         commentary_enabled: bool = False,
         commentary_config_id: str | None = None,
+        commentary_model_id: str | None = None,
+        commentary_reasoning_effort: str | None = None,
         vote_model_config_id: str | None = None,
         vote_model_id: str | None = None,
         vote_reasoning_effort: str | None = None,
@@ -1772,8 +1774,37 @@ class GameService:
             seat_configs, model_snapshot,
         )
         env_cfg = replace(env_default_client_config(), provider_profile="auto")
+        if commentary_config_id is None:
+            if commentary_model_id is not None:
+                raise ValueError("commentary_model_id requires commentary_config_id")
+            if commentary_reasoning_effort is not None:
+                raise ValueError(
+                    "commentary_reasoning_effort requires commentary_config_id"
+                )
+        elif commentary_model_id is not None and (
+            not isinstance(commentary_model_id, str)
+            or not commentary_model_id.strip()
+        ):
+            raise ValueError("commentary_model_id must be a non-empty string")
+        elif commentary_reasoning_effort is not None and (
+            not isinstance(commentary_reasoning_effort, str)
+            or commentary_reasoning_effort not in VALID_REASONING_EFFORTS
+        ):
+            raise ValueError(
+                "commentary_reasoning_effort must be one of "
+                + ", ".join(sorted(VALID_REASONING_EFFORTS))
+            )
         if commentary_config_id is not None:
-            _saved_client_config(commentary_config_id, env_cfg)
+            _saved_client_config(
+                commentary_config_id,
+                env_cfg,
+                model_id=(
+                    commentary_model_id.strip()
+                    if commentary_model_id is not None
+                    else None
+                ),
+                reasoning_effort=commentary_reasoning_effort,
+            )
         if vote_model_config_id is None:
             if vote_model_id is not None:
                 raise ValueError("vote_model_id requires vote_model_config_id")
@@ -1809,6 +1840,8 @@ class GameService:
         commentary_meta = {
             "enabled": bool(commentary_enabled),
             "commentary_config_id": commentary_config_id,
+            "commentary_model_id": commentary_model_id,
+            "commentary_reasoning_effort": commentary_reasoning_effort,
         }
         _log_session_affinity(game_id, config.total_players, affinity_mode)
         clients_by_seat: dict[int, LLMClient] = {}
