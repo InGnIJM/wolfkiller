@@ -185,7 +185,7 @@ describe('ModelConfigPage', () => {
       expect(testModelConnection).toHaveBeenCalledWith({
         config_id: 'a1', base_url: 'https://api.deepseek.com/v1',
         model_id: 'deepseek-v4-pro', strict_base_url: '',
-        api_key: 'sk-typed', provider_profile: 'auto', headers: {},
+        api_key: 'sk-typed', provider_profile: 'auto', reasoning_effort: '', headers: {},
       }),
     );
   });
@@ -205,7 +205,7 @@ describe('ModelConfigPage', () => {
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
         base_url: 'https://x/v1', model_id: 'm', strict_base_url: '',
-        api_key: 'sk-f', provider_profile: 'auto', headers: {},
+        api_key: 'sk-f', provider_profile: 'auto', reasoning_effort: '', headers: {},
       }),
     );
   });
@@ -232,7 +232,7 @@ describe('ModelConfigPage', () => {
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
         base_url: 'https://api.anthropic.com', model_id: 'claude-sonnet-4-5',
-        strict_base_url: '', api_key: 'sk-ant', provider_profile: 'anthropic', headers: {},
+        strict_base_url: '', api_key: 'sk-ant', provider_profile: 'anthropic', reasoning_effort: '', headers: {},
       }),
     );
     await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
@@ -279,7 +279,7 @@ describe('ModelConfigPage', () => {
       expect(testModelConnection).toHaveBeenCalledWith({
         config_id: 'a1', base_url: 'https://api.deepseek.com/v1',
         model_id: 'deepseek-v4-pro', strict_base_url: '',
-        api_key: '', provider_profile: 'custom-anthropic', headers: {},
+        api_key: '', provider_profile: 'custom-anthropic', reasoning_effort: '', headers: {},
       }),
     );
   });
@@ -491,7 +491,7 @@ describe('ModelConfigPage', () => {
     await waitFor(() =>
       expect(testModelConnection).toHaveBeenCalledWith({
         base_url: 'https://x/v1', model_id: 'm', strict_base_url: '',
-        api_key: '', provider_profile: 'auto', headers: { 'X-Extra': 'v' },
+        api_key: '', provider_profile: 'auto', reasoning_effort: '', headers: { 'X-Extra': 'v' },
       }),
     );
     await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
@@ -519,7 +519,7 @@ describe('ModelConfigPage', () => {
       expect(testModelConnection).toHaveBeenCalledWith({
         config_id: 'a1', base_url: 'https://api.deepseek.com/v1',
         model_id: 'deepseek-v4-pro', strict_base_url: '',
-        api_key: '', provider_profile: 'auto', headers: { 'X-One': '1' },
+        api_key: '', provider_profile: 'auto', reasoning_effort: '', headers: { 'X-One': '1' },
       }),
     );
   });

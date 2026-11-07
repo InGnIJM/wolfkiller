@@ -69,8 +69,51 @@ describe('ModelConfigDialog connection test payload', () => {
       strict_base_url: 'https://edited-strict.test/beta',
       api_key: '',
       provider_profile: 'auto',
+      reasoning_effort: '',
       headers: {},
     });
+  });
+
+  it('tests and saves the selected reasoning effort', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    const onSave = vi.fn(async () => {});
+    render(
+      <ModelConfigDialog open initial={stored} onClose={() => {}} onSave={onSave} />,
+    );
+
+    fireEvent.click(screen.getByText('▸ 高级选项（可选）'));
+    fireEvent.change(screen.getByLabelText('思考强度'), {
+      target: { value: 'none' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() => expect(testModelConnection).toHaveBeenCalledTimes(1));
+    expect(testModelConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ config_id: 'a1', reasoning_effort: 'none' }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoning_effort: 'none' }),
+    );
+  });
+
+  it('prefills a stored effort and sends an empty value when it is cleared', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    renderDialog({ ...stored, reasoning_effort: 'high' });
+
+    fireEvent.click(screen.getByText('▸ 高级选项（可选）'));
+    expect(screen.getByLabelText('思考强度')).toHaveValue('high');
+    fireEvent.change(screen.getByLabelText('思考强度'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() => expect(testModelConnection).toHaveBeenCalledTimes(1));
+    expect(testModelConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ config_id: 'a1', reasoning_effort: '' }),
+    );
   });
 
   it('sends an emptied strict address so a cleared field can be tested', async () => {
@@ -111,6 +154,7 @@ describe('ModelConfigDialog connection test payload', () => {
       strict_base_url: '',
       api_key: '',
       provider_profile: 'auto',
+      reasoning_effort: '',
       headers: {},
     });
   });
