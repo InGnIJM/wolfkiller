@@ -407,3 +407,57 @@ async def test_create_game_validates_commentary_config_id_before_creating(tmp_pa
     finally:
         await service.aclose()
 
+
+
+def test_model_parameters_omit_an_unset_reasoning_effort():
+    parameters = game_service._model_parameters(env_default_client_config())
+
+    assert "reasoning_effort" not in parameters
+
+
+def test_model_parameters_include_a_set_reasoning_effort():
+    from dataclasses import replace
+
+    config = replace(env_default_client_config(), reasoning_effort="none")
+    parameters = game_service._model_parameters(config)
+
+    assert parameters["reasoning_effort"] == "none"
+
+
+def test_frozen_client_config_defaults_reasoning_effort_for_old_params():
+    current = env_default_client_config()
+    parameters = game_service._model_parameters(current)
+
+    frozen = game_service.GameService._frozen_client_config(current, parameters)
+
+    assert frozen.reasoning_effort is None
+
+
+def test_frozen_client_config_restores_reasoning_effort():
+    from dataclasses import replace
+
+    current = replace(env_default_client_config(), reasoning_effort="low")
+    parameters = game_service._model_parameters(current)
+
+    frozen = game_service.GameService._frozen_client_config(current, parameters)
+
+    assert frozen.reasoning_effort == "low"
+
+
+def test_frozen_client_config_rejects_a_non_string_reasoning_effort():
+    current = env_default_client_config()
+    parameters = game_service._model_parameters(current)
+    parameters["reasoning_effort"] = 1.5
+
+    with pytest.raises(ValueError, match="checkpoint_corrupt"):
+        game_service.GameService._frozen_client_config(current, parameters)
+
+
+def test_saved_client_config_carries_reasoning_effort(tmp_path, monkeypatch):
+    cfg, _ = _store_with(tmp_path, monkeypatch, reasoning_effort="none")
+
+    client_config, _ = game_service._saved_client_config(
+        cfg.id, env_default_client_config(),
+    )
+
+    assert client_config.reasoning_effort == "none"

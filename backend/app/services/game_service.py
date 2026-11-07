@@ -594,6 +594,7 @@ def _saved_client_config(
         action_retry_timeout_seconds=env_config.action_retry_timeout_seconds,
         action_final_retry_timeout_seconds=env_config.action_final_retry_timeout_seconds,
         provider_profile=config.provider_profile,
+        reasoning_effort=config.reasoning_effort,
         headers=tuple(config.headers.items()),
     )
     resolved_profile = ProviderRegistry().resolve(
@@ -756,6 +757,11 @@ def _model_parameters(config: LLMClientConfig) -> dict[str, object]:
     profile = _resolved_profile_id(config)
     values = {name: getattr(config, name) for name in _MODEL_PARAMETER_FIELDS}
     values["provider_profile"] = profile
+    # An unset effort sends no parameter at all, so it stays out of the
+    # frozen parameters: checkpoints written before the field existed and
+    # games that never set it keep identical dicts and digests.
+    if config.reasoning_effort is not None:
+        values["reasoning_effort"] = config.reasoning_effort
     return values
 
 
@@ -2614,6 +2620,9 @@ class GameService:
         Only ``api_key`` and ``headers`` are read live, because they cannot be
         stored; every other field is the checkpoint's frozen copy.
         """
+        reasoning_effort = parameters.get("reasoning_effort")
+        if reasoning_effort is not None and not isinstance(reasoning_effort, str):
+            raise ValueError("checkpoint_corrupt")
         try:
             return LLMClientConfig(
                 api_key=current.api_key,
@@ -2627,6 +2636,9 @@ class GameService:
                 action_retry_timeout_seconds=float(parameters["action_retry_timeout_seconds"]),
                 action_final_retry_timeout_seconds=float(parameters["action_final_retry_timeout_seconds"]),
                 provider_profile=str(parameters["provider_profile"]),
+                # ``parameters.get`` keeps checkpoints frozen before the
+                # field existed resumable: the key is simply absent there.
+                reasoning_effort=reasoning_effort,
                 # Taken from the live config, exactly like ``api_key``:
                 # headers may carry relay credentials, so they stay out of
                 # the checkpoint and its digest, and a resumed game picks
