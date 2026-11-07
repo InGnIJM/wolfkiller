@@ -104,3 +104,25 @@
 - `2026-11-03-session-affinity-experiment.md`（custom-openai 网关的 `x-session-id` 实验，目标 profile 不重叠）
 - 代码：`app/agents/cache_route.py`（`SharedSessionMode` / `shared_session_id` / `apply_shared_session` / 分组 `pin_cache_routes` / `BurstWarmupMode` / `burst_warmup_mode`）、`LLMClient.session_id` / `set_session_id`、`game_service._share_cache_session`、`GameEngine(vote_warmup=)` + `_execute_vote_casting` 两阶段收集
 - 测试：`tests/test_cache_route.py`（模式解析、id 形状与确定性、仅 routing 生效、按 header 分组、组探测只探代表、冷组同 id 轮换、组成员轮换失败、create_game 接线顺序、`_share_cache_session` 容错、burst warmup env 解析与建局/恢复传参）；`tests/test_game_engine.py`（warmup 首座位先行、单座退化、首阶段/次阶段超时、默认 off）
+
+## 追加实验：放逐投票独立模型（2026-11-06）
+
+### 动机
+
+修复后首局 `77a92115` 仍有 8/52 次投票打满 `action_max_tokens=8192`——reasoning 模型的隐藏推理不受「简短」指令约束，每次截断浪费 ~9k prompt + 8192 completion + 40–60s。提高阈值只是把税加大；治本是给 `exile_vote` 换一个非 reasoning 模型。
+
+### 机制（已实现）
+
+- `create_game(vote_model_config_id=)` / `CreateGameRequest.vote_model_config_id` / 前端 ModelStep「投票模型」下拉（空 = 跟随座位模型）。
+- 建局时额外建**一个全座位共享的 `LLMClient`**，注入每个 `BaseRole.vote_llm_client`；`request_action` 仅在 `contract_id == "exile_vote"` 时改走它（`_VOTE_MODEL_CONTRACTS`），发言/夜晚/其他契约/警长票仍走座位模型。
+- 能力学习跨座位共享：`supports_action_tools` / `prefers_json_actions` / `note_action_tools_unsupported` 挂在 client 上，首个座位探出的能力全局生效；`llm_calls.log` 的 `model_id` 如实显示投票模型。
+- 选择冻结进 config doc `vote_model`（`config_id` + `parameters` + `parameters_digest`），恢复路径 `_resolve_recovery_vote_model` 按同口径重建；缺键老档自动回落座位模型，benchmark 不传参行为不变。
+- 共享缓存 session 把它当 `seat 0` 并入同组 `ses_`（routing profile 自动生效，direct 天然跨座位）；`pin_cache_routes` / `health_guard` 仍只按座位。预热 3s 机制对投票 client 照常适用。
+
+### 验收口径（下一局）
+
+- `llm_calls.log` 的 `contract_id=exile_vote` 行 `model_id` 为新投票模型。
+- `action_response_truncated` 次数：**目标 0**（非 reasoning 模型无隐藏推理）。
+- `exile_vote` 的 `elapsed_ms` 显著下降（对照 ~40–60s 截断调用）。
+- 全局 `hit_rate_all` 变化记录于此；投票共享 client 后跨座位前缀复用预期略有帮助（同一后端同一 session）。
+- 投票质量抽查：放逐票 `reasoning` 合理性人工看 2–3 条。
