@@ -108,6 +108,9 @@ class LLMClientConfig:
     action_retry_timeout_seconds: float = 120.0
     action_final_retry_timeout_seconds: float = 30.0
     provider_profile: str = "auto"
+    #: Sent verbatim as ``reasoning_effort`` on chat-completions calls; ``None``
+    #: means the parameter is not sent and the provider default applies.
+    reasoning_effort: str | None = None
     #: Extra request headers. Held as pairs, not a dict, because a frozen
     #: config is used as a cache key and therefore has to stay hashable.
     headers: tuple[tuple[str, str], ...] = ()
@@ -235,6 +238,7 @@ def env_default_client_config() -> LLMClientConfig:
             llm_cfg, "action_final_retry_timeout_seconds", 30.0,
         ),
         provider_profile=getattr(llm_cfg, "provider_profile", "auto"),
+        reasoning_effort=getattr(llm_cfg, "reasoning_effort", None) or None,
     )
 
 

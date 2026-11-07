@@ -90,6 +90,12 @@ class OpenAICompatibleTransport:
             kwargs["use_responses_api"] = True
         if profile.capabilities.temperature:
             kwargs["temperature"] = config.temperature
+        # The Responses dialect wants a nested ``reasoning`` object instead;
+        # a flat ``reasoning_effort`` is only the chat-completions spelling.
+        if getattr(config, "reasoning_effort", None) and not self.use_responses_api:
+            kwargs["model_kwargs"] = {
+                "reasoning_effort": config.reasoning_effort,
+            }
         headers = merge_request_headers(
             profile, getattr(config, "headers", ()), self.session_id,
         )

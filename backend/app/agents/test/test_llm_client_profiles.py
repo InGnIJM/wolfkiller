@@ -75,6 +75,34 @@ def test_action_model_uses_full_configured_budget(openrouter_config):
     assert chat.call_args.kwargs["max_tokens"] == 2048
 
 
+def test_reasoning_effort_reaches_the_request_body(openrouter_config):
+    config = replace(openrouter_config, reasoning_effort="none")
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        LLMClient(config=config).get_action_model()
+
+    assert chat.call_args.kwargs["model_kwargs"] == {"reasoning_effort": "none"}
+
+
+def test_reasoning_effort_unset_sends_no_model_kwargs(openrouter_config):
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        LLMClient(config=openrouter_config).get_action_model()
+
+    assert "model_kwargs" not in chat.call_args.kwargs
+
+
+def test_reasoning_effort_is_not_sent_on_the_responses_dialect(openrouter_config):
+    config = replace(
+        openrouter_config,
+        base_url="https://gateway.test/v1/responses",
+        reasoning_effort="low",
+        provider_profile="openai-responses",
+    )
+    with patch("app.agents.providers.openai_compatible.ChatOpenAI") as chat:
+        LLMClient(config=config).get_action_model()
+
+    assert "model_kwargs" not in chat.call_args.kwargs
+
+
 def test_openrouter_binds_action_contract_as_non_strict_tool(openrouter_config):
     client = LLMClient(config=openrouter_config)
 
