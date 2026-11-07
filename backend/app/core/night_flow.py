@@ -414,7 +414,7 @@ class NightDirector:
         human = (
             _TARGET_RULE
             + self._shared_briefing(briefing)
-            + self._night_status(state, seat, "狼队讨论", random_hint)
+            + self._night_status(state, seat, random_hint)
             + f"已进行的讨论：\n{self._history_text(history) or '（尚无发言）'}\n\n"
             + "\n讨论要求：\n"
             "- 这是与队友的实时对话：先简要回应队友刚提出的观点（同意、补充或反对），"
@@ -478,11 +478,14 @@ class NightDirector:
         )
 
     def _night_status(
-        self, state: GameState, seat: int, title: str, random_hint: int | None,
+        self, state: GameState, seat: int, random_hint: int | None,
     ) -> str:
+        # One status block for both contracts: a stage word here would split
+        # the pack's shared prefix between discussion and ballots; the task
+        # lines below the records carry the stage instead.
         immune = self._night_immune_clause(state)
         return (
-            f"## 当前局势\n第{state.round_number}晚{title}。"
+            f"## 当前局势\n第{state.round_number}晚狼队行动。"
             f"{self._teammates_clause(state, seat)}"
             f"场上存活玩家：{self._alive_text(state)}。\n"
             + "局势距离：" + stakes_text(state, seat) + "\n"
@@ -502,7 +505,7 @@ class NightDirector:
         human = (
             _TARGET_RULE
             + self._shared_briefing(briefing)
-            + self._night_status(state, seat, "狼队投票", random_hint)
+            + self._night_status(state, seat, random_hint)
             + f"已进行的讨论：\n{self._history_text(discussion) or '（无）'}\n"
             f"已出票：\n{self._prior_votes_text(prior_votes)}\n\n"
             + '输出 JSON：{"schema_version": 1, "action_type": "kill", "target_seat": 目标座位号, '

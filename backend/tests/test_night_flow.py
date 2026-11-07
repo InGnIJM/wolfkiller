@@ -728,6 +728,30 @@ def test_every_wolf_shares_one_system_turn_and_the_briefing_prefix(
     assert order == sorted(order)
 
 
+def test_first_ballot_extends_the_last_discussion_turn(
+    state: GameState, director: NightDirector,
+):
+    log = ConversationLog()
+    briefing = build_briefing(log, 1, 1)
+    history = ["2号：刀4号", "5号：同意"]
+    discussion = director.discussion_prompt(
+        state, 1, history, briefing, random_hint=7,
+    )[1]["content"]
+    ballot = director.vote_prompt(
+        state, 1, history + ["9号：跟4号"], [], briefing, random_hint=7,
+    )[1]["content"]
+
+    # The ballot must read as the discussion continued: every line before
+    # the transcript — including the status block — is identical, so the
+    # shared prefix reaches into the discussion records themselves.
+    cut = "已进行的讨论"
+    assert ballot[: ballot.index(cut)] == discussion[: discussion.index(cut)]
+    transcript = "已进行的讨论：\n" + "\n".join(
+        f"{i}. {line}" for i, line in enumerate(history, start=1)
+    )
+    assert ballot[ballot.index(cut):].startswith(transcript)
+
+
 def test_a_vote_reuses_the_discussion_and_prior_ballot_prefix(
     state: GameState, director: NightDirector,
 ):
