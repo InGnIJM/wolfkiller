@@ -87,21 +87,6 @@ def test_unknown_explicit_profile_is_rejected():
         ProviderRegistry().resolve("missing", "https://example.test/v1", "model")
 
 
-@pytest.mark.parametrize(
-    "profile_id",
-    [
-        "openai", "deepseek", "openrouter", "custom-openai",
-        "anthropic", "custom-anthropic", "opencode", "opencode-go",
-    ],
-)
-def test_profiles_use_config_default_action_token_budget(profile_id):
-    profile = ProviderRegistry().resolve(
-        profile_id, "https://example.test/v1", "model",
-    )
-
-    assert profile.default_action_max_tokens == 2048
-
-
 # ── OpenCode Zen / Go ─────────────────────────────────────────
 
 @pytest.mark.parametrize(

@@ -167,7 +167,6 @@ class ProviderProfile:
     profile_id: str
     api_mode: str
     capabilities: ModelCapabilities
-    default_action_max_tokens: int
     strict_endpoint: bool = False
     #: Headers every request to this provider must carry.
     default_headers: tuple[tuple[str, str], ...] = ()

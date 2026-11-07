@@ -412,7 +412,6 @@ def _routing_profile() -> ProviderProfile:
         profile_id="opencode-go",
         api_mode=API_MODE_CHAT_COMPLETIONS,
         capabilities=ModelCapabilities(True, True, True, True, True),
-        default_action_max_tokens=2048,
         session_header="x-opencode-session",
         cache_mode=CacheMode.ROUTING,
     )

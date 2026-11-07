@@ -85,7 +85,6 @@ def _profile(**overrides):
         "profile_id": "custom-openai",
         "api_mode": "chat_completions",
         "capabilities": ModelCapabilities(True, False, True, False, True),
-        "default_action_max_tokens": 2048,
     }
     base.update(overrides)
     return ProviderProfile(**base)

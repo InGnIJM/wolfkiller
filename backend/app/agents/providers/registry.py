@@ -43,7 +43,6 @@ def _opencode_profile(profile_id: str) -> ProviderProfile:
             True, False, True, False, True,
             forced_tool_choice=profile_id == "opencode-go",
         ),
-        default_action_max_tokens=2048,
         session_header=_OPENCODE_SESSION_HEADER,
         cache_mode=CacheMode.ROUTING,
     )
@@ -57,13 +56,11 @@ class ProviderRegistry:
             profile_id="openai",
             api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, True, True, True, True),
-            default_action_max_tokens=2048,
         ),
         "deepseek": ProviderProfile(
             profile_id="deepseek",
             api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, True, True, True, True),
-            default_action_max_tokens=2048,
             strict_endpoint=True,
             cache_mode=CacheMode.AUTOMATIC,
         ),
@@ -71,7 +68,6 @@ class ProviderRegistry:
             profile_id="openrouter",
             api_mode=API_MODE_CHAT_COMPLETIONS,
             capabilities=ModelCapabilities(True, False, True, True, True),
-            default_action_max_tokens=2048,
         ),
         # OpenCode Zen and OpenCode Go: OpenAI-compatible gateways that also
         # require a session-affinity header on every request.
@@ -86,7 +82,6 @@ class ProviderRegistry:
             profile_id="openai-responses",
             api_mode=API_MODE_OPENAI_RESPONSES,
             capabilities=ModelCapabilities(True, False, True, True, True),
-            default_action_max_tokens=2048,
         ),
         "custom-openai": ProviderProfile(
             profile_id="custom-openai",
@@ -94,7 +89,6 @@ class ProviderRegistry:
             capabilities=ModelCapabilities(
                 True, False, True, False, True, forced_tool_choice=False,
             ),
-            default_action_max_tokens=2048,
         ),
         # Anthropic Messages API: native tool use with a forced tool_choice is
         # reliable, but OpenAI-style strict JSON schema mode is not a Messages
@@ -103,7 +97,6 @@ class ProviderRegistry:
             profile_id="anthropic",
             api_mode=API_MODE_ANTHROPIC_MESSAGES,
             capabilities=ModelCapabilities(True, False, True, False, True),
-            default_action_max_tokens=2048,
         ),
         # Third-party relays speaking the Messages protocol; chosen explicitly
         # because their hostnames cannot be recognised.
@@ -111,7 +104,6 @@ class ProviderRegistry:
             profile_id="custom-anthropic",
             api_mode=API_MODE_ANTHROPIC_MESSAGES,
             capabilities=ModelCapabilities(True, False, True, False, True),
-            default_action_max_tokens=2048,
         ),
         # TypeSafe Jev: the System One decision API. It has no chat surface —
         # every chat-era capability is off — so a configuration built on it can
@@ -122,7 +114,6 @@ class ProviderRegistry:
             capabilities=ModelCapabilities(
                 False, False, False, False, False, forced_tool_choice=False,
             ),
-            default_action_max_tokens=512,
         ),
         # Relays speaking the same ``/systemone`` dialect (e.g. DigitalOcean's
         # inference.do-ai.run); their hostnames cannot be recognised.
@@ -132,7 +123,6 @@ class ProviderRegistry:
             capabilities=ModelCapabilities(
                 False, False, False, False, False, forced_tool_choice=False,
             ),
-            default_action_max_tokens=512,
         ),
     }
 
