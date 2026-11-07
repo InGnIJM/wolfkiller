@@ -83,6 +83,7 @@ def _to_response(
         api_key_masked=masked, key_invalid=key_invalid,
         temperature=config.temperature, strict_base_url=config.strict_base_url,
         provider_profile=config.provider_profile,
+        reasoning_effort=config.reasoning_effort,
         headers=dict(config.headers),
         created_at=config.created_at, updated_at=config.updated_at,
         latency=latency,
@@ -129,6 +130,7 @@ async def create_model(req: ModelConfigRequest):
         api_key_encrypted=crypto.encrypt(req.api_key) if req.api_key else "",
         temperature=req.temperature, strict_base_url=req.strict_base_url,
         provider_profile=req.provider_profile,
+        reasoning_effort=req.reasoning_effort,
         headers=req.headers,
     )
     store.upsert(config)
@@ -174,6 +176,7 @@ async def update_model(config_id: str, req: ModelConfigRequest):
         model_id=req.model_id, api_key_encrypted=encrypted,
         temperature=req.temperature, strict_base_url=req.strict_base_url,
         provider_profile=req.provider_profile,
+        reasoning_effort=req.reasoning_effort,
         headers=req.headers,
         created_at=existing.created_at,
         updated_at=datetime.now(timezone.utc).isoformat(),
@@ -247,6 +250,11 @@ async def test_model(req: ModelTestRequest):
         # ``None`` keeps the stored headers so the dialog can test a profile
         # change without losing them; an explicit dict (even empty) wins.
         headers = dict(config.headers) if req.headers is None else req.headers
+        reasoning_effort = (
+            config.reasoning_effort
+            if req.reasoning_effort is None
+            else req.reasoning_effort or None
+        )
     else:
         if not req.base_url or not req.model_id:
             raise HTTPException(422, "base_url and model_id are required")
@@ -255,6 +263,7 @@ async def test_model(req: ModelTestRequest):
         explicit_strict_base_url = req.strict_base_url
         provider_profile = req.provider_profile or "auto"
         headers = req.headers or {}
+        reasoning_effort = req.reasoning_effort or None
     resolved_profile = ProviderRegistry().resolve(
         provider_profile, base_url, model_id,
     )
@@ -277,6 +286,7 @@ async def test_model(req: ModelTestRequest):
                 action_timeout_seconds=10,
                 action_retry_timeout_seconds=10,
                 provider_profile=resolved_profile.profile_id,
+                reasoning_effort=reasoning_effort,
                 headers=tuple(headers.items()),
             ))
             if not prefix:

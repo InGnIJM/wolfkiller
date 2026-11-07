@@ -48,6 +48,23 @@ def test_model_assignment_count_must_be_positive():
         ModelAssignment(config_id=None, count=0)
 
 
+def test_request_rejects_unknown_reasoning_effort():
+    with pytest.raises(ValidationError, match="reasoning_effort"):
+        ModelConfigRequest(
+            name="n", base_url="https://x", model_id="m", reasoning_effort="ultra",
+        )
+    assert ModelConfigRequest(
+        name="n", base_url="https://x", model_id="m", reasoning_effort="none",
+    ).reasoning_effort == "none"
+
+
+def test_test_request_rejects_unknown_reasoning_effort():
+    with pytest.raises(ValidationError, match="reasoning_effort"):
+        ModelTestRequest(
+            base_url="https://x", model_id="m", reasoning_effort="ultra",
+        )
+
+
 # ── Store-backed handlers ──────────────────────────────────────
 
 @pytest.fixture
@@ -241,6 +258,91 @@ async def test_failed_probe_closes_client(monkeypatch):
     ))
     assert response.error == "TimeoutError"
     client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_model_round_trips_reasoning_effort(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+
+    response = await model_routes.create_model(ModelConfigRequest(
+        name="Vote DeepSeek", base_url="https://x", model_id="m",
+        reasoning_effort="none",
+    ))
+
+    assert response.reasoning_effort == "none"
+    stored = store.list_all()
+    assert len(stored) == 1 and stored[0].reasoning_effort == "none"
+
+
+@pytest.mark.asyncio
+async def test_update_model_changes_and_clears_reasoning_effort(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store)
+
+    updated = await model_routes.update_model(cfg.id, ModelConfigRequest(
+        name=cfg.name, base_url=cfg.base_url, model_id=cfg.model_id,
+        reasoning_effort="low",
+    ))
+    assert updated.reasoning_effort == "low"
+
+    cleared = await model_routes.update_model(cfg.id, ModelConfigRequest(
+        name=cfg.name, base_url=cfg.base_url, model_id=cfg.model_id,
+    ))
+    assert cleared.reasoning_effort is None
+    assert store.get(cfg.id).reasoning_effort is None
+
+
+@pytest.mark.asyncio
+async def test_connection_test_forwards_reasoning_effort(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    seen = []
+    client = MagicMock()
+    client.probe.return_value = _CAPABILITIES
+    client.aclose = AsyncMock()
+
+    def build(**kwargs):
+        seen.append(kwargs["config"])
+        return client
+
+    monkeypatch.setattr(model_routes, "LLMClient", build)
+    response = await model_routes.test_model(ModelTestRequest(
+        base_url="https://example.invalid/v1", model_id="fake",
+        provider_profile="custom-openai", reasoning_effort="none",
+    ))
+
+    assert response.ok
+    assert seen[0].reasoning_effort == "none"
+
+
+@pytest.mark.asyncio
+async def test_connection_test_empty_effort_clears_the_stored_value(
+    store, monkeypatch,
+):
+    from unittest.mock import AsyncMock, MagicMock
+
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = _stored(store)
+    store.upsert(ModelConfig(
+        id=cfg.id, name=cfg.name, base_url=cfg.base_url, model_id=cfg.model_id,
+        reasoning_effort="high",
+        created_at=cfg.created_at, updated_at=cfg.updated_at,
+    ))
+    seen = []
+    client = MagicMock()
+    client.probe.return_value = _CAPABILITIES
+    client.aclose = AsyncMock()
+    monkeypatch.setattr(
+        model_routes, "LLMClient",
+        lambda **kwargs: (seen.append(kwargs["config"]), client)[1],
+    )
+
+    response = await model_routes.test_model(ModelTestRequest(
+        config_id=cfg.id, reasoning_effort="",
+    ))
+
+    assert response.ok
+    assert seen[0].reasoning_effort is None
 
 
 @pytest.mark.asyncio

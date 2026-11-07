@@ -22,6 +22,11 @@ ResolvedProviderProfileId = Literal[
     "custom-openai", "openai-responses", "anthropic", "custom-anthropic",
 ]
 
+# Values sent verbatim as ``reasoning_effort`` on chat-completions calls;
+# ``none`` is the DeepSeek spelling for "thinking off". An unset field sends
+# nothing at all, leaving the provider's own default in place.
+ReasoningEffortId = Literal["none", "low", "medium", "high", "max"]
+
 
 def validated_headers(value: dict[str, str]) -> dict[str, str]:
     """Reject custom headers the transport would refuse to send anyway."""
@@ -49,6 +54,7 @@ class ModelConfigRequest(BaseModel):
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
     strict_base_url: Optional[str] = None
     provider_profile: ProviderProfileId = "auto"
+    reasoning_effort: Optional[ReasoningEffortId] = None
     headers: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("name")
@@ -96,6 +102,7 @@ class ModelConfigResponse(BaseModel):
     temperature: Optional[float]
     strict_base_url: Optional[str]
     provider_profile: ProviderProfileId
+    reasoning_effort: Optional[str]
     headers: dict[str, str] = Field(default_factory=dict)
     created_at: str
     updated_at: str
@@ -124,6 +131,19 @@ class ModelTestRequest(BaseModel):
     # ``config_id`` is given; an empty string is an edited value that clears
     # it, so the dialog can drop a strict address before saving.
     strict_base_url: Optional[str] = None
+    # Same omission rule as ``strict_base_url``: ``None`` falls back to the
+    # stored config, ``""`` clears it, anything else must be a valid level.
+    reasoning_effort: Optional[str] = None
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _check_reasoning_effort(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ("", *ReasoningEffortId.__args__):
+            raise ValueError(
+                "reasoning_effort must be one of "
+                + ", ".join(ReasoningEffortId.__args__),
+            )
+        return value
 
     @field_validator("headers")
     @classmethod
