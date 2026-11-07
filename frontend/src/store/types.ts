@@ -761,6 +761,16 @@ export interface FieldConstraints {
 export interface ModelAssignment {
   config_id: string | null;
   count: number;
+  /** 选模型时的单次覆盖；留空跟随该配置存储的模型 ID。 */
+  model_id?: string | null;
+  /** 选模型时的单次覆盖；留空跟随该配置存储的思考强度。 */
+  reasoning_effort?: string | null;
+}
+
+/** GET /api/models/{id}/catalog 的响应：上游列不出时 ids 为空、error 带原因。 */
+export interface ModelCatalog {
+  model_ids: string[];
+  error: string | null;
 }
 
 export interface ModelSnapshotEntry {

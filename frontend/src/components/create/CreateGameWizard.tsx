@@ -30,6 +30,8 @@ export default function CreateGameWizard() {
   const [commentaryEnabled, setCommentaryEnabled] = useState(false);
   const [commentaryConfigId, setCommentaryConfigId] = useState<string | null>(null);
   const [voteConfigId, setVoteConfigId] = useState<string | null>(null);
+  const [voteModelId, setVoteModelId] = useState<string | null>(null);
+  const [voteEffort, setVoteEffort] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const modelConfigs = useModelConfigStore((state) => state.configs);
@@ -91,6 +93,8 @@ export default function CreateGameWizard() {
             }
           : {}),
         vote_model_config_id: voteConfigId,
+        vote_model_id: voteConfigId ? voteModelId : null,
+        vote_reasoning_effort: voteConfigId ? voteEffort : null,
       });
       navigate(`/game/${res.game_id}`);
     } catch (err) {
@@ -139,7 +143,15 @@ export default function CreateGameWizard() {
           commentaryConfigId={commentaryConfigId}
           onCommentaryConfigIdChange={setCommentaryConfigId}
           voteConfigId={voteConfigId}
-          onVoteConfigIdChange={setVoteConfigId}
+          onVoteConfigIdChange={(id) => {
+            setVoteConfigId(id);
+            setVoteModelId(null);
+            setVoteEffort(null);
+          }}
+          voteModelId={voteModelId}
+          onVoteModelIdChange={setVoteModelId}
+          voteReasoningEffort={voteEffort}
+          onVoteReasoningEffortChange={setVoteEffort}
           disabled={creating}
         />
       )}

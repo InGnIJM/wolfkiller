@@ -3,7 +3,7 @@ import type {
   AudienceEventPage, AudienceSnapshot, AutoReviewSetting, BatchDeleteResult, BatchMoveResult, BenchmarkCreateInput, BenchmarkItem,
   BenchmarkItemsPage, BenchmarkReport, BenchmarkRun, BenchmarkRunList,
   FieldConstraints, GameFolder, GameListItem, GameListResponse, GameLogs, GameMemories, GamePreset,
-  GameReviewStatus, ModelAssignment, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
+  GameReviewStatus, ModelAssignment, ModelCatalog, ModelConfig, ModelConfigInput, ModelSnapshotEntry,
   ModelTestResult, PromptCaptureSetting, ProviderProfileId, PublicGameState, RoleCatalogItem,
   VictoryPolicy, WitchSelfSavePolicy,
 } from '../store/types';
@@ -26,6 +26,8 @@ export async function createGame(config?: {
   commentary_enabled?: boolean;
   commentary_config_id?: string | null;
   vote_model_config_id?: string | null;
+  vote_model_id?: string | null;
+  vote_reasoning_effort?: string | null;
 }): Promise<{ game_id: string; model_snapshot?: ModelSnapshotEntry[] }> {
   const res = await fetch(`${getApiBase()}/api/games`, {
     method: 'POST',
@@ -360,6 +362,12 @@ export async function updateAutoReviewSetting(
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) throw new Error(`Update auto review setting failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchModelCatalog(configId: string): Promise<ModelCatalog> {
+  const res = await fetch(`${getApiBase()}/api/models/${configId}/catalog`);
+  if (!res.ok) throw new Error(`Fetch model catalog failed: ${res.status}`);
   return res.json();
 }
 
