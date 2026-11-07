@@ -578,4 +578,26 @@ describe('CreateGameWizard per-selection model overrides', () => {
       })),
     );
   });
+
+  it('sends commentary model id and effort overrides', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('switch', { name: '开启上帝视角实时解说' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '解说与复盘模型' }));
+    fireEvent.click(await screen.findByRole('option', { name: /DeepSeek Pro/ }));
+
+    const modelSelect = await screen.findByRole('combobox', { name: '解说模型 ID' });
+    fireEvent.change(modelSelect, { target: { value: 'mimo-v2.6-flash' } });
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '解说模型思考强度' }));
+    fireEvent.click(await screen.findByText('关闭思考（none）'));
+
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        commentary_enabled: true,
+        commentary_config_id: 'm1',
+        commentary_model_id: 'mimo-v2.6-flash',
+        commentary_reasoning_effort: 'none',
+      })),
+    );
+  });
 });

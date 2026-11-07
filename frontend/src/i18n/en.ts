@@ -414,6 +414,8 @@ export const en: typeof zh = {
     effortInherit: 'Default (config value)',
     addGroup: 'Add another {{name}} group',
     removeGroup: 'Remove {{name}} group',
+    commentaryModelIdAria: 'Commentary model ID',
+    commentaryEffortAria: 'Commentary reasoning effort',
     voteModelIdAria: 'Vote model ID',
     voteEffortAria: 'Vote thinking effort',
     addRoleTitle: 'Add roles',

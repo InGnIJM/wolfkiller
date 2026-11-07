@@ -416,6 +416,8 @@ export const zh = {
     effortInherit: '默认（跟随配置）',
     addGroup: '再加一组 {{name}}',
     removeGroup: '移除 {{name}} 分组',
+    commentaryModelIdAria: '解说模型 ID',
+    commentaryEffortAria: '解说模型思考强度',
     voteModelIdAria: '投票模型 ID',
     voteEffortAria: '投票模型思考强度',
     addRoleTitle: '添加角色',
