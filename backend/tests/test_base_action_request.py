@@ -200,6 +200,29 @@ async def test_request_action_retries_invalid_strict_action_once_with_generic_co
 
 
 @pytest.mark.asyncio
+async def test_request_action_retry_names_missing_required_fields():
+    """A tool call missing required args gets a reminder naming the fields."""
+    state = make_state()
+    incomplete = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "exile_vote",
+            "args": {"action_type": "vote", "target_seat": 2},
+            "id": "call_1",
+        }],
+    )
+    client = ClientStub([incomplete, action_tool_response(target=2)])
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilderStub(), client)
+
+    accepted = await role.request_action(state, object(), request_for(state))
+
+    assert accepted.command.target_seat == 2
+    assert len(client.strict_model.messages) == 2
+    correction = client.strict_model.messages[1][-1].content
+    assert "reasoning" in correction
+
+
+@pytest.mark.asyncio
 async def test_request_action_uses_safe_fallback_after_two_invalid_actions():
     state = make_state()
     client = ClientStub([

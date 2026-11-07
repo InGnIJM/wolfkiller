@@ -1136,13 +1136,23 @@ class BaseRole:
                 # unusable answer, not a reason to rebuild context. Appending
                 # the reminder keeps the whole shared prefix warm for the
                 # next ballot; the compact prompt stays reserved for timeouts.
-                reminder = (
-                    "上次推理超出输出上限、未能给出结果。"
-                    "请立即直接输出符合契约的JSON对象，不要再展开推理。"
-                    if _validation_failure_code(error) == "action_response_truncated"
-                    else "The previous action was invalid. Submit the required "
-                         "action again using the issued schema."
-                )
+                failure_code = _validation_failure_code(error)
+                if failure_code == "action_response_truncated":
+                    reminder = (
+                        "上次推理超出输出上限、未能给出结果。"
+                        "请立即直接输出符合契约的JSON对象，不要再展开推理。"
+                    )
+                elif failure_code == "action_payload_missing_field" and error.missing_fields:
+                    reminder = (
+                        "The previous action was missing required field(s): "
+                        + ", ".join(error.missing_fields)
+                        + ". Submit the required action again using the issued schema."
+                    )
+                else:
+                    reminder = (
+                        "The previous action was invalid. Submit the required "
+                        "action again using the issued schema."
+                    )
                 active_messages = [*messages, HumanMessage(content=reminder)]
             except Exception:
                 self._vote_telemetry(
