@@ -43,6 +43,7 @@ class _StubHttp:
     def __init__(self, responses):
         self.responses = list(responses)
         self.posts = []
+        self.closed = False
 
     async def post(self, url, *, json=None, headers=None, timeout=None):
         self.posts.append({"url": url, "json": json, "headers": headers})
@@ -50,6 +51,28 @@ class _StubHttp:
         if isinstance(item, BaseException):
             raise item
         return item
+
+    async def aclose(self):
+        self.closed = True
+
+
+class _StubSyncHttp:
+    """Stand-in for httpx.Client: same capture, plus a close() marker."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.posts = []
+        self.closed = False
+
+    def post(self, url, *, json=None, headers=None, timeout=None):
+        self.posts.append({"url": url, "json": json, "headers": headers})
+        item = self.responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    def close(self):
+        self.closed = True
 
 
 def _ok(payload: dict) -> httpx.Response:
@@ -239,6 +262,136 @@ async def test_real_http_client_is_created_and_closed():
     assert isinstance(created, httpx.AsyncClient)
     await transport.aclose()
     assert transport._http is None
+
+
+@pytest.mark.asyncio
+async def test_aclose_releases_both_http_clients():
+    async_http, sync_http = _StubHttp([]), _StubSyncHttp([])
+    transport = SystemOneTransport(
+        http_client=async_http, sync_http_client=sync_http,
+    )
+
+    await transport.aclose()
+
+    assert transport._http is None
+    assert transport._sync_http is None
+    assert async_http.closed is True
+    assert sync_http.closed is True
+
+
+def test_decide_sync_posts_and_reads_answers():
+    http = _StubSyncHttp([
+        _ok({
+            "model": "jev-1.13.0",
+            "answers": {
+                "ballot": {"type": "choice", "choice": "2", "confidence": 0.5},
+            },
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+        }),
+    ])
+    transport = SystemOneTransport(sync_http_client=http)
+    questions = {
+        "ballot": {
+            "type": "choice",
+            "instructions": "pick",
+            "criteria": {"2": "seat 2", "pass": "abstain"},
+        },
+    }
+
+    response = transport.decide_sync(
+        _config(), _profile(), "state text", questions, timeout=5.0,
+    )
+
+    post = http.posts[0]
+    assert post["url"] == "https://api.typesafe.ai/v1/systemone"
+    assert post["json"]["state"] == "state text"
+    assert post["json"]["questions"] == questions
+    assert post["headers"]["Authorization"] == "Bearer key"
+    assert response.answers["ballot"]["choice"] == "2"
+    assert response.usage.prompt_tokens == 10
+
+
+def test_decide_sync_reuses_the_sync_client_and_closes_it():
+    http = _StubSyncHttp([
+        _ok({"answers": {}, "usage": None}),
+        _ok({"answers": {}, "usage": None}),
+    ])
+    transport = SystemOneTransport(sync_http_client=http)
+
+    transport.decide_sync(_config(), _profile(), "s", {"q": {}})
+    transport.decide_sync(_config(), _profile(), "s", {"q": {}})
+
+    assert len(http.posts) == 2
+    assert transport._sync_http is http
+
+    import asyncio
+
+    asyncio.run(transport.aclose())
+    assert http.closed is True
+    assert transport._sync_http is None
+
+
+def test_decide_sync_creates_a_real_httpx_client_lazily():
+    transport = SystemOneTransport()
+
+    created = transport._sync_client()
+
+    assert isinstance(created, httpx.Client)
+    assert transport._sync_client() is created
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (429, "RateLimitError"),
+        (500, "InternalServerError"),
+        (400, "BadRequestError"),
+        (401, "AuthenticationError"),
+        (403, "PermissionDeniedError"),
+        (404, "NotFoundError"),
+        (422, "UnprocessableEntityError"),
+    ],
+)
+def test_decide_sync_maps_http_errors_to_openai_classes(status, expected):
+    http = _StubSyncHttp([_err(status)])
+    transport = SystemOneTransport(sync_http_client=http)
+
+    with pytest.raises(Exception) as exc_info:
+        transport.decide_sync(_config(), _profile(), "s", {"q": {}})
+
+    assert type(exc_info.value).__name__ == expected
+
+
+def test_decide_sync_maps_connect_failures_to_api_connection_error():
+    request = httpx.Request("POST", "https://x")
+    http = _StubSyncHttp([httpx.ConnectError("down", request=request)])
+    transport = SystemOneTransport(sync_http_client=http)
+
+    with pytest.raises(Exception) as exc_info:
+        transport.decide_sync(_config(), _profile(), "s", {"q": {}})
+
+    assert type(exc_info.value).__name__ == "APIConnectionError"
+
+
+def test_decide_sync_maps_timeouts_to_api_timeout_error():
+    request = httpx.Request("POST", "https://x")
+    http = _StubSyncHttp([httpx.ReadTimeout("slow", request=request)])
+    transport = SystemOneTransport(sync_http_client=http)
+
+    with pytest.raises(Exception) as exc_info:
+        transport.decide_sync(_config(), _profile(), "s", {"q": {}})
+
+    assert type(exc_info.value).__name__ == "APITimeoutError"
+
+
+def test_decide_sync_rejects_a_malformed_response():
+    http = _StubSyncHttp([_ok({"unexpected": True})])
+    transport = SystemOneTransport(sync_http_client=http)
+
+    with pytest.raises(Exception) as exc_info:
+        transport.decide_sync(_config(), _profile(), "s", {"q": {}})
+
+    assert type(exc_info.value).__name__ == "InternalServerError"
 
 
 def test_build_is_not_a_chat_surface():

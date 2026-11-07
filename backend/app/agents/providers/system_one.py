@@ -60,10 +60,15 @@ _STATUS_TO_ERROR: dict[int, type[openai.APIStatusError]] = {
 class SystemOneTransport:
     """HTTP caller for the System One decide endpoint."""
 
-    def __init__(self, http_client=None):
+    def __init__(self, http_client=None, sync_http_client=None):
         #: Injectable for tests; a real ``httpx.AsyncClient`` is created lazily
         #: on first call and closed by :meth:`aclose`.
         self._http = http_client
+        #: The sync sibling for callers already running on a worker thread
+        #: (the sheriff ballot goes through the synchronous ``_night_invoke``
+        #: funnel; ``asyncio.run`` per call would reuse ``_http`` across event
+        #: loops). ``httpx.Client`` has no loop to belong to.
+        self._sync_http = sync_http_client
 
     def build(self, *_args, **_kwargs):
         """System One has no chat surface; callers must use :meth:`decide`."""
@@ -79,47 +84,53 @@ class SystemOneTransport:
         if self._http is not None:
             await self._http.aclose()
             self._http = None
+        if self._sync_http is not None:
+            self._sync_http.close()
+            self._sync_http = None
 
     def _client(self) -> httpx.AsyncClient:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=30.0)
         return self._http
 
-    async def decide(
-        self,
-        config,
-        profile: ProviderProfile,
-        state: Any,
-        questions: dict[str, Any],
-        *,
-        timeout: float | None = None,
-    ) -> SystemOneResponse:
-        """Evaluate ``questions`` against ``state`` in one parallel pass."""
+    def _sync_client(self) -> httpx.Client:
+        if self._sync_http is None:
+            self._sync_http = httpx.Client(timeout=30.0)
+        return self._sync_http
+
+    @staticmethod
+    def _request(
+        config, profile: ProviderProfile, state: Any, questions: dict[str, Any],
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
         headers = merge_request_headers(profile, (config.headers or {}).items())
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
-        try:
-            response = await self._client().post(
-                system_one_endpoint(config.base_url),
-                json={
-                    "model": config.model_id,
-                    "state": state,
-                    "questions": questions,
-                },
-                headers=headers,
-                timeout=timeout or 30.0,
-            )
-        except httpx.TimeoutException as error:
-            raise openai.APITimeoutError(
-                request=getattr(error, "request", None)
-                or httpx.Request("POST", config.base_url),
-            ) from error
-        except httpx.TransportError as error:
-            raise openai.APIConnectionError(
-                message=str(error),
-                request=getattr(error, "request", None)
-                or httpx.Request("POST", config.base_url),
-            ) from error
+        return (
+            system_one_endpoint(config.base_url),
+            headers,
+            {
+                "model": config.model_id,
+                "state": state,
+                "questions": questions,
+            },
+        )
+
+    @staticmethod
+    def _reraise_transport_error(
+        error: httpx.TransportError, config,
+    ) -> None:
+        request = (
+            getattr(error, "request", None)
+            or httpx.Request("POST", config.base_url)
+        )
+        if isinstance(error, httpx.TimeoutException):
+            raise openai.APITimeoutError(request=request) from error
+        raise openai.APIConnectionError(
+            message=str(error), request=request,
+        ) from error
+
+    @staticmethod
+    def _parse(response: httpx.Response) -> SystemOneResponse:
         if response.status_code >= 400:
             error_cls = _STATUS_TO_ERROR.get(
                 response.status_code, openai.InternalServerError,
@@ -145,3 +156,41 @@ class SystemOneTransport:
         return SystemOneResponse(
             answers=answers, usage=_usage_from_map(payload.get("usage")),
         )
+
+    async def decide(
+        self,
+        config,
+        profile: ProviderProfile,
+        state: Any,
+        questions: dict[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> SystemOneResponse:
+        """Evaluate ``questions`` against ``state`` in one parallel pass."""
+        url, headers, body = self._request(config, profile, state, questions)
+        try:
+            response = await self._client().post(
+                url, json=body, headers=headers, timeout=timeout or 30.0,
+            )
+        except httpx.TransportError as error:
+            self._reraise_transport_error(error, config)
+        return self._parse(response)
+
+    def decide_sync(
+        self,
+        config,
+        profile: ProviderProfile,
+        state: Any,
+        questions: dict[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> SystemOneResponse:
+        """Worker-thread sibling of :meth:`decide` over a plain ``httpx.Client``."""
+        url, headers, body = self._request(config, profile, state, questions)
+        try:
+            response = self._sync_client().post(
+                url, json=body, headers=headers, timeout=timeout or 30.0,
+            )
+        except httpx.TransportError as error:
+            self._reraise_transport_error(error, config)
+        return self._parse(response)
