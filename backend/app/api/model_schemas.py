@@ -171,8 +171,31 @@ class ModelTestResponse(BaseModel):
 
 
 class ModelAssignment(BaseModel):
+    """One seat group: provider config plus an optional per-selection model.
+
+    ``model_id`` / ``reasoning_effort`` override the values stored on the
+    referenced config so one provider entry can serve several models (and
+    thinking levels) inside the same game.
+    """
+
     config_id: Optional[str] = None
     count: Annotated[int, Field(strict=True, ge=1)]
+    model_id: Optional[str] = None
+    reasoning_effort: Optional[ReasoningEffortId] = None
+
+    @field_validator("model_id")
+    @classmethod
+    def _check_model_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not value.strip():
+            raise ValueError("model_id must be a non-empty string")
+        return value.strip() if value is not None else None
+
+
+class ModelCatalogResponse(BaseModel):
+    """Model ids exposed by a provider's ``GET /models`` listing."""
+
+    model_ids: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 class ModelSnapshotEntry(BaseModel):

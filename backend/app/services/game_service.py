@@ -562,8 +562,15 @@ def _night_turn(
     )
 
 
+VALID_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "max"})
+
+
 def _saved_client_config(
-    config_id: str, env_config: LLMClientConfig,
+    config_id: str,
+    env_config: LLMClientConfig,
+    *,
+    model_id: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[LLMClientConfig, dict]:
     config = get_model_config_store().get(config_id)
     if config is None:
@@ -579,7 +586,7 @@ def _saved_client_config(
     client_config = LLMClientConfig(
         base_url=config.base_url,
         api_key=api_key,
-        model_id=config.model_id,
+        model_id=model_id if model_id is not None else config.model_id,
         temperature=(
             config.temperature
             if config.temperature is not None
@@ -594,7 +601,11 @@ def _saved_client_config(
         action_retry_timeout_seconds=env_config.action_retry_timeout_seconds,
         action_final_retry_timeout_seconds=env_config.action_final_retry_timeout_seconds,
         provider_profile=config.provider_profile,
-        reasoning_effort=config.reasoning_effort,
+        reasoning_effort=(
+            reasoning_effort
+            if reasoning_effort is not None
+            else config.reasoning_effort
+        ),
         headers=tuple(config.headers.items()),
     )
     resolved_profile = ProviderRegistry().resolve(
@@ -605,7 +616,7 @@ def _saved_client_config(
     return client_config, {
         "config_id": config.id,
         "name": config.name,
-        "model_id": config.model_id,
+        "model_id": client_config.model_id,
         "base_url": config.base_url,
         "provider_profile": resolved_profile,
     }
@@ -637,39 +648,78 @@ def resolve_model_assignments(
     if not model_assignments:
         raise ValueError("model assignments must be non-empty")
 
-    normalized: list[tuple[str | None, int]] = []
-    seen_config_ids: set[str | None] = set()
+    normalized: list[tuple[str | None, int, str | None, str | None]] = []
+    seen_variants: set[tuple[str | None, str | None, str | None]] = set()
     for entry in model_assignments:
         if not isinstance(entry, dict):
             raise ValueError("model assignment entry must be an object")
         config_id = entry.get("config_id")
         count = entry.get("count")
+        model_id = entry.get("model_id")
+        reasoning_effort = entry.get("reasoning_effort")
         if config_id is not None and not isinstance(config_id, str):
             raise ValueError("model assignment config_id must be a string or null")
         if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
             raise ValueError("model assignment count must be a positive integer")
-        if config_id in seen_config_ids:
-            raise ValueError("model assignment config_id values must be unique")
-        seen_config_ids.add(config_id)
-        normalized.append((config_id, count))
-    if sum(count for _, count in normalized) != total_players:
+        if model_id is not None:
+            if not isinstance(model_id, str) or not model_id.strip():
+                raise ValueError(
+                    "model assignment model_id must be a non-empty string"
+                )
+            model_id = model_id.strip()
+        if reasoning_effort is not None and (
+            not isinstance(reasoning_effort, str)
+            or reasoning_effort not in VALID_REASONING_EFFORTS
+        ):
+            raise ValueError(
+                "model assignment reasoning_effort must be one of "
+                + ", ".join(sorted(VALID_REASONING_EFFORTS))
+            )
+        # A provider config may appear several times as long as the selected
+        # model or thinking effort differs between the groups.
+        variant = (config_id, model_id, reasoning_effort)
+        if variant in seen_variants:
+            raise ValueError("model assignment variants must be unique")
+        seen_variants.add(variant)
+        normalized.append((config_id, count, model_id, reasoning_effort))
+    if sum(count for _, count, _, _ in normalized) != total_players:
         raise ValueError("model assignment count sum must equal total players")
 
     resolved: list[tuple[LLMClientConfig, dict, int]] = []
-    for config_id, count in normalized:
+    for config_id, count, model_id, reasoning_effort in normalized:
         if config_id is None:
+            seat_config = env_config
+            if model_id is not None or reasoning_effort is not None:
+                seat_config = replace(
+                    env_config,
+                    model_id=(
+                        model_id if model_id is not None else env_config.model_id
+                    ),
+                    reasoning_effort=(
+                        reasoning_effort
+                        if reasoning_effort is not None
+                        else env_config.reasoning_effort
+                    ),
+                )
             resolved_profile = ProviderRegistry().resolve(
-                env_config.provider_profile, env_config.base_url, env_config.model_id,
+                seat_config.provider_profile,
+                seat_config.base_url,
+                seat_config.model_id,
             ).profile_id
-            resolved.append((env_config, {
+            resolved.append((seat_config, {
                 "config_id": None,
                 "name": "环境默认 (.env)",
-                "model_id": env_config.model_id,
-                "base_url": env_config.base_url,
+                "model_id": seat_config.model_id,
+                "base_url": seat_config.base_url,
                 "provider_profile": resolved_profile,
             }, count))
         else:
-            client_config, metadata = _saved_client_config(config_id, env_config)
+            client_config, metadata = _saved_client_config(
+                config_id,
+                env_config,
+                model_id=model_id,
+                reasoning_effort=reasoning_effort,
+            )
             resolved.append((client_config, metadata, count))
 
     expanded = [
@@ -1629,6 +1679,8 @@ class GameService:
         commentary_enabled: bool = False,
         commentary_config_id: str | None = None,
         vote_model_config_id: str | None = None,
+        vote_model_id: str | None = None,
+        vote_reasoning_effort: str | None = None,
         game_id_override: str | None = None,
         source: str = "native",
         benchmark_run_id: str | None = None,
@@ -1722,11 +1774,37 @@ class GameService:
         env_cfg = replace(env_default_client_config(), provider_profile="auto")
         if commentary_config_id is not None:
             _saved_client_config(commentary_config_id, env_cfg)
+        if vote_model_config_id is None:
+            if vote_model_id is not None:
+                raise ValueError("vote_model_id requires vote_model_config_id")
+            if vote_reasoning_effort is not None:
+                raise ValueError(
+                    "vote_reasoning_effort requires vote_model_config_id"
+                )
+        elif vote_model_id is not None and (
+            not isinstance(vote_model_id, str) or not vote_model_id.strip()
+        ):
+            raise ValueError("vote_model_id must be a non-empty string")
+        elif vote_reasoning_effort is not None and (
+            not isinstance(vote_reasoning_effort, str)
+            or vote_reasoning_effort not in VALID_REASONING_EFFORTS
+        ):
+            raise ValueError(
+                "vote_reasoning_effort must be one of "
+                + ", ".join(sorted(VALID_REASONING_EFFORTS))
+            )
         vote_client_config: LLMClientConfig | None = None
         vote_client_meta: dict | None = None
         if vote_model_config_id is not None:
             vote_client_config, vote_client_meta = _saved_client_config(
-                vote_model_config_id, env_cfg,
+                vote_model_config_id,
+                env_cfg,
+                model_id=(
+                    vote_model_id.strip()
+                    if vote_model_id is not None
+                    else None
+                ),
+                reasoning_effort=vote_reasoning_effort,
             )
         commentary_meta = {
             "enabled": bool(commentary_enabled),
