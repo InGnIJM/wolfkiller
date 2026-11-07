@@ -34,11 +34,25 @@ from app.stores.model_key_crypto import KeyDecryptionError, ModelKeyCrypto
 logger = logging.getLogger(__name__)
 
 
-def resolve_commentary_client_config(config_id: str | None) -> LLMClientConfig:
-    """Resolve an LLMClientConfig for commentary/review from a saved config or .env."""
+def resolve_commentary_client_config(
+    config_id: str | None,
+    *,
+    model_id: str | None = None,
+    reasoning_effort: str | None = None,
+) -> LLMClientConfig:
+    """Resolve an LLMClientConfig for commentary/review from a saved config or .env.
+
+    ``model_id`` / ``reasoning_effort`` are the per-selection overrides frozen
+    into the game's commentary metadata; omitted values fall back to the
+    stored config (or the .env default when ``config_id`` is ``None``).
+    """
     env_cfg = replace(env_default_client_config(), provider_profile="auto")
     if config_id is None:
-        return env_cfg
+        return replace(
+            env_cfg,
+            model_id=model_id or env_cfg.model_id,
+            reasoning_effort=reasoning_effort or env_cfg.reasoning_effort,
+        )
     config = get_model_config_store().get(config_id)
     if config is None:
         raise ValueError("unknown model config")
@@ -52,7 +66,7 @@ def resolve_commentary_client_config(config_id: str | None) -> LLMClientConfig:
     return LLMClientConfig(
         base_url=config.base_url,
         api_key=api_key,
-        model_id=config.model_id,
+        model_id=model_id or config.model_id,
         temperature=(
             config.temperature
             if config.temperature is not None
@@ -67,17 +81,19 @@ def resolve_commentary_client_config(config_id: str | None) -> LLMClientConfig:
         action_retry_timeout_seconds=env_cfg.action_retry_timeout_seconds,
         action_final_retry_timeout_seconds=env_cfg.action_final_retry_timeout_seconds,
         provider_profile=config.provider_profile,
+        reasoning_effort=(
+            reasoning_effort
+            if reasoning_effort is not None
+            else config.reasoning_effort
+        ),
         headers=tuple(config.headers.items()),
     )
 
 
-def _default_client_factory(config_id: str | None) -> LLMClient:
+def _default_client_factory(client_config: LLMClientConfig) -> LLMClient:
     # One-shot clients are closed after every segment/review; they must own
     # private httpx pools or that aclose() kills the running game's seats.
-    return LLMClient(
-        config=resolve_commentary_client_config(config_id),
-        dedicated_http_clients=True,
-    )
+    return LLMClient(config=client_config, dedicated_http_clients=True)
 
 
 def fetch_all_audience_events(
@@ -123,7 +139,7 @@ class CommentaryService:
         ws_manager: Any,
         data_dir: str = "data",
         *,
-        client_factory: Callable[[str | None], Any] = _default_client_factory,
+        client_factory: Callable[[LLMClientConfig], Any] = _default_client_factory,
         settle_delay_seconds: float = 0.5,
     ) -> None:
         self._repository = repository
@@ -181,23 +197,32 @@ class CommentaryService:
             return
         self._spawn(self._run_final(game_id))
 
-    def _commentary_config(self, game_id: str) -> tuple[bool, str | None, int]:
+    def _commentary_config(
+        self, game_id: str,
+    ) -> tuple[bool, str | None, str | None, str | None, int]:
         game = self._repository.get_game(game_id)
         if game is None:
-            return False, None, 1
+            return False, None, None, None, 1
         cfg = game.get("config")
         comm = cfg.get("commentary") if isinstance(cfg, Mapping) else None
         if not isinstance(comm, Mapping) or comm.get("enabled") is not True:
-            return False, None, 1
+            return False, None, None, None, 1
         cid = comm.get("commentary_config_id")
         config_id = cid if isinstance(cid, str) and cid else None
+        mid = comm.get("commentary_model_id")
+        model_id = mid if isinstance(mid, str) and mid else None
+        eff = comm.get("commentary_reasoning_effort")
+        effort = eff if isinstance(eff, str) and eff else None
         snap = self._repository.get_audience_snapshot(game_id)
         state = snap.get("state") if isinstance(snap, Mapping) else None
         rnd = state.get("round_number") if isinstance(state, Mapping) else 1
-        return True, config_id, (rnd if type(rnd) is int and rnd >= 1 else 1)
+        return (
+            True, config_id, model_id, effort,
+            (rnd if type(rnd) is int and rnd >= 1 else 1),
+        )
 
     async def _run_final(self, game_id: str) -> None:
-        enabled, _, round_number = self._commentary_config(game_id)
+        enabled, _, _, _, round_number = self._commentary_config(game_id)
         if not enabled:
             return
         await self._run_beat(game_id, round_number, "final", "game_over")
@@ -209,7 +234,9 @@ class CommentaryService:
             await asyncio.sleep(self._settle_delay)
         lock = self._locks.setdefault(game_id, asyncio.Lock())
         async with lock:
-            enabled, config_id, _ = self._commentary_config(game_id)
+            (
+                enabled, config_id, model_id, reasoning_effort, _,
+            ) = self._commentary_config(game_id)
             if not enabled:
                 return
             all_events = await asyncio.to_thread(
@@ -247,7 +274,11 @@ class CommentaryService:
             now = datetime.now(timezone.utc).isoformat()
             client = None
             try:
-                client = self._client_factory(config_id)
+                client = self._client_factory(resolve_commentary_client_config(
+                    config_id,
+                    model_id=model_id,
+                    reasoning_effort=reasoning_effort,
+                ))
                 model_id = getattr(client, "model_name", "unknown")
                 messages = [
                     SystemMessage(content=COMMENTARY_SYSTEM_PROMPT),

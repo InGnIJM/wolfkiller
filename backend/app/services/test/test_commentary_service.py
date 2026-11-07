@@ -55,13 +55,17 @@ def _seed_game(
     *,
     enabled: bool = True,
     config_id: str | None = None,
+    commentary_extra: dict | None = None,
 ) -> None:
+    commentary = {"enabled": enabled, "commentary_config_id": config_id}
+    if commentary_extra:
+        commentary.update(commentary_extra)
     repository.create_game(
         game_id=game_id,
         name="g",
         config={
             "role_counts": {"wolf-killer-werewolf": 1, "wolf-killer-seer": 1},
-            "commentary": {"enabled": enabled, "commentary_config_id": config_id},
+            "commentary": commentary,
         },
         execution_status="running",
         source="native",
@@ -373,3 +377,74 @@ def test_default_client_factory_owns_a_dedicated_http_pool():
         assert client._dedicated_http_clients is True
     finally:
         asyncio.run(client.aclose())
+
+
+def test_resolve_commentary_client_config_applies_overrides(
+    tmp_path, monkeypatch,
+) -> None:
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    monkeypatch.setattr(
+        "app.services.commentary_service.get_model_config_store", lambda: store,
+    )
+    model = ModelConfig.new(
+        name="P", base_url="https://x/v1", model_id="m-a",
+        reasoning_effort="high",
+    )
+    store.upsert(model)
+
+    default = resolve_commentary_client_config(model.id)
+    assert default.model_id == "m-a"
+    assert default.reasoning_effort == "high"
+
+    overridden = resolve_commentary_client_config(
+        model.id, model_id="m-b", reasoning_effort="none",
+    )
+    assert overridden.model_id == "m-b"
+    assert overridden.reasoning_effort == "none"
+
+
+@pytest.mark.asyncio
+async def test_commentary_meta_overrides_reach_the_client_factory(
+    tmp_path, monkeypatch,
+) -> None:
+    repository = GameRepository(tmp_path)
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    monkeypatch.setattr(
+        "app.services.commentary_service.get_model_config_store", lambda: store,
+    )
+    saved = ModelConfig.new(
+        name="Go", base_url="https://x/v1", model_id="deepseek-v4.1-flash",
+        reasoning_effort="high",
+    )
+    store.upsert(saved)
+    received: list[object] = []
+
+    def factory(client_config) -> _FakeLLMClient:
+        received.append(client_config)
+        return _FakeLLMClient(text="本轮解说正文")
+
+    service = CommentaryService(
+        repository=repository,
+        ws_manager=_FakeWSManager(),
+        data_dir=str(tmp_path),
+        client_factory=factory,
+        settle_delay_seconds=0.0,
+    )
+    try:
+        _seed_game(
+            repository, "g-ovr", enabled=True, config_id=saved.id,
+            commentary_extra={
+                "commentary_model_id": "mimo-v2.6-flash",
+                "commentary_reasoning_effort": "none",
+            },
+        )
+        await service.on_phase_changed(
+            game_id="g-ovr", phase="dawn", round_number=1,
+        )
+        await service.wait_pending()
+    finally:
+        await service.aclose()
+
+    assert len(received) == 1
+    assert received[0].model_id == "mimo-v2.6-flash"
+    assert received[0].reasoning_effort == "none"

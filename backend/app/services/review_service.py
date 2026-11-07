@@ -24,11 +24,13 @@ from app.agents.commentary_prompt import (
     normalize_review_payload,
 )
 from app.agents.failure_taxonomy import normalize_failure_code
+from app.agents.llm_client import LLMClientConfig
 from app.persistence.repository import GameRepository
 from app.services.commentary_service import (
     _default_client_factory,
     extract_roster_and_roles,
     fetch_all_audience_events,
+    resolve_commentary_client_config,
 )
 from app.stores.app_settings_store import (
     get_app_settings_store,
@@ -59,7 +61,7 @@ class ReviewService:
         repository: GameRepository,
         data_dir: str = "data",
         *,
-        client_factory: Callable[[str | None], Any] = _default_client_factory,
+        client_factory: Callable[[LLMClientConfig], Any] = _default_client_factory,
         auto_review_enabled_getter: Callable[[], bool] = _default_auto_review_enabled,
     ) -> None:
         self._repository = repository
@@ -185,6 +187,10 @@ class ReviewService:
         comm = cfg.get("commentary") if isinstance(cfg, Mapping) else None
         raw_cid = comm.get("commentary_config_id") if isinstance(comm, Mapping) else None
         config_id = raw_cid if isinstance(raw_cid, str) and raw_cid else None
+        raw_mid = comm.get("commentary_model_id") if isinstance(comm, Mapping) else None
+        model_id = raw_mid if isinstance(raw_mid, str) and raw_mid else None
+        raw_eff = comm.get("commentary_reasoning_effort") if isinstance(comm, Mapping) else None
+        effort = raw_eff if isinstance(raw_eff, str) and raw_eff else None
         now = datetime.now(timezone.utc).isoformat()
         client = None
         try:
@@ -205,7 +211,11 @@ class ReviewService:
                 r_key = rnd if type(rnd) is int and rnd >= 1 else 1
                 by_round.setdefault(r_key, []).append(ev)
 
-            client = self._client_factory(config_id)
+            client = self._client_factory(resolve_commentary_client_config(
+                config_id,
+                model_id=model_id,
+                reasoning_effort=effort,
+            ))
             model_id = getattr(client, "model_name", "unknown")
             sem = asyncio.Semaphore(_ROUND_CONCURRENCY)
 
