@@ -7,7 +7,6 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 
-import { fetchModelCatalog } from '../../api/client';
 import ModelConfigDialog from '../models/ModelConfigDialog';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type { ModelAssignment, ModelConfigInput } from '../../store/types';
@@ -242,9 +241,6 @@ export default function ModelStep({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [focusConfigId, setFocusConfigId] = useState<string | null>(null);
   const focusRowRef = useRef<HTMLDivElement | null>(null);
-  const [catalogs, setCatalogs] = useState<Record<string, string[]>>({});
-  const catalogRequested = useRef(new Set<string>());
-
   useEffect(() => {
     void load();
   }, [load]);
@@ -260,20 +256,6 @@ export default function ModelStep({
     () => new Map(configs.map((config) => [config.id, config])),
     [configs],
   );
-
-  // The provider's GET /models listing feeds the per-group model selector.
-  // A config that cannot list (e.g. JEV) degrades to a plain free-text field.
-  useEffect(() => {
-    configs.forEach((config) => {
-      if (config.key_invalid || catalogRequested.current.has(config.id)) return;
-      catalogRequested.current.add(config.id);
-      fetchModelCatalog(config.id)
-        .then((catalog) => {
-          setCatalogs((prev) => ({ ...prev, [config.id]: catalog.model_ids }));
-        })
-        .catch(() => undefined);
-    });
-  }, [configs]);
 
   const rows = useMemo<AssignmentRow[]>(() => {
     const result: AssignmentRow[] = [];
@@ -369,14 +351,17 @@ export default function ModelStep({
     onAssignmentsChange(assignments.filter((_, entryIndex) => entryIndex !== index));
   };
 
-  const modelOptionsFor = (configId: string | null): string[] => {
-    const stored = configId === null ? null : configById.get(configId)?.model_id;
-    const listed = configId === null ? [] : catalogs[configId] ?? [];
-    const options = stored ? [stored] : [];
-    listed.forEach((id) => {
-      if (!options.includes(id)) options.push(id);
-    });
-    return options;
+  const modelListFor = (configId: string | null): string[] | null => {
+    if (configId === null) return null;
+    const config = configById.get(configId);
+    if (!config) return null;
+    return config.model_ids?.length ? config.model_ids : [config.model_id];
+  };
+
+  const modelDefaultFor = (configId: string | null): string => {
+    if (configId === null) return '';
+    const config = configById.get(configId);
+    return config?.model_ids?.[0] ?? config?.model_id ?? '';
   };
 
   const handleSaved = async (input: ModelConfigInput) => {
@@ -536,34 +521,62 @@ export default function ModelStep({
                     useFlexGap
                     sx={{ alignItems: 'center', flexWrap: 'wrap', mt: 1 }}
                   >
-                    <TextField
-                      size="small"
-                      disabled={disabled}
-                      label={t('create.modelFieldLabel')}
-                      placeholder={
-                        configById.get(row.configId ?? '')?.model_id ?? ''
-                      }
-                      value={entry.model_id ?? ''}
-                      onChange={(e) => {
-                        if (row.assignmentIndex !== null) {
-                          patchEntry(row.assignmentIndex, {
-                            model_id: e.target.value.trim() || null,
-                          });
+                    {modelListFor(row.configId) !== null ? (
+                      <TextField
+                        select
+                        size="small"
+                        disabled={disabled}
+                        label={t('create.modelFieldLabel')}
+                        value={entry.model_id ?? ''}
+                        onChange={(e) => {
+                          if (row.assignmentIndex !== null) {
+                            patchEntry(row.assignmentIndex, {
+                              model_id: e.target.value || null,
+                            });
+                          }
+                        }}
+                        slotProps={{
+                          select: {
+                            native: true,
+                            inputProps: {
+                              'aria-label': t('create.groupModelAria', { name: row.name }),
+                            },
+                          },
+                          inputLabel: { shrink: true },
+                        }}
+                        sx={{ minWidth: 200, flex: 1 }}
+                      >
+                        <option value="">
+                          {t('create.groupModelDefault', { id: modelDefaultFor(row.configId) })}
+                        </option>
+                        {(modelListFor(row.configId) ?? []).map((id) => (
+                          <option key={id} value={id}>{id}</option>
+                        ))}
+                      </TextField>
+                    ) : (
+                      <TextField
+                        size="small"
+                        disabled={disabled}
+                        label={t('create.modelFieldLabel')}
+                        placeholder={
+                          configById.get(row.configId ?? '')?.model_id ?? ''
                         }
-                      }}
-                      slotProps={{
-                        htmlInput: {
-                          list: `catalog-${row.key}`,
-                          'aria-label': t('create.groupModelAria', { name: row.name }),
-                        },
-                      }}
-                      sx={{ minWidth: 200, flex: 1 }}
-                    />
-                    <datalist id={`catalog-${row.key}`}>
-                      {modelOptionsFor(row.configId).map((id) => (
-                        <option key={id} value={id} />
-                      ))}
-                    </datalist>
+                        value={entry.model_id ?? ''}
+                        onChange={(e) => {
+                          if (row.assignmentIndex !== null) {
+                            patchEntry(row.assignmentIndex, {
+                              model_id: e.target.value.trim() || null,
+                            });
+                          }
+                        }}
+                        slotProps={{
+                          htmlInput: {
+                            'aria-label': t('create.groupModelAria', { name: row.name }),
+                          },
+                        }}
+                        sx={{ minWidth: 200, flex: 1 }}
+                      />
+                    )}
                     <Select
                       size="small"
                       displayEmpty
@@ -734,27 +747,30 @@ export default function ModelStep({
                 sx={{ alignItems: 'center', flexWrap: 'wrap', mt: 2 }}
               >
                 <TextField
+                  select
                   size="small"
                   disabled={disabled}
                   label={t('create.modelFieldLabel')}
-                  placeholder={configById.get(voteConfigId)?.model_id ?? ''}
                   value={voteModelId ?? ''}
                   onChange={(e) => {
-                    onVoteModelIdChange?.(e.target.value.trim() || null);
+                    onVoteModelIdChange?.(e.target.value || null);
                   }}
                   slotProps={{
-                    htmlInput: {
-                      list: 'vote-model-catalog',
-                      'aria-label': t('create.voteModelIdAria'),
+                    select: {
+                      native: true,
+                      inputProps: { 'aria-label': t('create.voteModelIdAria') },
                     },
+                    inputLabel: { shrink: true },
                   }}
                   sx={{ minWidth: 200, flex: 1 }}
-                />
-                <datalist id="vote-model-catalog">
-                  {modelOptionsFor(voteConfigId).map((id) => (
-                    <option key={id} value={id} />
+                >
+                  <option value="">
+                    {t('create.groupModelDefault', { id: modelDefaultFor(voteConfigId) })}
+                  </option>
+                  {(modelListFor(voteConfigId) ?? []).map((id) => (
+                    <option key={id} value={id}>{id}</option>
                   ))}
-                </datalist>
+                </TextField>
                 <Select
                   size="small"
                   displayEmpty

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CreateGameWizard from '../CreateGameWizard';
 import {
-  createGame, createModel, fetchConstraints, fetchModelCatalog, fetchPresets,
+  createGame, createModel, fetchConstraints, fetchPresets,
   fetchRoleCatalog, listModels, testModelConnection,
 } from '../../../api/client';
 import type { GamePreset } from '../../../store/types';
@@ -22,7 +22,6 @@ vi.mock('../../../api/client', () => ({
   fetchRoleCatalog: vi.fn(),
   fetchPresets: vi.fn(),
   fetchConstraints: vi.fn(),
-  fetchModelCatalog: vi.fn(),
 }));
 
 const navigateMock = vi.fn();
@@ -59,6 +58,7 @@ const MODEL = {
   model_id: 'deepseek-v4-pro', has_key: true, api_key_masked: 'sk-***1234',
   key_invalid: false, temperature: null, strict_base_url: null,
   provider_profile: 'auto' as const,
+  model_ids: ['deepseek-v4-pro', 'mimo-v2.6-flash'],
   headers: {},
   created_at: '', updated_at: '',
 };
@@ -79,9 +79,6 @@ beforeEach(() => {
   vi.mocked(fetchConstraints).mockResolvedValue(CONSTRAINTS);
   vi.mocked(listModels).mockResolvedValue([MODEL]);
   vi.mocked(createGame).mockResolvedValue({ game_id: 'g1' });
-  vi.mocked(fetchModelCatalog).mockResolvedValue({
-    model_ids: ['deepseek-v4-pro', 'mimo-v2.6-flash'], error: null,
-  });
 });
 
 afterEach(() => {
@@ -497,9 +494,14 @@ describe('CreateGameWizard per-selection model overrides', () => {
   }
   const goToStep2 = toModelStep;
 
-  it('fetches the provider catalog for stored configs', async () => {
+  it('limits the group model select to the configured list', async () => {
     await goToStep2();
-    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledWith('m1'));
+    fireEvent.click(screen.getByRole('button', { name: '将环境默认模型减少 10 人' }));
+    fireEvent.click(screen.getByRole('button', { name: '将 DeepSeek Pro 增加 10 人' }));
+
+    const select = await screen.findByRole('combobox', { name: 'DeepSeek Pro 模型' });
+    const options = within(select).getAllByRole('option').map((o) => o.getAttribute('value'));
+    expect(options).toEqual(['', 'deepseek-v4-pro', 'mimo-v2.6-flash']);
   });
 
   it('sends a group model_id and reasoning_effort override', async () => {

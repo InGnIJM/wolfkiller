@@ -80,7 +80,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'New Model' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-new' } });
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
@@ -198,7 +198,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-f' } });
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
 
@@ -222,7 +222,7 @@ describe('ModelConfigPage', () => {
     fireEvent.change(screen.getByLabelText('接口协议'), { target: { value: 'anthropic' } });
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Claude' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.anthropic.com' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'claude-sonnet-4-5' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'claude-sonnet-4-5' } });
     fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: 'sk-ant' } });
 
     expect(screen.getByText(/Anthropic Messages API：Base URL 不含/)).toBeInTheDocument();
@@ -253,7 +253,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
@@ -293,7 +293,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Adv' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
     fireEvent.change(screen.getByLabelText(/Temperature/), { target: { value: '0.5' } });
     fireEvent.change(screen.getByLabelText(/严格模式地址/), { target: { value: 'https://x/beta' } });
@@ -317,7 +317,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'NoAdv' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() => expect(screen.getByText(/连接成功/)).toBeInTheDocument());
@@ -338,7 +338,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
 
     expect(screen.getByText('保存前需通过连接测试')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
@@ -356,11 +356,11 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm2' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm2' } });
 
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
   });
@@ -406,7 +406,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
     fireEvent.change(headerNames()[0], { target: { value: 'X Bad Name' } });
@@ -481,7 +481,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Heads' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加请求头' }));
     fireEvent.change(headerNames()[0], { target: { value: ' X-Extra ' } });
@@ -532,7 +532,7 @@ describe('ModelConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建模型配置/ }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'n' } });
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://x/v1' } });
-    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm' } });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), { target: { value: 'm' } });
     fireEvent.click(screen.getByRole('button', { name: /高级选项/ }));
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
     await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
