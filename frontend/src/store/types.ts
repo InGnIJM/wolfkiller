@@ -613,7 +613,9 @@ export type ProviderProfileId =
   | 'custom-openai'
   | 'openai-responses'
   | 'anthropic'
-  | 'custom-anthropic';
+  | 'custom-anthropic'
+  | 'jev'
+  | 'custom-system-one';
 
 /** 后端按历史模型请求统计的延迟分布；没有样本时为 `null`。 */
 export interface ModelLatencyStats {

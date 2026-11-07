@@ -12,6 +12,7 @@ describe('providerProfiles', () => {
     expect(PROVIDER_PROFILE_OPTIONS.map((option) => option.id)).toEqual([
       'auto', 'openai', 'deepseek', 'openrouter', 'opencode', 'opencode-go',
       'custom-openai', 'openai-responses', 'anthropic', 'custom-anthropic',
+      'jev', 'custom-system-one',
     ]);
     expect(isProviderProfileId('opencode')).toBe(true);
     expect(isProviderProfileId('opencode-go')).toBe(true);
@@ -32,6 +33,15 @@ describe('providerProfiles', () => {
       PROVIDER_PROFILE_OPTIONS.find((option) => option.id === id)?.baseUrlPlaceholder;
     expect(placeholderOf('opencode')).toBe('https://opencode.ai/zen/v1');
     expect(placeholderOf('opencode-go')).toBe('https://opencode.ai/zen/go/v1');
+  });
+
+  it('exposes the System One decision profiles', () => {
+    expect(isProviderProfileId('jev')).toBe(true);
+    expect(isProviderProfileId('custom-system-one')).toBe(true);
+    expect(providerProfileLabel('jev', t)).toBe('TypeSafe JEV（System One 决策模型）');
+    expect(
+      PROVIDER_PROFILE_OPTIONS.find((o) => o.id === 'jev')?.baseUrlPlaceholder,
+    ).toBe('https://api.typesafe.ai');
   });
 
   it('rejects unknown profile ids', () => {

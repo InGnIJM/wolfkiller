@@ -20,6 +20,8 @@ export const PROVIDER_PROFILE_OPTIONS: readonly ProviderProfileOption[] = [
   { id: 'openai-responses', labelKey: 'models.profile.openaiResponses', baseUrlPlaceholder: 'https://api.openai.com/v1' },
   { id: 'anthropic', labelKey: 'models.profile.anthropic', baseUrlPlaceholder: 'https://api.anthropic.com' },
   { id: 'custom-anthropic', labelKey: 'models.profile.customAnthropic', baseUrlPlaceholder: 'https://your-relay.example' },
+  { id: 'jev', labelKey: 'models.profile.jev', baseUrlPlaceholder: 'https://api.typesafe.ai' },
+  { id: 'custom-system-one', labelKey: 'models.profile.customSystemOne', baseUrlPlaceholder: 'https://inference.do-ai.run/v1' },
 ];
 
 export function providerProfileLabel(id: string, t: (key: string) => string): string {
