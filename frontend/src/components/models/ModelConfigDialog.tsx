@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
 
-import { testModelConnection } from '../../api/client';
+import { fetchModelCatalog, testModelConnection } from '../../api/client';
 import type {
   ModelConfig, ModelConfigInput, ModelTestResult, ProviderProfileId,
 } from '../../store/types';
@@ -61,7 +61,13 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? '');
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? '');
-  const [modelId, setModelId] = useState(initial?.model_id ?? '');
+  const [modelRows, setModelRows] = useState<string[]>(() => (
+    initial?.model_ids?.length
+      ? [...initial.model_ids]
+      : [initial?.model_id ?? '']
+  ));
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchModelsError, setFetchModelsError] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [providerProfile, setProviderProfile] = useState<ProviderProfileId>(
     initial?.provider_profile ?? 'auto',
@@ -84,7 +90,19 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
   const urlError = !/^https?:\/\//.test(baseUrl.trim())
     ? t('models.baseUrlScheme')
     : '';
-  const modelError = !modelId.trim() ? t('models.modelIdRequired') : '';
+  const cleanedModelIds = modelRows
+    .map((row) => row.trim())
+    .filter(Boolean);
+  const modelListError = cleanedModelIds.length === 0
+    ? t('models.modelListRequired')
+    : '';
+  const duplicateModelIndexes = new Set(
+    modelRows
+      .map((row, index) => ({ id: row.trim(), index }))
+      .filter(({ id }, _i, all) => Boolean(id) && all.findIndex((r) => r.id === id) !== _i)
+      .map(({ index }) => index),
+  );
+  const modelError = modelListError || (duplicateModelIndexes.size ? t('models.modelDuplicate') : '');
   const duplicateKeys = new Set(
     headerRows
       .map((row) => row.key.trim().toLowerCase())
@@ -125,6 +143,52 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     invalidateTest();
   };
 
+  const updateModelRow = (index: number, value: string) => {
+    setModelRows((rows) => rows.map((row, i) => (i === index ? value : row)));
+    invalidateTest();
+  };
+
+  const addModelRow = () => {
+    setModelRows((rows) => [...rows, '']);
+    invalidateTest();
+  };
+
+  const removeModelRow = (index: number) => {
+    setModelRows((rows) => rows.filter((_, i) => i !== index));
+    invalidateTest();
+  };
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true);
+    setFetchModelsError('');
+    try {
+      const catalog = await fetchModelCatalog({
+        config_id: initial?.id ?? undefined,
+        base_url: baseUrl.trim() || undefined,
+        api_key: apiKey || undefined,
+        provider_profile: providerProfile,
+        strict_base_url: strictUrl.trim() || undefined,
+        headers: headersPayload(),
+      });
+      if (catalog.error) {
+        setFetchModelsError(catalog.error);
+      } else {
+        setModelRows((rows) => {
+          const kept = rows.map((row) => row.trim()).filter(Boolean);
+          const merged = [...kept];
+          catalog.model_ids.forEach((id) => {
+            if (!merged.includes(id)) merged.push(id);
+          });
+          return merged.length ? merged : [''];
+        });
+      }
+    } catch (error) {
+      setFetchModelsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
   const addHeaderRow = () => {
     setHeaderRows((rows) => [...rows, { key: '', value: '' }]);
     invalidateTest();
@@ -142,7 +206,8 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
     await onSave({
       name: name.trim(),
       base_url: baseUrl.trim(),
-      model_id: modelId.trim(),
+      model_id: cleanedModelIds[0],
+      model_ids: cleanedModelIds,
       api_key: apiKey,
       temperature: temperature.trim() ? Number(temperature) : null,
       strict_base_url: strictUrl.trim() || null,
@@ -163,7 +228,7 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
       // test the stored config and unlock saving for an untested edit.
       const values = {
         base_url: baseUrl.trim(),
-        model_id: modelId.trim(),
+        model_id: cleanedModelIds[0] ?? '',
         strict_base_url: strictUrl.trim(),
         api_key: apiKey,
         provider_profile: providerProfile,
@@ -236,20 +301,75 @@ export default function ModelConfigDialog({ open, initial, onClose, onSave }: Pr
             size="small"
             fullWidth
           />
-          <TextField
-            label={t('models.modelIdLabel')}
-            placeholder={isAnthropic ? 'claude-sonnet-4-5' : 'deepseek-v4-flash'}
-            value={modelId}
-            onChange={(e) => {
-              setModelId(e.target.value);
-              invalidateTest();
-            }}
-            onBlur={() => setTouched(true)}
-            error={touched && Boolean(modelError)}
-            helperText={touched ? modelError : ''}
-            size="small"
-            fullWidth
-          />
+          <Stack spacing={1}>
+            <Typography variant="body2" color="text.secondary">
+              {t('models.modelListLabel')}
+            </Typography>
+            {modelRows.map((row, index) => (
+              <Stack
+                key={index}
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: 'flex-start' }}
+              >
+                <TextField
+                  label={t('models.modelIdLabel')}
+                  placeholder={isAnthropic ? 'claude-sonnet-4-5' : 'deepseek-v4-flash'}
+                  value={row}
+                  onChange={(e) => updateModelRow(index, e.target.value)}
+                  onBlur={() => setTouched(true)}
+                  error={touched && Boolean(modelError)
+                    && (cleanedModelIds.length === 0 || duplicateModelIndexes.has(index))}
+                  helperText={
+                    touched && index === 0 && modelListError
+                      ? modelListError
+                      : touched && duplicateModelIndexes.has(index)
+                        ? t('models.modelDuplicate')
+                        : ''
+                  }
+                  size="small"
+                  fullWidth
+                  slotProps={{
+                    htmlInput: {
+                      'aria-label': t('models.modelRowAria', { index: index + 1 }),
+                    },
+                  }}
+                />
+                <IconButton
+                  aria-label={t('models.deleteModel', { index: index + 1 })}
+                  onClick={() => removeModelRow(index)}
+                  disabled={modelRows.length <= 1}
+                  size="small"
+                  sx={{ mt: 0.5, color: 'text.secondary' }}
+                >
+                  <DeleteOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            ))}
+            <Stack direction="row" spacing={1}>
+              <Button
+                color="inherit"
+                onClick={addModelRow}
+                size="small"
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                {t('models.addModel')}
+              </Button>
+              <Button
+                color="inherit"
+                onClick={() => void handleFetchModels()}
+                disabled={fetchingModels || !baseUrl.trim()}
+                size="small"
+              >
+                {t('models.fetchModels')}
+              </Button>
+            </Stack>
+            {fetchModelsError && (
+              <Typography variant="body2" color="error.main">
+                {t('models.fetchModelsFailed')}: {fetchModelsError}
+              </Typography>
+            )}
+          </Stack>
           <TextField
             label={t(initial?.has_key ? 'models.apiKeyKeep' : 'models.apiKey')}
             type="password"

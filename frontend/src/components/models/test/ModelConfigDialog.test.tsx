@@ -10,6 +10,7 @@ import type { ModelConfig } from '../../../store/types';
 
 vi.mock('../../../api/client', () => ({
   testModelConnection: vi.fn(),
+  fetchModelCatalog: vi.fn(),
 }));
 
 const stored: ModelConfig = {
@@ -52,7 +53,7 @@ describe('ModelConfigDialog connection test payload', () => {
     fireEvent.change(screen.getByLabelText('Base URL'), {
       target: { value: 'https://edited.test/v1' },
     });
-    fireEvent.change(screen.getByLabelText('模型 ID'), {
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), {
       target: { value: 'gemini-3.7-flash-tiered' },
     });
     fireEvent.click(screen.getByText('▸ 高级选项（可选）'));
@@ -153,7 +154,7 @@ describe('ModelConfigDialog connection test payload', () => {
     fireEvent.change(screen.getByLabelText('Base URL'), {
       target: { value: 'https://fresh.test/v1' },
     });
-    fireEvent.change(screen.getByLabelText('模型 ID'), {
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), {
       target: { value: 'fresh-model' },
     });
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
@@ -168,5 +169,84 @@ describe('ModelConfigDialog connection test payload', () => {
       reasoning_effort: '',
       headers: {},
     });
+  });
+});
+
+
+describe('model list editor', () => {
+  it('saves the model rows as model_ids with the first as default', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    const onSave = vi.fn(async () => {});
+    render(
+      <ModelConfigDialog open initial={null} onClose={() => {}} onSave={onSave} />,
+    );
+
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Go' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://opencode.ai/zen/go/v1' },
+    });
+    fireEvent.change(screen.getByLabelText('模型 ID 1'), {
+      target: { value: 'deepseek-v4.1-flash' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '添加模型' }));
+    fireEvent.change(screen.getByLabelText('模型 ID 2'), {
+      target: { value: 'mimo-v2.6-flash' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    await waitFor(() => expect(testModelConnection).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      model_id: 'deepseek-v4.1-flash',
+      model_ids: ['deepseek-v4.1-flash', 'mimo-v2.6-flash'],
+    })));
+    expect(testModelConnection).toHaveBeenCalledWith(expect.objectContaining({
+      model_id: 'deepseek-v4.1-flash',
+    }));
+  });
+
+  it('prefills rows from a stored config model list', () => {
+    renderDialog({ ...stored, model_ids: ['m-a', 'm-b', 'm-c'] });
+
+    expect(screen.getByLabelText('模型 ID 1')).toHaveValue('m-a');
+    expect(screen.getByLabelText('模型 ID 2')).toHaveValue('m-b');
+    expect(screen.getByLabelText('模型 ID 3')).toHaveValue('m-c');
+  });
+
+  it('merges fetched upstream models into the rows', async () => {
+    const { fetchModelCatalog } = await import('../../../api/client');
+    vi.mocked(fetchModelCatalog).mockResolvedValue({
+      model_ids: ['deepseek-v4.1-flash', 'mimo-v2.6-flash'], error: null,
+    });
+    renderDialog(stored);
+
+    fireEvent.click(screen.getByRole('button', { name: '从供应商拉取' }));
+
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config_id: 'a1', base_url: 'http://127.0.0.1:8045/v1',
+      }),
+    ));
+    await waitFor(() => {
+      expect(screen.getByLabelText('模型 ID 2')).toHaveValue('deepseek-v4.1-flash');
+      expect(screen.getByLabelText('模型 ID 3')).toHaveValue('mimo-v2.6-flash');
+    });
+  });
+
+  it('blocks save when every model row is blank', async () => {
+    vi.mocked(testModelConnection).mockResolvedValue({ ok: true, latency_ms: 5, error: null });
+    const onSave = vi.fn(async () => {});
+    render(
+      <ModelConfigDialog open initial={null} onClose={() => {}} onSave={onSave} />,
+    );
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Go' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://x/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() => expect(testModelConnection).not.toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: '测试连接' })).toBeDisabled();
+    expect(onSave).not.toHaveBeenCalled();
   });
 });
