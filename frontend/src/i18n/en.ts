@@ -469,6 +469,8 @@ export const en: typeof zh = {
       openaiResponses: 'OpenAI Responses API (/responses)',
       anthropic: 'Anthropic (Messages API)',
       customAnthropic: 'Custom · Anthropic-compatible (Messages API)',
+      jev: 'TypeSafe JEV (System One decision model)',
+      customSystemOne: 'Custom · System One-compatible (/systemone)',
     },
     title: 'Model configs',
     subtitle: 'Selectable when creating a game; "Env default (.env)" is always available',

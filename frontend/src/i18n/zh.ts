@@ -471,6 +471,8 @@ export const zh = {
       openaiResponses: 'OpenAI Responses API（/responses）',
       anthropic: 'Anthropic（Messages API）',
       customAnthropic: '自定义 · Anthropic 兼容（Messages API）',
+      jev: 'TypeSafe JEV（System One 决策模型）',
+      customSystemOne: '自定义 · System One 兼容（/systemone）',
     },
     title: '模型配置',
     subtitle: '创建游戏时可选；「环境默认 (.env)」始终可用',
