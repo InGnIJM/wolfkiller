@@ -23,7 +23,8 @@ from app.agents.output_parser import (
 # reads to choose a repair reminder over a verbatim resend.
 from app.agents.retry import UnusableModelOutput
 from app.agents.providers.base import (
-    API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS, CallPurpose,
+    API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS,
+    API_MODE_SYSTEM_ONE, CallPurpose,
     new_session_id,
 )
 # Re-exported so game code can classify provider failures without importing
@@ -453,6 +454,30 @@ class LLMClient:
         """Whether actions can use native tools, strict or otherwise."""
         return self.provider_profile.capabilities.tools
 
+    @property
+    def is_system_one(self) -> bool:
+        """Whether this client speaks the TypeSafe System One dialect.
+
+        A decision model (Jev) has no chat surface: ``get_model`` and friends
+        raise, and ballot contracts route to :meth:`ainvoke_system_one`.
+        """
+        return self.provider_profile.api_mode == API_MODE_SYSTEM_ONE
+
+    async def ainvoke_system_one(self, state, questions: dict):
+        """Run one System One decide call: ``state`` + typed ``questions``.
+
+        Returns the transport's ``SystemOneResponse`` (``answers`` keyed by the
+        caller's question ids, plus token usage). Non-system-one profiles lack
+        the dialect entirely and fail loudly instead of guessing a mapping.
+        """
+        if not self.is_system_one:
+            raise NotImplementedError(
+                "ainvoke_system_one requires a system_one provider profile",
+            )
+        return await self._transport.decide(
+            self._config, self.provider_profile, state, questions,
+        )
+
     def _build(
         self, purpose: CallPurpose, config: LLMClientConfig | None = None,
     ) -> BaseChatModel:
@@ -502,6 +527,11 @@ class LLMClient:
                 except Exception:
                     logger.debug("Failed to close %s client", attr, exc_info=True)
         self._built_models.clear()
+        # The system-one transport owns an httpx client directly; give it the
+        # same shutdown hook the SDK-backed transports get via the loop above.
+        transport_close = getattr(self._transport, "aclose", None)
+        if callable(transport_close):
+            await transport_close()
         # LangChain caches httpx clients process-wide. Closing the SDK wrapper
         # above shuts that shared pool; drop the cache so the next client does
         # not inherit a closed connection (AnthropicConnectionError / APIConnectionError).
@@ -555,6 +585,20 @@ class LLMClient:
 
     def probe(self) -> dict[str, bool]:
         """Invoke a minimal text request and return this profile's capabilities."""
+        if self.is_system_one:
+            # A decision model cannot complete text; a one-option Choice costs
+            # a handful of tokens and proves the endpoint, key and model id.
+            asyncio.run(
+                self.ainvoke_system_one(
+                    "ping",
+                    {"ping": {
+                        "type": "choice",
+                        "instructions": "Reply 'ok'.",
+                        "criteria": {"ok": "Affirmative"},
+                    }},
+                ),
+            )
+            return asdict(self.provider_profile.capabilities)
         self._complete(self.get_model(), [HumanMessage(content="ping")])
         return asdict(self.provider_profile.capabilities)
 
