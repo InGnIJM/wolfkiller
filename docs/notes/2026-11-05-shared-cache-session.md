@@ -126,3 +126,9 @@
 - `exile_vote` 的 `elapsed_ms` 显著下降（对照 ~40–60s 截断调用）。
 - 全局 `hit_rate_all` 变化记录于此；投票共享 client 后跨座位前缀复用预期略有帮助（同一后端同一 session）。
 - 投票质量抽查：放逐票 `reasoning` 合理性人工看 2–3 条。
+
+### 实现路径更新：reasoning_effort 透传（2026-11-06）
+
+投票截断的另一条退路已落地为通用机制：`ModelConfig.reasoning_effort`（`none|low|medium|high|max`，env `LLM_REASONING_EFFORT`）经 `LLMClientConfig` 透传进 chat-completions 请求体（`model_kwargs`）。unset = 不发送按提供商默认；DeepSeek 官方接受 `reasoning_effort: "none"` 关闭 thinking。
+
+用法：给 `deepseek-v4.1-flash` 复制一条 config、effort 选 `none`、指定为投票模型——投票与发言同源同模型，只关推理。**opencode-go 是否透传该字段未验证**：建 config 后用「测试连接」即可确认（不透传上游会 400 或静默忽略，后者以 `llm_calls.log` 的 elapsed/截断数判断）。若不透传，退路是直连 `api.deepseek.com` 建投票专用 config。
