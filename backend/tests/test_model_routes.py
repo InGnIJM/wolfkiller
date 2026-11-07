@@ -910,3 +910,205 @@ def test_to_response_builds_its_own_crypto_when_not_supplied(store):
 
     assert response.id == config.id
     assert response.latency is None
+
+
+# ── Model catalog ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_catalog_lists_upstream_model_ids(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(
+        name="Go", base_url="https://opencode.ai/zen/go/v1",
+        model_id="deepseek-v4.1-flash",
+    )
+    store.upsert(cfg)
+    calls = {}
+
+    async def fake_fetch(base_url, api_key, headers, api_mode):
+        calls.update(
+            base_url=base_url, api_key=api_key,
+            headers=headers, api_mode=api_mode,
+        )
+        return ["deepseek-v4.1-flash", "mimo-v2.6-flash"]
+
+    monkeypatch.setattr(model_routes, "_fetch_model_ids", fake_fetch)
+    response = await model_routes.model_catalog(cfg.id)
+
+    assert response.model_ids == ["deepseek-v4.1-flash", "mimo-v2.6-flash"]
+    assert response.error is None
+    assert calls["base_url"] == "https://opencode.ai/zen/go/v1"
+
+
+@pytest.mark.asyncio
+async def test_catalog_decrypts_the_stored_key(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(
+        name="Keyed", base_url="https://x/v1", model_id="m",
+        api_key_encrypted=ModelKeyCrypto().encrypt("sk-live"),
+    )
+    store.upsert(cfg)
+    calls = {}
+
+    async def fake_fetch(base_url, api_key, headers, api_mode):
+        calls["api_key"] = api_key
+        return []
+
+    monkeypatch.setattr(model_routes, "_fetch_model_ids", fake_fetch)
+    response = await model_routes.model_catalog(cfg.id)
+
+    assert calls["api_key"] == "sk-live"
+    assert response.error is None
+
+
+@pytest.mark.asyncio
+async def test_catalog_unknown_config_returns_404(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    with pytest.raises(HTTPException) as exc:
+        await model_routes.model_catalog("missing")
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_catalog_undecryptable_key_returns_400(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(
+        name="Bad", base_url="https://x/v1", model_id="m",
+        api_key_encrypted="not-fernet",
+    )
+    store.upsert(cfg)
+    with pytest.raises(HTTPException) as exc:
+        await model_routes.model_catalog(cfg.id)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_catalog_system_one_reports_no_listing(store, monkeypatch):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(
+        name="Jev", base_url="https://api.typesafe.ai",
+        model_id="jev-latest", provider_profile="jev",
+    )
+    store.upsert(cfg)
+    response = await model_routes.model_catalog(cfg.id)
+
+    assert response.model_ids == []
+    assert response.error
+
+
+@pytest.mark.asyncio
+async def test_catalog_upstream_failure_is_reported_not_raised(
+    store, monkeypatch,
+):
+    monkeypatch.setattr(model_routes, "get_model_config_store", lambda: store)
+    cfg = ModelConfig.new(name="Down", base_url="https://x/v1", model_id="m")
+    store.upsert(cfg)
+
+    async def boom(*args):
+        raise TimeoutError("connect timeout")
+
+    monkeypatch.setattr(model_routes, "_fetch_model_ids", boom)
+    response = await model_routes.model_catalog(cfg.id)
+
+    assert response.model_ids == []
+    assert "TimeoutError" in response.error
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_ids_sends_bearer_and_parses_data(monkeypatch):
+    captured = {}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "b"}, {"id": "a"}, {"id": "a"}, "junk", {}]}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return _Response()
+
+    monkeypatch.setattr(model_routes.httpx, "AsyncClient", _Client)
+    ids = await model_routes._fetch_model_ids(
+        "https://x/v1/", "sk", {"X-Trace": "1"}, "chat_completions",
+    )
+
+    assert ids == ["a", "b"]
+    assert captured["url"] == "https://x/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer sk"
+    assert captured["headers"]["X-Trace"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_ids_uses_anthropic_auth(monkeypatch):
+    captured = {}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "claude-1"}]}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers=None):
+            captured["headers"] = headers
+            return _Response()
+
+    monkeypatch.setattr(model_routes.httpx, "AsyncClient", _Client)
+    ids = await model_routes._fetch_model_ids(
+        "https://api.anthropic.com/v1", "ak", {}, "anthropic_messages",
+    )
+
+    assert ids == ["claude-1"]
+    assert captured["headers"]["x-api-key"] == "ak"
+    assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_ids_rejects_an_unexpected_payload(monkeypatch):
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"unexpected": True}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, headers=None):
+            return _Response()
+
+    monkeypatch.setattr(model_routes.httpx, "AsyncClient", _Client)
+    with pytest.raises(ValueError, match="payload"):
+        await model_routes._fetch_model_ids(
+            "https://x/v1", "", {}, "chat_completions",
+        )

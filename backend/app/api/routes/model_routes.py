@@ -6,12 +6,15 @@ import time
 import sys
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from app.agents.llm_client import LLMClient, LLMClientConfig, derive_strict_base_url
+from app.agents.providers.base import API_MODE_ANTHROPIC_MESSAGES, API_MODE_SYSTEM_ONE
 from app.agents.providers.registry import ProviderRegistry
 from app.api.model_schemas import (
-    ModelConfigRequest, ModelConfigResponse, ModelListResponse,
-    ModelCapabilitiesResponse, ModelLatencyStats, ModelTestRequest, ModelTestResponse,
+    ModelCatalogResponse, ModelConfigRequest, ModelConfigResponse,
+    ModelListResponse, ModelCapabilitiesResponse, ModelLatencyStats,
+    ModelTestRequest, ModelTestResponse,
 )
 from app.stores.model_config_store import ModelConfig, get_model_config_store
 from app.stores.model_key_crypto import (
@@ -197,6 +200,77 @@ async def delete_model(config_id: str):
             })
     if not get_model_config_store().delete(config_id):
         raise HTTPException(404, "model config not found")
+
+
+async def _fetch_model_ids(
+    base_url: str,
+    api_key: str,
+    headers: dict[str, str],
+    api_mode: str,
+    *,
+    timeout: float = 10.0,
+) -> list[str]:
+    """List the provider's ``GET /models`` catalog, if it exposes one.
+
+    OpenAI-compatible and Anthropic dialects both answer with a
+    ``{"data": [{"id": ...}]}`` envelope; only the auth header differs.
+    """
+    url = f"{base_url.rstrip('/')}/models"
+    request_headers = dict(headers)
+    if api_mode == API_MODE_ANTHROPIC_MESSAGES:
+        request_headers.setdefault("x-api-key", api_key)
+        request_headers.setdefault("anthropic-version", "2023-06-01")
+    elif api_key:
+        request_headers.setdefault("Authorization", f"Bearer {api_key}")
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url, headers=request_headers)
+        response.raise_for_status()
+        payload = response.json()
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise ValueError("unexpected /models payload")
+    return sorted({
+        item["id"]
+        for item in data
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    })
+
+
+@router.get("/{config_id}/catalog", response_model=ModelCatalogResponse)
+async def model_catalog(config_id: str):
+    """List the models a stored provider config can serve.
+
+    The game wizard offers the ids as suggestions for the per-selection
+    model field; a failed or missing listing is reported in ``error`` so the
+    field degrades to free text instead of blocking game creation.
+    """
+    config = get_model_config_store().get(config_id)
+    if config is None:
+        raise HTTPException(404, "model config not found")
+    api_key = ""
+    if config.api_key_encrypted:
+        try:
+            api_key = ModelKeyCrypto().decrypt(config.api_key_encrypted)
+        except KeyDecryptionError:
+            raise HTTPException(
+                400, "stored api key cannot be decrypted",
+            ) from None
+    profile = ProviderRegistry().resolve(
+        config.provider_profile, config.base_url, config.model_id,
+    )
+    if profile.api_mode == API_MODE_SYSTEM_ONE:
+        return ModelCatalogResponse(
+            model_ids=[], error="provider does not expose a model listing",
+        )
+    try:
+        model_ids = await _fetch_model_ids(
+            config.base_url, api_key, dict(config.headers), profile.api_mode,
+        )
+    except Exception as error:
+        return ModelCatalogResponse(
+            model_ids=[], error=type(error).__name__,
+        )
+    return ModelCatalogResponse(model_ids=model_ids)
 
 
 def _probe_model(config: LLMClientConfig) -> dict[str, bool]:
