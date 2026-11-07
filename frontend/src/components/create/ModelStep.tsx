@@ -7,6 +7,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 
+import { fetchModelCatalog } from '../../api/client';
 import ModelConfigDialog from '../models/ModelConfigDialog';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type { ModelAssignment, ModelConfigInput } from '../../store/types';
@@ -15,6 +16,7 @@ import {
   parseAssignmentCount,
 } from './assignmentQuantity';
 
+const EFFORT_VALUES = ['none', 'low', 'medium', 'high', 'max'] as const;
 
 interface Props {
   totalPlayers: number;
@@ -26,18 +28,35 @@ interface Props {
   onCommentaryConfigIdChange?: (configId: string | null) => void;
   voteConfigId?: string | null;
   onVoteConfigIdChange?: (configId: string | null) => void;
+  voteModelId?: string | null;
+  onVoteModelIdChange?: (modelId: string | null) => void;
+  voteReasoningEffort?: string | null;
+  onVoteReasoningEffortChange?: (effort: string | null) => void;
   disabled?: boolean;
 }
 
 interface AssignmentRow {
+  /** Stable React key; variant groups of one config get distinct keys. */
+  key: string;
   configId: string | null;
+  /** Index into `assignments`; null when the config has no entry yet. */
+  assignmentIndex: number | null;
+  /** True for extra variant groups the user can remove again. */
+  removable: boolean;
   name: string;
   detail: string;
   invalidReason: string | null;
 }
 
-function countFor(assignments: ModelAssignment[], configId: string | null): number {
-  return assignments.find((entry) => entry.config_id === configId)?.count ?? 0;
+function effortMenuItems(t: TFunction) {
+  return [
+    <MenuItem key="" value="">{t('create.effortInherit')}</MenuItem>,
+    ...EFFORT_VALUES.map((value) => (
+      <MenuItem key={value} value={value}>
+        {t(`models.reasoningEffortOption.${value}`)}
+      </MenuItem>
+    )),
+  ];
 }
 
 const STEP_BUTTON_SX = {
@@ -210,6 +229,10 @@ export default function ModelStep({
   onCommentaryConfigIdChange,
   voteConfigId = null,
   onVoteConfigIdChange,
+  voteModelId = null,
+  onVoteModelIdChange,
+  voteReasoningEffort = null,
+  onVoteReasoningEffortChange,
   disabled = false,
 }: Props) {
   const { t } = useTranslation();
@@ -219,6 +242,8 @@ export default function ModelStep({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [focusConfigId, setFocusConfigId] = useState<string | null>(null);
   const focusRowRef = useRef<HTMLDivElement | null>(null);
+  const [catalogs, setCatalogs] = useState<Record<string, string[]>>({});
+  const catalogRequested = useRef(new Set<string>());
 
   useEffect(() => {
     void load();
@@ -236,35 +261,83 @@ export default function ModelStep({
     [configs],
   );
 
+  // The provider's GET /models listing feeds the per-group model selector.
+  // A config that cannot list (e.g. JEV) degrades to a plain free-text field.
+  useEffect(() => {
+    configs.forEach((config) => {
+      if (config.key_invalid || catalogRequested.current.has(config.id)) return;
+      catalogRequested.current.add(config.id);
+      fetchModelCatalog(config.id)
+        .then((catalog) => {
+          setCatalogs((prev) => ({ ...prev, [config.id]: catalog.model_ids }));
+        })
+        .catch(() => undefined);
+    });
+  }, [configs]);
+
   const rows = useMemo<AssignmentRow[]>(() => {
-    const storedRows = configs.map((config) => ({
-      configId: config.id,
-      name: config.name,
-      detail: `${config.model_id} · ${config.base_url}`,
-      invalidReason: config.key_invalid
+    const result: AssignmentRow[] = [];
+    const envIndex = assignments.findIndex((entry) => entry.config_id === null);
+    result.push({
+      key: 'env',
+      configId: null,
+      assignmentIndex: envIndex === -1 ? null : envIndex,
+      removable: false,
+      name: t('create.envDefaultName'),
+      detail: t('create.envDefaultDetail'),
+      invalidReason: null,
+    });
+    configs.forEach((config) => {
+      const detail = `${config.model_id} · ${config.base_url}`;
+      const invalidReason = config.key_invalid
         ? t('create.keyInvalid')
         : loadError
           ? t('create.configUncertain')
-          : null,
-    }));
-    const orphanRows = assignments
-      .filter((entry) => entry.config_id !== null && !configById.has(entry.config_id))
-      .map((entry) => ({
+          : null;
+      const indexes = assignments
+        .map((entry, index) => (entry.config_id === config.id ? index : -1))
+        .filter((index) => index !== -1);
+      if (indexes.length === 0) {
+        result.push({
+          // Same key as the first group row below: typing a count must not
+          // remount the row and detach the focused input.
+          key: `group-${config.id}`,
+          configId: config.id,
+          assignmentIndex: null,
+          removable: false,
+          name: config.name,
+          detail,
+          invalidReason,
+        });
+        return;
+      }
+      indexes.forEach((assignmentIndex, variant) => {
+        result.push({
+          // The first group keeps the placeholder's key so a freshly typed
+          // count does not remount the row (and detach its focused input).
+          key: variant === 0 ? `group-${config.id}` : `entry-${assignmentIndex}`,
+          configId: config.id,
+          assignmentIndex,
+          removable: variant > 0,
+          name: config.name,
+          detail,
+          invalidReason,
+        });
+      });
+    });
+    assignments.forEach((entry, assignmentIndex) => {
+      if (entry.config_id === null || configById.has(entry.config_id)) return;
+      result.push({
+        key: `entry-${assignmentIndex}`,
         configId: entry.config_id,
+        assignmentIndex,
+        removable: false,
         name: t('create.deletedConfigName', { id: entry.config_id }),
         detail: t('create.deletedConfigDetail'),
         invalidReason: t('create.deletedConfigReason'),
-      }));
-    return [
-      {
-        configId: null,
-        name: t('create.envDefaultName'),
-        detail: t('create.envDefaultDetail'),
-        invalidReason: null,
-      },
-      ...storedRows,
-      ...orphanRows,
-    ];
+      });
+    });
+    return result;
   }, [assignments, configById, configs, loadError, t]);
 
   const assignedTotal = assignments.reduce(
@@ -273,16 +346,37 @@ export default function ModelStep({
   );
   const difference = totalPlayers - assignedTotal;
 
-  const updateCount = (configId: string | null, nextCount: number) => {
+  const patchEntry = (index: number, patch: Partial<ModelAssignment>) => {
+    onAssignmentsChange(assignments.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )));
+  };
+
+  const updateCount = (row: AssignmentRow, nextCount: number) => {
     const count = Math.max(0, nextCount);
-    const index = assignments.findIndex((entry) => entry.config_id === configId);
-    if (index === -1) {
-      onAssignmentsChange([...assignments, { config_id: configId, count }]);
+    if (row.assignmentIndex === null) {
+      onAssignmentsChange([...assignments, { config_id: row.configId, count }]);
       return;
     }
-    onAssignmentsChange(assignments.map((entry, entryIndex) => (
-      entryIndex === index ? { ...entry, count } : entry
-    )));
+    patchEntry(row.assignmentIndex, { count });
+  };
+
+  const addGroup = (configId: string) => {
+    onAssignmentsChange([...assignments, { config_id: configId, count: 0 }]);
+  };
+
+  const removeGroup = (index: number) => {
+    onAssignmentsChange(assignments.filter((_, entryIndex) => entryIndex !== index));
+  };
+
+  const modelOptionsFor = (configId: string | null): string[] => {
+    const stored = configId === null ? null : configById.get(configId)?.model_id;
+    const listed = configId === null ? [] : catalogs[configId] ?? [];
+    const options = stored ? [stored] : [];
+    listed.forEach((id) => {
+      if (!options.includes(id)) options.push(id);
+    });
+    return options;
   };
 
   const handleSaved = async (input: ModelConfigInput) => {
@@ -351,7 +445,10 @@ export default function ModelStep({
 
       <Stack spacing={1}>
         {rows.map((row) => {
-          const count = countFor(assignments, row.configId);
+          const entry = row.assignmentIndex === null
+            ? null
+            : assignments[row.assignmentIndex];
+          const count = entry?.count ?? 0;
           const invalid = Boolean(row.invalidReason);
           const decreaseLabel = row.configId === null
             ? t('create.decreaseEnv')
@@ -362,7 +459,7 @@ export default function ModelStep({
           const isPendingFocus = row.configId !== null && row.configId === focusConfigId;
           return (
             <Box
-              key={row.configId ?? 'environment-default'}
+              key={row.key}
               ref={isPendingFocus ? focusRowRef : undefined}
               role="group"
               aria-label={t('create.assignInput', { name: row.name })}
@@ -394,6 +491,31 @@ export default function ModelStep({
                 >
                   <Typography variant="body1">{row.name}</Typography>
                   {invalid && <Chip size="small" color="warning" label={t('create.unavailable')} />}
+                  {row.configId !== null && !invalid && (
+                    <Button
+                      size="small"
+                      variant="text"
+                      disabled={disabled}
+                      onClick={() => addGroup(row.configId as string)}
+                      sx={{ whiteSpace: 'nowrap' }}
+                    >
+                      {t('create.addGroup', { name: row.name })}
+                    </Button>
+                  )}
+                  {row.removable && row.assignmentIndex !== null && (
+                    <IconButton
+                      size="small"
+                      disabled={disabled}
+                      aria-label={t('create.removeGroup', { name: row.name })}
+                      onClick={() => {
+                        if (row.assignmentIndex !== null) {
+                          removeGroup(row.assignmentIndex);
+                        }
+                      }}
+                    >
+                      <RemoveIcon fontSize="small" />
+                    </IconButton>
+                  )}
                 </Stack>
                 <Typography
                   variant="body2"
@@ -406,6 +528,60 @@ export default function ModelStep({
                   <Typography variant="body2" color="warning.main">
                     {row.invalidReason}
                   </Typography>
+                )}
+                {entry && (
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1}
+                    useFlexGap
+                    sx={{ alignItems: 'center', flexWrap: 'wrap', mt: 1 }}
+                  >
+                    <TextField
+                      size="small"
+                      disabled={disabled}
+                      label={t('create.modelFieldLabel')}
+                      placeholder={
+                        configById.get(row.configId ?? '')?.model_id ?? ''
+                      }
+                      value={entry.model_id ?? ''}
+                      onChange={(e) => {
+                        if (row.assignmentIndex !== null) {
+                          patchEntry(row.assignmentIndex, {
+                            model_id: e.target.value.trim() || null,
+                          });
+                        }
+                      }}
+                      slotProps={{
+                        htmlInput: {
+                          list: `catalog-${row.key}`,
+                          'aria-label': t('create.groupModelAria', { name: row.name }),
+                        },
+                      }}
+                      sx={{ minWidth: 200, flex: 1 }}
+                    />
+                    <datalist id={`catalog-${row.key}`}>
+                      {modelOptionsFor(row.configId).map((id) => (
+                        <option key={id} value={id} />
+                      ))}
+                    </datalist>
+                    <Select
+                      size="small"
+                      displayEmpty
+                      disabled={disabled}
+                      value={entry.reasoning_effort ?? ''}
+                      inputProps={{ 'aria-label': t('create.groupEffortAria', { name: row.name }) }}
+                      onChange={(e) => {
+                        if (row.assignmentIndex !== null) {
+                          patchEntry(row.assignmentIndex, {
+                            reasoning_effort: e.target.value || null,
+                          });
+                        }
+                      }}
+                      sx={{ minWidth: 200 }}
+                    >
+                      {effortMenuItems(t)}
+                    </Select>
+                  </Stack>
                 )}
               </Box>
 
@@ -421,7 +597,7 @@ export default function ModelStep({
                 }
                 decreaseOneLabel={decreaseLabel}
                 increaseOneLabel={increaseLabel}
-                onChange={(nextCount) => updateCount(row.configId, nextCount)}
+                onChange={(nextCount) => updateCount(row, nextCount)}
               />
             </Box>
           );
@@ -550,6 +726,50 @@ export default function ModelStep({
                   ))}
               </Select>
             </Stack>
+            {voteConfigId && (
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                useFlexGap
+                sx={{ alignItems: 'center', flexWrap: 'wrap', mt: 2 }}
+              >
+                <TextField
+                  size="small"
+                  disabled={disabled}
+                  label={t('create.modelFieldLabel')}
+                  placeholder={configById.get(voteConfigId)?.model_id ?? ''}
+                  value={voteModelId ?? ''}
+                  onChange={(e) => {
+                    onVoteModelIdChange?.(e.target.value.trim() || null);
+                  }}
+                  slotProps={{
+                    htmlInput: {
+                      list: 'vote-model-catalog',
+                      'aria-label': t('create.voteModelIdAria'),
+                    },
+                  }}
+                  sx={{ minWidth: 200, flex: 1 }}
+                />
+                <datalist id="vote-model-catalog">
+                  {modelOptionsFor(voteConfigId).map((id) => (
+                    <option key={id} value={id} />
+                  ))}
+                </datalist>
+                <Select
+                  size="small"
+                  displayEmpty
+                  disabled={disabled}
+                  value={voteReasoningEffort ?? ''}
+                  inputProps={{ 'aria-label': t('create.voteEffortAria') }}
+                  onChange={(e) => {
+                    onVoteReasoningEffortChange?.(e.target.value || null);
+                  }}
+                  sx={{ minWidth: 200 }}
+                >
+                  {effortMenuItems(t)}
+                </Select>
+              </Stack>
+            )}
           </Box>
         )}
       </Stack>

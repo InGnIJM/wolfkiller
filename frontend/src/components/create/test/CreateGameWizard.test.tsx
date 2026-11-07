@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CreateGameWizard from '../CreateGameWizard';
 import {
-  createGame, createModel, fetchConstraints, fetchPresets, fetchRoleCatalog,
-  listModels, testModelConnection,
+  createGame, createModel, fetchConstraints, fetchModelCatalog, fetchPresets,
+  fetchRoleCatalog, listModels, testModelConnection,
 } from '../../../api/client';
 import type { GamePreset } from '../../../store/types';
 import { useModelConfigStore } from '../../../store/modelConfigStore';
@@ -22,6 +22,7 @@ vi.mock('../../../api/client', () => ({
   fetchRoleCatalog: vi.fn(),
   fetchPresets: vi.fn(),
   fetchConstraints: vi.fn(),
+  fetchModelCatalog: vi.fn(),
 }));
 
 const navigateMock = vi.fn();
@@ -78,6 +79,9 @@ beforeEach(() => {
   vi.mocked(fetchConstraints).mockResolvedValue(CONSTRAINTS);
   vi.mocked(listModels).mockResolvedValue([MODEL]);
   vi.mocked(createGame).mockResolvedValue({ game_id: 'g1' });
+  vi.mocked(fetchModelCatalog).mockResolvedValue({
+    model_ids: ['deepseek-v4-pro', 'mimo-v2.6-flash'], error: null,
+  });
 });
 
 afterEach(() => {
@@ -184,6 +188,8 @@ describe('CreateGameWizard step 2 and submission', () => {
         victory: 'edge',
         model_assignments: [{ config_id: null, count: 9 }],
         vote_model_config_id: null,
+        vote_model_id: null,
+        vote_reasoning_effort: null,
       }),
     );
     expect(navigateMock).toHaveBeenCalledWith('/game/g1');
@@ -478,6 +484,95 @@ describe('CreateGameWizard step 2 and submission', () => {
       expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
         commentary_enabled: true,
         commentary_config_id: null,
+      })),
+    );
+  });
+});
+
+describe('CreateGameWizard per-selection model overrides', () => {
+  async function toModelStep() {
+    await renderStep1();
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    await waitFor(() => expect(screen.getByText('环境默认 (.env)')).toBeInTheDocument());
+  }
+  const goToStep2 = toModelStep;
+
+  it('fetches the provider catalog for stored configs', async () => {
+    await goToStep2();
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledWith('m1'));
+  });
+
+  it('sends a group model_id and reasoning_effort override', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '将环境默认模型减少 10 人' }));
+    fireEvent.click(screen.getByRole('button', { name: '将 DeepSeek Pro 增加 10 人' }));
+    const modelInput = await screen.findByRole('combobox', { name: 'DeepSeek Pro 模型' });
+    fireEvent.change(modelInput, { target: { value: 'mimo-v2.6-flash' } });
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'DeepSeek Pro 思考强度' }));
+    fireEvent.click(await screen.findByText('关闭思考（none）'));
+
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        model_assignments: [
+          {
+            config_id: 'm1', count: 9,
+            model_id: 'mimo-v2.6-flash', reasoning_effort: 'none',
+          },
+        ],
+        vote_model_id: null,
+        vote_reasoning_effort: null,
+      })),
+    );
+  });
+
+  it('splits one provider into two groups with different models', async () => {
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '将环境默认模型减少 10 人' }));
+    // First click creates the group; the second adds a variant row.
+    fireEvent.click(screen.getByRole('button', { name: '再加一组 DeepSeek Pro' }));
+    fireEvent.click(await screen.findByRole('button', { name: '再加一组 DeepSeek Pro' }));
+
+    const groups = screen.getAllByRole('group')
+      .filter((g) => g.getAttribute('aria-label') === 'DeepSeek Pro 人数分配');
+    expect(groups).toHaveLength(2);
+    const countInputs = groups.map((g) => within(g).getByRole('textbox', { name: 'DeepSeek Pro 人数输入' }));
+    fireEvent.change(countInputs[0], { target: { value: '5' } });
+    fireEvent.blur(countInputs[0]);
+    fireEvent.change(countInputs[1], { target: { value: '4' } });
+    fireEvent.blur(countInputs[1]);
+
+    const modelInputs = groups.map((g) => within(g).getByRole('combobox', { name: 'DeepSeek Pro 模型' }));
+    fireEvent.change(modelInputs[0], { target: { value: 'deepseek-v4-pro' } });
+    fireEvent.change(modelInputs[1], { target: { value: 'mimo-v2.6-flash' } });
+
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        model_assignments: [
+          { config_id: 'm1', count: 5, model_id: 'deepseek-v4-pro' },
+          { config_id: 'm1', count: 4, model_id: 'mimo-v2.6-flash' },
+        ],
+      })),
+    );
+  }, 15000);
+
+  it('sends vote model id and effort overrides', async () => {
+    await goToStep2();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '放逐投票模型' }));
+    fireEvent.click(await screen.findByRole('option', { name: /DeepSeek Pro/ }));
+
+    const voteModelInput = await screen.findByRole('combobox', { name: '投票模型 ID' });
+    fireEvent.change(voteModelInput, { target: { value: 'mimo-v2.6-flash' } });
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '投票模型思考强度' }));
+    fireEvent.click(await screen.findByText('关闭思考（none）'));
+
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        vote_model_config_id: 'm1',
+        vote_model_id: 'mimo-v2.6-flash',
+        vote_reasoning_effort: 'none',
       })),
     );
   });
