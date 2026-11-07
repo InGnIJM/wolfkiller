@@ -13,7 +13,7 @@ import importlib
 
 from .base import (
     API_MODE_ANTHROPIC_MESSAGES, API_MODE_CHAT_COMPLETIONS,
-    API_MODE_OPENAI_RESPONSES, ProviderProfile,
+    API_MODE_OPENAI_RESPONSES, API_MODE_SYSTEM_ONE, ProviderProfile,
 )
 
 
@@ -29,6 +29,10 @@ _TRANSPORTS = {
     API_MODE_OPENAI_RESPONSES: (
         "app.agents.providers.openai_responses",
         "OpenAIResponsesTransport",
+    ),
+    API_MODE_SYSTEM_ONE: (
+        "app.agents.providers.system_one",
+        "SystemOneTransport",
     ),
 }
 

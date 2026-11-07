@@ -9,6 +9,10 @@ from enum import StrEnum
 API_MODE_CHAT_COMPLETIONS = "chat_completions"
 API_MODE_ANTHROPIC_MESSAGES = "anthropic_messages"
 API_MODE_OPENAI_RESPONSES = "openai_responses"
+#: TypeSafe's System One dialect (Jev): ``POST /v1/systemone`` takes a
+#: ``state`` blob plus typed ``questions`` and returns typed answers, not
+#: generated text. It cannot serve any chat-surface call.
+API_MODE_SYSTEM_ONE = "system_one"
 
 #: Path suffix that selects the OpenAI Responses dialect. Providers publish
 #: endpoints in this form (e.g. ``https://opencode.ai/zen/v1/responses``) and
