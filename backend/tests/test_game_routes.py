@@ -2823,6 +2823,8 @@ async def test_create_game_with_commentary_options_forwards_only_when_set(monkey
         vote_reasoning_effort=None,
         commentary_enabled=True,
         commentary_config_id="cfg-1",
+        commentary_model_id=None,
+        commentary_reasoning_effort=None,
     )
 
 
@@ -2855,4 +2857,41 @@ async def test_create_game_passes_vote_model_overrides(monkeypatch):
         vote_model_config_id="cfg-9",
         vote_model_id="mimo-v2.6-flash",
         vote_reasoning_effort="none",
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_game_passes_commentary_model_overrides(monkeypatch) -> None:
+    counts = {"wolf-killer-werewolf": 1, "wolf-killer-villager": 3}
+    service = MagicMock()
+    service.create_game = AsyncMock(return_value="game-comm")
+    service.get_game_state.return_value = SimpleNamespace(
+        players={1: object(), 2: object(), 3: object(), 4: object()},
+        config=SimpleNamespace(role_counts=counts, reveal_on_death=False, enable_sheriff=False),
+    )
+    monkeypatch.setattr(game_routes, "get_service", lambda: service)
+
+    await game_routes.create_game(
+        CreateGameRequest(
+            role_counts=counts,
+            commentary_enabled=True,
+            commentary_config_id="cfg-1",
+            commentary_model_id="mimo-v2.6-flash",
+            commentary_reasoning_effort="none",
+        )
+    )
+    service.create_game.assert_awaited_once_with(
+        role_counts=counts,
+        reveal_on_death=False,
+        enable_sheriff=False,
+        witch_self_save="first_night_only",
+        victory="edge",
+        model_assignments=None,
+        vote_model_config_id=None,
+        vote_model_id=None,
+        vote_reasoning_effort=None,
+        commentary_enabled=True,
+        commentary_config_id="cfg-1",
+        commentary_model_id="mimo-v2.6-flash",
+        commentary_reasoning_effort="none",
     )

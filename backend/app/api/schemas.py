@@ -22,6 +22,8 @@ class CreateGameRequest(BaseModel):
     model_assignments: Optional[list[ModelAssignment]] = None
     commentary_enabled: bool = False
     commentary_config_id: Optional[str] = None
+    commentary_model_id: Optional[str] = None
+    commentary_reasoning_effort: Optional[ReasoningEffortId] = None
     vote_model_config_id: Optional[str] = None
     vote_model_id: Optional[str] = None
     vote_reasoning_effort: Optional[ReasoningEffortId] = None

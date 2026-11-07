@@ -134,10 +134,17 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
         else None
     )
     comm_kwargs: dict[str, Any] = {}
-    if req.commentary_enabled or req.commentary_config_id is not None:
+    if (
+        req.commentary_enabled
+        or req.commentary_config_id is not None
+        or req.commentary_model_id is not None
+        or req.commentary_reasoning_effort is not None
+    ):
         comm_kwargs = {
             "commentary_enabled": req.commentary_enabled,
             "commentary_config_id": req.commentary_config_id,
+            "commentary_model_id": req.commentary_model_id,
+            "commentary_reasoning_effort": req.commentary_reasoning_effort,
         }
     try:
         if req.role_counts is not None:
