@@ -25,9 +25,15 @@ class ToolCallResult:
 
 class ToolCallError(ActionValidationError):
     """Raised when tool call validation fails, with reason for caller."""
-    def __init__(self, reason: str, *, code: str = "action_validation_error"):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        code: str = "action_validation_error",
+        missing_fields: tuple[str, ...] = (),
+    ):
         self.reason = reason
-        super().__init__(reason, code=code)
+        super().__init__(reason, code=code, missing_fields=missing_fields)
 
 
 class StrictCapabilityError(RuntimeError):
@@ -279,7 +285,14 @@ class OutputParser:
             command = ActionCommand.model_validate(payload, strict=True)
         except ValidationError as error:
             code = _schema_failure_code({item["type"] for item in error.errors()})
-            raise ToolCallError("invalid action payload", code=code) from error
+            missing = tuple(
+                str(item["loc"][-1])
+                for item in error.errors()
+                if item["type"] == "missing" and item.get("loc")
+            )
+            raise ToolCallError(
+                "invalid action payload", code=code, missing_fields=missing,
+            ) from error
 
         schema = contract.json_schema()
         action_schema = schema["properties"]["action_type"]
@@ -351,7 +364,10 @@ class OutputParser:
                 tool_call["name"], tool_call.get("args", {}), contract
             )
         except ToolCallError as error:
-            raise ActionValidationError(error.reason, code=error.code) from error
+            raise ActionValidationError(
+                error.reason, code=error.code,
+                missing_fields=error.missing_fields,
+            ) from error
 
     def parse_night_action(self, raw: str, player_seat: int) -> NightAction:
         parsed = self._extract_json(raw)
