@@ -24,6 +24,8 @@ interface Props {
   onCommentaryEnabledChange?: (enabled: boolean) => void;
   commentaryConfigId?: string | null;
   onCommentaryConfigIdChange?: (configId: string | null) => void;
+  voteConfigId?: string | null;
+  onVoteConfigIdChange?: (configId: string | null) => void;
   disabled?: boolean;
 }
 
@@ -206,6 +208,8 @@ export default function ModelStep({
   onCommentaryEnabledChange,
   commentaryConfigId = null,
   onCommentaryConfigIdChange,
+  voteConfigId = null,
+  onVoteConfigIdChange,
   disabled = false,
 }: Props) {
   const { t } = useTranslation();
@@ -494,6 +498,57 @@ export default function ModelStep({
                     ))}
                 </Select>
               )}
+            </Stack>
+          </Box>
+        )}
+
+        {onVoteConfigIdChange && (
+          <Box
+            sx={{
+              p: 2,
+              borderRadius: 2,
+              border: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+            }}
+          >
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={2}
+              sx={{
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                justifyContent: 'space-between',
+              }}
+            >
+              <Box>
+                <Typography variant="body1">
+                  {t('create.voteModelLabel')}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {t('create.voteModelHint')}
+                </Typography>
+              </Box>
+              <Select
+                size="small"
+                disabled={disabled}
+                value={voteConfigId ?? ''}
+                displayEmpty
+                inputProps={{ 'aria-label': t('create.voteModelAria') }}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onVoteConfigIdChange(val === '' ? null : val);
+                }}
+                sx={{ minWidth: 220 }}
+              >
+                <MenuItem value="">{t('create.followSeatModel')}</MenuItem>
+                {configs
+                  .filter((cfg) => !cfg.key_invalid)
+                  .map((cfg) => (
+                    <MenuItem key={cfg.id} value={cfg.id}>
+                      {cfg.name} ({cfg.model_id})
+                    </MenuItem>
+                  ))}
+              </Select>
             </Stack>
           </Box>
         )}

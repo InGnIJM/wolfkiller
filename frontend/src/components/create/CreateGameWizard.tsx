@@ -29,6 +29,7 @@ export default function CreateGameWizard() {
   const [victory, setVictory] = useState<VictoryPolicy>('edge');
   const [commentaryEnabled, setCommentaryEnabled] = useState(false);
   const [commentaryConfigId, setCommentaryConfigId] = useState<string | null>(null);
+  const [voteConfigId, setVoteConfigId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const modelConfigs = useModelConfigStore((state) => state.configs);
@@ -89,6 +90,7 @@ export default function CreateGameWizard() {
               commentary_config_id: commentaryConfigId,
             }
           : {}),
+        vote_model_config_id: voteConfigId,
       });
       navigate(`/game/${res.game_id}`);
     } catch (err) {
@@ -136,6 +138,8 @@ export default function CreateGameWizard() {
           onCommentaryEnabledChange={setCommentaryEnabled}
           commentaryConfigId={commentaryConfigId}
           onCommentaryConfigIdChange={setCommentaryConfigId}
+          voteConfigId={voteConfigId}
+          onVoteConfigIdChange={setVoteConfigId}
           disabled={creating}
         />
       )}

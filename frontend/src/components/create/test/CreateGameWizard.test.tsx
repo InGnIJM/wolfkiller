@@ -183,6 +183,7 @@ describe('CreateGameWizard step 2 and submission', () => {
         witch_self_save: 'first_night_only',
         victory: 'edge',
         model_assignments: [{ config_id: null, count: 9 }],
+        vote_model_config_id: null,
       }),
     );
     expect(navigateMock).toHaveBeenCalledWith('/game/g1');
@@ -449,6 +450,22 @@ describe('CreateGameWizard step 2 and submission', () => {
 
     await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('forwards a chosen vote model and defaults to following the seat model', async () => {
+    await goToStep2();
+    const voteSelect = screen.getByRole('combobox', { name: '放逐投票模型' });
+    expect(voteSelect).toHaveTextContent('跟随座位模型');
+
+    fireEvent.mouseDown(voteSelect);
+    fireEvent.click(await screen.findByRole('option', { name: /DeepSeek Pro/ }));
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+
+    await waitFor(() =>
+      expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+        vote_model_config_id: 'm1',
+      })),
+    );
   });
 
   it('enables god-view commentary and forwards commentary_enabled + commentary_config_id', async () => {
