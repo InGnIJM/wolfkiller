@@ -105,6 +105,57 @@ def eligible_sheriff_voters(ran: frozenset[int], alive: frozenset[int]) -> froze
     return alive - ran
 
 
+def sheriff_vote_decision(state: GameState, seat: int) -> dict | None:
+    """System-one spec for one sheriff ballot, or ``None`` when underivable.
+
+    The choice question mirrors the answer set ``vote_turn`` accepts: one
+    option per live candidate (``office.active`` on the first ballot,
+    ``office.pk_seats`` in the runoff), ``pass``, and ``explode`` only for a
+    wolf the rules let swallow the badge. ``answer_map`` translates the
+    picked option back into the JSON payload ``parse_vote`` already reads.
+    """
+    office = state.sheriff_office
+    if office.step == "vote":
+        candidates = office.active
+    elif office.step == "pk":
+        candidates = office.pk_seats
+    else:
+        return None
+    if not candidates:
+        return None
+    player = state.players.get(seat)
+    explode = (
+        player is not None
+        and player.camp == Camp.WEREWOLF
+        and SheriffDirector._may_explode(state, seat)
+    )
+    criteria = {
+        str(item): f"投票给{item}号当选警长" for item in sorted(candidates)
+    }
+    criteria["pass"] = "弃权：本轮不投警长票"
+    answer_map = {
+        str(item): {"action_type": "vote", "target_seat": item}
+        for item in candidates
+    }
+    answer_map["pass"] = {"action_type": "pass"}
+    if explode:
+        criteria["explode"] = "自爆吞警徽：立即自爆，警徽流失（只死自己）"
+        answer_map["explode"] = {"action_type": "explode"}
+    return {
+        "questions": {
+            "sheriff_vote": {
+                "type": "choice",
+                "instructions": (
+                    "狼人杀警长投票：结合警上发言与局势选出应当选警长的候选人；"
+                    "没有明确判断时选择弃权。"
+                ),
+                "criteria": criteria,
+            },
+        },
+        "answer_map": answer_map,
+    }
+
+
 def decide_tally(counts: Mapping[int, int]) -> tuple[Optional[int], tuple[int, ...]]:
     if not counts:
         return None, ()
