@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +11,7 @@ from app.config import PipelineMode
 from app.core.event_bus import EventBus, GameEvent as BusEvent
 from app.core.game_engine import GameEngine
 from app.core.role_pipeline import PipelineResult
+from app.core.scheduler import PipelinePaused
 from app.core.sheriff_flow import (
     DEATH_LEFT,
     DEATH_RIGHT,
@@ -27,13 +30,26 @@ import app.core.game_engine as game_engine_module
 
 
 class ScriptedSheriff:
+    """Seat-keyed scripted director.
+
+    ``withdraw``/``votes`` map a seat to the queue of answers it returns in
+    order: the withdraw and ballot stages collect every seat's answer
+    concurrently, so a single shared queue would bind answers to seats at
+    random. ``campaign`` stays a plain queue — the run stage is still
+    sequential.
+    """
+
     def __init__(
-        self, campaign=(), withdraw=(), votes=(), side=SHERIFF_LEFT,
+        self, campaign=(), withdraw=None, votes=None, side=SHERIFF_LEFT,
         badge=("tear", None), badge_reason="",
     ):
         self.campaign = list(campaign)
-        self.withdraw = list(withdraw)
-        self.votes = list(votes)
+        self.withdraw = {
+            seat: list(items) for seat, items in (withdraw or {}).items()
+        }
+        self.votes = {
+            seat: list(items) for seat, items in (votes or {}).items()
+        }
         self.side = side
         self.badge = badge
         self.badge_reason = badge_reason
@@ -42,10 +58,12 @@ class ScriptedSheriff:
         return self.campaign.pop(0) if self.campaign else "pass"
 
     def withdraw_turn(self, state, seat, *, wolf):
-        return self.withdraw.pop(0) if self.withdraw else "stay"
+        queue = self.withdraw.get(seat)
+        return queue.pop(0) if queue else "stay"
 
     def vote_turn(self, state, seat, candidates, *, wolf):
-        return self.votes.pop(0) if self.votes else None
+        queue = self.votes.get(seat)
+        return queue.pop(0) if queue else None
 
     def side_turn(self, state, seat, sides):
         return self.side if self.side in sides else sides[0]
@@ -129,7 +147,7 @@ async def test_withdraw_to_one_candidate_and_skip_dead_campaigners() -> None:
     engine.state.players[4].is_alive = False
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run"],
-        withdraw=["withdraw", "stay"],
+        withdraw={2: ["withdraw"], 3: ["stay"]},
     )
     engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
     await engine._execute_sheriff_election()
@@ -142,8 +160,8 @@ async def test_vote_elects_and_pk_breaks_a_tie() -> None:
     engine = _engine()
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[2, 3, 2, 2],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [2, 2], 4: [3, 2]},
     )
     engine.speak = AsyncMock(return_value="平票加赛，请再听我一次竞选发言。")
     await engine._execute_sheriff_election()
@@ -156,8 +174,8 @@ async def test_tied_pk_and_empty_tally_destroy_the_badge() -> None:
     engine = _engine()
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[2, 3, 2, 3],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [2, 2], 4: [3, 3]},
     )
     engine.speak = AsyncMock(return_value="加赛发言请再考虑一下我的上警理由。")
     await engine._execute_sheriff_election()
@@ -167,8 +185,8 @@ async def test_tied_pk_and_empty_tally_destroy_the_badge() -> None:
     engine = _engine()
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[None, None],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [None], 4: [None]},
     )
     engine.speak = AsyncMock(return_value="我会认真当警长，请大家投票给我。")
     await engine._execute_sheriff_election()
@@ -180,7 +198,7 @@ async def test_all_alive_remain_after_withdraw_destroys_badge() -> None:
     engine = _engine(seats=3)
     engine._sheriff_director = ScriptedSheriff(
         campaign=["run", "run", "run"],
-        withdraw=["stay", "stay", "stay"],
+        withdraw={1: ["stay"], 2: ["stay"], 3: ["stay"]},
     )
     engine.speak = AsyncMock(return_value="全员上警后我选择继续留在警上。")
     await engine._execute_sheriff_election()
@@ -252,7 +270,7 @@ async def test_explode_on_withdraw_and_vote_and_dead_player_is_ignored() -> None
     engine = _engine(wolves=2)
     engine._sheriff_director = ScriptedSheriff(
         campaign=["run", "run"],
-        withdraw=["explode"],
+        withdraw={1: ["explode"]},
     )
     engine.speak = AsyncMock(return_value="先听我竞选，再决定是否退水。")
     await engine._execute_sheriff_election()
@@ -262,8 +280,8 @@ async def test_explode_on_withdraw_and_vote_and_dead_player_is_ignored() -> None
     engine = _engine(wolves=2)
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=["explode"],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: ["explode"]},
     )
     engine.speak = AsyncMock(return_value="投票前我再强调一次上警理由请支持。")
     await engine._execute_sheriff_election()
@@ -298,7 +316,7 @@ async def test_resume_campaign_withdraw_vote_and_pk_steps() -> None:
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.active = {2, 3}
     engine._sheriff_director = ScriptedSheriff(
-        withdraw=["stay", "stay"], votes=[2, None],
+        withdraw={2: ["stay"], 3: ["stay"]}, votes={1: [2], 4: [None]},
     )
     engine.speak = AsyncMock(return_value="续跑竞选发言，请投给我这个位置。")
     await engine._execute_sheriff_election()
@@ -308,7 +326,7 @@ async def test_resume_campaign_withdraw_vote_and_pk_steps() -> None:
     engine.state.sheriff_office.step = "vote"
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.active = {2, 3}
-    engine._sheriff_director = ScriptedSheriff(votes=[3, 3])
+    engine._sheriff_director = ScriptedSheriff(votes={1: [3], 4: [3]})
     await engine._execute_sheriff_election()
     assert engine.state.sheriff == 3
 
@@ -317,7 +335,7 @@ async def test_resume_campaign_withdraw_vote_and_pk_steps() -> None:
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.pk_seats = {2, 3}
     engine.state.players[2].is_alive = False
-    engine._sheriff_director = ScriptedSheriff(votes=[3])
+    engine._sheriff_director = ScriptedSheriff(votes={1: [3]})
     engine.speak = AsyncMock(return_value="PK 加赛发言请再投我一次谢谢。")
     await engine._execute_sheriff_election()
     assert engine.state.sheriff == 3
@@ -328,7 +346,7 @@ async def test_resume_campaign_withdraw_vote_and_pk_steps() -> None:
     engine.state.sheriff_office.active = {2, 3, 9}
     engine.speak = AsyncMock(return_value=None)
     engine._sheriff_director = ScriptedSheriff(
-        withdraw=["stay", "stay"], votes=[2, None],
+        withdraw={2: ["stay"], 3: ["stay"]}, votes={1: [2], 4: [None]},
     )
     await engine._execute_sheriff_election()
     assert engine.state.sheriff == 2
@@ -337,7 +355,7 @@ async def test_resume_campaign_withdraw_vote_and_pk_steps() -> None:
     engine.state.sheriff_office.step = "withdraw"
     engine.state.sheriff_office.candidates = {2, 3, 9}
     engine.state.players[3].is_alive = False
-    engine._sheriff_director = ScriptedSheriff(withdraw=["stay"])
+    engine._sheriff_director = ScriptedSheriff(withdraw={2: ["stay"]})
     await engine._execute_sheriff_election()
     assert engine.state.sheriff == 2
 
@@ -352,7 +370,7 @@ async def test_resume_campaign_withdraw_vote_and_pk_steps() -> None:
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.pk_seats = {2, 3}
     engine.speak = AsyncMock(return_value=None)
-    engine._sheriff_director = ScriptedSheriff(votes=[3, None])
+    engine._sheriff_director = ScriptedSheriff(votes={1: [3], 4: [None]})
     await engine._execute_sheriff_election()
     assert engine.state.sheriff == 3
 
@@ -370,7 +388,7 @@ async def test_vote_skips_a_voter_who_dies_mid_round() -> None:
     engine.state.sheriff_office.step = "vote"
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.active = {2, 3}
-    engine._sheriff_director = _KillVoterSheriff(votes=[2])
+    engine._sheriff_director = _KillVoterSheriff(votes={1: [2]})
     await engine._execute_sheriff_election()
     assert engine.state.sheriff == 2
 
@@ -611,8 +629,8 @@ async def test_campaign_and_pk_speeches_are_public_and_do_not_block_day_speech()
     engine = _engine()
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[2, 3, 2, 2],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [2, 2], 4: [3, 2]},
         side=SHERIFF_LEFT,
     )
     audience: list[tuple[str, dict]] = []
@@ -658,8 +676,8 @@ async def test_campaign_speeches_are_written_to_game_log(tmp_path) -> None:
     engine = _engine(data_dir=str(tmp_path))
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[2, 3, 2, 2],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [2, 2], 4: [3, 2]},
     )
     engine.speak = AsyncMock(return_value="请投给我，我会认真履职保护好人。")
 
@@ -694,8 +712,8 @@ async def test_a_sheriff_technical_abstain_is_checkpointed_and_announced() -> No
     engine = _engine()
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[SHERIFF_TECHNICAL_ABSTAIN, 2],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [SHERIFF_TECHNICAL_ABSTAIN], 4: [2]},
     )
     labels: list[str] = []
     engine._checkpoint_hook = labels.append
@@ -740,7 +758,7 @@ async def test_pk_speech_appends_speech_record_with_election_phase() -> None:
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.pk_seats = {2, 3}
     engine.speak = AsyncMock(return_value="PK 加赛发言请再投我一次谢谢。")
-    engine._sheriff_director = ScriptedSheriff(votes=[3, None])
+    engine._sheriff_director = ScriptedSheriff(votes={1: [3], 4: [None]})
     await engine._execute_sheriff_election()
     assert [record.phase for record in engine.state.speeches] == [
         "sheriff_election", "sheriff_election",
@@ -753,10 +771,14 @@ async def test_pk_speech_appends_speech_record_with_election_phase() -> None:
 class RecordingSheriff:
     """Scripted director that captures every prompt it receives."""
 
-    def __init__(self, campaign=(), withdraw=(), votes=()):
+    def __init__(self, campaign=(), withdraw=None, votes=None):
         self.campaign = list(campaign)
-        self.withdraw = list(withdraw)
-        self.votes = list(votes)
+        self.withdraw = {
+            seat: list(items) for seat, items in (withdraw or {}).items()
+        }
+        self.votes = {
+            seat: list(items) for seat, items in (votes or {}).items()
+        }
         self.side = SHERIFF_LEFT
         self.badge = ("tear", None)
         self.badge_reason = ""
@@ -771,11 +793,13 @@ class RecordingSheriff:
 
     def withdraw_turn(self, state, seat, *, wolf):
         self._record(_last_messages.get("withdraw", ["", ""]))
-        return self.withdraw.pop(0) if self.withdraw else "stay"
+        queue = self.withdraw.get(seat)
+        return queue.pop(0) if queue else "stay"
 
     def vote_turn(self, state, seat, candidates, *, wolf):
         self._record(_last_messages.get("vote", ["", ""]))
-        return self.votes.pop(0) if self.votes else None
+        queue = self.votes.get(seat)
+        return queue.pop(0) if queue else None
 
     def side_turn(self, state, seat, sides):
         return self.side if self.side in sides else sides[0]
@@ -799,7 +823,8 @@ async def test_withdraw_decision_sees_campaign_speeches() -> None:
     from app.core.conversation_log import ConversationLog
     engine = _engine(seats=12, wolves=4)
     engine._sheriff_director = ScriptedSheriff(
-        campaign=["run"] * 12, withdraw=["withdraw"] * 10 + ["stay", "stay"],
+        campaign=["run"] * 12,
+        withdraw={seat: ["withdraw"] for seat in range(1, 11)},
     )
     engine.speak = AsyncMock(return_value="我是真预言家，昨晚查验3号是金水。")
     await engine._execute_sheriff_election()
@@ -811,7 +836,8 @@ async def test_withdraw_decision_sees_campaign_speeches() -> None:
 async def test_all_run_badge_loss_announces_reason() -> None:
     engine = _engine(seats=3)
     engine._sheriff_director = ScriptedSheriff(
-        campaign=["run", "run", "run"], withdraw=["withdraw", "stay", "stay"],
+        campaign=["run", "run", "run"],
+        withdraw={1: ["withdraw"], 2: ["stay"], 3: ["stay"]},
     )
     engine.speak = AsyncMock(return_value="请听我说明上警理由后再决定去留。")
     await engine._execute_sheriff_election()
@@ -834,7 +860,7 @@ async def test_badge_loss_message_for_all_withdraw() -> None:
     engine = _engine(seats=4)
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass"],
-        withdraw=["withdraw", "withdraw"],
+        withdraw={2: ["withdraw"], 3: ["withdraw"]},
     )
     engine.speak = AsyncMock(return_value="我退水，把警徽让给真预言家。")
     await engine._execute_sheriff_election()
@@ -1122,8 +1148,8 @@ async def test_a_first_night_victim_still_votes_for_sheriff() -> None:
     engine.state.death_history = [DeathReport(5, "wolf_kill", 1)]
     engine._sheriff_director = ScriptedSheriff(
         campaign=["pass", "run", "run", "pass", "pass"],
-        withdraw=["stay", "stay"],
-        votes=[2, 2, 3],
+        withdraw={2: ["stay"], 3: ["stay"]},
+        votes={1: [2], 4: [2], 5: [3]},
     )
     engine.speak = AsyncMock(return_value="我上警竞选，请大家把票投给我。")
 
@@ -1244,3 +1270,4 @@ async def test_deferred_react_death_is_published_once_and_merged_into_the_slot()
     engine._publish_deaths.reset_mock()
     await engine._run_deferred_night_reactions()
     engine._publish_deaths.assert_not_called()
+

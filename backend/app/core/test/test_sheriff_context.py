@@ -249,13 +249,16 @@ async def test_explosion_does_not_publish_partial_ballot(tmp_path):
 
 @pytest.mark.asyncio
 async def test_mid_ballot_explosion_after_accepted_vote_publishes_nothing(tmp_path):
-    """An accepted vote followed by an explosion must not publish a partial ballot."""
-    order = []
+    """An accepted vote followed by an explosion must not publish a partial ballot.
+
+    The ballot round collects both answers concurrently, so the answers are
+    keyed by seat; the deterministic seat-order pass still commits seat 1's
+    accepted ballot before it reaches seat 4's explode.
+    """
 
     def explode_late(messages, tool, schema, seat):
         assert tool == "sheriff_vote"
-        order.append(seat)
-        if len(order) == 1:
+        if seat == 1:
             return '{"action_type":"vote","target_seat":2}'
         return '{"action_type":"explode"}'
 
@@ -272,8 +275,19 @@ async def test_mid_ballot_explosion_after_accepted_vote_publishes_nothing(tmp_pa
     engine.state.sheriff_office.candidates = {2, 3}
     engine.state.sheriff_office.active = {2, 3}
     engine.state.sheriff_office.step = "vote"
+    audience = []
+    original = engine._log_sheriff_audience
+    engine._log_sheriff_audience = lambda kind, payload: (
+        audience.append((kind, dict(payload))), original(kind, payload),
+    )
     await engine._execute_sheriff_election()
-    assert order == [1, 4]  # seat 1 accepted a vote, then seat 4 (wolf) exploded
+    votes = [payload for kind, payload in audience if kind == "SHERIFF_VOTE"]
+    assert votes == [
+        {
+            "round_number": 1, "voter_seat": 1, "target_seat": 2,
+            "kind": "vote",
+        },
+    ]  # seat 1's accepted ballot lands, then seat 4's explode ends the round
     assert engine.state.players[4].is_alive is False  # exploding wolf dies
     assert engine.state.players[1].is_alive is True  # accepted vote, no ballot published
     assert not any(r.phase == "sheriff_ballot" for r in engine.conversation_log.records)
