@@ -478,6 +478,22 @@ class LLMClient:
             self._config, self.provider_profile, state, questions,
         )
 
+    def invoke_system_one(self, state, questions: dict):
+        """Worker-thread sibling of :meth:`ainvoke_system_one`.
+
+        The sheriff ballot path (``game_service._night_invoke``) already runs
+        inside ``asyncio.to_thread``, so a sync ``httpx.Client`` is the right
+        transport here: ``asyncio.run`` per call would hand the async client a
+        fresh loop while its pool still belongs to the first one.
+        """
+        if not self.is_system_one:
+            raise NotImplementedError(
+                "invoke_system_one requires a system_one provider profile",
+            )
+        return self._transport.decide_sync(
+            self._config, self.provider_profile, state, questions,
+        )
+
     def _build(
         self, purpose: CallPurpose, config: LLMClientConfig | None = None,
     ) -> BaseChatModel:
@@ -588,15 +604,13 @@ class LLMClient:
         if self.is_system_one:
             # A decision model cannot complete text; a one-option Choice costs
             # a handful of tokens and proves the endpoint, key and model id.
-            asyncio.run(
-                self.ainvoke_system_one(
-                    "ping",
-                    {"ping": {
-                        "type": "choice",
-                        "instructions": "Reply 'ok'.",
-                        "criteria": {"ok": "Affirmative"},
-                    }},
-                ),
+            self.invoke_system_one(
+                "ping",
+                {"ping": {
+                    "type": "choice",
+                    "instructions": "Reply 'ok'.",
+                    "criteria": {"ok": "Affirmative"},
+                }},
             )
             return asdict(self.provider_profile.capabilities)
         self._complete(self.get_model(), [HumanMessage(content="ping")])

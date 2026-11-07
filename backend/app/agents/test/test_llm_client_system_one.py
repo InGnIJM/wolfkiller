@@ -85,6 +85,34 @@ async def test_ainvoke_system_one_rejects_non_system_one_profiles(
         await client.ainvoke_system_one("s", {})
 
 
+def test_invoke_system_one_delegates_to_the_sync_transport(
+    jev_config, monkeypatch,
+):
+    client = LLMClient(config=jev_config)
+    calls = []
+
+    def fake_decide_sync(config, profile, state, questions, **kwargs):
+        calls.append((config, profile, state, questions))
+        return "decision"
+
+    monkeypatch.setattr(client._transport, "decide_sync", fake_decide_sync)
+
+    result = client.invoke_system_one("state text", {"q": {}})
+
+    assert result == "decision"
+    assert calls[0][0] is client._config
+    assert calls[0][1] is client.provider_profile
+    assert calls[0][2] == "state text"
+    assert calls[0][3] == {"q": {}}
+
+
+def test_invoke_system_one_rejects_non_system_one_profiles(openrouter_like):
+    client = LLMClient(config=openrouter_like)
+
+    with pytest.raises(NotImplementedError, match="system_one"):
+        client.invoke_system_one("s", {})
+
+
 @pytest.mark.asyncio
 async def test_aclose_releases_the_transports_http_client(
     jev_config, monkeypatch,
@@ -106,15 +134,16 @@ def test_probe_uses_a_minimal_decision_call(jev_config, monkeypatch):
     client = LLMClient(config=jev_config)
     calls = []
 
-    async def fake_decide(config, profile, state, questions, **kwargs):
+    def fake_decide_sync(config, profile, state, questions, **kwargs):
         calls.append((state, questions))
         from app.agents.providers.system_one import SystemOneResponse
         return SystemOneResponse(answers={"ping": {}}, usage=None)
 
-    monkeypatch.setattr(client._transport, "decide", fake_decide)
+    monkeypatch.setattr(client._transport, "decide_sync", fake_decide_sync)
 
     capabilities = client.probe()
 
     assert calls, "probe must exercise the real endpoint"
+    assert calls[0][0] == "ping"
     assert capabilities["tools"] is False
     assert capabilities["json_output"] is False
