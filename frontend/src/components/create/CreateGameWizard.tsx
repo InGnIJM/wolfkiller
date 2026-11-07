@@ -7,6 +7,7 @@ import {
 
 import RoleStep from './RoleStep';
 import ModelStep from './ModelStep';
+import CreatingOverlay from './CreatingOverlay';
 import { createGame } from '../../api/client';
 import { useModelConfigStore } from '../../store/modelConfigStore';
 import type {
@@ -193,6 +194,8 @@ export default function CreateGameWizard() {
           </Button>
         )}
       </Box>
+
+      {creating && <CreatingOverlay />}
     </Container>
   );
 }

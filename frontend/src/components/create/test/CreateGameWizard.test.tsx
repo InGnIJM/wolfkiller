@@ -455,6 +455,21 @@ describe('CreateGameWizard step 2 and submission', () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it('shows the creating overlay while pending and removes it on failure', async () => {
+    let rejectRequest: (error: Error) => void = () => undefined;
+    vi.mocked(createGame).mockImplementation(() => new Promise((_, reject) => {
+      rejectRequest = reject;
+    }));
+    await goToStep2();
+    fireEvent.click(screen.getByRole('button', { name: '创建游戏' }));
+
+    expect(await screen.findByTestId('creating-overlay')).toBeInTheDocument();
+    rejectRequest(new Error('boom'));
+
+    await waitFor(() => expect(screen.queryByTestId('creating-overlay')).not.toBeInTheDocument());
+    expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+
   it('forwards a chosen vote model and defaults to following the seat model', async () => {
     await goToStep2();
     const voteSelect = screen.getByRole('combobox', { name: '放逐投票模型' });
