@@ -12,6 +12,7 @@ from app.agents.providers.base import MAX_CUSTOM_HEADERS, header_error
 ProviderProfileId = Literal[
     "auto", "openai", "deepseek", "openrouter", "opencode", "opencode-go",
     "custom-openai", "openai-responses", "anthropic", "custom-anthropic",
+    "jev", "custom-system-one",
 ]
 
 # Profiles as materialized in a game snapshot (``auto`` already resolved).
@@ -20,6 +21,7 @@ ProviderProfileId = Literal[
 ResolvedProviderProfileId = Literal[
     "openai", "deepseek", "openrouter", "opencode", "opencode-go",
     "custom-openai", "openai-responses", "anthropic", "custom-anthropic",
+    "jev", "custom-system-one",
 ]
 
 # Values sent verbatim as ``reasoning_effort`` on chat-completions calls;
