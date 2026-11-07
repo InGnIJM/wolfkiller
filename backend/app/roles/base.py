@@ -939,12 +939,12 @@ class BaseRole:
         turned "ask again" into "give up sooner". Later attempts may be granted
         more room, never less.
         """
-        base = getattr(self._client(), "action_timeout_seconds", 90.0)
-        floor = float(base) if isinstance(base, (int, float)) and base > 0 else 90.0
+        base = getattr(self._client(), "action_timeout_seconds", 180.0)
+        floor = float(base) if isinstance(base, (int, float)) and base > 0 else 180.0
         if final:
-            attribute, fallback = "action_final_retry_timeout_seconds", 30.0
+            attribute, fallback = "action_final_retry_timeout_seconds", 120.0
         elif retried:
-            attribute, fallback = "action_retry_timeout_seconds", 90.0
+            attribute, fallback = "action_retry_timeout_seconds", 240.0
         else:
             return floor
         value = getattr(self._client(), attribute, fallback)

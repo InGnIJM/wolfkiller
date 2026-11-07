@@ -1683,14 +1683,14 @@ class TestRetryBudgetPolicy:
         role = make_role(client=client)
 
         # The floor still applies, so the fallback can only widen the budget.
-        assert role._action_timeout_seconds(retried=True, final=True) == 90.0
+        assert role._action_timeout_seconds(retried=True, final=True) == 120.0
 
-    def test_a_missing_first_attempt_timeout_falls_back_to_ninety_seconds(self):
+    def test_a_missing_first_attempt_timeout_falls_back_to_one_eighty_seconds(self):
         client = ClientStub()
         client.action_timeout_seconds = None
         role = make_role(client=client)
 
-        assert role._action_timeout_seconds(retried=False) == 90.0
+        assert role._action_timeout_seconds(retried=False) == 180.0
 
     def test_backoff_policy_keeps_the_ladder_classification(self):
         """Zeroing the delay for tests must not disable the retry classes."""
