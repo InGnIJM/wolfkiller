@@ -147,6 +147,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 witch_self_save=req.witch_self_save,
                 victory=req.victory,
                 model_assignments=assignments,
+                vote_model_config_id=req.vote_model_config_id,
                 **comm_kwargs,
             )
         else:
@@ -161,6 +162,7 @@ async def create_game(req: CreateGameRequest = CreateGameRequest()):
                 witch_self_save=req.witch_self_save,
                 victory=req.victory,
                 model_assignments=assignments,
+                vote_model_config_id=req.vote_model_config_id,
                 **comm_kwargs,
             )
     except ValueError as error:

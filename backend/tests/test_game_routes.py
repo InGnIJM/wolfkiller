@@ -175,6 +175,7 @@ async def test_create_game_passes_dynamic_role_counts_and_returns_canonical_conf
     service.create_game.assert_awaited_once_with(
         role_counts=counts, reveal_on_death=False, enable_sheriff=False,
         witch_self_save="first_night_only", victory="edge", model_assignments=None,
+        vote_model_config_id=None,
     )
     assert response.config == {
         "role_counts": counts,
@@ -221,6 +222,7 @@ async def test_create_game_keeps_legacy_request_and_returns_canonical_role_count
         witch_self_save="first_night_only",
         victory="edge",
         model_assignments=None,
+        vote_model_config_id=None,
     )
     assert response.config["role_counts"] == counts
 
@@ -2812,6 +2814,7 @@ async def test_create_game_with_commentary_options_forwards_only_when_set(monkey
         witch_self_save="first_night_only",
         victory="edge",
         model_assignments=None,
+        vote_model_config_id=None,
         commentary_enabled=True,
         commentary_config_id="cfg-1",
     )

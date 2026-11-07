@@ -20,6 +20,7 @@ class CreateGameRequest(BaseModel):
     model_assignments: Optional[list[ModelAssignment]] = None
     commentary_enabled: bool = False
     commentary_config_id: Optional[str] = None
+    vote_model_config_id: Optional[str] = None
 
     @model_validator(mode="after")
     def reject_mixed_role_count_formats(self):
