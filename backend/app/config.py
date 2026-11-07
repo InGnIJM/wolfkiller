@@ -60,6 +60,9 @@ class LLMConfig:
     action_final_retry_timeout_seconds: float = float(
         os.getenv("LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS", "60")
     )
+    # Sent verbatim on chat-completions calls; empty means "don't send",
+    # so the provider default (thinking on for DeepSeek V4) applies.
+    reasoning_effort: str | None = os.getenv("LLM_REASONING_EFFORT") or None
 
 
 class GameConfig:
