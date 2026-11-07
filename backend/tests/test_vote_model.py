@@ -451,3 +451,84 @@ async def test_create_game_shares_the_cache_session_with_the_vote_client(
         assert [client.session_id for client in sessions] == [expected] * 5
     finally:
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_game_applies_vote_model_overrides(
+    tmp_path, monkeypatch, fake_clients,
+):
+    cfg, _ = _store_with(tmp_path, monkeypatch, reasoning_effort="high")
+    repository = GameRepository(tmp_path / "repo")
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    try:
+        game_id = await service.create_game(
+            role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+            vote_model_config_id=cfg.id,
+            vote_model_id="mimo-v2.6-flash",
+            vote_reasoning_effort="none",
+        )
+        await service._tasks[game_id]
+
+        vote_client = fake_clients.instances[-1]
+        assert vote_client.config.model_id == "mimo-v2.6-flash"
+        assert vote_client.config.reasoning_effort == "none"
+        assert vote_client.config.base_url == "https://vote.test/v1"
+
+        doc = repository.get_game(game_id)["config"]["vote_model"]
+        assert doc["parameters"]["model_id"] == "mimo-v2.6-flash"
+        assert doc["parameters"]["reasoning_effort"] == "none"
+        assert doc["parameters_digest"] == _parameter_digest(doc["parameters"])
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_vote_overrides_without_a_config_are_rejected(
+    tmp_path, monkeypatch, fake_clients,
+):
+    repository = GameRepository(tmp_path / "repo")
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    try:
+        with pytest.raises(ValueError, match="vote_model_id"):
+            await service.create_game(
+                role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+                vote_model_id="mimo-v2.6-flash",
+            )
+        with pytest.raises(ValueError, match="vote_reasoning_effort"):
+            await service.create_game(
+                role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+                vote_reasoning_effort="low",
+            )
+    finally:
+        await service.aclose()
+        repository.close()
+
+
+@pytest.mark.asyncio
+async def test_create_game_rejects_invalid_vote_overrides(
+    tmp_path, monkeypatch, fake_clients,
+):
+    cfg, _ = _store_with(tmp_path, monkeypatch)
+    repository = GameRepository(tmp_path / "repo")
+    service = GameService(
+        WSManager(), EventBus(), data_dir=str(tmp_path), repository=repository,
+    )
+    try:
+        with pytest.raises(ValueError, match="vote_model_id"):
+            await service.create_game(
+                role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+                vote_model_config_id=cfg.id, vote_model_id="  ",
+            )
+        with pytest.raises(ValueError, match="reasoning_effort"):
+            await service.create_game(
+                role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 3},
+                vote_model_config_id=cfg.id, vote_reasoning_effort="ultra",
+            )
+    finally:
+        await service.aclose()
+        repository.close()

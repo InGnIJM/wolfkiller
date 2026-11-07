@@ -313,8 +313,13 @@ async def test_create_game_route_passes_assignments_and_returns_snapshot(monkeyp
         enable_sheriff=False,
         witch_self_save="first_night_only",
         victory="edge",
-        model_assignments=[{"config_id": None, "count": 2}],
+        model_assignments=[{
+            "config_id": None, "count": 2,
+            "model_id": None, "reasoning_effort": None,
+        }],
         vote_model_config_id=None,
+        vote_model_id=None,
+        vote_reasoning_effort=None,
     )
     assert [entry.model_dump() for entry in response.model_snapshot] == expected_snapshot
 
