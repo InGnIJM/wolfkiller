@@ -97,6 +97,11 @@ class _ActionTransientRetry(_ActionTransportTimeout):
     """
 
 
+#: Contracts served by the dedicated vote client when one was configured.
+#: ``sheriff_vote`` runs on the SheriffDirector night path and never reaches
+#: ``request_action``, so it cannot join this set from here.
+_VOTE_MODEL_CONTRACTS = frozenset({"exile_vote"})
+
 #: ``finish_reason`` values meaning the answer was cut by the output budget.
 _TRUNCATED_FINISH_REASONS = frozenset({
     "length", "max_tokens", "max_completion_tokens",
@@ -198,6 +203,16 @@ class BaseRole:
         self.role_name = role_name
         self.prompt_builder = prompt_builder
         self.llm_client = llm_client
+        # Optional shared client for ballot contracts (exile_vote). The game
+        # service assigns it after construction when the game was created
+        # with a dedicated vote model; it is a runtime attribute and is
+        # never persisted.
+        self.vote_llm_client = None
+        # The client currently serving ``request_action``'s retry ladder.
+        # Set by the entry point for the duration of one logical call so the
+        # whole ladder -- timeouts, capability learning, telemetry -- reads
+        # the same client the request was routed to.
+        self._active_action_client = None
         self.output_parser = OutputParser()
         # The game service replaces this with its checkpointed RNG.
         self._rng = random
@@ -568,6 +583,25 @@ class BaseRole:
 
     # ── LLM invocation ──────────────────────────────────────────
 
+    def _resolve_action_client(self, request: ActionRequest):
+        """The client this issued action is routed to.
+
+        A game created with a dedicated vote model hands every role the same
+        shared client; only ballot contracts use it, so speeches and night
+        actions keep the seat's own model. ``vote_llm_client`` is ``None``
+        otherwise and this collapses to the seat client.
+        """
+        contract_id = getattr(
+            getattr(request, "contract", None), "contract_id", None,
+        )
+        if self.vote_llm_client is not None and contract_id in _VOTE_MODEL_CONTRACTS:
+            return self.vote_llm_client
+        return self.llm_client
+
+    def _client(self):
+        """The client serving the in-flight action call (or the seat's)."""
+        return self._active_action_client or self.llm_client
+
     async def request_action(
         self,
         state: GameState,
@@ -579,16 +613,31 @@ class BaseRole:
         # One logical call = one usage total; the three-stage ladder accumulates.
         self._last_call_usage = None
         self._last_attempt_usage = None
+        self._active_action_client = self._resolve_action_client(request)
+        try:
+            return await self._request_action_ladder(
+                state, conversation_log, request, capture=capture,
+            )
+        finally:
+            self._active_action_client = None
+
+    async def _request_action_ladder(
+        self,
+        state: GameState,
+        conversation_log: ConversationLog,
+        request: ActionRequest,
+        *, capture=None,
+    ) -> AcceptedAction:
         prompt = self._build_contract_action_prompt(state, conversation_log, request)
         messages = [
             SystemMessage(content=self.prompt_builder.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
         supports_strict = getattr(
-            self.llm_client, "supports_strict_actions", True,
+            self._client(), "supports_strict_actions", True,
         )
         supports_tools = getattr(
-            self.llm_client, "supports_action_tools", supports_strict,
+            self._client(), "supports_action_tools", supports_strict,
         )
         if supports_tools is False:
             try:
@@ -617,7 +666,7 @@ class BaseRole:
                 self._invoke_json_action, conversation_log, "json", 3, capture=capture,
             )
         tool_transport = "strict" if supports_strict else "tool"
-        if getattr(self.llm_client, "prefers_json_actions", False):
+        if getattr(self._client(), "prefers_json_actions", False):
             # This provider already showed it will not honour an action tool, so
             # attempt 1 goes straight to the JSON transport instead of spending a
             # round trip rediscovering it. The vote prompt carries the schema, so
@@ -652,7 +701,7 @@ class BaseRole:
             # changes; the prompt stays the original so the prefix cache still
             # serves it (the full prompt carries the JSON instruction anyway).
             note_unsupported = getattr(
-                self.llm_client, "note_action_tools_unsupported", None,
+                self._client(), "note_action_tools_unsupported", None,
             )
             if callable(note_unsupported):
                 note_unsupported()
@@ -768,7 +817,7 @@ class BaseRole:
             round_num, self.seat, phase,
             call_kind=call_kind, contract_id=contract_id,
             transport=transport, attempt=attempt,
-            model_id=getattr(self.llm_client, "model_name", None),
+            model_id=getattr(self._client(), "model_name", None),
             prompt_chars=prompt_chars, elapsed_ms=elapsed_ms,
             retried=retried, parse_result=parse_result,
             failure_code=failure_code, timeout_type=timeout_type,
@@ -792,7 +841,7 @@ class BaseRole:
         turned "ask again" into "give up sooner". Later attempts may be granted
         more room, never less.
         """
-        base = getattr(self.llm_client, "action_timeout_seconds", 90.0)
+        base = getattr(self._client(), "action_timeout_seconds", 90.0)
         floor = float(base) if isinstance(base, (int, float)) and base > 0 else 90.0
         if final:
             attribute, fallback = "action_final_retry_timeout_seconds", 30.0
@@ -800,7 +849,7 @@ class BaseRole:
             attribute, fallback = "action_retry_timeout_seconds", 90.0
         else:
             return floor
-        value = getattr(self.llm_client, attribute, fallback)
+        value = getattr(self._client(), attribute, fallback)
         if not isinstance(value, (int, float)) or value <= 0:
             value = fallback
         return max(floor, float(value))
@@ -828,7 +877,7 @@ class BaseRole:
 
     def _client_seconds(self, attribute: str, default: float) -> float:
         """One non-negative client-provided delay, falling back to ``default``."""
-        value = getattr(self.llm_client, attribute, default)
+        value = getattr(self._client(), attribute, default)
         if type(value) not in (int, float) or value < 0:
             return float(default)
         return float(value)
@@ -1067,7 +1116,7 @@ class BaseRole:
 
     async def _invoke_strict_action(self, messages, request):
         try:
-            model = self.llm_client.get_model_with_action_tool(request.contract)
+            model = self._client().get_model_with_action_tool(request.contract)
             response = await LLMClient._acomplete(model, messages)
         except Exception as error:
             mapped = LLMClient.map_strict_capability_error(error)
@@ -1109,7 +1158,7 @@ class BaseRole:
                 # "learn once" contract). Without this, every later ballot pays
                 # the same discovery cost.
                 note_unsupported = getattr(
-                    self.llm_client, "note_action_tools_unsupported", None,
+                    self._client(), "note_action_tools_unsupported", None,
                 )
                 if callable(note_unsupported):
                     note_unsupported()
@@ -1131,10 +1180,11 @@ class BaseRole:
         return self.output_parser.parse_strict_action_response(response, request.contract)
 
     async def _invoke_json_action(self, messages, request):
-        action_model = getattr(type(self.llm_client), "get_action_model", None)
+        client = self._client()
+        action_model = getattr(type(client), "get_action_model", None)
         model = (
-            self.llm_client.get_action_model()
-            if callable(action_model) else self.llm_client.get_model()
+            client.get_action_model()
+            if callable(action_model) else client.get_model()
         )
         response = await LLMClient._acomplete(model, messages)
         self._record_usage(extract_usage(response))

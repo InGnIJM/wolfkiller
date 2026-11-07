@@ -48,6 +48,7 @@ class JsonClient:
 class TelemetryLogger:
     def __init__(self):
         self.records = []
+        self.llm_call_records = []
         self.technical_abstentions = []
 
     def log_vote_telemetry(self, game_id, round_num, seat, **data):
@@ -55,6 +56,9 @@ class TelemetryLogger:
 
     def log_vote_technical_abstain(self, game_id, round_num, seat, **data):
         self.technical_abstentions.append(data)
+
+    def log_llm_call(self, game_id, round_num, phase, seat, **data):
+        self.llm_call_records.append(data)
 
     def log_conversation(self, game_id, record):
         pass
@@ -173,6 +177,67 @@ def test_vote_instruction_asks_for_brief_reasoning():
     instruction = PromptBuilder._vote_instruction(state)
     assert "简短" in instruction
     assert "reasoning" in instruction
+
+
+@pytest.mark.asyncio
+async def test_exile_vote_uses_the_shared_vote_client_when_set():
+    seat_client = JsonClient([
+        AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
+    ])
+    vote_client = JsonClient([
+        AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
+    ])
+    state = make_state()
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), seat_client)
+    role.vote_llm_client = vote_client
+
+    accepted = await role.request_action(state, make_log(), make_request(state))
+
+    assert accepted.command.target_seat == 2
+    assert len(vote_client.model.messages) == 1
+    assert seat_client.model.messages == []
+
+
+def test_resolve_action_client_only_switches_exile_vote():
+    from dataclasses import replace
+
+    seat_client = JsonClient([])
+    vote_client = JsonClient([])
+    state = make_state()
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), seat_client)
+    role.vote_llm_client = vote_client
+    other = replace(
+        make_request(state),
+        contract=replace(VOTE_CONTRACT, contract_id="day_action"),
+        idempotency_key="1:vote_casting:1:1:day_action",
+    )
+
+    assert role._resolve_action_client(make_request(state)) is vote_client
+    assert role._resolve_action_client(other) is seat_client
+
+    role.vote_llm_client = None
+    assert role._resolve_action_client(make_request(state)) is seat_client
+
+
+@pytest.mark.asyncio
+async def test_vote_telemetry_reports_the_vote_model_name():
+    seat_client = JsonClient([
+        AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
+    ])
+    seat_client.model_name = "seat-model"
+    vote_client = JsonClient([
+        AIMessage(content='{"action_type":"vote","target_seat":2,"reasoning":"x"}'),
+    ])
+    vote_client.model_name = "vote-model"
+    logger = TelemetryLogger()
+    state = make_state()
+    role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), seat_client)
+    role.vote_llm_client = vote_client
+
+    await role.request_action(state, make_log(logger), make_request(state))
+
+    model_rows = [r["model_id"] for r in logger.llm_call_records if "model_id" in r]
+    assert model_rows == ["vote-model"]
 
 
 @pytest.mark.asyncio
