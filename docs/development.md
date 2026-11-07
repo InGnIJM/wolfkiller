@@ -15,14 +15,14 @@
 | `LLM_MODEL` | 无 | 环境默认模型；未配置且 `LLM_MODELS` 无有效值时回退 `deepseek-v4-pro` |
 | `LLM_MODELS` | 空 | **已弃用的兼容变量**；只使用首个非空值（优先于 `LLM_MODEL`），配置多个值时每个进程仅警告一次 |
 | `LLM_TEMPERATURE` | `1.2` | 常规请求温度（行动请求固定为 0.1） |
-| `LLM_MAX_TOKENS` | `768` | 常规请求 token 上限 |
-| `LLM_ACTION_MAX_TOKENS` | `2048` | 行动请求 token 上限 |
-| `LLM_ACTION_TIMEOUT_SECONDS` | `90` | 行动请求主超时 |
-| `LLM_ACTION_RETRY_TIMEOUT_SECONDS` | `120` | 行动请求重试超时 |
-| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `60` | 投票 JSON 强格式末次重试超时。**只是下限建议值**：`_action_timeout_seconds()` 以第一次尝试的 `LLM_ACTION_TIMEOUT_SECONDS` 为地板，后续尝试取值 ≥ 地板（配置比地板小也不会把末次砍短——慢到需要重试的 provider 正是最容易被更小的本地 deadline 砍掉的那个） |
+| `LLM_MAX_TOKENS` | `16384` | 常规请求 token 上限 |
+| `LLM_ACTION_MAX_TOKENS` | `16384` | 行动请求 token 上限 |
+| `LLM_ACTION_TIMEOUT_SECONDS` | `180` | 行动请求主超时（发言 deadline 也走它） |
+| `LLM_ACTION_RETRY_TIMEOUT_SECONDS` | `240` | 行动请求重试超时 |
+| `LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS` | `120` | 投票 JSON 强格式末次重试超时。**只是下限建议值**：`_action_timeout_seconds()` 以第一次尝试的 `LLM_ACTION_TIMEOUT_SECONDS` 为地板，后续尝试取值 ≥ 地板（配置比地板小也不会把末次砍短——慢到需要重试的 provider 正是最容易被更小的本地 deadline 砍掉的那个） |
 | `LLM_PROVIDER_MAX_RETRIES` | `4` | SDK 对瞬时 429/5xx 的重试次数 |
 | `VOTE_CONCURRENCY` | `5` | 投票并发上限 |
-| `VOTE_PHASE_TIMEOUT_SECONDS` | `540` | 投票阶段总超时（须 ≥ 两批 5 并发的完整重试梯子，由 `app/test/test_config.py` 的不变式测试把关） |
+| `VOTE_PHASE_TIMEOUT_SECONDS` | `1800` | 投票阶段总超时（须 ≥ 三批 5 并发（12 座）的完整重试梯子，由 `app/test/test_config.py` 的不变式测试把关） |
 | `ROLE_PIPELINE_V2` | `v1` | **不改变对局运行时**。仅 `pipeline_mode_from_env()` / `RolePipeline` 适配器测试读取；`GameEngine` 固定走 `PipelineMode.V2` |
 | `WOLFKILLER_DATA_DIR` | `data` | SQLite、游戏日志、模型配置的数据根目录 |
 | `MODEL_CONFIG_PATH` | `{WOLFKILLER_DATA_DIR}/models.json` | 显式覆盖模型配置文件路径 |

@@ -3328,12 +3328,13 @@ class TestGameEngine:
         assert started == {1, 2}
         assert [item.voter_seat for item in engine.state.votes] == [1, 2]
 
-    def test_vote_casting_runtime_defaults_to_five_workers_and_540_seconds(self):
+    def test_vote_casting_runtime_defaults_to_five_workers_and_1800_seconds(self):
         engine = GameEngine(game_id="vote-runtime-defaults")
 
         assert engine._vote_concurrency == 5
-        # Two full retry ladders (90 + 120 + 60) for two batches of five workers.
-        assert engine._vote_phase_timeout_seconds == 540.0
+        # Three full retry ladders (180 + 240 + 120) for three batches of five
+        # workers on a twelve-seat board.
+        assert engine._vote_phase_timeout_seconds == 1800.0
 
     @pytest.mark.parametrize(
         ("concurrency", "phase_timeout"),

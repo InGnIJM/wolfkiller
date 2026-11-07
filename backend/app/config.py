@@ -51,14 +51,16 @@ class LLMConfig:
         return ["deepseek-v4-pro"]
 
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.2"))
-    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "768"))
-    action_max_tokens: int = int(os.getenv("LLM_ACTION_MAX_TOKENS", "2048"))
-    action_timeout_seconds: float = float(os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "90"))
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "16384"))
+    action_max_tokens: int = int(os.getenv("LLM_ACTION_MAX_TOKENS", "16384"))
+    action_timeout_seconds: float = float(
+        os.getenv("LLM_ACTION_TIMEOUT_SECONDS", "180")
+    )
     action_retry_timeout_seconds: float = float(
-        os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "120")
+        os.getenv("LLM_ACTION_RETRY_TIMEOUT_SECONDS", "240")
     )
     action_final_retry_timeout_seconds: float = float(
-        os.getenv("LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS", "60")
+        os.getenv("LLM_ACTION_FINAL_RETRY_TIMEOUT_SECONDS", "120")
     )
     # Sent verbatim on chat-completions calls; empty means "don't send",
     # so the provider default (thinking on for DeepSeek V4) applies.
@@ -71,14 +73,14 @@ class GameConfig:
     num_seers: int = 1
     num_witches: int = 1
     num_hunters: int = 1
-    speech_timeout_seconds: int = 60
     phase_delay_seconds: float = 0.3
     vote_concurrency: int = int(os.getenv("VOTE_CONCURRENCY", "5"))
-    #: Must stay at or above two full retry ladders (see the invariant test in
-    #: ``app/test/test_config.py``): the phase runs ``vote_concurrency`` workers
-    #: at a time, so the worst case is two batches of the whole ladder.
+    #: Must stay at or above the full retry ladders of every worker batch (see
+    #: the invariant test in ``app/test/test_config.py``): the phase runs
+    #: ``vote_concurrency`` workers at a time, so a twelve-seat board can need
+    #: three batches of the whole ladder.
     vote_phase_timeout_seconds: float = float(
-        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "540")
+        os.getenv("VOTE_PHASE_TIMEOUT_SECONDS", "1800")
     )
 
 
