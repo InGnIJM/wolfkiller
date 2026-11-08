@@ -768,6 +768,8 @@ export interface ModelAssignment {
   model_id?: string | null;
   /** 选模型时的单次覆盖；留空跟随该配置存储的思考强度。 */
   reasoning_effort?: string | null;
+  /** 选模型时的单次覆盖；留空跟随该配置存储的温度。 */
+  temperature?: number | null;
 }
 
 /** GET /api/models/{id}/catalog 的响应：上游列不出时 ids 为空、error 带原因。 */
@@ -863,6 +865,14 @@ export interface BenchmarkReport {
   [key: string]: unknown;
 }
 
+/** 评测模型条目：config 固定供应商，其余字段是当次选择的单次覆盖。 */
+export interface BenchmarkModelInput {
+  model_config_id: string;
+  model_id?: string | null;
+  reasoning_effort?: string | null;
+  temperature?: number | null;
+}
+
 export interface BenchmarkCreateInput {
   client_request_id: string;
   name: string;
@@ -874,9 +884,18 @@ export interface BenchmarkCreateInput {
   };
   games?: number;
   repetitions?: number;
-  models?: Array<{ model_config_id: string }>;
-  baseline?: { model_config_id: string; temperature?: number };
-  candidate?: { model_config_id: string; temperature?: number };
+  models?: BenchmarkModelInput[];
+  /** 变体行 + 席位数：count 展开成 per-seat dict 后冻结进调度。 */
+  model_assignments?: Array<BenchmarkModelInput & { count: number }>;
+  baseline?: BenchmarkModelInput;
+  candidate?: BenchmarkModelInput;
+  commentary_enabled?: boolean;
+  commentary_config_id?: string | null;
+  commentary_model_id?: string | null;
+  commentary_reasoning_effort?: string | null;
+  vote_model_config_id?: string | null;
+  vote_model_id?: string | null;
+  vote_reasoning_effort?: string | null;
   concurrency?: number;
   game_timeout_seconds?: number;
   max_games?: number;
