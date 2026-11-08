@@ -808,14 +808,47 @@ def _field(item: Mapping[str, Any], assignment: Mapping[str, Any], key: str) -> 
     return item[key] if key in item else assignment.get(key)
 
 
-def _model_name(model: object) -> str:
+def model_variant_key(model: object) -> str:
+    """Stable metric key for one frozen model entry.
+
+    Bare ``{model_config_id: x}`` entries — the shape older runs froze —
+    keep keying on the config id so existing reports are unchanged. The
+    newer per-selection overrides append ``|model_id``, ``|effort=v`` and
+    ``|temp=v`` so same-config variants score as separate rows.
+    """
     if not isinstance(model, Mapping):
         return "default"
-    for key in ("model_config_id", "config_id", "model_id", "name"):
-        value = model.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return "default"
+    config_id = next(
+        (
+            model[key]
+            for key in ("model_config_id", "config_id")
+            if isinstance(model.get(key), str) and model.get(key)
+        ),
+        None,
+    )
+    model_id = model.get("model_id")
+    name = model.get("name")
+    base = (
+        config_id
+        or (model_id if isinstance(model_id, str) and model_id else None)
+        or (name if isinstance(name, str) and name else None)
+        or "default"
+    )
+    parts = [base]
+    # ``model_id`` already served as the base when no config id exists; it is
+    # only a discriminating suffix once the base is the config id.
+    if config_id is not None and isinstance(model_id, str) and model_id:
+        parts.append(model_id)
+    effort = model.get("reasoning_effort")
+    if isinstance(effort, str) and effort:
+        parts.append(f"effort={effort}")
+    temperature = model.get("temperature")
+    if (
+        isinstance(temperature, (int, float))
+        and not isinstance(temperature, bool)
+    ):
+        parts.append(f"temp={temperature}")
+    return "|".join(parts)
 
 
 def _seat_number(value: object) -> int | None:
@@ -838,12 +871,12 @@ def _assigned_models(assignment: Mapping[str, Any]) -> list[tuple[int, str]]:
         for raw_seat, model in seat_models.items():
             seat = _seat_number(raw_seat)
             if seat is not None:
-                rows.append((seat, _model_name(model)))
+                rows.append((seat, model_variant_key(model)))
         return rows
     seats = assignment.get("seats")
     if not isinstance(seats, Sequence) or isinstance(seats, (str, bytes)):
         return []
-    model = _model_name(assignment.get("model"))
+    model = model_variant_key(assignment.get("model"))
     return [
         (seat, model)
         for raw_seat in seats
@@ -1032,7 +1065,7 @@ def _mixed_uncertainty(
         interval_method: str | None = None
         if samples:
             interval_method = "bootstrap"
-        elif valid_seats:
+        elif valid_seats:  # pragma: no branch — a group exists only with seats
             # One block cannot be resampled at all; fall back to a Wilson
             # score interval over the pooled seats so the run still reports
             # its (wide) uncertainty instead of a bare point estimate.

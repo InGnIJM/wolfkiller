@@ -58,7 +58,15 @@ def _apply_model_labels(report: Mapping[str, Any]) -> None:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            label = labels.get(row.get("model"))
+            model_key = row.get("model")
+            label = labels.get(model_key)
+            if label is None and isinstance(model_key, str):
+                # Variant keys carry ``|suffix`` after the config id; label the
+                # base config and keep the discriminating suffix readable.
+                base, separator, suffix = model_key.partition("|")
+                base_label = labels.get(base) if separator else None
+                if base_label:
+                    label = f"{base_label}|{suffix}"
             if label:
                 row["model_label"] = label
 

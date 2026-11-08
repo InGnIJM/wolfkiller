@@ -84,6 +84,7 @@ def _references_model_config(value: object, config_id: str) -> bool:
             if key in {
                 "config_id", "model_config_id", "baseline_config_id",
                 "candidate_config_id", "commentary_config_id",
+                "vote_model_config_id",
             } and item == config_id:
                 return True
             if _references_model_config(item, config_id):
