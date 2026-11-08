@@ -122,11 +122,27 @@ async function selectPreset(name: string) {
   fireEvent.click(await screen.findByRole('option', { name }));
 }
 
+/** 变体列表逐行添加：每次新增一行再从该行挑配置。 */
 async function selectModels(...names: RegExp[]) {
-  fireEvent.mouseDown(inPage().getByLabelText('参赛模型'));
   for (const name of names) {
+    fireEvent.click(inPage().getByRole('button', { name: '添加变体' }));
+    const rows = inPage().getAllByRole('group', { name: /模型变体 \d+/ });
+    fireEvent.mouseDown(
+      within(rows[rows.length - 1]).getByRole('combobox', { name: '模型配置' }),
+    );
     fireEvent.click(await screen.findByRole('option', { name }));
   }
+}
+
+function variantRow(index: number) {
+  return inPage().getByRole('group', { name: `模型变体 ${index}` });
+}
+
+async function pickOption(label: string, option: RegExp | string, scope?: HTMLElement) {
+  fireEvent.mouseDown(
+    (scope ? within(scope) : inPage()).getByRole('combobox', { name: label }),
+  );
+  fireEvent.click(await screen.findByRole('option', { name: option }));
 }
 
 /** 预估提示 Alert 的根节点；用文案定位以免依赖无障碍树（打开弹层后页面会被标记 aria-hidden）。 */
@@ -311,5 +327,128 @@ describe('预估单局时长预警', () => {
     await selectModels(/近超时上模型/);
     expect(estimateAlert(/已超过单局超时 150 分钟/))
       .toHaveTextContent('预计单局约 150 分钟，已超过单局超时 150 分钟，几乎必定超时');
+  });
+});
+
+describe('模型变体与辅助模型', () => {
+  const CONFIG_A: ModelConfig = {
+    ...model('cfg-a', '模型A', 7000),
+    model_ids: ['a-one', 'a-two'],
+  };
+  const CONFIG_B: ModelConfig = {
+    ...model('cfg-b', '模型B', 9000),
+    model_ids: ['b-one', 'b-two'],
+  };
+
+  async function submitDraft() {
+    fireEvent.click(inPage().getByRole('button', { name: '创建草稿' }));
+    await waitFor(() => expect(mocks.createDraft).toHaveBeenCalled());
+  }
+
+  it('混座提交把每行展开为带覆盖的 model_assignments', async () => {
+    mocks.configs = [CONFIG_A];
+    mocks.createDraft.mockResolvedValue({ run_id: 'r-1' });
+    renderPage();
+    await waitForPresets();
+    await selectModels(/模型A/);
+
+    const row = variantRow(1);
+    fireEvent.change(
+      within(row).getByRole('combobox', { name: '变体模型' }),
+      { target: { value: 'a-two' } },
+    );
+    fireEvent.mouseDown(within(row).getByRole('combobox', { name: '变体思考强度' }));
+    fireEvent.click(await screen.findByRole('option', { name: '高（high）' }));
+    fireEvent.change(within(row).getByLabelText('变体温度'), { target: { value: '0.4' } });
+
+    await submitDraft();
+    expect(mocks.createDraft).toHaveBeenCalledWith(expect.objectContaining({
+      model_assignments: [expect.objectContaining({
+        model_config_id: 'cfg-a',
+        model_id: 'a-two',
+        reasoning_effort: 'high',
+        temperature: 0.4,
+        count: 9,
+      })],
+    }));
+  });
+
+  it('添加行默认坐满席位，满员时新行从最大行让一席，移除归还', async () => {
+    mocks.configs = [CONFIG_A, CONFIG_B];
+    renderPage();
+    await waitForPresets();
+
+    fireEvent.click(inPage().getByRole('button', { name: '添加变体' }));
+    expect(inPage().getByText('已分配 9 / 9 席')).toBeInTheDocument();
+    expect(
+      (within(variantRow(1)).getByLabelText('模型变体 1 人数输入') as HTMLInputElement).value,
+    ).toBe('9');
+
+    fireEvent.click(inPage().getByRole('button', { name: '添加变体' }));
+    expect(inPage().getByText('已分配 9 / 9 席')).toBeInTheDocument();
+    expect(
+      (within(variantRow(1)).getByLabelText('模型变体 1 人数输入') as HTMLInputElement).value,
+    ).toBe('8');
+    expect(
+      (within(variantRow(2)).getByLabelText('模型变体 2 人数输入') as HTMLInputElement).value,
+    ).toBe('1');
+
+    fireEvent.click(within(variantRow(2)).getByLabelText('移除此变体'));
+    expect(inPage().queryByRole('group', { name: '模型变体 2' })).not.toBeInTheDocument();
+    expect(
+      (within(variantRow(1)).getByLabelText('模型变体 1 人数输入') as HTMLInputElement).value,
+    ).toBe('9');
+  });
+
+  it('成对回归允许同配置不同覆盖，拒绝完全相同的变体', async () => {
+    mocks.configs = [CONFIG_A];
+    mocks.createDraft.mockResolvedValue({ run_id: 'r-2' });
+    renderPage();
+    await waitForPresets();
+    await pickOption('评测模式', 'A/B 配置回归');
+
+    const base = inPage().getByRole('group', { name: '基线变体' });
+    const cand = inPage().getByRole('group', { name: '候选变体' });
+    await pickOption('模型配置', /模型A/, base);
+    await pickOption('模型配置', /模型A/, cand);
+
+    expect(screen.getByText('基线与候选变体完全相同，请至少调整一项覆盖。')).toBeInTheDocument();
+    expect(inPage().getByRole('button', { name: '创建草稿' })).toBeDisabled();
+
+    await pickOption('变体思考强度', '低（low）', cand);
+    expect(screen.queryByText('基线与候选变体完全相同，请至少调整一项覆盖。'))
+      .not.toBeInTheDocument();
+
+    await submitDraft();
+    expect(mocks.createDraft).toHaveBeenCalledWith(expect.objectContaining({
+      baseline: expect.objectContaining({ model_config_id: 'cfg-a' }),
+      candidate: expect.objectContaining({
+        model_config_id: 'cfg-a',
+        reasoning_effort: 'low',
+      }),
+    }));
+  });
+
+  it('解说与投票模型覆盖随请求冻结', async () => {
+    mocks.configs = [CONFIG_A, CONFIG_B];
+    mocks.createDraft.mockResolvedValue({ run_id: 'r-3' });
+    renderPage();
+    await waitForPresets();
+    await selectModels(/模型A/);
+
+    fireEvent.click(inPage().getByRole('switch', { name: '开启上帝视角实时解说' }));
+    await pickOption('解说与复盘模型', /模型B/);
+    await pickOption('解说模型思考强度', '中（medium）');
+    await pickOption('投票模型', /模型B/);
+    await pickOption('投票模型思考强度', '低（low）');
+
+    await submitDraft();
+    expect(mocks.createDraft).toHaveBeenCalledWith(expect.objectContaining({
+      commentary_enabled: true,
+      commentary_config_id: 'cfg-b',
+      commentary_reasoning_effort: 'medium',
+      vote_model_config_id: 'cfg-b',
+      vote_reasoning_effort: 'low',
+    }));
   });
 });

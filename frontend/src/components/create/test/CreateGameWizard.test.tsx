@@ -472,7 +472,7 @@ describe('CreateGameWizard step 2 and submission', () => {
 
   it('forwards a chosen vote model and defaults to following the seat model', async () => {
     await goToStep2();
-    const voteSelect = screen.getByRole('combobox', { name: '放逐投票模型' });
+    const voteSelect = screen.getByRole('combobox', { name: '投票模型' });
     expect(voteSelect).toHaveTextContent('跟随座位模型');
 
     fireEvent.mouseDown(voteSelect);
@@ -576,7 +576,7 @@ describe('CreateGameWizard per-selection model overrides', () => {
 
   it('sends vote model id and effort overrides', async () => {
     await goToStep2();
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: '放逐投票模型' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '投票模型' }));
     fireEvent.click(await screen.findByRole('option', { name: /DeepSeek Pro/ }));
 
     const voteModelInput = await screen.findByRole('combobox', { name: '投票模型 ID' });
