@@ -21,6 +21,7 @@ from app.api.schemas import BatchDeleteResponse, BatchGameIdsRequest
 from app.persistence.repository import (
     CommitConflict, GameReferencedByBenchmark, InvalidExecutionTransition,
 )
+from app.services.benchmark_metrics import model_variant_key
 
 
 router = APIRouter(prefix="/api/benchmarks", tags=["benchmarks"])
@@ -284,8 +285,7 @@ def _assignment_groups(item: Mapping[str, object]) -> list[tuple[str, list[int]]
             if not isinstance(model, Mapping):
                 continue
             canonical = json.dumps(dict(model), ensure_ascii=False, sort_keys=True)
-            model_name = str(model.get("model_config_id") or model.get("model_id") or "unknown")
-            group = grouped.setdefault(canonical, (model_name, []))
+            group = grouped.setdefault(canonical, (model_variant_key(model), []))
             try:
                 group[1].append(int(seat))
             except (TypeError, ValueError):
@@ -294,7 +294,7 @@ def _assignment_groups(item: Mapping[str, object]) -> list[tuple[str, list[int]]
     model = assignment.get("model")
     seats = assignment.get("seats")
     if isinstance(model, Mapping):
-        model_name = str(model.get("model_config_id") or model.get("model_id") or "unknown")
+        model_name = model_variant_key(model)
         valid_seats = [int(seat) for seat in seats or [] if type(seat) is int and seat > 0]
         return [(model_name, valid_seats)]
     return [(str(assignment.get("variant") or "unknown"), [])]
