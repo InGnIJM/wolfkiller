@@ -649,12 +649,49 @@ async def test_durable_action_gateway_bypasses_unbound_and_collected_wolf_action
     ({"benchmark_run_id": "run"}, "benchmark source"),
     ({"model_seat_assignments": {}}, "every seat"),
     ({"model_seat_assignments": {1: 7}}, "string or null"),
+    ({"model_seat_assignments": {1: {"config_id": 7}}}, "string or null"),
+    ({"model_seat_assignments": {1: {"config_id": None, "model_id": " "}}},
+     "model_id"),
+    ({"model_seat_assignments": {
+        1: {"config_id": None, "reasoning_effort": "ultra"},
+    }}, "reasoning_effort"),
+    ({"model_seat_assignments": {
+        1: {"config_id": None, "temperature": "hot"},
+    }}, "temperature"),
 ])
 async def test_creation_rejects_incomplete_ownership_and_model_seats(durable, options, message):
     service, repository = durable
     with pytest.raises(ValueError, match=message):
         await service.create_game(role_counts={"wolf-killer-villager": 1}, **options)
     assert repository.list_games() == []
+
+
+@pytest.mark.asyncio
+async def test_seat_variant_dicts_drive_per_seat_model_overrides(
+    durable, fake_provider,
+):
+    """评测排程的 ``seat_models`` 保留整个变体 dict：同 config 不同
+    model_id/思考强度/温度的变体必须真的落到各自的座位客户端上。"""
+    service, repository = durable
+    game_id = await service.create_game(
+        role_counts={"wolf-killer-werewolf": 1, "wolf-killer-villager": 1},
+        model_seat_assignments={
+            1: {
+                "config_id": None, "model_id": "override-m",
+                "reasoning_effort": "high", "temperature": 0.4,
+            },
+            2: {"model_config_id": None},
+        },
+    )
+    await service.wait_game(game_id)
+
+    overridden, inherited = fake_provider.instances
+    assert overridden.config.model_id == "override-m"
+    assert overridden.config.reasoning_effort == "high"
+    assert overridden.config.temperature == 0.4
+    env = env_default_client_config()
+    assert inherited.config.model_id == env.model_id
+    assert inherited.config.temperature == env.temperature
 
 
 @pytest.mark.asyncio

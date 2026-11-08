@@ -144,6 +144,70 @@ def test_reasoning_effort_must_be_a_known_value(
         )
 
 
+def test_temperature_overrides_the_stored_value(tmp_path, monkeypatch):
+    cfg = _store_with(tmp_path, monkeypatch, temperature=0.7)
+
+    seat_configs, _ = resolve_model_assignments(
+        [{"config_id": cfg.id, "count": 1, "temperature": 0.2}],
+        1, shuffle=lambda values: None,
+    )
+
+    assert seat_configs[1].temperature == 0.2
+
+
+def test_unset_temperature_keeps_the_stored_value(tmp_path, monkeypatch):
+    cfg = _store_with(tmp_path, monkeypatch, temperature=0.7)
+
+    seat_configs, _ = resolve_model_assignments(
+        [{"config_id": cfg.id, "count": 1}], 1, shuffle=lambda values: None,
+    )
+
+    assert seat_configs[1].temperature == 0.7
+
+
+def test_different_temperature_makes_entries_distinct(tmp_path, monkeypatch):
+    cfg = _store_with(tmp_path, monkeypatch)
+
+    seat_configs, _ = resolve_model_assignments(
+        [
+            {"config_id": cfg.id, "count": 1, "temperature": 0.2},
+            {"config_id": cfg.id, "count": 1, "temperature": 0.9},
+        ],
+        2, shuffle=lambda values: None,
+    )
+
+    assert seat_configs[1].temperature == 0.2
+    assert seat_configs[2].temperature == 0.9
+
+
+def test_env_entry_accepts_temperature_override(monkeypatch):
+    seat_configs, _ = resolve_model_assignments(
+        [{"config_id": None, "count": 1, "temperature": 0.4}],
+        1, shuffle=lambda values: None,
+    )
+
+    assert seat_configs[1].temperature == 0.4
+
+
+@pytest.mark.parametrize("temperature", ["hot", [0.5], True, -0.1, 2.1])
+def test_temperature_must_be_a_number_in_range(
+    tmp_path, monkeypatch, temperature,
+):
+    cfg = _store_with(tmp_path, monkeypatch)
+
+    with pytest.raises(ValueError, match="temperature"):
+        resolve_model_assignments(
+            [{"config_id": cfg.id, "count": 1, "temperature": temperature}], 1,
+        )
+
+
+def test_assignment_schema_rejects_out_of_range_temperature() -> None:
+    from app.api.model_schemas import ModelAssignment
+
+    with pytest.raises(Exception):
+        ModelAssignment(config_id="m1", count=1, temperature=3)
+
+
 def test_assignment_schema_rejects_blank_model_id() -> None:
     from app.api.model_schemas import ModelAssignment
 
