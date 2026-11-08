@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections import Counter, defaultdict
 from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -990,3 +991,54 @@ async def test_delete_run_cancels_active_benchmark_before_removing_games() -> No
     repository.transition_benchmark.assert_called_once()
     assert deleted == ["g1"]
     repository.delete_benchmark_run.assert_called_once_with("run")
+
+
+def test_apply_model_labels_resolves_variant_suffixes(tmp_path, monkeypatch) -> None:
+    """同 config 的变体行（``config|model|effort=..``）也挂得上人类可读标签。"""
+    import app.services.benchmark_service as module
+    from app.stores.model_config_store import JsonModelConfigStore, ModelConfig
+
+    store = JsonModelConfigStore(str(tmp_path / "models.json"))
+    store.upsert(ModelConfig.new(
+        name="Go", base_url="https://go.test/v1", model_id="base-model",
+    ))
+    # 名字已含 model_id 的配置不再追加 ``(model_id)`` 后缀。
+    store.upsert(ModelConfig.new(
+        name="self-named", base_url="https://x.test/v1", model_id="self-named",
+    ))
+    config = next(
+        item for item in store.list_all() if item.name == "Go"
+    )
+    monkeypatch.setattr(module, "get_model_config_store", lambda: store)
+
+    report = {"summary": {"model_performance": [
+        {"model": config.id},
+        {"model": f"{config.id}|m-x|effort=high"},
+        {"model": "unknown-id|m-x"},
+        "not-a-row",
+    ], "mixed_uncertainty": "not-a-list"}}
+    module._apply_model_labels(report)
+
+    rows = report["summary"]["model_performance"]
+    assert rows[0]["model_label"] == "Go (base-model)"
+    assert rows[1]["model_label"] == "Go (base-model)|m-x|effort=high"
+    assert "model_label" not in rows[2]
+    assert rows[3] == "not-a-row"
+
+    # summary 不是 Mapping：直接返回，不标任何行。
+    report = {"summary": "nope"}
+    module._apply_model_labels(report)
+    assert report == {"summary": "nope"}
+
+    # 配置库读失败：labels 为空，所有行维持原样。
+    def _boom():
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(
+        module, "get_model_config_store",
+        lambda: SimpleNamespace(list_all=_boom),
+    )
+
+    report = {"summary": {"model_performance": [{"model": config.id}]}}
+    module._apply_model_labels(report)
+    assert report["summary"]["model_performance"] == [{"model": config.id}]

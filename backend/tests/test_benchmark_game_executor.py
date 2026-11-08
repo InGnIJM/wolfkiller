@@ -7,8 +7,8 @@ import pytest
 
 from app.services.benchmark_game_executor import (
     BenchmarkGameExecutor,
-    _config_id,
     _seat_assignments,
+    _seat_model,
 )
 
 
@@ -18,17 +18,17 @@ def test_seat_assignments_preserve_frozen_schedule() -> None:
             "1": {"model_config_id": "a"},
             "2": {"config_id": "b"},
         },
-    }, 2) == {1: "a", 2: "b"}
+    }, 2) == {1: {"model_config_id": "a"}, 2: {"config_id": "b"}}
     with pytest.raises(ValueError, match="every seat"):
         _seat_assignments({"seat_models": {"1": {"config_id": "a"}}}, 2)
 
 
 def test_seat_assignments_reject_malformed_models_seats_and_paired_plans() -> None:
-    assert _config_id({"config_id": None}) is None
+    assert _seat_model({"config_id": None}) == {"config_id": None}
     with pytest.raises(ValueError, match="must be an object"):
-        _config_id("model")
+        _seat_model("model")
     with pytest.raises(ValueError, match="string or null"):
-        _config_id({"config_id": 7})
+        _seat_model({"config_id": 7})
     with pytest.raises(ValueError, match="seat must be an integer"):
         _seat_assignments({"seat_models": {"first": {"config_id": "a"}}}, 1)
     with pytest.raises(ValueError, match="paired benchmark"):
@@ -59,7 +59,9 @@ async def test_executor_creates_and_waits_through_formal_game_service_api() -> N
     assert result == ("created", "completed", None)
     call = game_service.create_game.await_args.kwargs
     assert call["role_counts"] == {"villager": 2}
-    assert call["model_seat_assignments"] == {1: "model", 2: "model"}
+    assert call["model_seat_assignments"] == {
+        1: {"model_config_id": "model"}, 2: {"model_config_id": "model"},
+    }
     assert call["role_by_seat"] == {1: "werewolf", 2: "villager"}
     assert call["runtime_seed"] == 987654321
     assert call["benchmark_run_id"] == "run"
@@ -67,6 +69,85 @@ async def test_executor_creates_and_waits_through_formal_game_service_api() -> N
     assert call["enable_sheriff"] is False  # scenario has no enable_sheriff → defaults to False
     assert call["victory"] == "edge"
     game_service.wait_game.assert_awaited_once_with("created")
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_variant_overrides_and_auxiliary_models() -> None:
+    """seat_models 的变体字段与 run 级解说/投票配置都要原样进 create_game。"""
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {
+        "config": {
+            "scenario": {"role_counts": {"villager": 2}},
+            "commentary_enabled": True,
+            "commentary_config_id": "cc", "commentary_model_id": "cm",
+            "commentary_reasoning_effort": "high",
+            "vote_model_config_id": "vc", "vote_model_id": "vm",
+            "vote_reasoning_effort": "low",
+        },
+    }
+    game_service = MagicMock()
+    game_service.create_game = AsyncMock(return_value="created")
+    game_service.wait_game = AsyncMock(return_value={"execution_status": "completed"})
+    executor = BenchmarkGameExecutor(repository, game_service)
+
+    await executor({
+        "run_id": "run", "item_index": 0, "game_id": None,
+        "assignment": {
+            "seat_models": {
+                "1": {
+                    "model_config_id": "a", "model_id": "m-x",
+                    "reasoning_effort": "high", "temperature": 0.3,
+                },
+                "2": {"model_config_id": "b"},
+            },
+            "role_by_seat": {"1": "werewolf", "2": "villager"},
+            "runtime_seed": 7,
+        },
+    })
+
+    call = game_service.create_game.await_args.kwargs
+    assert call["model_seat_assignments"] == {
+        1: {
+            "model_config_id": "a", "model_id": "m-x",
+            "reasoning_effort": "high", "temperature": 0.3,
+        },
+        2: {"model_config_id": "b"},
+    }
+    assert call["commentary_enabled"] is True
+    assert call["commentary_config_id"] == "cc"
+    assert call["commentary_model_id"] == "cm"
+    assert call["commentary_reasoning_effort"] == "high"
+    assert call["vote_model_config_id"] == "vc"
+    assert call["vote_model_id"] == "vm"
+    assert call["vote_reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", [
+    "commentary_config_id", "commentary_model_id",
+    "commentary_reasoning_effort", "vote_model_config_id", "vote_model_id",
+    "vote_reasoning_effort",
+])
+async def test_executor_rejects_non_text_auxiliary_model_fields(field) -> None:
+    repository = MagicMock()
+    repository.get_benchmark_run.return_value = {
+        "config": {
+            "scenario": {"role_counts": {"villager": 1}},
+            field: 7,
+        },
+    }
+    executor = BenchmarkGameExecutor(repository, MagicMock())
+
+    with pytest.raises(ValueError, match=field):
+        await executor({
+            "run_id": "run", "item_index": 0, "game_id": None,
+            "assignment": {
+                "model": {"model_config_id": "a"},
+                "seats": [1],
+                "role_by_seat": {"1": "villager"},
+                "runtime_seed": 1,
+            },
+        })
 
 
 @pytest.mark.asyncio

@@ -685,11 +685,29 @@ def test_assignment_and_model_helpers_cover_legacy_and_malformed_shapes() -> Non
     assert metrics._assignment({"assignment_json": "[]"}) == {}
     assert metrics._assignment({}) == {}
 
-    assert metrics._model_name(None) == "default"
-    assert metrics._model_name({"model_config_id": ""}) == "default"
-    assert metrics._model_name({"model_config_id": 3, "config_id": "config"}) == "config"
-    assert metrics._model_name({"model_id": "provider"}) == "provider"
-    assert metrics._model_name({"name": "friendly"}) == "friendly"
+    assert metrics.model_variant_key(None) == "default"
+    assert metrics.model_variant_key({"model_config_id": ""}) == "default"
+    assert metrics.model_variant_key({"model_config_id": 3, "config_id": "config"}) == "config"
+    assert metrics.model_variant_key({"model_id": "provider"}) == "provider"
+    assert metrics.model_variant_key({"name": "friendly"}) == "friendly"
+    # 变体覆盖把同一 config 的不同选择区分成不同 metric 行；裸 config id 的旧
+    # 形状仍 key 在 config 上，旧报表不受影响。
+    assert metrics.model_variant_key({
+        "model_config_id": "a", "model_id": "m-x",
+    }) == "a|m-x"
+    assert metrics.model_variant_key({
+        "model_config_id": "a", "reasoning_effort": "high",
+    }) == "a|effort=high"
+    assert metrics.model_variant_key({
+        "model_config_id": "a", "model_id": "m",
+        "reasoning_effort": "low", "temperature": 0.3,
+    }) == "a|m|effort=low|temp=0.3"
+    assert metrics.model_variant_key({
+        "model_config_id": "a", "temperature": True,
+    }) == "a"
+    assert metrics.model_variant_key({
+        "model_id": "m", "reasoning_effort": "high",
+    }) == "m|effort=high"
 
     assert metrics._seat_number(1) == 1
     assert metrics._seat_number(0) is None
@@ -709,6 +727,24 @@ def test_assignment_and_model_helpers_cover_legacy_and_malformed_shapes() -> Non
     assert metrics._assigned_models({
         "model": {"model_config_id": "a"}, "seats": [1, "bad", -1],
     }) == [(1, "a")]
+
+
+def test_metric_helpers_cover_defensive_and_boundary_shapes() -> None:
+    """非 Mapping 行、警长竞选桶与 Wilson 零样本边界的兜底路径。"""
+    from app.services import benchmark_metrics as metrics
+
+    assert metrics._win_reason_distribution(["not-a-mapping"]) == {}
+    rejected = metrics._rule_rejection_metrics([{
+        "rounds": {"r1": {
+            "rejected_actions": 0,
+            "rejected_action_details": [123],
+        }},
+    }], requests_total=1)
+    assert rejected["detailed_games"] == 0
+    assert metrics._pass_bucket({
+        "action_position": "x:sheriff_campaign:seat:3",
+    }) == "sheriff_campaign"
+    assert metrics._wilson_interval(0, 0) == (None, None)
 
 
 def test_model_performance_excludes_unusable_seats_and_keeps_camp_only_rows() -> None:
