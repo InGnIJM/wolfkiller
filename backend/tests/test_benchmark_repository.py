@@ -52,6 +52,23 @@ def test_model_config_references_only_include_unfinished_work(tmp_path) -> None:
         repository.close()
 
 
+def test_model_config_references_include_run_level_vote_model(tmp_path) -> None:
+    """评测 run 级冻结的投票模型也要进删除保护，不能只查每座位条目。"""
+    repository = GameRepository(tmp_path)
+    try:
+        repository.create_benchmark_run(
+            run_id="run-vote", client_request_id="client-vote",
+            request_digest="ref", name="vote", mode="mixed_arena",
+            config={"vote_model_config_id": "vote-cfg"},
+            schedule=_schedule(),
+        )
+        assert repository.model_config_references("vote-cfg")["benchmark_run_ids"] == [
+            "run-vote",
+        ]
+    finally:
+        repository.close()
+
+
 def test_benchmark_plan_is_fully_persisted_and_idempotent_before_claim(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:

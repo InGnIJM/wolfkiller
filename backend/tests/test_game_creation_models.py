@@ -316,6 +316,7 @@ async def test_create_game_route_passes_assignments_and_returns_snapshot(monkeyp
         model_assignments=[{
             "config_id": None, "count": 2,
             "model_id": None, "reasoning_effort": None,
+            "temperature": None,
         }],
         vote_model_config_id=None,
         vote_model_id=None,

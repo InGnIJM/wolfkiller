@@ -519,7 +519,18 @@ def test_assignment_groups_and_csv_rows_cover_malformed_optional_data():
         }},
     })
     assert ("provider-model", [1, 2]) in grouped
-    assert any(name == "unknown" and seats == [] for name, seats in grouped)
+    assert any(name == "default|temp=0.2" and seats == [] for name, seats in grouped)
+    variant_groups = benchmark_routes._assignment_groups({
+        "assignment": {"seat_models": {
+            "1": {"model_config_id": "a", "model_id": "m-x",
+                  "reasoning_effort": "high"},
+            "2": {"model_config_id": "a", "model_id": "m-x",
+                  "reasoning_effort": "high"},
+            "3": {"model_config_id": "a", "reasoning_effort": "low"},
+        }},
+    })
+    assert ("a|m-x|effort=high", [1, 2]) in variant_groups
+    assert ("a|effort=low", [3]) in variant_groups
     assert benchmark_routes._assignment_groups({
         "assignment": {"model": {"model_id": "m"}, "seats": [1, 0, "2"]},
     }) == [("m", [1])]
