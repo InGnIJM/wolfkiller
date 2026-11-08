@@ -15,27 +15,33 @@ from app.persistence.repository import GameRepository
 from app.services.game_service import GameService
 
 
-def _config_id(model: object) -> str | None:
+def _seat_model(model: object) -> dict[str, object]:
+    """Return one frozen seat entry for ``create_game``.
+
+    The whole dict — not just the config id — crosses the boundary so
+    per-selection ``model_id`` / ``reasoning_effort`` / ``temperature``
+    overrides survive into the game; ``create_game`` validates the fields.
+    """
     if not isinstance(model, Mapping):
         raise ValueError("benchmark model assignment must be an object")
     value = model.get("config_id", model.get("model_config_id"))
     if value is not None and not isinstance(value, str):
         raise ValueError("benchmark model config_id must be a string or null")
-    return value
+    return dict(model)
 
 
 def _seat_assignments(
     assignment: Mapping[str, object], player_count: int,
-) -> dict[int, str | None]:
+) -> dict[int, dict[str, object]]:
     seat_models = assignment.get("seat_models")
     if isinstance(seat_models, Mapping):
-        result: dict[int, str | None] = {}
+        result: dict[int, dict[str, object]] = {}
         for raw_seat, model in seat_models.items():
             try:
                 seat = int(raw_seat)
             except (TypeError, ValueError):
                 raise ValueError("benchmark seat must be an integer") from None
-            result[seat] = _config_id(model)
+            result[seat] = _seat_model(model)
         if set(result) != set(range(1, player_count + 1)):
             raise ValueError("benchmark assignment must cover every seat")
         return result
@@ -44,8 +50,15 @@ def _seat_assignments(
     seats = assignment.get("seats")
     if not isinstance(seats, list) or set(seats) != set(range(1, player_count + 1)):
         raise ValueError("paired benchmark assignment must cover every seat")
-    config_id = _config_id(model)
-    return {seat: config_id for seat in range(1, player_count + 1)}
+    seat_model = _seat_model(model)
+    return {seat: dict(seat_model) for seat in range(1, player_count + 1)}
+
+
+def _optional_text(config: Mapping[str, object], key: str) -> str | None:
+    value = config.get(key)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"benchmark {key} must be a string or null")
+    return value
 
 
 def _role_assignments(
@@ -169,6 +182,12 @@ class BenchmarkGameExecutor:
             game_id = str(uuid.uuid5(
                 uuid.NAMESPACE_URL, f"wolfkiller:benchmark:{run_id}:{item_index}",
             ))
+            commentary_enabled_raw = config.get("commentary_enabled")
+            commentary_enabled = (
+                commentary_enabled_raw
+                if isinstance(commentary_enabled_raw, bool)
+                else False
+            )
             game_id = await self._game_service.create_game(
                 role_counts=normalized_counts,
                 model_seat_assignments=seats,
@@ -181,6 +200,23 @@ class BenchmarkGameExecutor:
                 enable_sheriff=enable_sheriff,
                 witch_self_save=witch_self_save,
                 victory=victory,
+                commentary_enabled=commentary_enabled,
+                commentary_config_id=_optional_text(
+                    config, "commentary_config_id",
+                ),
+                commentary_model_id=_optional_text(
+                    config, "commentary_model_id",
+                ),
+                commentary_reasoning_effort=_optional_text(
+                    config, "commentary_reasoning_effort",
+                ),
+                vote_model_config_id=_optional_text(
+                    config, "vote_model_config_id",
+                ),
+                vote_model_id=_optional_text(config, "vote_model_id"),
+                vote_reasoning_effort=_optional_text(
+                    config, "vote_reasoning_effort",
+                ),
             )
 
         arm = getattr(self._game_service, "arm_benchmark_timeout", None)

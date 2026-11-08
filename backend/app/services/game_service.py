@@ -653,12 +653,41 @@ def _sheriff_vote_route(vote_client, seat_client, state, seat: int):
 VALID_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "max"})
 
 
+def _seat_model_variant(
+    value: object,
+) -> tuple[str | None, object, object, object]:
+    """Normalize one ``model_seat_assignments`` value to a variant tuple.
+
+    The durable benchmark path accepts either the legacy ``str | None``
+    config id or a frozen ``{config_id, model_id, reasoning_effort,
+    temperature}`` object; override fields are validated downstream by
+    ``resolve_model_assignments`` so both entry points share one rule set.
+    """
+    if value is None or isinstance(value, str):
+        return value, None, None, None
+    if isinstance(value, Mapping):
+        config_id = value.get("config_id", value.get("model_config_id"))
+        if config_id is not None and not isinstance(config_id, str):
+            raise ValueError("model seat config_id must be a string or null")
+        return (
+            config_id,
+            value.get("model_id"),
+            value.get("reasoning_effort"),
+            value.get("temperature"),
+        )
+    raise ValueError(
+        "model seat assignment must be a string or null config id, "
+        "or a variant object",
+    )
+
+
 def _saved_client_config(
     config_id: str,
     env_config: LLMClientConfig,
     *,
     model_id: str | None = None,
     reasoning_effort: str | None = None,
+    temperature: float | None = None,
 ) -> tuple[LLMClientConfig, dict]:
     config = get_model_config_store().get(config_id)
     if config is None:
@@ -676,7 +705,9 @@ def _saved_client_config(
         api_key=api_key,
         model_id=model_id if model_id is not None else config.model_id,
         temperature=(
-            config.temperature
+            temperature
+            if temperature is not None
+            else config.temperature
             if config.temperature is not None
             else env_config.temperature
         ),
@@ -736,8 +767,12 @@ def resolve_model_assignments(
     if not model_assignments:
         raise ValueError("model assignments must be non-empty")
 
-    normalized: list[tuple[str | None, int, str | None, str | None]] = []
-    seen_variants: set[tuple[str | None, str | None, str | None]] = set()
+    normalized: list[
+        tuple[str | None, int, str | None, str | None, float | None]
+    ] = []
+    seen_variants: set[
+        tuple[str | None, str | None, str | None, float | None]
+    ] = set()
     for entry in model_assignments:
         if not isinstance(entry, dict):
             raise ValueError("model assignment entry must be an object")
@@ -763,21 +798,39 @@ def resolve_model_assignments(
                 "model assignment reasoning_effort must be one of "
                 + ", ".join(sorted(VALID_REASONING_EFFORTS))
             )
+        temperature = entry.get("temperature")
+        if temperature is not None:
+            if (
+                isinstance(temperature, bool)
+                or not isinstance(temperature, (int, float))
+            ):
+                raise ValueError("model assignment temperature must be a number")
+            temperature = float(temperature)
+            if not 0 <= temperature <= 2:
+                raise ValueError(
+                    "model assignment temperature must be between 0 and 2"
+                )
         # A provider config may appear several times as long as the selected
-        # model or thinking effort differs between the groups.
-        variant = (config_id, model_id, reasoning_effort)
+        # model, thinking effort or temperature differs between the groups.
+        variant = (config_id, model_id, reasoning_effort, temperature)
         if variant in seen_variants:
             raise ValueError("model assignment variants must be unique")
         seen_variants.add(variant)
-        normalized.append((config_id, count, model_id, reasoning_effort))
-    if sum(count for _, count, _, _ in normalized) != total_players:
+        normalized.append(
+            (config_id, count, model_id, reasoning_effort, temperature)
+        )
+    if sum(count for _, count, _, _, _ in normalized) != total_players:
         raise ValueError("model assignment count sum must equal total players")
 
     resolved: list[tuple[LLMClientConfig, dict, int]] = []
-    for config_id, count, model_id, reasoning_effort in normalized:
+    for config_id, count, model_id, reasoning_effort, temperature in normalized:
         if config_id is None:
             seat_config = env_config
-            if model_id is not None or reasoning_effort is not None:
+            if (
+                model_id is not None
+                or reasoning_effort is not None
+                or temperature is not None
+            ):
                 seat_config = replace(
                     env_config,
                     model_id=(
@@ -787,6 +840,11 @@ def resolve_model_assignments(
                         reasoning_effort
                         if reasoning_effort is not None
                         else env_config.reasoning_effort
+                    ),
+                    temperature=(
+                        temperature
+                        if temperature is not None
+                        else env_config.temperature
                     ),
                 )
             resolved_profile = ProviderRegistry().resolve(
@@ -807,6 +865,7 @@ def resolve_model_assignments(
                 env_config,
                 model_id=model_id,
                 reasoning_effort=reasoning_effort,
+                temperature=temperature,
             )
             resolved.append((client_config, metadata, count))
 
@@ -1775,7 +1834,9 @@ class GameService:
         source: str = "native",
         benchmark_run_id: str | None = None,
         benchmark_item_index: int | None = None,
-        model_seat_assignments: Mapping[int, str | None] | None = None,
+        model_seat_assignments: (
+            Mapping[int, str | None | Mapping[str, object]] | None
+        ) = None,
         role_by_seat: Mapping[int, str] | None = None,
         runtime_seed: int | None = None,
     ) -> str:
@@ -1823,26 +1884,39 @@ class GameService:
             expected_seats = set(range(1, config.total_players + 1))
             if set(model_seat_assignments) != expected_seats:
                 raise ValueError("model seat assignments must cover every seat")
-            ordered_ids: list[str | None] = []
+            # Seats group by the full variant tuple, not the config id alone:
+            # benchmark schedules pin (config, model, effort, temperature)
+            # per seat so one config can drive several variants in one game.
+            seat_variants: dict[
+                int, tuple[str | None, object, object, object],
+            ] = {}
+            ordered_variants: list[
+                tuple[str | None, object, object, object],
+            ] = []
             for seat in sorted(model_seat_assignments):
-                config_id = model_seat_assignments[seat]
-                if config_id is not None and not isinstance(config_id, str):
-                    raise ValueError("model seat config_id must be a string or null")
-                if config_id not in ordered_ids:
-                    ordered_ids.append(config_id)
+                variant = _seat_model_variant(model_seat_assignments[seat])
+                seat_variants[seat] = variant
+                if variant not in ordered_variants:
+                    ordered_variants.append(variant)
             model_assignments = [
                 {
                     "config_id": config_id,
                     "count": sum(
-                        assigned == config_id
-                        for assigned in model_seat_assignments.values()
+                        seat_variant == variant
+                        for seat_variant in seat_variants.values()
                     ),
+                    "model_id": model_id,
+                    "reasoning_effort": effort,
+                    "temperature": temperature,
                 }
-                for config_id in ordered_ids
+                for config_id, model_id, effort, temperature in ordered_variants
             ]
-            positions = {config_id: index for index, config_id in enumerate(ordered_ids)}
+            positions = {
+                variant: index
+                for index, variant in enumerate(ordered_variants)
+            }
             desired = [
-                positions[model_seat_assignments[seat]]
+                positions[seat_variants[seat]]
                 for seat in range(1, config.total_players + 1)
             ]
 

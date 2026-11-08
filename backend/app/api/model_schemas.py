@@ -196,6 +196,7 @@ class ModelAssignment(BaseModel):
     count: Annotated[int, Field(strict=True, ge=1)]
     model_id: Optional[str] = None
     reasoning_effort: Optional[ReasoningEffortId] = None
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
 
     @field_validator("model_id")
     @classmethod
