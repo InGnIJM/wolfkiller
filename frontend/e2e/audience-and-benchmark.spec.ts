@@ -160,7 +160,9 @@ test('creates and previews a benchmark draft, then starts, pauses, resumes and r
 
   await expect(page.getByRole('heading', { name: '新建评测草稿' })).toBeVisible();
   await expect(page.getByText('完整区组局数').locator('..').getByText('16')).toBeVisible();
-  await page.getByLabel('参赛模型').click();
+  await page.getByRole('button', { name: '添加变体' }).click();
+  const variantRow = page.getByRole('group', { name: '模型变体 1' });
+  await variantRow.getByLabel('模型配置').click();
   await page.getByRole('option', { name: /测试模型/ }).click();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '创建草稿' }).click();
