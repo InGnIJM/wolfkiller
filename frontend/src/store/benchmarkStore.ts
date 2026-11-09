@@ -34,7 +34,7 @@ function messageOf(error: unknown): string {
 
 async function loadAllGames(runId: string): Promise<BenchmarkItem[]> {
   const games: BenchmarkItem[] = [];
-  const limit = 50;
+  const limit = 200;
   while (true) {
     const page = await api.fetchBenchmarkGames(runId, games.length, limit);
     games.push(...page.games);
