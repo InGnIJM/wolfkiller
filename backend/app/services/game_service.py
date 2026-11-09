@@ -39,6 +39,7 @@ from app.agents.retry import (
 from app.agents.failure_taxonomy import normalize_failure_code
 from app.agents.cache_route import (
     BurstWarmupMode, CacheRouteMode, SharedSessionMode, apply_shared_session,
+    burst_warmup_commit_seconds,
     burst_warmup_max_wait_seconds, burst_warmup_mode, cache_route_mode,
     pin_cache_routes, shared_session_mode,
 )
@@ -360,7 +361,7 @@ def _log_llm_telemetry(
     elapsed_ms: int = 0, usage=None, attempts: int = 1,
     parse_result: str, failure_code: Optional[str] = None,
     call_kind: str = "night", transport: str = "night_json",
-    phase: str = "night",
+    phase: str = "night", cache_baseline: Optional[dict] = None,
 ) -> None:
     """Write one model-call record; telemetry must never break the game flow.
 
@@ -369,7 +370,22 @@ def _log_llm_telemetry(
     row is invisible in its call count, token total and failure rate (the
     pipeline's skill actions were missing exactly that way, while the durable
     ledger had them all).
+
+    ``cache_baseline`` is an optional ``(game_id, seat, tool_name) -> int``
+    high-water map maintained by the caller: when a call reports fewer cached
+    prompt tokens than the best seen for that seat and contract, the row is
+    flagged ``cache_regressed`` — the provider dropped or could not see the
+    commit it served before. The map is only ever raised; an unmeasured call
+    leaves it untouched.
     """
+    cached = getattr(usage, "cached_prompt_tokens", None) if usage else None
+    regressed = False
+    if cache_baseline is not None and cached is not None:
+        key = (game_id, seat, tool_name)
+        best = cache_baseline.get(key)
+        regressed = best is not None and cached < best
+        if best is None or cached > best:
+            cache_baseline[key] = cached
     try:
         game_logger.log_llm_call(
             game_id, round_number, phase, seat,
@@ -379,11 +395,10 @@ def _log_llm_telemetry(
             prompt_tokens=(usage.prompt_tokens if usage else None),
             completion_tokens=(usage.completion_tokens if usage else None),
             total_tokens=(usage.total_tokens if usage else None),
-            cached_prompt_tokens=(
-                getattr(usage, "cached_prompt_tokens", None) if usage else None
-            ),
+            cached_prompt_tokens=cached,
             retried=attempts > 1, parse_result=parse_result,
             failure_code=failure_code,
+            cache_regressed=regressed,
         )
     except Exception:
         logger.exception(
@@ -1133,6 +1148,12 @@ class GameService:
         # two threads. Two handles for one game would mean two descriptors and two
         # independent write locks, which interleaves records into corrupt lines.
         self._prompt_captures_lock = threading.Lock()
+        # ``(game_id, seat, tool_name)`` → best ``cached_prompt_tokens`` seen
+        # this process. Runtime-only like the guards above: a call that lands
+        # under its seat's own watermark is provider-side cache churn, and the
+        # row it writes flags ``cache_regressed`` so the next report can size
+        # that pool without guessing.
+        self._llm_cache_baseline: dict[tuple[str, int, str], int] = {}
         self._recovery_warnings: dict[str, list[str]] = {}
         self._clock_tasks: dict[str, asyncio.Task] = {}
         self._clock_state: dict[str, dict[str, int | float | None]] = {}
@@ -1851,6 +1872,7 @@ class GameService:
         shared_session = shared_session_mode()
         burst_warmup = burst_warmup_mode()
         warmup_max_wait = burst_warmup_max_wait_seconds()
+        warmup_commit = burst_warmup_commit_seconds()
         game_id = game_id_override or (
             str(uuid.uuid4()) if self.repository is not None
             else str(uuid.uuid4())[:8]
@@ -2186,6 +2208,7 @@ class GameService:
                             parse_result="error",
                             failure_code=normalize_failure_code(error),
                             call_kind=call_kind, phase=phase, transport=transport,
+                            cache_baseline=self._llm_cache_baseline,
                         )
                     raise
                 if engine_ref is not None:
@@ -2200,6 +2223,7 @@ class GameService:
                         attempts=(result.attempts if result is not None else 1),
                         parse_result="ok",
                         call_kind=call_kind, phase=phase, transport=transport,
+                        cache_baseline=self._llm_cache_baseline,
                     )
                 return json.dumps(dict(payload), ensure_ascii=False)
 
@@ -2227,6 +2251,7 @@ class GameService:
                 health_guard=health_guard,
                 vote_warmup=burst_warmup is BurstWarmupMode.ON,
                 vote_warmup_max_wait_seconds=warmup_max_wait,
+                vote_warmup_commit_seconds=warmup_commit,
             )
             self._attach_health_sink(game_id, health_guard, engine)
             engine_ref = engine
@@ -3257,6 +3282,7 @@ class GameService:
         affinity_mode = session_affinity_mode()
         vote_warmup = burst_warmup_mode() is BurstWarmupMode.ON
         warmup_max_wait = burst_warmup_max_wait_seconds()
+        warmup_commit = burst_warmup_commit_seconds()
         seat_configs = self._resolve_recovery_model_configs(state, record)
         vote_client_config = self._resolve_recovery_vote_model(state, record)
         _log_session_affinity(state.game_id, len(state.players), affinity_mode)
@@ -3402,6 +3428,7 @@ class GameService:
                     attempts=(turn.attempts if turn is not None else 1),
                     parse_result="ok",
                     call_kind=call_kind, phase=phase, transport=transport,
+                    cache_baseline=self._llm_cache_baseline,
                 )
             return json.dumps(dict(payload), ensure_ascii=False)
 
@@ -3420,6 +3447,7 @@ class GameService:
             health_guard=health_guard,
             vote_warmup=vote_warmup,
             vote_warmup_max_wait_seconds=warmup_max_wait,
+            vote_warmup_commit_seconds=warmup_commit,
         )
         self._attach_health_sink(state.game_id, health_guard, engine)
         engine_box["engine"] = engine
@@ -3895,6 +3923,7 @@ class GameService:
                     ),
                     call_kind="action", transport="action_tool",
                     phase=pipeline_phase,
+                    cache_baseline=self._llm_cache_baseline,
                 )
             if command is None or command.action_type not in request.contract.action_types:
                 # Provider failure, unusable answer, or an action type outside the
