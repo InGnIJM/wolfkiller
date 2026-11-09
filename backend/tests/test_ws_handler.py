@@ -71,6 +71,53 @@ class TestWSManager:
 
         assert "game-1" not in mgr._v2_connections
 
+    @pytest.mark.asyncio
+    async def test_speech_stream_notices_coalesce_per_seat(self):
+        """Pending live-text frames keep only the latest per (type, seat)."""
+        mgr = WSManager()
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        await mgr.connect_v2("game-1", ws)
+
+        mgr.queue_v2_notice("game-1", "speech_stream", seat=3, text="第一段")
+        mgr.queue_v2_notice("game-1", "speech_stream", seat=3, text="第一段第二段")
+        mgr.queue_v2_notice("game-1", "speech_stream", seat=4, text="四号说")
+
+        assert mgr.drain_v2_notices("game-1", ws) == [
+            {"type": "speech_stream", "seat": 3, "text": "第一段第二段"},
+            {"type": "speech_stream", "seat": 4, "text": "四号说"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_thinking_and_stream_notices_do_not_swallow_each_other(self):
+        mgr = WSManager()
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        await mgr.connect_v2("game-1", ws)
+
+        mgr.queue_v2_notice("game-1", "speech_stream", seat=3, text="正文")
+        mgr.queue_v2_notice("game-1", "speech_thinking", seat=3, text="在想")
+
+        assert mgr.drain_v2_notices("game-1", ws) == [
+            {"type": "speech_stream", "seat": 3, "text": "正文"},
+            {"type": "speech_thinking", "seat": 3, "text": "在想"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_other_notice_types_append_without_coalescing(self):
+        mgr = WSManager()
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        await mgr.connect_v2("game-1", ws)
+
+        mgr.queue_v2_notice("game-1", "acting", seat=4)
+        mgr.queue_v2_notice("game-1", "acting", seat=4)
+
+        assert mgr.drain_v2_notices("game-1", ws) == [
+            {"type": "acting", "seat": 4},
+            {"type": "acting", "seat": 4},
+        ]
+
 
 class TestWSHandler:
     @pytest.mark.asyncio

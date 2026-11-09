@@ -18,6 +18,10 @@ _V2_POLL_SECONDS = 1.0
 _V2_HEARTBEAT_SECONDS = 20.0
 _V2_IDLE_TIMEOUT_SECONDS = 60.0
 
+#: Live-text notices carry the full text-so-far, so a pending frame is obsolete
+#: the moment a newer partial arrives; the queue keeps only the latest per seat.
+_COALESCE_NOTICE_TYPES = frozenset({"speech_stream", "speech_thinking"})
+
 
 class _V2SendError(RuntimeError):
     pass
@@ -66,8 +70,18 @@ class WSManager:
         if not queues:
             return
         notice = {"type": msg_type, **payload}
+        coalesce = msg_type in _COALESCE_NOTICE_TYPES
+        seat = payload.get("seat") if coalesce else None
         for queue in queues.values():
-            queue.append(notice)
+            if not coalesce:
+                queue.append(notice)
+                continue
+            for index, pending in enumerate(queue):
+                if pending.get("type") == msg_type and pending.get("seat") == seat:
+                    queue[index] = notice
+                    break
+            else:
+                queue.append(notice)
         for wakeup in self._v2_wakeups.get(game_id, {}).values():
             wakeup.set()
 
