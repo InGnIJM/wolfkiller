@@ -339,7 +339,7 @@ def test_render_truncates_oversized_history_to_byte_budget() -> None:
     # is what the truncation drops.
     assert "最新狼窝记录乙" in rendered
     assert "狼窝旧记录甲" not in rendered
-    assert "最新狼窝记录乙</record></untrusted_action_history>\nPROJECTED_CONTEXT=" in rendered
+    assert "最新狼窝记录乙</record></untrusted_action_history>\nROLE_CONTRACT=" in rendered
 
 
 def test_action_prompt_sections_follow_the_prefix_cache_order() -> None:
@@ -347,10 +347,10 @@ def test_action_prompt_sections_follow_the_prefix_cache_order() -> None:
     rendered = PromptRenderer().render(spec, contract, context, "history line")
     order = [
         rendered.index("<public_role_rules>"),
+        rendered.index("<untrusted_action_history>"),
         rendered.index("ROLE_CONTRACT="),
         rendered.index("OUTPUT_ACTION_COMMAND_SCHEMA="),
         rendered.index("TARGET_SELECTION_RULE="),
-        rendered.index("<untrusted_action_history>"),
         rendered.index("PROJECTED_CONTEXT="),
     ]
     assert order == sorted(order)
