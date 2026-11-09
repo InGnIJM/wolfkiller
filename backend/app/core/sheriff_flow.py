@@ -10,7 +10,6 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Optional
 
-from app.agents.game_rules import BASE_RULES, SHERIFF_GAME_RULES
 from app.agents.output_parser import extract_json_object
 from app.core.conversation_log import ConversationLog
 from app.core.wolf_pack import actor_sees_pack, in_wolf_pack, pack_seats
@@ -558,14 +557,6 @@ class SheriffDirector:
     @staticmethod
     def _messages(system: str, human: str) -> list[dict[str, str]]:
         return [{"role": "system", "content": system}, {"role": "user", "content": human}]
-
-    @staticmethod
-    def _system() -> str:
-        return (
-            BASE_RULES
-            + " ".join(SHERIFF_GAME_RULES)
-            + " Only use the currently bound tool. Do not invent other Werewolf offices."
-        )
 
     def _speech_lines(self, state: GameState) -> list[str]:
         """Recent public campaign speeches for the current election round."""
