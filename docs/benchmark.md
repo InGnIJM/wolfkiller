@@ -2,9 +2,9 @@
 
 本文说明 WolfKiller 的 benchmark 工具链：如何采集数据、如何跑批量对局评测，以及各指标的定义。
 
-最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。**最近两次运行的复盘与现行指标缺陷清单见 [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md)**：在那一批修完之前，本页「指标定义」一节的决策质量（阵营/神职分类走角色名字符串）与 `requests.failure_rate`（流水线兜底不计失败）两项仍不要当权威口径。
+最近一次本机混座跑批（2026-09-16，61 局完成）的结论与口径陷阱见 [notes/2026-09-16-mimo-mixed-arena.md](notes/2026-09-16-mimo-mixed-arena.md)。**最近两次运行的复盘与当时的指标缺陷清单见 [notes/2026-10-07-eval-review.md](notes/2026-10-07-eval-review.md)**：其中点名的两项已修——决策质量的阵营/神职分类改读 `RoleSpec.tags`（见下「指标定义」），流水线兜底与技术性失败计入 `requests.failed`。
 
-**2026-10-09 已修**（同一批复盘里的另两项）：`attempts.token_usage.completeness_rate` —— 发言/投票/夜间流水线三条路现在都把 usage 交回账本与 `llm_calls.log`（`BaseRole._record_usage`，流式纯文本没有 usage 就留空，不记假 0）；`retry_rate` —— `attempts.retry_rate` 已**下线**（重试发生在一次 `provider_call` 内部，`model_attempts` 每逻辑请求只有一行，该键结构性恒 0），真实内层重试率是 `llm.llm_retry_rate`，来源是 `llm_calls.log` 的 `retried` 标记；`attempts.retried_requests` 保留，但它的语义是**恢复重派发**次数，不是梯子重试。同一批还加了报告保留窗口：`benchmark_reports` 每个 `(run_id, metric_version)` 只保留最新两份（此前从不清理，单个 run 曾累积 3404 行 / 149MB）。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
+**2026-10-09 已修**（同一批复盘里的另两项）：`attempts.token_usage.completeness_rate` —— 发言/投票/夜间流水线三条路现在都把 usage 交回账本与 `llm_calls.log`（`BaseRole._record_usage`，流式纯文本没有 usage 就留空，不记假 0）；`retry_rate` —— `attempts.retry_rate` 自 v6 起恢复输出，是真内层重试率（按各局 `summary.llm.retried / llm.calls` 聚合，来源是 `llm_calls.log` 的 `retried` 标记；v5 时代它曾结构性恒 0 而下线）；`attempts.retried_requests` 改名 `recovery_redispatches`（恢复重派发次数，旧键保留一版）。同一批还加了报告保留窗口：`benchmark_reports` 每个 `(run_id, metric_version)` 只保留最新两份（此前从不清理，单个 run 曾累积 3404 行 / 149MB）。8 月底 [project-analysis.md](project-analysis.md) 里「4 局 / 狼票集中度 27%」不要再当现行数据。
 
 ## 两层基准
 
@@ -13,7 +13,7 @@
 | 评测层（仓库内 `backend/scripts/run_benchmark.py`） | 真实模型调用 | 对局质量、token 成本、调用延迟 | 消耗 token | 版本对比 / 模型对比时手动触发 |
 | 兼容日志 / `summary.json` | 无额外调用 | 人工审计与旧口径聚合 | 无 | 对局结束时由服务自动写入 |
 
-评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 JSON **自 v3 起含决策质量（当前 `v5`）**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）；`summary.reliability` 单独给出 Scheduler 规则拒绝的次数与分母（`rule_rejected` / `per_game` / `per_request` / `samples`），不要把 provider 成功但被规则拒绝的请求算成传输失败。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率；`summary.reliability` 目前只进 JSON 报告，尚未单独做详情页表格。`app/benchmark/report.py` 的 Markdown 报告仍是**只被测试引用**的手动工具（`run_benchmark.py` 不生成它）。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 放行 `run_benchmark.py`、`purge_old_games.py`、`prompt_size_report.py` 与 `cleanup_stale_benchmarks.py`；`perf_benchmark.py` / `export_game_summary.py` **不在版本控制中**，克隆后执行会找不到文件。
+评测层以 SQLite 中冻结的 benchmark 计划、对局、模型请求和模型尝试为事实源。`GET /api/benchmarks/{id}/report` 的原生 JSON **自 v3 起含决策质量（当前 `v8`）**：`summary.decision` 给出跨局池化的命中率，并带各自的**样本量**（`summary.decision.samples`）；`summary.reliability` 单独给出 Scheduler 规则拒绝的次数与分母（`rule_rejected` / `per_game` / `per_request` / `samples`），不要把 provider 成功但被规则拒绝的请求算成传输失败。数据来自每局结束时写下的 `summary.json`（`app/services/game_summary.py` 的 `read_game_summary()` 逐局读取；缺失或损坏的局只计入 `data_quality.summaries_missing`，不会让报告失败）。评测详情页把这一节渲染成「决策质量」表（14 个比率 + 2 个计数，逐行给样本），并额外显示平均轮次与中断率；`summary.reliability` 在详情页有独立区块与 `by_contract` 表。Markdown 报告由 `GET /api/benchmarks/{id}/export?format=markdown`（`benchmark_routes._markdown_text`）导出，旧的 `app/benchmark/report.py` 已删除。JSONL/`summary.json` 还用于人工审计与下文「兼容导出」表。`.gitignore` 放行 `run_benchmark.py`、`purge_old_games.py`、`prompt_size_report.py` 与 `cleanup_stale_benchmarks.py`；`perf_benchmark.py` / `export_game_summary.py` **不在版本控制中**，克隆后执行会找不到文件。
 
 ## 数据采集层
 
@@ -114,13 +114,7 @@ API 报告带 `metric_version` 与 `input_digest`。当前原生指标版本为 
 
 ## A/B 对比
 
-两次 run 的 `report.json` 可直接对比：
-
-```python
-from app.benchmark.report import compare, render_comparison_markdown
-rows = compare(base_aggregate, candidate_aggregate)   # 数值路径增量表
-markdown = render_comparison_markdown(base_aggregate, candidate_aggregate)
-```
+仓库内没有内置的 A/B 对比工具（旧的 `app/benchmark/report.py` 的 `compare` / `render_comparison_markdown` 已删除）。两次 run 各自经 `export` 拿到 `report.json` / `report.md` 后自行比对；成对回归（`--mode paired`）的差值与 bootstrap 区间由报告原生出，不需要外接脚本。
 
 `model_snapshot`、`model_snapshot_version` 与 `pipeline_version` 已写入每局 summary。v2 模型快照按配置列出 `count` 和升序 `seats`，可准确还原每个座位所用模型；`model_assignment_known=false` 表示旧档缺少完整座位分配，工具不会根据模型总数反推或伪造映射。所有模型快照均不包含 API Key。
 
