@@ -16,13 +16,14 @@ import DownloadIcon from '@mui/icons-material/Download';
 
 import { benchmarkExportUrl } from '../../api/client';
 import { useBenchmarkStore } from '../../store/benchmarkStore';
-import type { BenchmarkReport, BenchmarkStatus, GamePhase, WinningCamp } from '../../store/types';
+import type { BenchmarkReport, BenchmarkStatus, GamePhase, WinReason, WinningCamp } from '../../store/types';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useLabels } from '../../i18n/useLabels';
 import { BACKDROP } from '../../theme/tokens';
 
 const TERMINAL = new Set<BenchmarkStatus>(['completed', 'failed', 'cancelled']);
+const ITEM_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -53,6 +54,8 @@ interface DecisionRow {
   label: string;
   value: number | null;
   sample: number | null;
+  /** Non-numeric sample text (e.g. "12 / 3534 次调用") overrides ``sample``. */
+  sampleText?: string;
   count: boolean;
 }
 
@@ -125,6 +128,144 @@ function performanceRows(report: BenchmarkReport | null, t: TFunction): Performa
   return rows;
 }
 
+interface UncertaintyRow {
+  id: string;
+  model: string;
+  dimension: 'role' | 'camp';
+  group: string;
+  games: number | null;
+  validSeats: number | null;
+  winRate: number | null;
+  low: number | null;
+  high: number | null;
+  method: string | null;
+  insufficientBlocks: boolean;
+}
+
+// 混座不确定度行（summary.mixed_uncertainty）：多块 bootstrap、单块 Wilson。
+// 旧报告没有该键或不是数组时返回空，由页面降级为不渲染。
+function uncertaintyRows(report: BenchmarkReport | null, t: TFunction): UncertaintyRow[] {
+  const candidate = record(report?.uncertainty).mixed_arena
+    ?? record(report?.summary).mixed_uncertainty;
+  const rows = Array.isArray(candidate) ? candidate : [];
+  return rows.map((raw, index) => {
+    const item = record(raw);
+    const field = (key: string): number | null => {
+      const value = item[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    };
+    return {
+      id: String(item.id ?? index),
+      model: String(item.model_label ?? item.model ?? t('benchmark.unknownModel')),
+      dimension: item.camp ? 'camp' : 'role',
+      group: String(item.role ?? item.camp ?? t('benchmark.all')),
+      games: field('games'),
+      validSeats: field('valid_seats'),
+      winRate: field('win_rate'),
+      low: field('low'),
+      high: field('high'),
+      method: typeof item.interval_method === 'string' ? item.interval_method : null,
+      insufficientBlocks: item.insufficient_blocks === true,
+    };
+  });
+}
+
+interface PairRow {
+  pairId: string;
+  baseline: number | null;
+  candidate: number | null;
+  difference: number | null;
+}
+
+// 配对差异行：summary.paired_regression / paired_latency_ms 共用同一形状。
+function pairRows(source: unknown): PairRow[] {
+  const differences = record(source).differences;
+  if (!Array.isArray(differences)) return [];
+  return differences.map((raw) => {
+    const item = record(raw);
+    return {
+      pairId: String(item.pair_id ?? ''),
+      baseline: typeof item.baseline === 'number' ? item.baseline : null,
+      candidate: typeof item.candidate === 'number' ? item.candidate : null,
+      difference: typeof item.difference === 'number' ? item.difference : null,
+    };
+  });
+}
+
+function intervalText(low: number | null, high: number | null): string {
+  return low === null || high === null
+    ? '—'
+    : `[${(low * 100).toFixed(1)}% – ${(high * 100).toFixed(1)}%]`;
+}
+
+// 配对区间的数值不是胜率：得分差用小数、延迟差用 ms，不能套百分比格式。
+function fmtInterval(
+  low: number | null, high: number | null,
+  format: (value: number | null) => string,
+): string {
+  return low === null || high === null ? '—' : `[${format(low)} – ${format(high)}]`;
+}
+
+function decimalText(value: number | null): string {
+  return value === null ? '—' : value.toFixed(4);
+}
+
+function msText(value: number | null): string {
+  return value === null ? '—' : `${Math.round(value).toLocaleString()} ms`;
+}
+
+function MetricRowsTable({ rows, aria, t }: { rows: DecisionRow[]; aria: string; t: TFunction }) {
+  return (
+    <TableContainer sx={{ overflowX: 'auto' }}>
+      <Table sx={{ minWidth: 520 }} aria-label={aria}>
+        <TableHead>
+          <TableRow><TableCell>{t('benchmark.colMetric')}</TableCell><TableCell>{t('benchmark.colValue')}</TableCell><TableCell>{t('benchmark.colSample')}</TableCell></TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.id}>
+              <TableCell>{row.label}</TableCell>
+              <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {row.count ? (row.value === null ? '—' : row.value.toLocaleString()) : rate(row.value)}
+              </TableCell>
+              <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {row.sampleText ?? (row.sample === null ? '—' : row.sample.toLocaleString())}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
+function PairTable({ rows, format, aria, t }: {
+  rows: PairRow[];
+  format: (value: number | null) => string;
+  aria: string;
+  t: TFunction;
+}) {
+  return (
+    <TableContainer sx={{ overflowX: 'auto' }}>
+      <Table sx={{ minWidth: 520 }} aria-label={aria}>
+        <TableHead>
+          <TableRow><TableCell>{t('benchmark.colPair')}</TableCell><TableCell>{t('benchmark.colBaseline')}</TableCell><TableCell>{t('benchmark.colCandidate')}</TableCell><TableCell>{t('benchmark.colDifference')}</TableCell></TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.pairId}>
+              <TableCell>{row.pairId}</TableCell>
+              <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{format(row.baseline)}</TableCell>
+              <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{format(row.candidate)}</TableCell>
+              <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{format(row.difference)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
 export default function BenchmarkDetailPage() {
   const { t } = useTranslation();
   const L = useLabels();
@@ -141,6 +282,7 @@ export default function BenchmarkDetailPage() {
   const [deleteGameId, setDeleteGameId] = useState<string | null>(null);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [deleteRunOpen, setDeleteRunOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('');
 
   useEffect(() => {
     if (!id) return undefined;
@@ -164,7 +306,11 @@ export default function BenchmarkDetailPage() {
       const rightValue = sort === 'samples' ? right.samples : right.value ?? -1;
       return (leftValue - rightValue) * (descending ? -1 : 1);
     }), [descending, dimension, report, sort, t]);
-  const deletableIds = items
+  const filteredItems = useMemo(
+    () => (statusFilter ? items.filter((item) => item.status === statusFilter) : items),
+    [items, statusFilter],
+  );
+  const deletableIds = filteredItems
     .map((item) => item.game_id)
     .filter((gameId): gameId is string => Boolean(gameId));
 
@@ -198,6 +344,110 @@ export default function BenchmarkDetailPage() {
   const coverage = record(reportSummary.coverage);
   const boardSummary = boardCoverageText(coverage, t);
   const status = current.status;
+
+  const campEntries = Object.entries(record(games.win_rate_by_camp))
+    .map(([camp, value]): [string, number | null] => [camp, typeof value === 'number' ? value : null]);
+  const reasonEntries = Object.entries(record(games.win_reason_distribution))
+    .map(([reason, value]): [string, number] => [reason, typeof value === 'number' ? value : 0]);
+  const seatEntries = Object.entries(record(games.win_rate_by_seat))
+    .map(([seat, raw]) => {
+      const item = record(raw);
+      return [seat, {
+        value: typeof item.win_rate === 'number' ? item.win_rate : null,
+        wins: typeof item.wins === 'number' ? item.wins : null,
+        games: typeof item.games === 'number' ? item.games : null,
+      }] as const;
+    });
+  const hasOutcome = campEntries.length > 0 || reasonEntries.length > 0 || seatEntries.length > 0;
+
+  const uncRows = uncertaintyRows(report, t);
+  const pairedBlock = record(reportSummary.paired_regression);
+  const pairedBoot = record(pairedBlock.bootstrap);
+  const pairedPairs = pairRows(reportSummary.paired_regression);
+  const pairedLatencyBlock = record(reportSummary.paired_latency_ms);
+  const latencyBoot = record(pairedLatencyBlock.bootstrap);
+  const latencyPairs = pairRows(reportSummary.paired_latency_ms);
+
+  const eligibleTerminal = numberAt(requests, 'eligible_terminal');
+  const terminalVotes = numberAt(requests, 'terminal_votes');
+  const requestRows: DecisionRow[] = [
+    { id: 'valid', label: t('benchmark.reqValidRate'), value: numberAt(requests, 'valid_rate'), sample: eligibleTerminal, count: false },
+    { id: 'success', label: t('benchmark.reqSuccessRate'), value: numberAt(requests, 'success_rate'), sample: eligibleTerminal, count: false },
+    { id: 'voluntary', label: t('benchmark.reqVoluntaryAbstain'), value: numberAt(requests, 'voluntary_abstain_rate'), sample: eligibleTerminal, count: false },
+    { id: 'failure', label: t('benchmark.reqFailureRate'), value: numberAt(requests, 'failure_rate'), sample: eligibleTerminal, count: false },
+    { id: 'fallback', label: t('benchmark.reqFallbackRate'), value: numberAt(requests, 'fallback_rate'), sample: eligibleTerminal, count: false },
+    { id: 'tech-abstain', label: t('benchmark.reqTechAbstainRate'), value: numberAt(requests, 'technical_abstain_rate'), sample: terminalVotes, count: false },
+  ];
+  const passBreakdown = record(requests.pass_breakdown);
+  const passRows: DecisionRow[] = [
+    { id: 'campaign', label: t('benchmark.passSheriffCampaign'), value: numberAt(passBreakdown, 'sheriff_campaign'), sample: null, count: true },
+    { id: 'vote', label: t('benchmark.passVoteAbstain'), value: numberAt(passBreakdown, 'vote_abstain'), sample: null, count: true },
+    { id: 'night', label: t('benchmark.passNightOptional'), value: numberAt(passBreakdown, 'night_optional'), sample: null, count: true },
+  ];
+  const votesBlock = record(requests.votes);
+  const voteRows = (['exile', 'sheriff'] as const)
+    .map((kind) => {
+      const bucket = record(votesBlock[kind]);
+      return Object.keys(bucket).length === 0 ? null : {
+        kind,
+        terminal: numberAt(bucket, 'terminal'),
+        technical: numberAt(bucket, 'technical'),
+        voluntary: numberAt(bucket, 'voluntary'),
+        failed: numberAt(bucket, 'failed'),
+        techRate: numberAt(bucket, 'technical_abstain_rate'),
+        volRate: numberAt(bucket, 'voluntary_abstain_rate'),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+  const logicalLatency = record(requests.logical_latency_ms);
+  const llmCalls = numberAt(attempts, 'llm_calls');
+  const retriedCalls = numberAt(attempts, 'retried_llm_calls');
+  const usageRows: DecisionRow[] = [
+    {
+      id: 'retry', label: t('benchmark.usageRetryRate'),
+      value: numberAt(attempts, 'retry_rate'), sample: null, count: false,
+      sampleText: t('benchmark.usageRetrySample', { retried: retriedCalls ?? '—', calls: llmCalls ?? '—' }),
+    },
+    { id: 'tokens', label: t('benchmark.usageTokensPerAttempt'), value: numberAt(attempts, 'tokens_per_attempt'), sample: numberAt(tokenUsage, 'known_attempts'), count: true },
+    { id: 'executed', label: t('benchmark.usageExecuted'), value: numberAt(attempts, 'executed_requests'), sample: numberAt(attempts, 'total'), count: true },
+    { id: 'redispatches', label: t('benchmark.usageRedispatches'), value: numberAt(attempts, 'recovery_redispatches'), sample: null, count: true },
+    { id: 'known-seats', label: t('benchmark.usageKnownSeats'), value: numberAt(tokenUsage, 'cache_known_seats'), sample: null, count: true },
+    { id: 'cold-seats', label: t('benchmark.usageColdSeats'), value: numberAt(tokenUsage, 'cache_cold_seats'), sample: null, count: true },
+    { id: 'cache-ex-cold', label: t('benchmark.usageCacheHitExCold'), value: numberAt(tokenUsage, 'cache_hit_rate_excluding_cold_seats'), sample: null, count: false },
+  ];
+  const decisionRows: DecisionRow[] = [
+    { id: 'seer-check', label: t('benchmark.metric.seerCheck'), value: numberAt(decision, 'seer_check_hit_rate'), sample: numberAt(decisionSamples, 'seer_checks'), count: false },
+    { id: 'witch-poison', label: t('benchmark.metric.witchPoison'), value: numberAt(decision, 'witch_poison_hit_rate'), sample: numberAt(decisionSamples, 'witch_poisons'), count: false },
+    { id: 'hunter-shot', label: t('benchmark.metric.hunterShot'), value: numberAt(decision, 'hunter_shot_hit_rate'), sample: numberAt(decisionSamples, 'hunter_shots'), count: false },
+    { id: 'wolf-kill', label: t('benchmark.metric.wolfKill'), value: numberAt(decision, 'wolf_kill_god_rate'), sample: numberAt(decisionSamples, 'wolf_kills'), count: false },
+    { id: 'pure-white', label: t('benchmark.metric.pureWhite'), value: numberAt(decision, 'pure_white_check_hit_rate'), sample: numberAt(decisionSamples, 'pure_white_checks'), count: false },
+    { id: 'wolf-witch', label: t('benchmark.metric.wolfWitch'), value: numberAt(decision, 'wolf_witch_check_hit_rate'), sample: numberAt(decisionSamples, 'wolf_witch_checks'), count: false },
+    { id: 'gargoyle', label: t('benchmark.metric.gargoyle'), value: numberAt(decision, 'gargoyle_check_hit_rate'), sample: numberAt(decisionSamples, 'gargoyle_checks'), count: false },
+    { id: 'demon-hunter', label: t('benchmark.metric.demonHunter'), value: numberAt(decision, 'demon_hunter_hunt_hit_rate'), sample: numberAt(decisionSamples, 'demon_hunter_hunts'), count: false },
+    { id: 'dance-pool', label: t('benchmark.metric.dancePool'), value: numberAt(decision, 'dance_pool_wolf_rate'), sample: numberAt(decisionSamples, 'dance_pools'), count: false },
+    { id: 'mask-in-pool', label: t('benchmark.metric.maskInPool'), value: numberAt(decision, 'mask_in_pool_rate'), sample: numberAt(decisionSamples, 'mask_grants'), count: false },
+    { id: 'good-vote', label: t('benchmark.metric.goodVote'), value: numberAt(decision, 'good_vote_hit_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
+    { id: 'good-abstain', label: t('benchmark.metric.goodAbstain'), value: numberAt(decision, 'good_vote_abstain_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
+    { id: 'exile-wolf', label: t('benchmark.metric.exileWolf'), value: numberAt(decision, 'exile_wolf_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
+    { id: 'exile-misfire', label: t('benchmark.metric.exileMisfire'), value: numberAt(decision, 'exile_god_misfire_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
+    { id: 'witch-save-uses', label: t('benchmark.metric.witchSaveUses'), value: numberAt(decision, 'witch_save_uses'), sample: null, count: true },
+    { id: 'witch-poison-uses', label: t('benchmark.metric.witchPoisonUses'), value: numberAt(decision, 'witch_poison_uses'), sample: null, count: true },
+  ];
+  const reliability = record(reportSummary.reliability);
+  const ruleRejected = numberAt(reliability, 'rule_rejected');
+  const ruleRejectedPerGame = numberAt(reliability, 'per_game');
+  const ruleRejectedPerRequest = numberAt(reliability, 'per_request');
+  const rejectionRows = Object.entries(record(reliability.by_contract)).map(([contract, raw]) => {
+    const item = record(raw);
+    const violations = Object.entries(record(item.violations))
+      .map(([code, count]) => `${code}×${typeof count === 'number' ? count : 0}`)
+      .join(t('game.listJoin'));
+    return { contract, rejected: typeof item.rejected === 'number' ? item.rejected : 0, violations };
+  });
+  const hasRequestDetail = Object.keys(requests).length > 0 || Object.keys(attempts).length > 0;
+  const inclusion = record(report?.inclusion);
+  const exclusion = record(report?.exclusion);
+  const dataQuality = record(report?.data_quality);
 
   return (
     <Container component="main" maxWidth="xl" sx={{
@@ -248,6 +498,48 @@ export default function BenchmarkDetailPage() {
         ))}
       </Box>
 
+      {hasOutcome && (
+        <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
+          <Typography component="h2" variant="h6">{t('benchmark.outcomeTitle')}</Typography>
+          <Typography variant="body2" color="text.secondary">{t('benchmark.outcomeDesc')}</Typography>
+          {campEntries.length > 0 && (
+            <Box sx={{ mt: 1.5 }}>
+              <Typography variant="subtitle2">{t('benchmark.campWinsLabel')}</Typography>
+              <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+                {campEntries.map(([camp, value]) => (
+                  <Chip key={camp} variant="outlined" label={`${L.WINNER_LABELS[camp as WinningCamp] ?? camp} ${rate(value)}`} />
+                ))}
+              </Stack>
+            </Box>
+          )}
+          {reasonEntries.length > 0 && (
+            <Box sx={{ mt: 1.5 }}>
+              <Typography variant="subtitle2">{t('benchmark.winReasonsLabel')}</Typography>
+              <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+                {reasonEntries.map(([reason, count]) => (
+                  <Chip key={reason} variant="outlined" label={`${L.WIN_REASON_LABELS[reason as WinReason] ?? reason} ×${count}`} />
+                ))}
+              </Stack>
+            </Box>
+          )}
+          {seatEntries.length > 0 && (
+            <Box sx={{ mt: 1.5 }}>
+              <Typography variant="subtitle2">{t('benchmark.seatWinRatesLabel')}</Typography>
+              <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+                {seatEntries.map(([seat, stats]) => (
+                  <Chip
+                    key={seat}
+                    size="small"
+                    variant="outlined"
+                    label={`${t('benchmark.seatN', { seat })} ${rate(stats.value)}${stats.wins !== null && stats.games !== null ? ` (${stats.wins}/${stats.games})` : ''}`}
+                  />
+                ))}
+              </Stack>
+            </Box>
+          )}
+        </Paper>
+      )}
+
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Box><Typography component="h2" variant="h6">{t('benchmark.perfTitle')}</Typography><Typography variant="body2" color="text.secondary">{t('benchmark.perfDesc1')}</Typography><Typography variant="body2" color="text.secondary">{t('benchmark.perfDesc2')}</Typography></Box>
@@ -263,6 +555,69 @@ export default function BenchmarkDetailPage() {
         )}
       </Paper>
 
+      {current.mode === 'paired_regression' ? (
+        <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
+          <Typography component="h2" variant="h6">{t('benchmark.uncertaintyTitle')}</Typography>
+          <Typography variant="body2" color="text.secondary">{t('benchmark.uncertaintyDescPaired')}</Typography>
+          <Stack direction="row" useFlexGap spacing={3} sx={{ flexWrap: 'wrap', mt: 1.5 }}>
+            <Typography>{t('benchmark.meanDiffLabel')}: <strong>{decimalText(numberAt(pairedBlock, 'mean_difference'))}</strong></Typography>
+            <Typography>{t('benchmark.colInterval')}: <strong>{fmtInterval(numberAt(pairedBoot, 'low'), numberAt(pairedBoot, 'high'), decimalText)}</strong></Typography>
+            <Typography>{t('benchmark.pairCountLabel')}: <strong>{numberAt(pairedBlock, 'pair_count') ?? '—'}</strong></Typography>
+          </Stack>
+          {pairedBoot.insufficient_pairs === true && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t('benchmark.insufficientPairsNote')}</Typography>
+          )}
+          {pairedPairs.length === 0 ? (
+            <Typography color="text.secondary" sx={{ mt: 1 }}>{t('benchmark.noPairs')}</Typography>
+          ) : (
+            <Box sx={{ mt: 1 }}><PairTable rows={pairedPairs} format={decimalText} aria={t('benchmark.uncertaintyTitle')} t={t} /></Box>
+          )}
+          <Typography component="h3" variant="subtitle1" sx={{ mt: 2, mb: 0.5 }}>{t('benchmark.pairedLatencyTitle')}</Typography>
+          <Stack direction="row" useFlexGap spacing={3} sx={{ flexWrap: 'wrap' }}>
+            <Typography>{t('benchmark.latencyMeanDiffLabel')}: <strong>{msText(numberAt(pairedLatencyBlock, 'mean_difference'))}</strong></Typography>
+            <Typography>{t('benchmark.colInterval')}: <strong>{fmtInterval(numberAt(latencyBoot, 'low'), numberAt(latencyBoot, 'high'), msText)}</strong></Typography>
+            <Typography>{t('benchmark.excludedInterruptedLabel')}: <strong>{numberAt(pairedLatencyBlock, 'excluded_interrupted_pairs') ?? '—'}</strong></Typography>
+            <Typography>{t('benchmark.excludedMissingLabel')}: <strong>{numberAt(pairedLatencyBlock, 'excluded_incomplete_pairs') ?? '—'}</strong></Typography>
+          </Stack>
+          {latencyPairs.length > 0 && (
+            <Box sx={{ mt: 1 }}><PairTable rows={latencyPairs} format={msText} aria={t('benchmark.pairedLatencyTitle')} t={t} /></Box>
+          )}
+        </Paper>
+      ) : (
+        <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
+          <Typography component="h2" variant="h6">{t('benchmark.uncertaintyTitle')}</Typography>
+          <Typography variant="body2" color="text.secondary">{t('benchmark.uncertaintyDescMixed')}</Typography>
+          {uncRows.length === 0 ? (
+            <Typography color="text.secondary" sx={{ mt: 1 }}>{t('benchmark.uncertaintyEmpty')}</Typography>
+          ) : (
+          <TableContainer sx={{ overflowX: 'auto', mt: 1 }}>
+            <Table sx={{ minWidth: 760 }} aria-label={t('benchmark.uncertaintyTitle')}>
+              <TableHead>
+                <TableRow><TableCell>{t('benchmark.colModel')}</TableCell><TableCell>{t('benchmark.colDimension')}</TableCell><TableCell>{t('benchmark.colGroup')}</TableCell><TableCell>{t('benchmark.colGames')}</TableCell><TableCell>{t('benchmark.colValidSeats')}</TableCell><TableCell>{t('benchmark.colWinRate')}</TableCell><TableCell>{t('benchmark.colInterval')}</TableCell><TableCell>{t('benchmark.colMethod')}</TableCell></TableRow>
+              </TableHead>
+              <TableBody>
+                {uncRows.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell>{row.model}</TableCell>
+                    <TableCell>{t(row.dimension === 'role' ? 'benchmark.dimRole' : 'benchmark.dimCamp')}</TableCell>
+                    <TableCell>{row.group}</TableCell>
+                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.games ?? '—'}</TableCell>
+                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.validSeats ?? '—'}</TableCell>
+                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{rate(row.winRate)}</TableCell>
+                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{intervalText(row.low, row.high)}</TableCell>
+                    <TableCell>{row.method ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          )}
+          {uncRows.some((row) => row.insufficientBlocks) && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t('benchmark.insufficientBlocksNote')}</Typography>
+          )}
+        </Paper>
+      )}
+
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ mb: 2 }}>
           <Typography component="h2" variant="h6">{t('benchmark.decisionTitle')}</Typography>
@@ -276,43 +631,104 @@ export default function BenchmarkDetailPage() {
         {decision === null ? (
           <Alert severity="info">{t('benchmark.decisionEmpty')}</Alert>
         ) : (
-          <TableContainer sx={{ overflowX: 'auto' }}>
-            <Table sx={{ minWidth: 520 }} aria-label={t('benchmark.decisionTableAria')}>
-              <TableHead>
-                <TableRow><TableCell>{t('benchmark.colMetric')}</TableCell><TableCell>{t('benchmark.colValue')}</TableCell><TableCell>{t('benchmark.colSample')}</TableCell></TableRow>
-              </TableHead>
-              <TableBody>
-                {([
-                  { id: 'seer-check', label: t('benchmark.metric.seerCheck'), value: numberAt(decision, 'seer_check_hit_rate'), sample: numberAt(decisionSamples, 'seer_checks'), count: false },
-                  { id: 'witch-poison', label: t('benchmark.metric.witchPoison'), value: numberAt(decision, 'witch_poison_hit_rate'), sample: numberAt(decisionSamples, 'witch_poisons'), count: false },
-                  { id: 'hunter-shot', label: t('benchmark.metric.hunterShot'), value: numberAt(decision, 'hunter_shot_hit_rate'), sample: numberAt(decisionSamples, 'hunter_shots'), count: false },
-                  { id: 'wolf-kill', label: t('benchmark.metric.wolfKill'), value: numberAt(decision, 'wolf_kill_god_rate'), sample: numberAt(decisionSamples, 'wolf_kills'), count: false },
-                  { id: 'pure-white', label: t('benchmark.metric.pureWhite'), value: numberAt(decision, 'pure_white_check_hit_rate'), sample: numberAt(decisionSamples, 'pure_white_checks'), count: false },
-                  { id: 'wolf-witch', label: t('benchmark.metric.wolfWitch'), value: numberAt(decision, 'wolf_witch_check_hit_rate'), sample: numberAt(decisionSamples, 'wolf_witch_checks'), count: false },
-                  { id: 'gargoyle', label: t('benchmark.metric.gargoyle'), value: numberAt(decision, 'gargoyle_check_hit_rate'), sample: numberAt(decisionSamples, 'gargoyle_checks'), count: false },
-                  { id: 'demon-hunter', label: t('benchmark.metric.demonHunter'), value: numberAt(decision, 'demon_hunter_hunt_hit_rate'), sample: numberAt(decisionSamples, 'demon_hunter_hunts'), count: false },
-                  { id: 'dance-pool', label: t('benchmark.metric.dancePool'), value: numberAt(decision, 'dance_pool_wolf_rate'), sample: numberAt(decisionSamples, 'dance_pools'), count: false },
-                  { id: 'mask-in-pool', label: t('benchmark.metric.maskInPool'), value: numberAt(decision, 'mask_in_pool_rate'), sample: numberAt(decisionSamples, 'mask_grants'), count: false },
-                  { id: 'good-vote', label: t('benchmark.metric.goodVote'), value: numberAt(decision, 'good_vote_hit_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
-                  { id: 'good-abstain', label: t('benchmark.metric.goodAbstain'), value: numberAt(decision, 'good_vote_abstain_rate'), sample: numberAt(decisionSamples, 'good_votes'), count: false },
-                  { id: 'exile-wolf', label: t('benchmark.metric.exileWolf'), value: numberAt(decision, 'exile_wolf_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
-                  { id: 'exile-misfire', label: t('benchmark.metric.exileMisfire'), value: numberAt(decision, 'exile_god_misfire_rate'), sample: numberAt(decisionSamples, 'exiles'), count: false },
-                  { id: 'witch-save-uses', label: t('benchmark.metric.witchSaveUses'), value: numberAt(decision, 'witch_save_uses'), sample: null, count: true },
-                  { id: 'witch-poison-uses', label: t('benchmark.metric.witchPoisonUses'), value: numberAt(decision, 'witch_poison_uses'), sample: null, count: true },
-                ] as DecisionRow[]).map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>{row.label}</TableCell>
-                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {row.count ? (row.value === null ? '—' : row.value.toLocaleString()) : rate(row.value)}
-                    </TableCell>
-                    <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.sample === null ? '—' : row.sample.toLocaleString()}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+          <MetricRowsTable rows={decisionRows} aria={t('benchmark.decisionTableAria')} t={t} />
         )}
       </Paper>
+
+      {hasRequestDetail && (
+        <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
+          <Typography component="h2" variant="h6">{t('benchmark.requestsTitle')}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{t('benchmark.requestsDesc')}</Typography>
+          <MetricRowsTable rows={requestRows} aria={t('benchmark.requestsTitle')} t={t} />
+          {voteRows.length > 0 && (
+            <>
+              <Typography component="h3" variant="subtitle1" sx={{ mt: 2, mb: 0.5 }}>{t('benchmark.votesTitle')}</Typography>
+              <TableContainer sx={{ overflowX: 'auto' }}>
+                <Table sx={{ minWidth: 640 }} aria-label={t('benchmark.votesTitle')}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>{t('benchmark.colBallot')}</TableCell>
+                      <TableCell>{t('benchmark.colTerminal')}</TableCell>
+                      <TableCell>{t('benchmark.colTechnical')}</TableCell>
+                      <TableCell>{t('benchmark.colTechRate')}</TableCell>
+                      <TableCell>{t('benchmark.colVoluntary')}</TableCell>
+                      <TableCell>{t('benchmark.colVolRate')}</TableCell>
+                      <TableCell>{t('benchmark.colFailedCount')}</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {voteRows.map((row) => (
+                      <TableRow key={row.kind}>
+                        <TableCell>{t(row.kind === 'exile' ? 'benchmark.ballotExile' : 'benchmark.ballotSheriff')}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.terminal ?? '—'}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.technical ?? '—'}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{rate(row.techRate)}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.voluntary ?? '—'}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{rate(row.volRate)}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.failed ?? '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          )}
+          {passRows.some((row) => row.value !== null) && (
+            <>
+              <Typography component="h3" variant="subtitle1" sx={{ mt: 2, mb: 0.5 }}>{t('benchmark.passBreakdownTitle')}</Typography>
+              <MetricRowsTable rows={passRows} aria={t('benchmark.passBreakdownTitle')} t={t} />
+            </>
+          )}
+          {(Object.keys(logicalLatency).length > 0 || Object.keys(attempts).length > 0) && (
+            <>
+              <Typography component="h3" variant="subtitle1" sx={{ mt: 2, mb: 0.5 }}>{t('benchmark.usageTitle')}</Typography>
+              {Object.keys(logicalLatency).length > 0 && (
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  {t('benchmark.logicalLatencyTitle')}: <strong>{msText(numberAt(logicalLatency, 'p50'))}</strong>
+                  {' / p95: '}<strong>{msText(numberAt(logicalLatency, 'p95'))}</strong>
+                  {' / p99: '}<strong>{msText(numberAt(logicalLatency, 'p99'))}</strong>
+                </Typography>
+              )}
+              <MetricRowsTable rows={usageRows} aria={t('benchmark.usageTitle')} t={t} />
+            </>
+          )}
+          {rejectionRows.length > 0 && (
+            <>
+              <Typography component="h3" variant="subtitle1" sx={{ mt: 2, mb: 0.5 }}>{t('benchmark.reliabilityTitle')}</Typography>
+              <Typography variant="body2" color="text.secondary">{t('benchmark.reliabilityDesc')}</Typography>
+              {ruleRejected !== null && (
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  {t('benchmark.reliabilityLine', {
+                    count: ruleRejected,
+                    perGame: ruleRejectedPerGame === null ? '—' : ruleRejectedPerGame.toFixed(2),
+                    perRequest: ruleRejectedPerRequest === null ? '—' : rate(ruleRejectedPerRequest),
+                  })}
+                </Typography>
+              )}
+              <TableContainer sx={{ overflowX: 'auto' }}>
+                <Table sx={{ minWidth: 480 }} aria-label={t('benchmark.reliabilityTitle')}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>{t('benchmark.colContract')}</TableCell>
+                      <TableCell>{t('benchmark.colRejected')}</TableCell>
+                      <TableCell>{t('benchmark.colViolations')}</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {rejectionRows.map((row) => (
+                      <TableRow key={row.contract}>
+                        <TableCell>{row.contract}</TableCell>
+                        <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{row.rejected}</TableCell>
+                        <TableCell>{row.violations || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          )}
+        </Paper>
+      )}
 
       <Paper component="section" variant="outlined" sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
@@ -320,6 +736,20 @@ export default function BenchmarkDetailPage() {
             <Typography component="h2" variant="h6">{t('benchmark.gamesTitle')}</Typography>
             <Typography variant="body2" color="text.secondary">{t('benchmark.gamesHint')}</Typography>
           </Box>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel id="benchmark-status-filter-label">{t('benchmark.filterStatus')}</InputLabel>
+            <Select
+              labelId="benchmark-status-filter-label"
+              value={statusFilter}
+              label={t('benchmark.filterStatus')}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <MenuItem value="">{t('benchmark.statusAll')}</MenuItem>
+              {ITEM_STATUSES.map((itemStatus) => (
+                <MenuItem key={itemStatus} value={itemStatus}>{itemStatus}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
           {selectedIds.length > 0 && (
             <Stack direction="row" spacing={1}>
               <Typography variant="body2" sx={{ alignSelf: 'center' }}>{t('benchmark.selectedGames', { count: selectedIds.length })}</Typography>
@@ -328,7 +758,7 @@ export default function BenchmarkDetailPage() {
             </Stack>
           )}
         </Box>
-        {items.length === 0 ? <Typography color="text.secondary">{t('benchmark.noGames')}</Typography> : (
+        {filteredItems.length === 0 ? <Typography color="text.secondary">{t('benchmark.noGames')}</Typography> : (
           <TableContainer sx={{ overflowX: 'auto' }}>
             <Table sx={{ minWidth: 760 }} aria-label={t('benchmark.gamesTableAria')}>
               <TableHead>
@@ -351,7 +781,7 @@ export default function BenchmarkDetailPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {items.map((item) => {
+                {filteredItems.map((item) => {
                   const gameId = item.game_id;
                   const selected = Boolean(gameId && selectedIds.includes(gameId));
                   return (
@@ -418,6 +848,13 @@ export default function BenchmarkDetailPage() {
             <Typography>{t('benchmark.completeness', { rate: rate(numberAt(tokenUsage, 'completeness_rate')) })}</Typography>
             <Typography>{t('benchmark.unknownRequests', { count: numberAt(requests, 'unknown') ?? '—' })}</Typography>
             <Typography>{t('benchmark.interruptions', { interruptions: numberAt(report?.data_quality, 'interruptions') ?? '—', excluded: numberAt(report?.data_quality, 'excluded_pairs') ?? '—' })}</Typography>
+            <Typography>{t('benchmark.diagInclusion', { with: numberAt(inclusion, 'games_with_results') ?? '—', without: numberAt(inclusion, 'games_without_results') ?? '—' })}</Typography>
+            <Typography>{t('benchmark.diagExclusion', { unstarted: numberAt(exclusion, 'unstarted_items') ?? '—', failed: numberAt(exclusion, 'failed_items') ?? '—', cancelled: numberAt(exclusion, 'cancelled_items') ?? '—' })}</Typography>
+            <Typography>{t('benchmark.diagSummaries', { available: numberAt(dataQuality, 'summaries_available') ?? '—', missing: numberAt(dataQuality, 'summaries_missing') ?? '—' })}</Typography>
+            <Typography>{t('benchmark.diagRecovery', { retries: numberAt(dataQuality, 'recovery_retries') ?? '—', attempts: numberAt(dataQuality, 'recovery_attempts') ?? '—' })}</Typography>
+            {current.mode === 'paired_regression' && (
+              <Typography>{t('benchmark.diagLatencyPairs', { interrupted: numberAt(dataQuality, 'latency_pairs_excluded_for_interruptions') ?? '—', missing: numberAt(dataQuality, 'latency_pairs_excluded_for_missing_data') ?? '—' })}</Typography>
+            )}
           </Stack>
           <Button startIcon={<RefreshIcon />} disabled={actionPending} onClick={() => void rebuildReport(id)} sx={{ mt: 2 }}>{t('benchmark.rebuildReport')}</Button>
           <Typography component="h3" variant="subtitle1" sx={{ mt: 3, mb: 1 }}>{t('benchmark.exportTitle')}</Typography>
