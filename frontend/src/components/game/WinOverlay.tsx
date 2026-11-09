@@ -20,7 +20,9 @@ const CAMP_ACCENT: Record<WinningCamp, string> = {
 export default function WinOverlay({ winResult, revealOnDeath }: Props) {
   const { t } = useTranslation();
   const L = useLabels();
-  const { dismissWinOverlay, seekTo, play } = useGameStore();
+  const dismissWinOverlay = useGameStore((s) => s.dismissWinOverlay);
+  const seekTo = useGameStore((s) => s.seekTo);
+  const play = useGameStore((s) => s.play);
 
   const handleReplay = () => {
     dismissWinOverlay();

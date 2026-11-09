@@ -14,11 +14,21 @@ const SPEEDS = [0.5, 1, 2, 4, 8];
 export default function TimelineController() {
   const { t } = useTranslation();
   const L = useLabels();
-  const {
-    timeline, timelineIndex, isPlaying, playSpeed,
-    stepBack, play, pause, stepForward, setSpeed, seekTo,
-    phase, roundNumber, isPaused, isFollowingLive, goLive,
-  } = useGameStore();
+  const timeline = useGameStore((s) => s.timeline);
+  const timelineIndex = useGameStore((s) => s.timelineIndex);
+  const isPlaying = useGameStore((s) => s.isPlaying);
+  const playSpeed = useGameStore((s) => s.playSpeed);
+  const stepBack = useGameStore((s) => s.stepBack);
+  const play = useGameStore((s) => s.play);
+  const pause = useGameStore((s) => s.pause);
+  const stepForward = useGameStore((s) => s.stepForward);
+  const setSpeed = useGameStore((s) => s.setSpeed);
+  const seekTo = useGameStore((s) => s.seekTo);
+  const phase = useGameStore((s) => s.phase);
+  const roundNumber = useGameStore((s) => s.roundNumber);
+  const isPaused = useGameStore((s) => s.isPaused);
+  const isFollowingLive = useGameStore((s) => s.isFollowingLive);
+  const goLive = useGameStore((s) => s.goLive);
 
   const total = timeline.length;
   const progress = total > 0 ? ((timelineIndex + 1) / total) * 100 : 0;
