@@ -11,6 +11,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from app.models.game import Camp, GameState, GamePhase, GameConfig, PlayerState
 from app.models.actions import (
     VoteAction, SpeechRecord, DeathReport, WinResult, is_last_words_eligible,
@@ -60,6 +62,7 @@ from app.core.role_runtime import role_private_data_view
 from app.core.scheduler import PipelinePaused, PointResult, Scheduler
 from app.models.pipeline import IssuedActionRequest, SchedulePoint
 from app.models.vote import CastVoteArgs, VoteError, VoteStatus
+from app.agents.cache_route import await_prefix_commit
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +269,7 @@ class GameEngine:
         health_guard=None,
         vote_warmup: bool = False,
         vote_warmup_max_wait_seconds: float | None = 3.0,
+        vote_warmup_commit_seconds: float | None = 45.0,
     ):
         self.game_id = game_id or str(uuid.uuid4())[:8]
         self.config = config or GameConfig()
@@ -312,6 +316,19 @@ class GameEngine:
                 and vote_warmup_max_wait_seconds > 0
             )
             else 3.0
+        )
+        # ``WOLFKILLER_BURST_WARMUP_COMMIT_SECONDS``: instead of guessing the
+        # head start, a tiny capped probe call waits until the shared prompt
+        # prefix is actually committed upstream (the gateway's cache write
+        # lags the call that made it). ``None`` restores the fixed wait.
+        self._vote_warmup_commit_seconds = (
+            vote_warmup_commit_seconds
+            if vote_warmup_commit_seconds is None
+            or (
+                type(vote_warmup_commit_seconds) in (int, float)
+                and vote_warmup_commit_seconds > 0
+            )
+            else 45.0
         )
         self._running = False
         self._paused = False
@@ -1630,6 +1647,60 @@ class GameEngine:
             )
         await self._sheriff_vote_round(office.pk_seats, "pk", final_tie=True)
 
+    async def _await_prefix_commit(
+        self, warmup_seat: int, *, budget: float,
+    ) -> bool:
+        """Hold the follower ballot until the shared prefix is committed.
+
+        The provider's cache write lags the call that made it, so releasing
+        the batch on a fixed head start fires the followers before the
+        warmup's write is visible. A tiny capped probe through the warmup
+        seat's own client both commits and measures the prefix, releasing the
+        batch the moment the commit is observable — or once ``budget``
+        expires, whichever comes first. The probe prompt is the seat's own
+        exile-vote prompt: every day-family prompt shares the same head, so
+        one probe confirms the prefix for exile and sheriff ballots alike.
+
+        Returns ``True`` when the probe path ran; ``False`` means the caller
+        should fall back to the fixed head-start wait.
+        """
+        if (
+            self._vote_warmup_commit_seconds is None
+            or budget <= 0
+        ):
+            return False
+        role = self.roles.get(warmup_seat)
+        prompt_builder = getattr(role, "prompt_builder", None)
+        client = (
+            getattr(role, "vote_llm_client", None)
+            or getattr(role, "llm_client", None)
+        ) if role is not None else None
+        if (
+            client is None
+            or prompt_builder is None
+            or getattr(client, "is_system_one", False)
+        ):
+            return False
+        try:
+            messages = [
+                SystemMessage(content=prompt_builder.get_system_prompt()),
+                HumanMessage(content=prompt_builder.build_vote_prompt(
+                    self.state, warmup_seat, getattr(role, "role_name", None),
+                    self.conversation_log, "exile_vote",
+                )),
+            ]
+        except Exception:  # noqa: BLE001 - fall back to the fixed head start
+            logger.debug("prefix-commit probe prompt failed", exc_info=True)
+            return False
+        try:
+            await await_prefix_commit(
+                client, messages,
+                timeout=min(self._vote_warmup_commit_seconds, budget),
+            )
+        except Exception:  # noqa: BLE001 - never stall the ballot on telemetry
+            logger.debug("prefix-commit confirm failed", exc_info=True)
+        return True
+
     async def _collect_sheriff_decisions(
         self,
         seats: Sequence[int],
@@ -1676,18 +1747,23 @@ class GameEngine:
         )
         if warmup_seat is not None:
             tasks[warmup_seat] = asyncio.create_task(ask(warmup_seat))
-            # Same head-start contract as the casting phase: the warmup either
-            # commits the shared prefix within a few seconds or the extra wait
-            # buys nothing more (``None`` waits for the whole first call, still
+            # Same head-start contract as the casting phase, with the probe
+            # preferred: release once the shared prefix shows committed
+            # upstream, falling back to the fixed wait when the seat's client
+            # cannot probe (``None`` waits for the whole first call, still
             # bounded by the phase budget).
-            head_start = self._vote_warmup_max_wait_seconds
-            await asyncio.wait(
-                {tasks[warmup_seat]},
-                timeout=(
-                    budget() if head_start is None
-                    else min(float(head_start), budget())
-                ),
+            probed = await self._await_prefix_commit(
+                warmup_seat, budget=budget(),
             )
+            if not probed:
+                head_start = self._vote_warmup_max_wait_seconds
+                await asyncio.wait(
+                    {tasks[warmup_seat]},
+                    timeout=(
+                        budget() if head_start is None
+                        else min(float(head_start), budget())
+                    ),
+                )
         for seat in seats:
             if seat != warmup_seat:
                 tasks[seat] = asyncio.create_task(ask(seat))
@@ -2529,13 +2605,19 @@ class GameEngine:
         async def collect_all() -> None:
             if warmup_seat is not None:
                 warmup_task = asyncio.create_task(collect_vote(warmup_seat))
-                # Release the rest once the warmup has had its head start —
-                # or finished early — whichever comes first. Its own outcome
-                # is awaited below with the others, never swallowed.
-                await asyncio.wait(
-                    {warmup_task},
-                    timeout=self._vote_warmup_max_wait_seconds,
+                # Release the rest once the warmup's prefix is confirmed
+                # committed upstream — the fixed head start is the fallback
+                # when the seat's client cannot probe. Its own outcome is
+                # awaited below with the others, never swallowed.
+                probed = await self._await_prefix_commit(
+                    warmup_seat,
+                    budget=float(self._vote_phase_timeout_seconds),
                 )
+                if not probed:
+                    await asyncio.wait(
+                        {warmup_task},
+                        timeout=self._vote_warmup_max_wait_seconds,
+                    )
                 await asyncio.gather(
                     warmup_task,
                     *(collect_vote(seat) for seat in seats if seat != warmup_seat)
