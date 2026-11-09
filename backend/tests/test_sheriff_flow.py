@@ -975,6 +975,53 @@ def test_context_block_survives_malformed_private_state() -> None:
     assert "暂无夜间私密信息" in human
 
 
+def test_legacy_context_block_fallback_branches() -> None:
+    """``_context_block`` is the exception fallback of ``_prompt_for`` now, so
+    its own branches need direct exercise: campaign-speech recap, private
+    checks, role resources, the hidden-wolf / may-explode sentences, and a
+    wolf-channel log that holds nothing for this round.
+    """
+    from app.core.sheriff_flow import SheriffDirector as Director
+
+    class _Runtime:
+        def __init__(self) -> None:
+            self.private_facts: dict = {}
+            self.role_resources: dict = {}
+
+        def clone(self):
+            return self
+
+    state = _rich_state()
+    state._pipeline_runtime = _Runtime()
+    state._pipeline_runtime.private_facts = {
+        11: [{"namespace": "private_checks",
+              "fact": {"target": 9, "camp": "werewolf"}}],
+    }
+    state._pipeline_runtime.role_resources = {
+        11: {"antidote": 0, "poison": 1},
+        4: {"gun": 1},
+    }
+    # Short records take the non-truncating branch of ``_speech_lines``.
+    director = Director(conversation_log=_campaign_log())
+
+    human = director._context_block(state, 11, wolf=False)
+    assert "警上已发言" in human
+    assert "查验9号：狼人" in human
+    assert "解药已用" in human and "毒药仍在手" in human
+
+    assert "猎枪仍在手" in director._context_block(state, 4, wolf=False)
+
+    state._pipeline_runtime.role_resources[2] = {"no_wolf_pack": 1}
+    assert "不属于狼窝" in director._context_block(state, 2, wolf=True)
+    state._pipeline_runtime.role_resources[2] = {}
+    assert "也可自爆吞警徽" in director._context_block(state, 2, wolf=True)
+
+    # Log exists but holds no wolf-channel record for this round.
+    assert director._wolf_team_block(state, 2) == [
+        "狼队成员：2号、6号、10号、12号。",
+    ]
+
+
 def test_sheriff_vote_schema_does_not_require_a_target_for_pass() -> None:
     """`pass` 不该被工具 schema 逼着给 `target_seat`。
 

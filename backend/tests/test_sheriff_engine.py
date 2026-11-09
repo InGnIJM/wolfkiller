@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -1335,6 +1336,35 @@ async def test_collect_sheriff_decisions_warmup_runs_the_first_seat_first() -> N
     assert order[0] == 1
     assert sorted(order) == [1, 2, 3]
     assert results == {1: 1, 2: 2, 3: 3}
+    assert timed_out == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_collect_sheriff_decisions_probe_confirm_skips_the_fixed_wait() -> None:
+    """``probed=True`` releases the followers at once: seats 2/3 answer while
+    seat 1's warmup ballot is still open — a fixed head start would have held
+    them back. ``_await_prefix_commit`` itself is covered in test_game_engine.
+    """
+    engine = _engine()
+    engine._vote_warmup = True
+    engine._await_prefix_commit = AsyncMock(return_value=True)
+    warmup_open = threading.Event()
+    started: list[int] = []
+
+    def decide(seat: int) -> str:
+        started.append(seat)
+        if seat == 1:
+            warmup_open.wait(timeout=5)
+        return "stay"
+
+    run = asyncio.create_task(engine._collect_sheriff_decisions(
+        [1, 2, 3], decide, timeout_result="stay",
+    ))
+    await asyncio.sleep(0.1)
+    assert sorted(started) == [1, 2, 3]
+    warmup_open.set()
+    results, timed_out = await run
+    assert results == {1: "stay", 2: "stay", 3: "stay"}
     assert timed_out == frozenset()
 
 
