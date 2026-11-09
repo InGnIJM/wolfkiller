@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, IconButton, Tab, Tabs, Typography } from '@mui/material';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import CloseIcon from '@mui/icons-material/Close';
 import { useGameStore } from '../../store/gameStore';
 import { fetchGameMemories } from '../../api/client';
@@ -76,6 +77,26 @@ function buildDayGroups(events: { event: PublicReplayEvent; index: number }[]) {
     else groups.push({ label, items: [item] });
   }
   return groups;
+}
+
+// 虚拟列表的拍平行模型：tab 0 是「日分隔行 + 事件行」交错，其余 tab 只有事件行。
+type ChronicleRow =
+  | { kind: 'day'; label: string; key: string }
+  | { kind: 'event'; event: PublicReplayEvent; index: number; key: string };
+
+// 超过这个数量才走虚拟化：短列表维持原 map 渲染，零成本零风险。
+const VIRTUALIZE_THRESHOLD = 120;
+
+function DayDivider({ label }: { label: string }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1.5, mb: 0.5 }}>
+      <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
+      <Typography variant="caption" sx={{ color: 'secondary.dark', fontWeight: 600, letterSpacing: 1.5 }}>
+        {label}
+      </Typography>
+      <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
+    </Box>
+  );
 }
 
 function formatKnowledgeValue(key: string, value: unknown): string {
@@ -203,17 +224,22 @@ function MemoryCard({ memory }: { memory: PlayerMemory }) {
   );
 }
 
-function EventCard({
+const EventCard = memo(function EventCard({
   event,
-  onClick,
+  index,
+  onSeek,
+  rewoundRounds,
 }: {
   event: PublicReplayEvent;
-  onClick: () => void;
+  index: number;
+  onSeek: (index: number) => void;
+  /** 被定序王子作废过的放逐轮次：由父级一次算好传入，免去每卡 O(n) 扫描。 */
+  rewoundRounds: ReadonlySet<number>;
 }) {
   const { t } = useTranslation();
   const L = useLabels();
   const players = useGameStore((s) => s.players);
-  const timeline = useGameStore((s) => s.timeline);
+  const onClick = useCallback(() => onSeek(index), [index, onSeek]);
   let content: React.ReactNode;
 
   switch (event.event_type) {
@@ -251,7 +277,7 @@ function EventCard({
       content = (
         <Typography variant="caption" color="warning.light" sx={{ fontWeight: 500 }}>
           {t('game.acVoteResult', { round: event.payload.round_number })} · {event.payload.exiled_seat === null
-            ? (L.voteRoundWasRewound(event.payload.round_number, timeline)
+            ? (rewoundRounds.has(event.payload.round_number)
               ? L.VOTE_REWOUND_RESULT
               : t('game.evTie'))
             : t('game.evExiled', { seat: event.payload.exiled_seat })}
@@ -635,19 +661,25 @@ function EventCard({
       {content}
     </Box>
   );
-}
+});
 
 export default function HistoryPanel({ onClose }: Props) {
   const { t } = useTranslation();
   const [tab, setTab] = useState(0);
   const [memories, setMemories] = useState<PlayerMemory[] | null>(null);
   const [memoriesError, setMemoriesError] = useState<string | null>(null);
-  const { timeline, seekTo, pause, gameId } = useGameStore();
-  const indexedEvents = timeline.map((event, index) => ({ event, index })).reverse();
-  const speeches = indexedEvents.filter(({ event }) => (
+  const timeline = useGameStore((s) => s.timeline);
+  const seekTo = useGameStore((s) => s.seekTo);
+  const pause = useGameStore((s) => s.pause);
+  const gameId = useGameStore((s) => s.gameId);
+  const indexedEvents = useMemo(
+    () => timeline.map((event, index) => ({ event, index })).reverse(),
+    [timeline],
+  );
+  const speeches = useMemo(() => indexedEvents.filter(({ event }) => (
     event.event_type === 'speech' || event.event_type === 'sheriff_side'
-  ));
-  const votes = indexedEvents.filter(({ event }) => (
+  )), [indexedEvents]);
+  const votes = useMemo(() => indexedEvents.filter(({ event }) => (
     event.event_type === 'vote'
     || event.event_type === 'vote_result'
     || event.event_type === 'vote_rewound'
@@ -657,9 +689,11 @@ export default function HistoryPanel({ onClose }: Props) {
     || event.event_type === 'sheriff_run'
     || event.event_type === 'sheriff_withdraw'
     || event.event_type === 'sheriff_vote'
-  ));
-  const deaths = indexedEvents.filter(({ event }) => event.event_type === 'death' || event.event_type === 'self_explode');
-  const nightActions = indexedEvents.filter(({ event }) => (
+  )), [indexedEvents]);
+  const deaths = useMemo(() => indexedEvents.filter(({ event }) => (
+    event.event_type === 'death' || event.event_type === 'self_explode'
+  )), [indexedEvents]);
+  const nightActions = useMemo(() => indexedEvents.filter(({ event }) => (
     event.event_type === 'night_action' || event.event_type === 'wolf_vote'
     || event.event_type === 'narration'
     // 舞池/面具是夜间行动，只是各自带自己的载荷，所以有自己的事件类型。
@@ -669,16 +703,57 @@ export default function HistoryPanel({ onClose }: Props) {
     || event.event_type === 'awakened_witch_assist_chat'
     || event.event_type === 'awakened_witch_assist_vote'
     || event.event_type === 'awakened_witch_poison_result'
-  ));
-  const thoughts = indexedEvents.filter(({ event }) => (
+  )), [indexedEvents]);
+  const thoughts = useMemo(() => indexedEvents.filter(({ event }) => (
     event.event_type === 'wolf_chat_message' || event.event_type === 'witch_thought' || event.event_type === 'seer_thought' || event.event_type === 'night_thought'
-  ));
+  )), [indexedEvents]);
   const currentEvents = tab === 0 ? indexedEvents
     : tab === 1 ? speeches
     : tab === 2 ? votes
     : tab === 3 ? deaths
     : tab === 4 ? nightActions
     : thoughts;
+
+  // 被作废的放逐轮次一次算全：卡片只查 Set，不再各自扫整条时间轴。
+  const rewoundRounds = useMemo(
+    () => new Set(
+      timeline
+        .filter((event): event is Extract<PublicReplayEvent, { event_type: 'vote_rewound' }> => (
+          event.event_type === 'vote_rewound'
+        ))
+        .map((event) => event.payload.round_number),
+    ),
+    [timeline],
+  );
+
+  // 拍平成虚拟列表行：tab 0 在事件行之间插日分隔行，其余 tab 纯事件行。
+  const rows = useMemo<ChronicleRow[]>(() => {
+    if (tab === 0) {
+      const flat: ChronicleRow[] = [];
+      for (const group of buildDayGroups(currentEvents)) {
+        flat.push({ kind: 'day', label: group.label, key: `day-${flat.length}` });
+        for (const { event, index } of group.items) {
+          flat.push({ kind: 'event', event, index, key: `e-${index}` });
+        }
+      }
+      return flat;
+    }
+    return currentEvents.map(({ event, index }) => ({
+      kind: 'event', event, index, key: `e-${index}`,
+    }));
+  }, [currentEvents, tab]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 64,
+    overscan: 8,
+    // jsdom 没有布局，给个非零初始矩形让首屏虚拟项能挂出来（测试也依赖它）。
+    initialRect: { width: 320, height: 600 },
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const virtualized = currentEvents.length > VIRTUALIZE_THRESHOLD;
 
   useEffect(() => {
     if (tab !== 6 || gameId === null) return undefined;
@@ -701,10 +776,10 @@ export default function HistoryPanel({ onClose }: Props) {
     setTab(value);
   };
 
-  const handleClick = (index: number) => {
+  const handleClick = useCallback((index: number) => {
     seekTo(index);
     pause();
-  };
+  }, [seekTo, pause]);
 
   return (
     <Box sx={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', overflow: 'hidden' }}>
@@ -723,7 +798,7 @@ export default function HistoryPanel({ onClose }: Props) {
         <Tab label={t('game.hpTabMemory')} />
       </Tabs>
 
-      <Box sx={{ flex: 1, overflowY: 'auto', px: 1.2, py: 1 }}>
+      <Box ref={scrollRef} sx={{ flex: 1, overflowY: 'auto', px: 1.2, py: 1 }}>
         {tab === 6 ? (
           <>
             {memoriesError !== null && (
@@ -745,26 +820,63 @@ export default function HistoryPanel({ onClose }: Props) {
               <MemoryCard key={memory.seat_number} memory={memory} />
             ))}
           </>
+        ) : virtualized ? (
+          <Box sx={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+            {virtualItems.map((virtualRow) => {
+              const row = rows[virtualRow.index];
+              return (
+                <Box
+                  key={row.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {row.kind === 'day'
+                    ? <DayDivider label={row.label} />
+                    : (
+                      <EventCard
+                        event={row.event}
+                        index={row.index}
+                        onSeek={handleClick}
+                        rewoundRounds={rewoundRounds}
+                      />
+                    )}
+                </Box>
+              );
+            })}
+          </Box>
         ) : (
           <>
             {tab === 0 ? (
               buildDayGroups(currentEvents).map((group, groupIndex) => (
                 <Box key={`chronicle-${groupIndex}`} sx={{ mb: 0.5 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1.5, mb: 0.5 }}>
-                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
-                    <Typography variant="caption" sx={{ color: 'secondary.dark', fontWeight: 600, letterSpacing: 1.5 }}>
-                      {group.label}
-                    </Typography>
-                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
-                  </Box>
+                  <DayDivider label={group.label} />
                   {group.items.map(({ event, index }) => (
-                    <EventCard key={index} event={event} onClick={() => handleClick(index)} />
+                    <EventCard
+                      key={index}
+                      event={event}
+                      index={index}
+                      onSeek={handleClick}
+                      rewoundRounds={rewoundRounds}
+                    />
                   ))}
                 </Box>
               ))
             ) : (
               currentEvents.map(({ event, index }) => (
-                <EventCard key={index} event={event} onClick={() => handleClick(index)} />
+                <EventCard
+                  key={index}
+                  event={event}
+                  index={index}
+                  onSeek={handleClick}
+                  rewoundRounds={rewoundRounds}
+                />
               ))
             )}
             {currentEvents.length === 0 && (
