@@ -23,20 +23,28 @@
 | `LLM_PROVIDER_MAX_RETRIES` | `4` | SDK 对瞬时 429/5xx 的重试次数 |
 | `VOTE_CONCURRENCY` | `5` | 投票并发上限 |
 | `VOTE_PHASE_TIMEOUT_SECONDS` | `1800` | 投票阶段总超时（须 ≥ 三批 5 并发（12 座）的完整重试梯子，由 `app/test/test_config.py` 的不变式测试把关） |
-| `ROLE_PIPELINE_V2` | `v1` | **不改变对局运行时**。仅 `pipeline_mode_from_env()` / `RolePipeline` 适配器测试读取；`GameEngine` 固定走 `PipelineMode.V2` |
+| `LLM_REASONING_EFFORT` | 未设置 | 思考强度透传参数（`none\|low\|medium\|high\|max`）：按原值进 chat-completions 请求体；unset 是「不发送、按提供商默认」而非「关」，DeepSeek 的 `none` 才关推理；Responses/Anthropic 方言不发 |
 | `WOLFKILLER_DATA_DIR` | `data` | SQLite、游戏日志、模型配置的数据根目录 |
 | `MODEL_CONFIG_PATH` | `{WOLFKILLER_DATA_DIR}/models.json` | 显式覆盖模型配置文件路径 |
-| `APP_SETTINGS_PATH` | `{WOLFKILLER_DATA_DIR}/settings.json` | 显式覆盖应用设置文件路径（训练语料采集开关） |
+| `APP_SETTINGS_PATH` | `{WOLFKILLER_DATA_DIR}/settings.json` | 显式覆盖应用设置文件路径（语料采集、自动复盘等应用级开关） |
 | `WOLFKILLER_PROVIDER_PREWARM` | `1` | 启动完成后是否用后台 daemon 线程预热 provider SDK 与 `/api/models` 延迟缓存。`0` 关闭；关闭不改变功能，只把首次 LLM 调用/模型页首屏的成本移回请求路径 |
 | `PROMPT_CAPTURE_ENABLED` | 未设置（默认开） | 训练语料采集的进程级开关：`1` / `true` / `yes` / `on` 开，其他值一律关。界面设置优先于它；只在**建局**时解析，恢复路径不重读（见下文「数据存储」） |
+| `AUTO_REVIEW_ENABLED` | 未设置（默认开） | 对局结束后自动发起赛后复盘的进程级开关：truthy 开，其他值关。界面设置（`GET/PATCH /api/settings/auto-review`）优先于它 |
 | `WOLFKILLER_SESSION_AFFINITY` | `off` | 会话亲和实验开关（仅 `custom-openai` 网关）：`off` / `on` / `ab`。进程级配置，建局与恢复各解析一次，不进 checkpoint；`ab` 按 `game_id` 取一半座位为 treatment，treatment 座位带稳定 `x-session-id: wk-{game_id}-s{seat}`，用于验证上游前缀缓存 |
 | `WOLFKILLER_CACHE_ROUTE_PIN` | `off` | 路由型前缀缓存实验开关（仅 `cache_mode=routing` 的 provider，如 `opencode` / `opencode-go`）：`off` / `on` / `ab`。进程级，建局时解析一次，不进 checkpoint；开时用固定短 prompt 连发两次，第二次无缓存命中就轮换该座位的 `x-opencode-session`（最多 2 次），结果写 `data/games/<id>/cache_route.jsonl`。默认 `off`，正式评测不要开 |
 | `WOLFKILLER_SHARED_CACHE_SESSION` | `off` | 共享缓存会话开关（仅 `cache_mode=routing` 的 provider）：`off` / `on`。进程级，建局与恢复各解析一次，不进 checkpoint/snapshot；开时同局所有 routing 座位共用一个确定性 `x-opencode-session`（`ses_`+`sha256(session_header, game_id)` 截断 26 hex），把整局流量收敛到一台上游后端以集中前缀缓存；与 `CACHE_ROUTE_PIN` 组合时探测按 session 组进行、判冷整组轮换。首局开启后盯 `model_errors.log` 确认网关无单 session 限流 |
 | `WOLFKILLER_BURST_WARMUP` | `off` | 投票预热首发开关：`off` / `on`。进程级，建局与恢复各解析一次，不进 checkpoint；开时放逐投票首座位（`seats[0]`）先串行完成、其余座位再按 `game.vote_concurrency` 并行——让后续同契约调用吃到首发刚提交的缓存前缀。仅与 `WOLFKILLER_SHARED_CACHE_SESSION=on` 组合有意义（非共享后端时 followers 吃不到暖，白付一次串行延迟 ~15-30s/轮）；投票阶段预算、超时、技术弃权语义不变 |
+| `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS` | `3` | 预热首发后其余座位的最长等待秒数；`<=0` 恢复旧的「等完整一张票」行为 |
+| `MODEL_ABORT_ENABLED` | `true` | 模型通道健康监控总开关（`ProviderHealthMonitor` 信号 + `ModelHealthGuard` 在 turn 边界检查） |
+| `MODEL_ABORT_MODE` / `MODEL_ABORT_BENCHMARK_MODE` | `pause` / `fail` | 熔断动作：live 局默认 `pause`（`off`/`warn` 只观测不动作），benchmark 局默认 `fail` |
+| `MODEL_ABORT_CONSECUTIVE` / `SEATS` / `WINDOW_SECONDS` / `SAMPLE_WINDOW` / `RATIO` / `RATIO_MIN_SAMPLES` / `TERMINAL_SEATS` / `QUALITY_FAILURES` / `QUALITY_SEATS` | `5`/`3`/`120`/`20`/`0.8`/`10`/`2`/`4`/`3` | 熔断阈值组：120s 窗内连续失败 ≥5 次且 ≥3 座、或样本 ≥10 且失败率 ≥0.8 且 ≥3 座、或终局错误（401/403/404/402/地区限制/上下文超限）≥2 座、或质量崩溃连续 ≥4 次且 ≥3 座 → `provider_circuit_open` |
+| `MODEL_ABORT_SINGLE_SEAT` / `REOPEN_LIMIT` / `NO_PROGRESS_ROUNDS` | `warn`/`2`/`0` | 单座位信号策略（`off`/`warn`/`pause`）/ 熔断重开上限 / 无进展轮数阈值（`0`=关） |
 | `WOLFKILLER_BURST_WARMUP_COMMIT_SECONDS` | `45` | 预热放行确认窗口：`GameEngine._await_prefix_commit` 用首发座位的放逐投票提示词发 `LLMClient.probe_prefix`（单次、`max_tokens=8` 封顶）轮询，上游缓存提交可见（`cached/prompt ≥ 0.5`）或窗口用尽即放行其余座位；`<=0` 恢复 `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS` 的固定等待，客户端不可探测（System One 等）时同样回落；进程级，建局与恢复各解析一次，不进 checkpoint |
 | `WOLFKILLER_API_URL` | `http://127.0.0.1:8000` | benchmark CLI 连接的后端地址 |
 | `DEBUG` | `false` | 调试模式 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
+
+注：`ROLE_PIPELINE_V2` 环境变量与 `pipeline_mode_from_env()` 已整体删除，`GameEngine` 运行时固定 `PipelineMode.V2`。
 
 `.env` 推荐最小配置：
 
@@ -105,7 +113,7 @@ npm run lint       # ESLint
 | 门禁 | 内容 | 状态 |
 | --- | --- | --- |
 | 后端覆盖率 | `tests` + `app` 全量，statement/branch 100%（`--cov-fail-under=100`） | 生效（CI） |
-| 前端覆盖率 | `vite.config.ts` 对 11 个核心文件（labels、gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、seatLayout、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效（CI `npm run test:coverage`） |
+| 前端覆盖率 | `vite.config.ts` 对 13 个核心文件（labels、useLabels、uiSettingsStore、gameStore、benchmarkStore、websocket、GameBoard、TimelineController、HistoryPanel、WinOverlay、seatLayout、GameList、GameCard）要求 statements/branches/functions/lines 均 100% | 生效（CI `npm run test:coverage`） |
 | 隐私扫描 | 公开 DTO 与前端消费链不得含私有字段（`role_init`、`visible_to`、`night_intel`、`check_results`、`has_antidote`、`has_poison`、`has_gun` 等） | 生效（测试门禁） |
 | 凭据扫描 | 提交前 `.githooks/pre-commit` → `secret-scan.sh --staged`；CI 的 `secret-scan` job 用 `--history` 扫全历史 | 生效（钩子 + CI） |
 | 核心源码门禁 | 引擎/校验器/解析器/提示外壳的禁词与角色名测试，证明核心不写死内置角色分支 | 生效（测试门禁） |
@@ -122,7 +130,7 @@ sh .githooks/secret-scan.sh --staged         # 手动跑：只看暂存区
 sh .githooks/secret-scan.sh --history        # 手动跑：扫全历史
 ```
 
-- **`--staged`（pre-commit）**：拦下禁止提交的路径（任何 `.env` 变体、`*.pem|key|p12|pfx|jks|keystore`、`data/models.json`、`*.sqlite3`）和含凭据特征的**内容**（`sk-`、`AKIA`、`ghp_`、`github_pat_`、`xox?-`、`AIza`、`BEGIN … PRIVATE KEY`）。它**不读基线**——此刻要提交的东西必须干净。`.env.example` / `.env.sample` / `.env.template` 是唯一放行的模板形态。
+- **`--staged`（pre-commit）**：拦下禁止提交的路径（任何 `.env` 变体、`*.pem|p12|pfx|jks|keystore`、`data/models.json`、`*.sqlite3`）和含凭据特征的**内容**（`sk-`、`AKIA`、`ghp_`、`github_pat_`、`xox?-`、`AIza`、`BEGIN … PRIVATE KEY`）。它**不读基线**——此刻要提交的东西必须干净。`.env.example` / `.env.sample` / `.env.template` 是唯一放行的模板形态。
 - **`--history`（CI）**：同样的两类检查跑一遍全部历史。提交过、后来又删掉的泄漏只有这一模式看得见，而浅克隆看不到它，所以 CI 用 `fetch-depth: 0`。
 - 命中只打印**位置**，从不打印匹配内容：报告本身不会把凭据带进终端、CI 日志或 issue。
 - `git commit --no-verify` 能绕过钩子，所以 CI 那一层才是兜底。
@@ -141,11 +149,11 @@ sh .githooks/secret-scan.sh --history        # 手动跑：扫全历史
 
 ## 数据存储
 
-- 耐久事实库：`backend/data/wolfkiller.sqlite3`；SQLite 使用 WAL 与 `synchronous=FULL`，同目录可能出现 `wolfkiller.sqlite3-wal` / `wolfkiller.sqlite3-shm`
+- 耐久事实库：`backend/data/wolfkiller.sqlite3`；SQLite 使用 WAL 与 `synchronous=NORMAL`，同目录可能出现 `wolfkiller.sqlite3-wal` / `wolfkiller.sqlite3-shm`
 - 游戏数据：`backend/data/games/<game_id>/`（JSONL 日志 `game.log`、LLM 对话 `conversation.log`、角色记忆 `memories/`）；`game.log` 的无密钥 `model_assignment` 记录可用于重建模型分配
 - 游戏清单：`backend/data/games/index.json`（重启后恢复游戏列表并校验流水线版本兼容性）；新对局以 `model_snapshot_version: 2` 保存按配置分组的 `count` 与 `seats`
 - 模型配置：`backend/data/models.json`（API Key 加密存储）
-- 应用设置：`backend/data/settings.json`（`APP_SETTINGS_PATH` 可覆盖）。与模型配置分开存，目前只有训练语料采集开关；落盘 `{"version": 1, "settings": {...}}`，写入走 tmp + `os.replace`，文件损坏时回落到「未设置」并在日志告警。开关的裁决链是「界面设置 > `PROMPT_CAPTURE_ENABLED` > 默认开」，只在建局时解析一次；对局数据目录里的 `llm_prompts.jsonl` 是否存在就是那局是否继续采集的耐久标记。
+- 应用设置：`backend/data/settings.json`（`APP_SETTINGS_PATH` 可覆盖）。与模型配置分开存，现有两个开关：`prompt_capture_enabled`（训练语料采集）与 `auto_review_enabled`（赛后自动复盘）；落盘 `{"version": 1, "settings": {...}}`，写入走 tmp + `os.replace`，文件损坏时回落到「未设置」并在日志告警。语料采集的裁决链是「界面设置 > `PROMPT_CAPTURE_ENABLED` > 默认开」，只在建局时解析一次；对局数据目录里的 `llm_prompts.jsonl` 是否存在就是那局是否继续采集的耐久标记。自动复盘的裁决链同构（界面设置 > `AUTO_REVIEW_ENABLED` > 默认开），`ReviewService` 在对局结束时读取它决定是否自动发起复盘。
 - 设置 `WOLFKILLER_DATA_DIR` 后，默认模型配置随数据目录迁移；`MODEL_CONFIG_PATH` 可显式覆盖模型配置路径。测试同时隔离两个路径，不使用真实 Key。
 - **禁止删除正在进行的游戏数据，否则会导致游戏中断**
 

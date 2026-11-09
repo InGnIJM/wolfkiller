@@ -105,7 +105,7 @@
 - Trigger: a benchmark game runs without the sheriff even though the chosen preset declares `enable_sheriff: true`. Action: check the two drop points before touching `catalog.py` — the preset is usually already correct. `NewBenchmarkPage.tsx` builds the frozen `scenario` from `scenario_id` + `role_counts` only, and `benchmark_game_executor.py` called `create_game()` without `enable_sheriff`, so `GameConfig` took its `False` default. Confirm from the facts, not the code path: `benchmark_runs.config_json.scenario` had no such key and all ten games stored `enable_sheriff=false`. Forward the flag into the frozen scenario (not by re-reading the live catalog at execution time) so the run stays reproducible when the catalog changes later. Any other preset flag needs the same two-point audit.
 - Trigger: running vitest/eslint/build for `frontend/` from WSL against the Windows-mounted `/mnt/e` path. Action: copy the frontend (src + configs + lockfile) to an ext4 mirror (e.g. `/tmp/wk-verify`), run `npm ci` and the commands there — on `/mnt/e`, vitest fork/threads workers time out at ~60s and full runs die with "Timeout waiting for worker to respond", and a plain `npx vitest run` can fail outright with `Cannot find module '@rolldown/binding-linux-x64-gnu'` (the optional native binary npm skipped on the mount). After any `npm install` on the mount, restore `package.json`/`package-lock.json` (`git checkout --`) because npm rewrites CRLF→LF and drops `libc` fields, polluting the diff.
 - Trigger: a test file's `vi.mock('.../api/client', ...)` factory returns only the exports the component used *before* this change, and the component now does `instanceof GameControlError` (or imports any new export). Action: spread the real module inside the factory — `vi.mock(path, async (importOriginal) => ({ ...(await importOriginal<typeof import(path)>()), ... }))` — otherwise the mocked module lacks the new export and the access throws `Cannot access 'X' on the mocked module` at render time, which reads like a component bug.
-- Trigger: `npm run test:coverage` reports `BenchmarkDetailPage.test.tsx > lists every scheduled game and surfaces delete errors` as "Test timed out in 5000ms" while `npm test` (no coverage) passes the same file. Action: treat it as pre-existing flakiness, not a regression — the same single failure reproduces on a pristine `git archive HEAD` checkout, and the file passes in isolation (`npx vitest run <file>`). V8 instrumentation pushes the full run past the default 5s per-test budget. Confirm the real gate with `npx vitest run --coverage --testTimeout=30000`, which passes 100% on all ten gated files. Do not "fix" the component.
+- Trigger: `npm run test:coverage` reports `BenchmarkDetailPage.test.tsx > lists every scheduled game and surfaces delete errors` as "Test timed out in 5000ms" while `npm test` (no coverage) passes the same file. Action: treat it as pre-existing flakiness, not a regression — the same single failure reproduces on a pristine `git archive HEAD` checkout, and the file passes in isolation (`npx vitest run <file>`). V8 instrumentation pushes the full run past the default 5s per-test budget. Confirm the real gate with `npx vitest run --coverage --testTimeout=30000`, which passes 100% on all gated files (13 as of 2026-11). Do not "fix" the component.
 - Trigger: adding a preset-level rule flag (sheriff, witch self-save, …) and the flag silently has no effect. Action: audit **four** points, not one — `catalog.py` preset dict, `PresetItem` schema, `CreateGameWizard`/`RoleStep` forwarding into `createGame`, and the benchmark pair (`NewBenchmarkPage` frozen `scenario` + `benchmark_game_executor` reading that scenario). The benchmark pair is the one that gets missed; read the flag back from the frozen scenario rather than the live catalog.
 - Trigger: a live game looks frozen while the timeline speed is already 8x.
   Action: treat this as waiting on the in-flight model call. Timeline 0.5x–8x
@@ -118,7 +118,7 @@
   aggregates target seat numbers across games. Recompute per daytime round
   among living wolves. The 2026-09-16 snapshot (61 finished games) had median
   100% per-round agreement.
-- Trigger: `npm run test:coverage` gate in `frontend/vite.config.ts`. Action: CI now runs this job against the 9 included files with 100% thresholds. On WSL `/mnt/e` the local run can still die from worker timeouts (see above); copy to an ext4 mirror before treating coverage as a local signal. If a mirror run is below 100%, compare against the current `main` CI job rather than a remembered 96.4% snapshot.
+- Trigger: `npm run test:coverage` gate in `frontend/vite.config.ts`. Action: CI now runs this job against the include-listed files (13 as of 2026-11) with 100% thresholds. On WSL `/mnt/e` the local run can still die from worker timeouts (see above); copy to an ext4 mirror before treating coverage as a local signal. If a mirror run is below 100%, compare against the current `main` CI job rather than a remembered 96.4% snapshot.
 - Trigger: wanting a real browser screenshot of a frontend page from WSL (jsdom tests pass but the layout is unverified). Action: the Linux browsers are already in `~/.cache/ms-playwright`, but headless Chromium dies with `error while loading shared libraries: libnspr4.so`. Without root, `apt-get download libnspr4 libnss3 libasound2t64` into a scratch dir, `dpkg -x` each `.deb` into `/tmp/wk-libs/root`, then run the Playwright script with `LD_LIBRARY_PATH=/tmp/wk-libs/root/usr/lib/x86_64-linux-gnu`. Write the script *inside* the mirror (`/tmp/wk-verify/shot.mjs`) so `import { chromium } from 'playwright'` resolves against the mirrored `node_modules`.
 - Trigger: a page load in the browser logs `Failed to fetch` for `/api/...` while `curl` on the same URL succeeds. Action: the backend CORS/`LocalAccessMiddleware` allow-list is only `localhost` / `127.0.0.1` / `[::1]` on ports 5173, 4173 and 8000 (`app/api/local_access.py`'s `LOCAL_ORIGINS`). A dev server on any other port is rejected, and a data-driven page that only fetches will look "empty" rather than "broken" — start the frontend on 5173/4173 (or add the port) before debugging the page itself.
 - Trigger: a claim that "provider X now requires header Y" arrives from web
@@ -183,27 +183,32 @@
   `error code: 1010` for *every* model, which looks exactly like a blanket
   region block and will send the diagnosis the wrong way. Probe sequentially
   with ~2.5s spacing; the rule clears by itself.
-- Trigger: adding a role to the backend registry. Action: the frontend keeps
-  **four** independent role-id → Chinese-name tables and they drift silently —
-  `components/game/SeatMap.tsx` (`ROLE_BADGES`), `components/game/DeathAnnouncement.tsx`
-  (`ROLE_LABELS`), `components/game/HistoryPanel.tsx` (`ROLE_LABELS`) and
-  `components/shared/RoleIcon.tsx` (`ROLE_ICONS`); `theme/tokens.ts` (`ROLE_COLORS`)
-  is a fifth one, but it only supplies colours. A missing key never throws:
+- Trigger: adding a role to the backend registry. Action: the frontend used to
+  keep **four** independent role-id → Chinese-name tables that drifted silently
+  (`SeatMap.ROLE_BADGES`, `DeathAnnouncement.ROLE_LABELS`, `HistoryPanel.ROLE_LABELS`,
+  `RoleIcon.ROLE_ICONS`). The tables have since been centralised: names live in
+  `src/labels.ts` (+ `src/i18n/labelsEn.ts` mirror) and `components/shared/roleMeta.ts`,
+  and only `RoleIcon.ROLE_ICONS` remains per-component; `src/test/labels.test.ts`
+  and the backend `test_frontend_labels_cover_every_declared_value` are the current
+  guards (see the later entry on labels.ts). The historical failure mode: a
+  missing key never throws —
   SeatMap renders `{badge && ...}`, so the seat card silently loses its role line
   *and* falls back to the camp colour, while the hover card drops the role from
   its identity line; DeathAnnouncement falls back to the raw id
   (`身份：wolf-killer-wolf-beauty`). Seen 2026-09-26 on game `aea935c4`: seats 2
   (wolf beauty) and 7 (old drunkard) showed no name while the other ten did —
   the knight was missing from the table too but was not in that line-up, which
-  is why the symptom looked like "two players". The `it.each` role tables in
-  `test/SeatMap.test.tsx` and `test/DeathAnnouncement.test.tsx` are the only
-  guard: they fail whenever a table is short. The same drift hits death causes:
+  is why the symptom looked like "two players". Back then the `it.each` role
+  tables in `test/SeatMap.test.tsx` and `test/DeathAnnouncement.test.tsx` were
+  the only guard; both files are gone now. The same drift hit death causes:
   the `DeathCause` union in `store/types.ts` plus four `CAUSE_LABELS` tables
   (`DeathAnnouncement.tsx`, `ActivityCard.tsx`, `CenterDisplay.tsx`,
-  `HistoryPanel.tsx`). Only DeathAnnouncement's lagged behind `knight_duel` and
-  `charm`, and it degrades to the raw cause (`charm · 第2轮`) rather than
-  failing. Typing the test table as `Array<[DeathCause, string]>` makes a
-  missing cause break `tsc` as well as the render.
+  `HistoryPanel.tsx`); DeathAnnouncement's lagged behind `knight_duel` and
+  `charm`, degrading to the raw cause (`charm · 第2轮`) rather than failing.
+  Today the cause labels live in one `DEATH_CAUSE_LABELS` table per locale
+  (`labels.ts` / `i18n/labelsEn.ts`, typed `Record<DeathCause, string>`) with
+  `labels.test.ts` as the guard, and `DeathAnnouncement.tsx` /
+  `SeatMap.test.tsx` no longer exist.
 - Trigger: one death cause shared by two players whose last-words rules differ
   (the knight's duel — victim speaks, knight does not). Action:
   `is_last_words_eligible` is a pure function of `(cause, round)` and cannot
@@ -334,8 +339,8 @@
   and `HistoryPanel` (give `HistoryPanel` a `default: return null`), plus a
   `roundNumber` clause in `gameStore.applyEvent` for events that carry their own
   `round_number` without making anyone the current speaker. `eventCoverage.test.tsx`
-  now walks all 29 types (26 projected + `narration` + the legacy
-  `witch_thought` / `seer_thought`) against the three surfaces, and
+  now walks all projected types (35 as of 2026-11; was 29: 26 projected +
+  `narration` + the legacy `witch_thought` / `seer_thought`) against the three surfaces, and
   `tests/test_audience_projector.py` freezes the projected set — add a type and
   the build stays red until you answer for it. Centre panel and chronicle are
   whole panels, so their "did it render" probe is the `.wk-event-summary` /
@@ -749,8 +754,10 @@
   已经存在」。
 - Trigger: 指标恒为 0 或覆盖率长期偏低，被当成「数据还不够」。Action: 先问这个数**在结构上
   能不能非零**。`attempts.retry_rate` 恒 0 是因为重试发生在一次 `provider_call` **内部**，
-  `model_attempts` 每逻辑请求只写一行 —— 这个键永远不会动，正确做法是下线它，并把真实来源
-  （`llm_calls.log` 的 `retried`）接进 `llm.llm_retry_rate`；token 覆盖率 42% 是因为三条路
+  `model_attempts` 每逻辑请求只写一行 —— 这个键永远不会动；当时的建议是下线它、把真实来源
+  （`llm_calls.log` 的 `retried`）接进报表。实际落地没有新增 `llm.llm_retry_rate`，而是 v6
+  起恢复 `attempts.retry_rate`、改按各局 `summary.llm.retried / llm.calls` 聚合（旧
+  `retried_requests` 改名 `recovery_redispatches`）；token 覆盖率 42% 是因为三条路
   一律给账本传 `None`，不是 provider 没给。同类：`benchmark_reports` 每次事实变化插一整份、
   从不清理（单 run 3404 行 / 149MB），读者的 `ORDER BY … LIMIT 1` 只用最新一行。
 - Trigger: 要清理生产库，但 `sqlite3.connect("backend/data/wolfkiller.sqlite3")` 在 WSL 里
@@ -822,7 +829,7 @@
 - 根因（2026-11-01 复盘）：自动前缀缓存只命中**从第一个 token 起**逐字相同的部分。旧布局把身份、回合、存活、`revision` 放在最前，整局不变的 `<public_role_rules>`（12 人板 7–8k 字）放在后面；狼队讨论在 system 第 766 字就插入 `seat` + `persona_line`；历史全是 `[-30:]` / `[-120:]` / `[-20000:]` 滑动窗口，每多一条记录起点就后移；白天三种 scope 共用一个 `[-30:]`，导致不同座位的公开历史不一致。统计侧 `LLMUsage` 根本没读 cached tokens，所以问题一直不可见。
 - 动作：按「整局不变 → 跨座位共享 → 座位不变 → 追加型 → 易变 → 任务」排列；截断用 `agents/prompt_window.stable_tail*`（整步前移）；不要为此改 system 文本（`prompt_drift`）。改完用 `scripts/prompt_size_report.py --prefix` 看理论上限、单局 summary `llm.cache` 看实测。
 - 坑：langchain-openai 只把 `prompt_tokens_details.cached_tokens` 归一到 `input_token_details.cache_read`，DeepSeek 的 `prompt_cache_hit_tokens` 要从 `response_metadata.token_usage` 补读；未报告缓存字段的调用必须排除出分母，否则命中率被稀释成假 0%。
-- 已知遗留（与本改动无关）：`tests/test_base_role.py` 的 5 条 vote telemetry 用例在 HEAD `1b771a3` 已失败（`ConversationLog` 不再转发 `log_vote_telemetry`）。
+- 已知遗留（与本改动无关，已过时）：曾记录 `tests/test_base_role.py` 的 5 条 vote telemetry 用例在 HEAD `1b771a3` 失败（`ConversationLog` 不再转发 `log_vote_telemetry`）；当前 `conversation_log.py` 已恢复该转发方法，若用例仍失败需重新定位原因。
 
 ## 投票截断 + 紧凑重试 = 双重缓存损失（2026-11-06 复盘）
 
