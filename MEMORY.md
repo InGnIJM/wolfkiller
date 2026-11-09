@@ -830,3 +830,10 @@
 - 根因：reasoning 模型把 4096 输出预算全花在推理上、正文为空（旧口径记 `action_response_not_text`）；失败后走 `build_vote_retry_prompt` 紧凑重试，开头就是座位私有内容，前缀缓存几乎全丢——一次截断付两遍钱。
 - 动作：① `finish_reason∈{length,max_tokens}` 且空响应要单独记 `action_response_truncated` 并进 `QUALITY_CODES`（tool 通道同理，别误判 `StrictCapabilityError` 降级传输）；② 投票重试**只有超时**才换紧凑 prompt，其余失败在原 messages 尾部追加一条提醒即可保住前缀；③ 投票指令直接要求「reasoning ≤100 字」并配足 `action_max_tokens`；④ `failure_taxonomy` 的 `test_source_code_literals_are_all_registered` 会拦住任何没注册的新 `code=` 字面量，先加进 `QUALITY_CODES`。
 - 预热：`WOLFKILLER_BURST_WARMUP` 等首票只对共享 session 有意义，且要用 `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS`（默认 3s）封顶——网关缓存写入延迟是秒级黑盒，等满一张票 15-30s 买不到更多缓存。
+
+## 评测报告字段口径 + 前端展示坑（2026-11 详情页补齐时记）
+
+- `summary.mixed_uncertainty` 与 `uncertainty.mixed_arena` 是**同一个 list 对象**（service 只搬引用，`_apply_model_labels` 原地打 `model_label`）；但 `uncertainty.paired_regression` 只含 `bootstrap` 子块，完整块（`differences`/`mean_difference`/`pair_count`）只在 `summary.paired_regression`。
+- `requests.logical_latency_ms` 形状是 `{count, p50, p95, p99}`——**没有 mean/max**；`attempts.latency_ms` 同形。`attempts.llm_calls` 可为 null（无 summary 时），别假定 int。
+- 配对回归 `differences`/`bootstrap.{low,high}` 是裸得分差（-1..1）和 ms 差，不是胜率——渲染区间不要复用 `%` 格式化器。
+- 覆盖率门禁是全局 100%（vitest v8）。`npm run test:coverage` 在高负载机器上会让 `waitFor`/`real-timer` 用例偶发 5s 超时（本次 BenchmarkDetailPage + GameList 各一条），单文件重跑即过——先当抖动重跑，别急着改测试。

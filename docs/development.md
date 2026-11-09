@@ -33,6 +33,7 @@
 | `WOLFKILLER_CACHE_ROUTE_PIN` | `off` | 路由型前缀缓存实验开关（仅 `cache_mode=routing` 的 provider，如 `opencode` / `opencode-go`）：`off` / `on` / `ab`。进程级，建局时解析一次，不进 checkpoint；开时用固定短 prompt 连发两次，第二次无缓存命中就轮换该座位的 `x-opencode-session`（最多 2 次），结果写 `data/games/<id>/cache_route.jsonl`。默认 `off`，正式评测不要开 |
 | `WOLFKILLER_SHARED_CACHE_SESSION` | `off` | 共享缓存会话开关（仅 `cache_mode=routing` 的 provider）：`off` / `on`。进程级，建局与恢复各解析一次，不进 checkpoint/snapshot；开时同局所有 routing 座位共用一个确定性 `x-opencode-session`（`ses_`+`sha256(session_header, game_id)` 截断 26 hex），把整局流量收敛到一台上游后端以集中前缀缓存；与 `CACHE_ROUTE_PIN` 组合时探测按 session 组进行、判冷整组轮换。首局开启后盯 `model_errors.log` 确认网关无单 session 限流 |
 | `WOLFKILLER_BURST_WARMUP` | `off` | 投票预热首发开关：`off` / `on`。进程级，建局与恢复各解析一次，不进 checkpoint；开时放逐投票首座位（`seats[0]`）先串行完成、其余座位再按 `game.vote_concurrency` 并行——让后续同契约调用吃到首发刚提交的缓存前缀。仅与 `WOLFKILLER_SHARED_CACHE_SESSION=on` 组合有意义（非共享后端时 followers 吃不到暖，白付一次串行延迟 ~15-30s/轮）；投票阶段预算、超时、技术弃权语义不变 |
+| `WOLFKILLER_BURST_WARMUP_COMMIT_SECONDS` | `45` | 预热放行确认窗口：`GameEngine._await_prefix_commit` 用首发座位的放逐投票提示词发 `LLMClient.probe_prefix`（单次、`max_tokens=8` 封顶）轮询，上游缓存提交可见（`cached/prompt ≥ 0.5`）或窗口用尽即放行其余座位；`<=0` 恢复 `WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS` 的固定等待，客户端不可探测（System One 等）时同样回落；进程级，建局与恢复各解析一次，不进 checkpoint |
 | `WOLFKILLER_API_URL` | `http://127.0.0.1:8000` | benchmark CLI 连接的后端地址 |
 | `DEBUG` | `false` | 调试模式 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
