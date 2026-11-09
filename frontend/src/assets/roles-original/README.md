@@ -18,7 +18,8 @@
   记得同时确认 `ROLE_ART_BY_ID` 已登记该角色）。
 
 文件名与活动目录**基本同名**，但 `role-werewolf_king` / `role-wolf_beauty` 用下划线，
-活动目录统一用连字符（`role-werewolf-king.webp` / `role-wolf-beauty.webp`）；还原时请改名。
+活动目录多数用连字符（`role-werewolf-king.webp` / `role-wolf-beauty.webp`），
+例外是 `role-old_drunkard.webp` 用下划线且已按原名登记进 `ROLE_ART_BY_ID`；还原时请按登记名处理。
 卡背 `../roles/card-back.webp` 与老酒鬼在重绘前就是自有的，因此不在这份备份里。
 
 ```bash

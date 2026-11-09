@@ -27,6 +27,7 @@ Wolf Killer 源码基于 **Mozilla Public License Version 2.0 (MPL-2.0)** 发布
 | **PyYAML** | 配置文件解析 | MIT |
 | **python-dotenv** | 环境变量加载 | BSD-3-Clause |
 | **pytest** / **pytest-cov** / **pytest-asyncio** | 自动化测试与覆盖率门禁 | MIT / Apache-2.0 |
+| **tzdata** | Windows 环境的 IANA 时区数据库 | Apache-2.0 |
 
 ### 2.2 前端依赖 (Node.js / npm)
 | 软件包 | 主要用途 | 许可证 |
@@ -42,6 +43,7 @@ Wolf Killer 源码基于 **Mozilla Public License Version 2.0 (MPL-2.0)** 发布
 | **ESLint** | 代码规范检查 | MIT |
 | **Vitest** | 前端单元测试框架 | MIT |
 | **Playwright** | 端到端浏览器验收测试 | Apache-2.0 |
+| **i18next** / **react-i18next** | 界面国际化（中英双语资源与标签镜像） | MIT |
 
 > **注**：本项目前端构建链依赖的 `lightningcss` 原生遵循 MPL-2.0 协议，与本项目主许可证高度自洽。
 
