@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from app.agents import llm_client
@@ -511,13 +511,10 @@ async def test_stream_and_accumulate_without_speech_emits_nothing(monkeypatch):
             yield AIMessageChunk(content='{"reasoning": "想一想"}')
             yield AIMessageChunk(content="")
 
-    emitted = []
-
-    async def on_chunk(text: str):
-        emitted.append(text)
+    on_chunk = AsyncMock()
 
     await client._stream_and_accumulate(
         NoSpeechModel(), [], on_chunk=on_chunk,
     )
-    assert emitted == []
+    on_chunk.assert_not_called()
 
