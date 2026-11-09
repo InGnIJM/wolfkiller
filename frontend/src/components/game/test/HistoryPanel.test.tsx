@@ -738,3 +738,64 @@ describe('HistoryPanel role-skill event cards', () => {
     expect(screen.queryByText(/平票/)).not.toBeInTheDocument();
   });
 });
+
+describe('HistoryPanel virtualization', () => {
+  const makeSpeechEvents = (count: number): PublicReplayEvent[] => (
+    Array.from({ length: count }, (_, i) => ({
+      ...replayEventMeta,
+      event_type: 'speech',
+      payload: {
+        player_seat: (i % 10) + 1,
+        text: `发言内容${i}`,
+        round_number: 1,
+        phase: 'speech',
+      },
+    })) as PublicReplayEvent[]
+  );
+
+  // jsdom 没有布局：clientHeight/offsetHeight 恒 0 会让虚拟器认为视口为 0 而一行不挂。
+  // mock 出视口 600px、行高 64px 后窗口才有边界。
+  const mockVirtualLayout = () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(64);
+  };
+
+  it('mounts only the visible window for a long chronicle', () => {
+    mockVirtualLayout();
+    const timeline = makeSpeechEvents(200);
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    const mounted = document.querySelectorAll('.wk-chronicle-entry').length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(timeline.length);
+    // 编年史倒序展示：最新的事件挂在窗口内，最早的不在 DOM 里
+    expect(screen.getByText(/发言内容199/)).toBeVisible();
+    expect(screen.queryByText(/发言内容0/)).not.toBeInTheDocument();
+    // 日分隔行也走虚拟行模型
+    expect(screen.getAllByText('第1天').length).toBeGreaterThan(0);
+  });
+
+  it('virtualizes filtered tabs without day divider rows', () => {
+    mockVirtualLayout();
+    const timeline = makeSpeechEvents(150);
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: /发言/ }));
+    const mounted = document.querySelectorAll('.wk-chronicle-entry').length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(timeline.length);
+    expect(screen.queryByText('第1天')).not.toBeInTheDocument();
+  });
+
+  it('keeps click-to-seek working in the virtualized list', () => {
+    mockVirtualLayout();
+    const timeline = makeSpeechEvents(200);
+    useGameStore.setState({ timeline });
+    render(<HistoryPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByText(/发言内容199/));
+    expect(useGameStore.getState().timelineIndex).toBe(199);
+  });
+});
