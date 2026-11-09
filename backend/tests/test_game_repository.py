@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 import threading
@@ -29,7 +30,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
         assert repository.database_path == tmp_path / "wolfkiller.sqlite3"
-        assert repository.schema_version() == 6
+        assert repository.schema_version() == 7
         pragmas = repository.pragmas()
         assert pragmas == {
             "journal_mode": "wal",
@@ -43,7 +44,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
             "domain_events", "audience_events", "audience_snapshots",
             "model_requests", "model_attempts", "benchmark_runs",
             "benchmark_items", "benchmark_reports", "derived_jobs",
-            "game_folders", "game_folder_items",
+            "game_folders", "game_folder_items", "game_checkpoint_segments",
         } <= tables
     finally:
         repository.close()
@@ -192,6 +193,18 @@ def test_shared_write_connection_survives_rollback_and_close(tmp_path) -> None:
     repository.close()
 
 
+def test_writer_connection_guards_after_out_of_band_teardown(tmp_path) -> None:
+    """Writes racing connection teardown must fail loudly, not hit AttributeError."""
+    repository = GameRepository(tmp_path)
+    try:
+        repository._write(repository._close_write_conn)
+        with pytest.raises(RuntimeError, match="write connection"):
+            repository._write(repository._wconn)
+        repository._write(repository._close_write_conn)
+    finally:
+        repository.close()
+
+
 def test_event_pagination_has_a_stable_through_seq(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
@@ -326,6 +339,153 @@ def _table_count(repository: GameRepository, table: str, game_id: str) -> int:
         ).fetchone()[0])
 
 
+def _segment_rows(
+    repository: GameRepository, game_id: str, segment: str,
+) -> list[sqlite3.Row]:
+    with sqlite3.connect(repository.database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        return connection.execute(
+            "SELECT seq,payload_json FROM game_checkpoint_segments "
+            "WHERE game_id=? AND segment=? ORDER BY seq",
+            (game_id, segment),
+        ).fetchall()
+
+
+def _segmented_kwargs(
+    records: list, speeches: list, **updates,
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "game_id": "game-1",
+        "expected_storage_revision": 0,
+        "execution_generation": 1,
+        "step_key": "step-1",
+        "input_digest": "input",
+        "result_digest": "result",
+        "checkpoint": {
+            "checkpoint_version": 1,
+            "state": {"speeches": speeches},
+            "orchestration": {"conversation_records": records},
+        },
+        "domain_events": [],
+        "audience_events": [],
+        "audience_state": {"speeches": speeches},
+    }
+    values.update(updates)
+    return values
+
+
+def test_commit_step_stores_append_only_fields_as_segments(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        records = [{"scope": "public", "content": "hi", "round_number": 1}]
+        speeches = [{"player_seat": 1, "text": "s1", "round_number": 1}]
+        repository.commit_step(**_segmented_kwargs(records, speeches))
+
+        loaded = repository.load_checkpoint("game-1")["checkpoint"]
+        assert loaded["orchestration"]["conversation_records"] == records
+        assert loaded["state"]["speeches"] == speeches
+        assert repository.get_audience_snapshot("game-1")["state"]["speeches"] == speeches
+        assert len(_segment_rows(repository, "game-1", "conversations")) == 1
+        assert len(_segment_rows(repository, "game-1", "state_speeches")) == 1
+        assert len(_segment_rows(repository, "game-1", "audience_speeches")) == 1
+
+        # The next commit appends only the new tail of each list.
+        records2 = records + [{"scope": "thought", "content": "t", "round_number": 1}]
+        speeches2 = speeches + [{"player_seat": 2, "text": "s2", "round_number": 1}]
+        step2 = _segmented_kwargs(
+            records2, speeches2, step_key="step-2",
+            expected_storage_revision=1, input_digest="i2", result_digest="r2",
+        )
+        repository.commit_step(**step2)
+        loaded = repository.load_checkpoint("game-1")["checkpoint"]
+        assert loaded["orchestration"]["conversation_records"] == records2
+        assert loaded["state"]["speeches"] == speeches2
+        assert repository.get_audience_snapshot("game-1")["state"]["speeches"] == speeches2
+        assert len(_segment_rows(repository, "game-1", "conversations")) == 2
+        assert len(_segment_rows(repository, "game-1", "state_speeches")) == 2
+        assert len(_segment_rows(repository, "game-1", "audience_speeches")) == 2
+
+        # A replayed step is deduplicated before any segment write.
+        receipt = repository.commit_step(**step2)
+        assert receipt["replayed"] is True
+        assert len(_segment_rows(repository, "game-1", "conversations")) == 2
+        assert repository.load_checkpoint("game-1")["checkpoint"] == loaded
+    finally:
+        repository.close()
+
+
+def test_load_checkpoint_reads_legacy_inline_records(tmp_path) -> None:
+    """Pre-segment checkpoints keep their embedded lists untouched."""
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        document = {
+            "checkpoint_version": 1,
+            "state": {"speeches": [{"player_seat": 1, "text": "s", "round_number": 1}]},
+            "orchestration": {
+                "conversation_records": [{"scope": "public", "content": "x"}],
+            },
+        }
+        raw = json.dumps(document)
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        with sqlite3.connect(repository.database_path) as connection:
+            connection.execute(
+                "INSERT INTO game_checkpoints VALUES (?,?,?,?,?,?)",
+                ("game-1", 0, 1, raw, digest, "now"),
+            )
+        assert repository.load_checkpoint("game-1")["checkpoint"] == document
+    finally:
+        repository.close()
+
+
+def test_commit_step_truncates_segment_rows_when_list_shrinks(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        two = [{"scope": "public", "content": str(i)} for i in (1, 2)]
+        repository.commit_step(**_segmented_kwargs(two, []))
+        repository.commit_step(**_segmented_kwargs(
+            two[:1], [], step_key="step-2", expected_storage_revision=1,
+        ))
+        loaded = repository.load_checkpoint("game-1")["checkpoint"]
+        assert loaded["orchestration"]["conversation_records"] == two[:1]
+        assert len(_segment_rows(repository, "game-1", "conversations")) == 1
+    finally:
+        repository.close()
+
+
+def test_mark_game_deleted_purges_segment_rows(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        repository.commit_step(**_segmented_kwargs([{"content": "x"}], [{"text": "y"}]))
+        repository.mark_game_deleted("game-1")
+        assert _table_count(repository, "game_checkpoint_segments", "game-1") == 0
+    finally:
+        repository.close()
+
+
+def test_repository_migrates_v6_database_and_adds_segments_table(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    with sqlite3.connect(repository.database_path) as connection:
+        connection.execute("DROP TABLE game_checkpoint_segments")
+        connection.execute("DELETE FROM schema_migrations WHERE version=7")
+    repository.close()
+
+    repository = GameRepository(tmp_path)
+    try:
+        assert repository.schema_version() == 7
+        assert "game_checkpoint_segments" in repository.table_names()
+        _game(repository)
+        records = [{"scope": "public", "content": "ok"}]
+        repository.commit_step(**_segmented_kwargs(records, []))
+        loaded = repository.load_checkpoint("game-1")["checkpoint"]
+        assert loaded["orchestration"]["conversation_records"] == records
+    finally:
+        repository.close()
+
+
 def test_commit_step_keeps_only_the_latest_audience_snapshot(tmp_path) -> None:
     repository = GameRepository(tmp_path)
     try:
@@ -402,6 +562,7 @@ def test_mark_game_deleted_purges_durable_payload_tables(tmp_path) -> None:
             "audience_snapshots", "audience_events", "domain_events",
             "model_attempts", "model_requests", "game_commits",
             "game_checkpoints", "game_runtime_clocks", "derived_jobs",
+            "game_checkpoint_segments",
         ):
             assert _table_count(repository, table, "game-1") == 0, table
         assert repository.get_game("game-1") is None
@@ -565,7 +726,7 @@ def test_v3_database_gains_the_pause_columns(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 6
+        assert repository.schema_version() == 7
         row = repository.get_game("old")
         assert row["pause_code"] is None
         assert row["pause_detail"] == {}
@@ -591,7 +752,7 @@ def test_v4_database_gains_the_attempts_started_index(tmp_path) -> None:
 
     repository = GameRepository(tmp_path)
     try:
-        assert repository.schema_version() == 6
+        assert repository.schema_version() == 7
         with repository._connect() as connection:
             names = {
                 row[0] for row in connection.execute(

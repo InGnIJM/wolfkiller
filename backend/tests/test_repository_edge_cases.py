@@ -216,6 +216,83 @@ def test_load_checkpoint_detects_digest_corruption(tmp_path) -> None:
         repository.close()
 
 
+def test_load_checkpoint_rejects_truncated_segment(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _create_game(repository)
+        repository.commit_step(**_commit_args(checkpoint={
+            "checkpoint_version": 1,
+            "orchestration": {
+                "conversation_records": [{"content": "a"}, {"content": "b"}],
+            },
+        }))
+        with sqlite3.connect(repository.database_path) as connection:
+            connection.execute(
+                "DELETE FROM game_checkpoint_segments WHERE seq=2"
+            )
+        with pytest.raises(ValueError, match="segment"):
+            repository.load_checkpoint("game")
+    finally:
+        repository.close()
+
+
+def test_load_checkpoint_rejects_malformed_segment_marker(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _create_game(repository)
+        import hashlib, json
+        document = {
+            "checkpoint_version": 1,
+            "orchestration": {
+                "conversation_records": {"@segment": 7, "count": "x"},
+            },
+        }
+        raw = json.dumps(document)
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        with sqlite3.connect(repository.database_path) as connection:
+            connection.execute(
+                "INSERT INTO game_checkpoints VALUES (?,?,?,?,?,?)",
+                ("game", 0, 1, raw, digest, "now"),
+            )
+        with pytest.raises(ValueError, match="segment marker"):
+            repository.load_checkpoint("game")
+    finally:
+        repository.close()
+
+
+def test_commit_step_passes_non_list_segment_fields_through(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _create_game(repository)
+        repository.commit_step(**_commit_args(checkpoint={
+            "checkpoint_version": 1,
+            "orchestration": {"conversation_records": "legacy-string"},
+            "state": {"speeches": {"odd": "shape"}},
+        }, audience_state={"speeches": "not-a-list"}))
+        loaded = repository.load_checkpoint("game")["checkpoint"]
+        assert loaded["orchestration"]["conversation_records"] == "legacy-string"
+        assert loaded["state"]["speeches"] == {"odd": "shape"}
+        assert repository.get_audience_snapshot("game")["state"]["speeches"] == "not-a-list"
+    finally:
+        repository.close()
+
+
+def test_segment_fields_are_ignored_when_parent_is_not_a_mapping(tmp_path) -> None:
+    repository = GameRepository(tmp_path)
+    try:
+        _create_game(repository)
+        repository.commit_step(**_commit_args(checkpoint={
+            "checkpoint_version": 1,
+            "orchestration": "not-a-mapping",
+            "state": "not-a-mapping",
+        }))
+        loaded = repository.load_checkpoint("game")["checkpoint"]
+        assert loaded["orchestration"] == "not-a-mapping"
+        assert loaded["state"] == "not-a-mapping"
+    finally:
+        repository.close()
+
+
 @pytest.mark.parametrize(
     ("after_seq", "limit", "through_seq", "message"),
     [

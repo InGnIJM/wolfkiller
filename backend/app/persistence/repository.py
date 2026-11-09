@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 T = TypeVar("T")
 _FOLDER_NAME_MAX = 50
 
@@ -184,6 +184,14 @@ CREATE TABLE IF NOT EXISTS audience_snapshots (
     state_digest TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (game_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS game_checkpoint_segments (
+    game_id TEXT NOT NULL REFERENCES games(game_id) ON DELETE CASCADE,
+    segment TEXT NOT NULL,
+    seq INTEGER NOT NULL CHECK(seq >= 1),
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (game_id, segment, seq)
 );
 
 CREATE TABLE IF NOT EXISTS model_requests (
@@ -459,6 +467,19 @@ class GameRepository:
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (6, _now()),
                 )
+            if current < 7:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS game_checkpoint_segments ("
+                    "game_id TEXT NOT NULL REFERENCES games(game_id) ON DELETE CASCADE,"
+                    "segment TEXT NOT NULL,"
+                    "seq INTEGER NOT NULL CHECK(seq >= 1),"
+                    "payload_json TEXT NOT NULL,"
+                    "PRIMARY KEY (game_id, segment, seq))"
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (7, _now()),
+                )
 
     def _write(self, function: Callable[..., T], *args: object) -> T:
         if self._closed:
@@ -661,7 +682,7 @@ class GameRepository:
         for table in (
             "audience_snapshots", "audience_events", "domain_events",
             "game_commits", "game_checkpoints", "game_runtime_clocks",
-            "derived_jobs", "game_folder_items",
+            "game_checkpoint_segments", "derived_jobs", "game_folder_items",
         ):
             connection.execute(f"DELETE FROM {table} WHERE game_id=?", (game_id,))
 
@@ -1000,13 +1021,12 @@ class GameRepository:
         derived_jobs: Iterable[Mapping[str, object]],
     ) -> tuple[object, ...]:
         checkpoint_value = dict(checkpoint)
-        checkpoint_json = _json(checkpoint_value)
         checkpoint_version = checkpoint_value.get("checkpoint_version")
         if type(checkpoint_version) is not int or checkpoint_version < 1:
             raise ValueError("checkpoint_version must be a positive integer")
         domains = [self._normalize_event(item) for item in domain_events]
         audience = [self._normalize_event(item) for item in audience_events]
-        state_json = _json(dict(audience_state))
+        audience_value = dict(audience_state)
         request_ids = tuple(consumed_model_request_ids)
         if any(type(item) is not str or not item for item in request_ids):
             raise ValueError("consumed model request IDs must be non-empty strings")
@@ -1025,9 +1045,92 @@ class GameRepository:
             jobs.append((job_key, job_type, run_id))
         return (
             game_id, expected_storage_revision, execution_generation, step_key,
-            input_digest, result_digest, checkpoint_version, checkpoint_json,
-            domains, audience, state_json, projection_version, request_ids, jobs,
+            input_digest, result_digest, checkpoint_version, checkpoint_value,
+            domains, audience, audience_value, projection_version, request_ids, jobs,
         )
+
+    #: Append-only list fields that are moved out of the checkpoint/snapshot
+    #: JSON documents into ``game_checkpoint_segments`` rows.  Each entry maps a
+    #: document path to its segment name; persisting then costs only the new
+    #: tail instead of rewriting the whole history every step.
+    _SEGMENTED_CHECKPOINT_FIELDS = (
+        (("orchestration", "conversation_records"), "conversations"),
+        (("state", "speeches"), "state_speeches"),
+    )
+    _SEGMENTED_SNAPSHOT_FIELDS = (
+        (("speeches",), "audience_speeches"),
+    )
+
+    @staticmethod
+    def _segment_append_only(
+        connection: sqlite3.Connection, game_id: str,
+        document: object, path: tuple[str, ...], segment: str,
+    ) -> None:
+        """Swap an append-only list field for a cursor marker.
+
+        Only the tail beyond the persisted ``MAX(seq)`` is inserted; the field
+        is replaced by ``{"@segment": ..., "count": n}`` which
+        ``_inflate_segments`` resolves back to the full list on load. Parent
+        mappings along ``path`` are shallow-copied so the caller's document is
+        never mutated.
+        """
+        node = document
+        for key in path[:-1]:
+            child = node.get(key)  # type: ignore[union-attr]
+            if not isinstance(child, dict):
+                return
+            child = dict(child)
+            node[key] = child  # type: ignore[index]
+            node = child
+        field = node.get(path[-1])  # type: ignore[union-attr]
+        if not isinstance(field, list):
+            return
+        base = int(connection.execute(
+            "SELECT COALESCE(MAX(seq),0) FROM game_checkpoint_segments "
+            "WHERE game_id=? AND segment=?", (game_id, segment),
+        ).fetchone()[0])
+        for offset, record in enumerate(field[base:], base + 1):
+            connection.execute(
+                "INSERT INTO game_checkpoint_segments VALUES (?,?,?,?)",
+                (game_id, segment, offset, _json(record)),
+            )
+        connection.execute(
+            "DELETE FROM game_checkpoint_segments WHERE game_id=? AND segment=? AND seq>?",
+            (game_id, segment, len(field)),
+        )
+        node[path[-1]] = {"@segment": segment, "count": len(field)}  # type: ignore[index]
+
+    @staticmethod
+    def _inflate_segments(
+        connection: sqlite3.Connection, game_id: str,
+        document: object, path: tuple[str, ...],
+    ) -> None:
+        """Resolve a ``{"@segment", "count"}`` marker back into its list.
+
+        Documents written before segmentation keep an inline list and pass
+        through untouched.
+        """
+        node = document
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            return
+        marker = node.get(path[-1])
+        if not isinstance(marker, dict) or "@segment" not in marker:
+            return
+        segment = marker.get("@segment")
+        count = marker.get("count")
+        if type(segment) is not str or not segment \
+                or type(count) is not int or count < 0:
+            raise ValueError("invalid checkpoint segment marker")
+        rows = connection.execute(
+            "SELECT payload_json FROM game_checkpoint_segments "
+            "WHERE game_id=? AND segment=? AND seq<=? ORDER BY seq",
+            (game_id, segment, count),
+        ).fetchall()
+        if len(rows) != count:
+            raise ValueError("checkpoint segment truncated")
+        node[path[-1]] = [json.loads(row["payload_json"]) for row in rows]
 
     @staticmethod
     def _normalize_event(event: Mapping[str, object]) -> tuple[str, str, str, int, str]:
@@ -1048,10 +1151,10 @@ class GameRepository:
     def _commit_step(
         self, game_id: str, expected_revision: int, generation: int,
         step_key: str, input_digest: str, result_digest: str,
-        checkpoint_version: int, checkpoint_json: str,
+        checkpoint_version: int, checkpoint: Mapping[str, object],
         domains: list[tuple[str, str, str, int, str]],
         audience: list[tuple[str, str, str, int, str]],
-        state_json: str, projection_version: int,
+        audience_state: Mapping[str, object], projection_version: int,
         request_ids: tuple[str, ...], jobs: list[tuple[str, str, str | None]],
     ) -> dict[str, object]:
         connection = self._wconn()
@@ -1095,6 +1198,18 @@ class GameRepository:
                 (game_id,),
             ).fetchone()[0]
             now = _now()
+            checkpoint_value = dict(checkpoint)
+            audience_value = dict(audience_state)
+            for path, segment in self._SEGMENTED_CHECKPOINT_FIELDS:
+                self._segment_append_only(
+                    connection, game_id, checkpoint_value, path, segment,
+                )
+            for path, segment in self._SEGMENTED_SNAPSHOT_FIELDS:
+                self._segment_append_only(
+                    connection, game_id, audience_value, path, segment,
+                )
+            checkpoint_json = _json(checkpoint_value)
+            state_json = _json(audience_value)
             connection.execute(
                 "INSERT INTO game_commits VALUES (?,?,?,?,?,?,?,?)",
                 (game_id, step_key, input_digest, result_digest, next_revision,
@@ -1176,11 +1291,14 @@ class GameRepository:
             digest = hashlib.sha256(checkpoint_json.encode("utf-8")).hexdigest()
             if digest != row["checkpoint_digest"]:
                 raise ValueError("checkpoint digest mismatch")
+            document = json.loads(checkpoint_json)
+            for path, _segment in self._SEGMENTED_CHECKPOINT_FIELDS:
+                self._inflate_segments(connection, game_id, document, path)
             return {
                 "game_id": game_id,
                 "storage_revision": row["storage_revision"],
                 "checkpoint_version": row["checkpoint_version"],
-                "checkpoint": json.loads(checkpoint_json),
+                "checkpoint": document,
                 "updated_at": row["updated_at"],
             }
 
@@ -1215,10 +1333,13 @@ class GameRepository:
             ).fetchone()
             if row is None:
                 return None
+            state = json.loads(row["state_json"])
+            for path, _segment in self._SEGMENTED_SNAPSHOT_FIELDS:
+                self._inflate_segments(connection, game_id, state, path)
             return {
                 "game_id": game_id, "schema_version": 1,
                 "projection_version": row["projection_version"],
-                "last_seq": row["seq"], "state": json.loads(row["state_json"]),
+                "last_seq": row["seq"], "state": state,
             }
 
     def get_audience_events(
