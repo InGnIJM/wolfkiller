@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Box, Typography, keyframes } from '@mui/material';
 import { useGameStore } from '../../store/gameStore';
 import type { GamePhase, PublicReplayEvent } from '../../store/types';
@@ -149,7 +150,10 @@ function PhaseContent({ phase, roundNumber }: { phase: string; roundNumber: numb
   const alive = Object.values(players).filter((p) => p.is_alive).length;
   const total = Object.keys(players).length;
   const wolvesRemain = Object.values(players).filter((p) => p.camp === 'werewolf' && p.is_alive).length;
-  const report = buildReport(phase, timeline.slice(0, timelineIndex + 1), L);
+  const report = useMemo(
+    () => buildReport(phase, timeline.slice(0, timelineIndex + 1), L),
+    [phase, timeline, timelineIndex, L],
+  );
 
   const currentEntry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
@@ -267,6 +271,11 @@ function EventSummary({
   const { t } = useTranslation();
   const L = useLabels();
   const players = useGameStore((s) => s.players);
+  const voteRewound = useMemo(
+    () => entry.event_type === 'vote_result'
+      && L.voteRoundWasRewound(entry.payload.round_number, events),
+    [entry, events, L],
+  );
   let text: string;
   let tone: string = BLOOD_MOON.goldLight;
 
@@ -334,9 +343,7 @@ function EventSummary({
       break;
     case 'vote_result':
       text = entry.payload.exiled_seat === null
-        ? (L.voteRoundWasRewound(entry.payload.round_number, events)
-          ? L.VOTE_REWOUND_RESULT
-          : t('game.evTie'))
+        ? (voteRewound ? L.VOTE_REWOUND_RESULT : t('game.evTie'))
         : t('game.evExiled', { seat: entry.payload.exiled_seat });
       break;
     case 'vote_rewound':
@@ -534,7 +541,12 @@ function LiveSpeechLine({ seat }: { seat: number }) {
 
 export default function CenterDisplay() {
   const { t } = useTranslation();
-  const { phase, roundNumber, timeline, timelineIndex, isPaused, pauseInfo } = useGameStore();
+  const phase = useGameStore((s) => s.phase);
+  const roundNumber = useGameStore((s) => s.roundNumber);
+  const timeline = useGameStore((s) => s.timeline);
+  const timelineIndex = useGameStore((s) => s.timelineIndex);
+  const isPaused = useGameStore((s) => s.isPaused);
+  const pauseInfo = useGameStore((s) => s.pauseInfo);
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
     : null;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Box, Typography, Button, Chip, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
@@ -106,15 +106,34 @@ function nightWolfVoteTargets(
 
 export default function GameBoard({ onBack, gameId }: Props) {
   const { connect, disconnect } = useWebSocket();
-  const {
-    players, phase, roundNumber, winResult, showWinOverlay, revealOnDeath,
-    showHistory, currentSpeaker, modelSnapshot,
-    badgeCandidates, offBadgeSeats,
-    initPlayersFromDetail, loadLogs, mergeLogs, toggleHistory, timeline, timelineIndex,
-    loadAudienceSnapshot, loadAudienceHistory, mergeAudienceEvents, reset,
-    syncMode, streamError, executionStatus, recoverable, recoveryBlockCode,
-    pauseInfo,
-  } = useGameStore();
+  // 逐字段 selector 订阅：流式 chunk 等无关字段变化不再整板重渲染
+  const players = useGameStore((s) => s.players);
+  const phase = useGameStore((s) => s.phase);
+  const roundNumber = useGameStore((s) => s.roundNumber);
+  const winResult = useGameStore((s) => s.winResult);
+  const showWinOverlay = useGameStore((s) => s.showWinOverlay);
+  const revealOnDeath = useGameStore((s) => s.revealOnDeath);
+  const showHistory = useGameStore((s) => s.showHistory);
+  const currentSpeaker = useGameStore((s) => s.currentSpeaker);
+  const modelSnapshot = useGameStore((s) => s.modelSnapshot);
+  const badgeCandidates = useGameStore((s) => s.badgeCandidates);
+  const offBadgeSeats = useGameStore((s) => s.offBadgeSeats);
+  const timeline = useGameStore((s) => s.timeline);
+  const timelineIndex = useGameStore((s) => s.timelineIndex);
+  const syncMode = useGameStore((s) => s.syncMode);
+  const streamError = useGameStore((s) => s.streamError);
+  const executionStatus = useGameStore((s) => s.executionStatus);
+  const recoverable = useGameStore((s) => s.recoverable);
+  const recoveryBlockCode = useGameStore((s) => s.recoveryBlockCode);
+  const pauseInfo = useGameStore((s) => s.pauseInfo);
+  const initPlayersFromDetail = useGameStore((s) => s.initPlayersFromDetail);
+  const loadLogs = useGameStore((s) => s.loadLogs);
+  const mergeLogs = useGameStore((s) => s.mergeLogs);
+  const toggleHistory = useGameStore((s) => s.toggleHistory);
+  const loadAudienceSnapshot = useGameStore((s) => s.loadAudienceSnapshot);
+  const loadAudienceHistory = useGameStore((s) => s.loadAudienceHistory);
+  const mergeAudienceEvents = useGameStore((s) => s.mergeAudienceEvents);
+  const reset = useGameStore((s) => s.reset);
   const { t } = useTranslation();
   const L = useLabels();
 
@@ -278,19 +297,22 @@ export default function GameBoard({ onBack, gameId }: Props) {
   const aliveCount = Object.values(players).filter((p) => p.is_alive).length;
   const totalPlayers = Object.keys(players).length;
 
-  const voteTargets: Record<number, number | null> = {};
-  if (phase === 'sheriff_election') {
-    Object.assign(voteTargets, sheriffVoteTargets(timeline, timelineIndex));
-  } else if (phase === 'vote_casting' || phase === 'vote_resolution') {
-    for (const event of timeline.slice(0, timelineIndex + 1)) {
-      if (event.event_type === 'vote' && event.payload.round_number === roundNumber) {
-        voteTargets[event.payload.voter_seat] = event.payload.target_seat;
+  const voteTargets = useMemo(() => {
+    const targets: Record<number, number | null> = {};
+    if (phase === 'sheriff_election') {
+      Object.assign(targets, sheriffVoteTargets(timeline, timelineIndex));
+    } else if (phase === 'vote_casting' || phase === 'vote_resolution') {
+      for (const event of timeline.slice(0, timelineIndex + 1)) {
+        if (event.event_type === 'vote' && event.payload.round_number === roundNumber) {
+          targets[event.payload.voter_seat] = event.payload.target_seat;
+        }
       }
+    } else {
+      // 其余阶段（含首夜停在 waiting 的情况）由夜间事件本身决定是否出票
+      Object.assign(targets, nightWolfVoteTargets(timeline, timelineIndex));
     }
-  } else {
-    // 其余阶段（含首夜停在 waiting 的情况）由夜间事件本身决定是否出票
-    Object.assign(voteTargets, nightWolfVoteTargets(timeline, timelineIndex));
-  }
+    return targets;
+  }, [phase, roundNumber, timeline, timelineIndex]);
 
   const recoveryTooltip = !recoverable
     ? (L.recoveryBlockLabel(recoveryBlockCode) ?? t('game.recoverImpossible'))

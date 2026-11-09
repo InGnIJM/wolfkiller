@@ -2,7 +2,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { keyframes } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import type { PublicReplayEvent, WinningCamp } from '../../store/types';
 // 标签表与文案统一经 useLabels() 取（L.*），不再直接 import labels.ts
@@ -441,7 +441,9 @@ function DeathView({
   payload }: { payload: Extract<PublicReplayEvent['payload'], { player_seat: number; cause: string; round_number: number }> }) {
   const { t } = useTranslation();
   const L = useLabels();
-  const { timeline, timelineIndex, phase } = useGameStore.getState();
+  const timeline = useGameStore((s) => s.timeline);
+  const timelineIndex = useGameStore((s) => s.timelineIndex);
+  const phase = useGameStore((s) => s.phase);
   const explodeLabel = payload.cause === 'self_explode' && (
     phase === 'sheriff_election'
     || [timeline[timelineIndex - 1], timeline[timelineIndex + 1]].some(
@@ -487,7 +489,10 @@ function VoteResultView({
   const { t } = useTranslation();
   const L = useLabels();
   const timeline = useGameStore((s) => s.timeline);
-  const rewound = L.voteRoundWasRewound(payload.round_number, timeline);
+  const rewound = useMemo(
+    () => L.voteRoundWasRewound(payload.round_number, timeline),
+    [L, payload.round_number, timeline],
+  );
   const exiled = payload.exiled_seat === null
     ? (rewound ? L.VOTE_REWOUND_RESULT : t('game.evTie'))
     : t('game.evExiled', { seat: payload.exiled_seat });
@@ -592,7 +597,11 @@ function DayVerdictView({
 
 export default function ActivityCard() {
   const { t } = useTranslation();
-  const { timeline, timelineIndex, streamingSpeech, isFollowingLive, players } = useGameStore();
+  const timeline = useGameStore((s) => s.timeline);
+  const timelineIndex = useGameStore((s) => s.timelineIndex);
+  const streamingSpeech = useGameStore((s) => s.streamingSpeech);
+  const isFollowingLive = useGameStore((s) => s.isFollowingLive);
+  const players = useGameStore((s) => s.players);
   const L = useLabels();
   const entry = timelineIndex >= 0 && timelineIndex < timeline.length
     ? timeline[timelineIndex]
