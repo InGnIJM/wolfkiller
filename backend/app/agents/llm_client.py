@@ -280,6 +280,10 @@ def _content_text(content: Any) -> str:
 _THINKING_EMIT_INTERVAL_SECONDS = 0.2
 #: Thinking notifications carry only this many trailing characters.
 _THINKING_TAIL_CHARS = 1500
+#: Minimum gap between two speech notifications; each one carries the full
+#: accumulated text, so intermediate partials are dropped inside the window and
+#: the final partial is always flushed after the stream ends.
+_SPEECH_EMIT_INTERVAL_SECONDS = 0.15
 
 
 def _block_thinking(block: Mapping) -> str:
@@ -1061,6 +1065,8 @@ class LLMClient:
         acc = None
         args_acc = ""
         last_emitted = ""
+        last_partial = ""
+        speech_sent_at: float | None = None
         thinking_sent = ""
         thinking_sent_at: float | None = None
         async for chunk in model.astream(messages):
@@ -1085,13 +1091,22 @@ class LLMClient:
             else:
                 text, _ = split_stream_content(getattr(acc, "content", ""))
                 partial = extract_partial_speech(text)
+            last_partial = partial
             if partial and partial != last_emitted:
-                last_emitted = partial
-                await on_chunk(partial)
+                now = time.monotonic()
+                if (
+                    speech_sent_at is None
+                    or now - speech_sent_at >= _SPEECH_EMIT_INTERVAL_SECONDS
+                ):
+                    last_emitted = partial
+                    speech_sent_at = now
+                    await on_chunk(partial)
         if on_chunk is not None and acc is not None:
             thinking = _stream_thinking(acc)
             if thinking != thinking_sent:
                 await on_chunk(thinking[-_THINKING_TAIL_CHARS:], kind="thinking")
+            if last_partial and last_partial != last_emitted:
+                await on_chunk(last_partial)
         return acc if acc is not None else AIMessage(content="")
 
     async def ainvoke_json(

@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch
 from langchain_core.messages import AIMessage, AIMessageChunk
 
+from app.agents import llm_client
 from app.agents.llm_client import LLMClient, LLMClientConfig, extract_partial_speech
 from app.models.contracts import ActionContract
 from app.models.game import GamePhase
@@ -430,4 +431,93 @@ async def test_acomplete_ignores_non_callable_astream_attr():
 
     result = await LLMClient._acomplete(Model(), [])
     assert result.content == "via ainvoke"
+
+
+@pytest.mark.asyncio
+async def test_stream_and_accumulate_throttles_speech_but_flushes_the_tail(monkeypatch):
+    """Partials inside the emit interval are swallowed; the last one is flushed."""
+    monkeypatch.setattr(llm_client, "_SPEECH_EMIT_INTERVAL_SECONDS", 999.0)
+    client = LLMClient(config=_test_config())
+
+    class ThreeChunkModel:
+        async def astream(self, messages):
+            yield AIMessageChunk(content="第一句，")
+            yield AIMessageChunk(content="第二句，")
+            yield AIMessageChunk(content="第三句。")
+
+    emitted = []
+
+    async def on_chunk(text: str):
+        emitted.append(text)
+
+    await client._stream_and_accumulate(
+        ThreeChunkModel(), [], on_chunk=on_chunk,
+    )
+    assert emitted == ["第一句，", "第一句，第二句，第三句。"]
+
+
+@pytest.mark.asyncio
+async def test_stream_and_accumulate_emits_every_partial_once_interval_elapses(monkeypatch):
+    """interval=0 preserves the legacy every-chunk emission."""
+    monkeypatch.setattr(llm_client, "_SPEECH_EMIT_INTERVAL_SECONDS", 0.0)
+    client = LLMClient(config=_test_config())
+
+    class ThreeChunkModel:
+        async def astream(self, messages):
+            yield AIMessageChunk(content="第一句，")
+            yield AIMessageChunk(content="第二句，")
+            yield AIMessageChunk(content="第三句。")
+
+    emitted = []
+
+    async def on_chunk(text: str):
+        emitted.append(text)
+
+    await client._stream_and_accumulate(
+        ThreeChunkModel(), [], on_chunk=on_chunk,
+    )
+    assert emitted == ["第一句，", "第一句，第二句，", "第一句，第二句，第三句。"]
+
+
+@pytest.mark.asyncio
+async def test_stream_and_accumulate_single_partial_emits_once(monkeypatch):
+    """The tail flush must not re-emit a partial already sent."""
+    monkeypatch.setattr(llm_client, "_SPEECH_EMIT_INTERVAL_SECONDS", 999.0)
+    client = LLMClient(config=_test_config())
+
+    class SingleChunkModel:
+        async def astream(self, messages):
+            yield AIMessageChunk(content="只发一次")
+
+    emitted = []
+
+    async def on_chunk(text: str):
+        emitted.append(text)
+
+    await client._stream_and_accumulate(
+        SingleChunkModel(), [], on_chunk=on_chunk,
+    )
+    assert emitted == ["只发一次"]
+
+
+@pytest.mark.asyncio
+async def test_stream_and_accumulate_without_speech_emits_nothing(monkeypatch):
+    """Chunks with no extractable speech never emit, not even at flush time."""
+    monkeypatch.setattr(llm_client, "_SPEECH_EMIT_INTERVAL_SECONDS", 999.0)
+    client = LLMClient(config=_test_config())
+
+    class NoSpeechModel:
+        async def astream(self, messages):
+            yield AIMessageChunk(content='{"reasoning": "想一想"}')
+            yield AIMessageChunk(content="")
+
+    emitted = []
+
+    async def on_chunk(text: str):
+        emitted.append(text)
+
+    await client._stream_and_accumulate(
+        NoSpeechModel(), [], on_chunk=on_chunk,
+    )
+    assert emitted == []
 
