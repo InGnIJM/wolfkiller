@@ -106,6 +106,25 @@ def _seed_repo(tmp_path) -> GameRepository:
         execution_status="failed", source="native", model_snapshot=[],
         benchmark_run_id="run-1",
     )
+    # keep_recent selection sorts by updated_at: fast commits share a clock
+    # tick, so the ordering assumption needs explicit distinct timestamps.
+    stamped = [
+        ("old-failed", "2026-01-01T00:00:00+00:00"),
+        ("old-completed", "2026-01-02T00:00:00+00:00"),
+        ("fresh-failed", "2026-01-03T00:00:00+00:00"),
+        ("bench-failed", "2026-01-04T00:00:00+00:00"),
+    ]
+    connection = sqlite3.connect(repository.database_path, timeout=5.0)
+    try:
+        connection.execute("PRAGMA busy_timeout=5000")
+        for game_id, updated_at in stamped:
+            connection.execute(
+                "UPDATE games SET updated_at=? WHERE game_id=?",
+                (updated_at, game_id),
+            )
+        connection.commit()
+    finally:
+        connection.close()
     _seed_archive(
         tmp_path, "old-failed", "old-completed", "fresh-failed", "bench-failed",
     )

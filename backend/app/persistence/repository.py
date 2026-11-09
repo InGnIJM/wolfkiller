@@ -1,8 +1,8 @@
 """SQLite repository used as the durable source of truth for native games.
 
-Writes are serialized on one dedicated thread.  Every public read opens a
-short-lived connection so no transaction is kept open across application
-``await`` points.
+Writes are serialized on one dedicated thread over a single persistent
+connection.  Every public read opens a short-lived connection so no
+transaction is kept open across application ``await`` points.
 """
 
 from __future__ import annotations
@@ -350,12 +350,16 @@ class GameRepository:
         self.database_path = self.data_dir / "wolfkiller.sqlite3"
         self._fault_injector = fault_injector
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wolfkiller-db")
+        self._write_conn: sqlite3.Connection | None = None
         self._closed = False
         try:
             self._write(self._initialize)
         except BaseException:
-            self._writer.shutdown(wait=True, cancel_futures=True)
-            self._closed = True
+            try:
+                self._writer.submit(self._close_write_conn).result()
+            finally:
+                self._writer.shutdown(wait=True, cancel_futures=True)
+                self._closed = True
             raise
 
     def _connect(self) -> sqlite3.Connection:
@@ -363,13 +367,26 @@ class GameRepository:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
-        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA synchronous=NORMAL")
         return connection
 
+    def _wconn(self) -> sqlite3.Connection:
+        """The shared write connection owned by the writer thread."""
+        connection = self._write_conn
+        if connection is None:
+            raise RuntimeError("write connection is not initialized")
+        return connection
+
+    def _close_write_conn(self) -> None:
+        if self._write_conn is not None:
+            self._write_conn.close()
+            self._write_conn = None
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        connection = self._write_conn = self._connect()
+        with connection:
             connection.execute("PRAGMA journal_mode=WAL")
-            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations ("
                 "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
@@ -457,7 +474,10 @@ class GameRepository:
         if self._closed:
             return
         self._closed = True
-        self._writer.shutdown(wait=True, cancel_futures=False)
+        try:
+            self._writer.submit(self._close_write_conn).result()
+        finally:
+            self._writer.shutdown(wait=True, cancel_futures=False)
 
     def schema_version(self) -> int:
         with self._connect() as connection:
@@ -506,7 +526,7 @@ class GameRepository:
         execution_generation: int,
     ) -> None:
         now = _now()
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             if benchmark_item_index is not None:
@@ -537,8 +557,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     @staticmethod
     def _game_row(row: sqlite3.Row) -> dict[str, object]:
@@ -593,7 +611,7 @@ class GameRepository:
         self._write(self._rename_game, game_id, name.strip())
 
     def _rename_game(self, game_id: str, name: str) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "UPDATE games SET name=?,updated_at=? "
                 "WHERE game_id=? AND deleted_at IS NULL",
@@ -606,7 +624,7 @@ class GameRepository:
         self._write(self._mark_game_deleted, game_id)
 
     def _mark_game_deleted(self, game_id: str) -> None:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -636,8 +654,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     @staticmethod
     def _purge_game_payload(connection: sqlite3.Connection, game_id: str) -> None:
@@ -655,7 +671,7 @@ class GameRepository:
     def _create_folder(self, name: str) -> dict[str, object]:
         folder_id = uuid.uuid4().hex
         now = _now()
-        with self._connect() as connection:
+        with self._wconn() as connection:
             try:
                 connection.execute(
                     "INSERT INTO game_folders(folder_id,name,created_at,updated_at) "
@@ -696,7 +712,7 @@ class GameRepository:
         return self._write(self._rename_folder, folder_id, _normalize_folder_name(name))
 
     def _rename_folder(self, folder_id: str, name: str) -> dict[str, object]:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             try:
                 cursor = connection.execute(
                     "UPDATE game_folders SET name=?,updated_at=? WHERE folder_id=?",
@@ -714,7 +730,7 @@ class GameRepository:
         self._write(self._delete_folder, folder_id)
 
     def _delete_folder(self, folder_id: str) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "DELETE FROM game_folders WHERE folder_id=?", (folder_id,),
             )
@@ -745,7 +761,7 @@ class GameRepository:
         self._write(self._set_game_folder, game_id, folder_id)
 
     def _set_game_folder(self, game_id: str, folder_id: str | None) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             if folder_id is None:
                 connection.execute(
                     "DELETE FROM game_folder_items WHERE game_id=?", (game_id,),
@@ -785,7 +801,7 @@ class GameRepository:
         increment_generation: bool, recovery_block_code: str | None,
         pause_code: str | None, pause_detail: Mapping[str, object] | None,
     ) -> dict[str, object]:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -832,8 +848,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def save_runtime_clock(
         self, game_id: str, *, active_elapsed_ms: int,
@@ -858,7 +872,7 @@ class GameRepository:
         self, game_id: str, active_elapsed_ms: int,
         remaining_window_ms: int | None, generation: int,
     ) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             row = connection.execute(
                 "SELECT execution_generation FROM games WHERE game_id=? AND deleted_at IS NULL",
                 (game_id,),
@@ -889,7 +903,7 @@ class GameRepository:
         return self._write(self._interrupt_running_games)
 
     def _interrupt_running_games(self) -> list[str]:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             game_ids = [row[0] for row in connection.execute(
@@ -922,8 +936,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def commit_step(
         self, *, game_id: str, expected_storage_revision: int,
@@ -1042,7 +1054,7 @@ class GameRepository:
         state_json: str, projection_version: int,
         request_ids: tuple[str, ...], jobs: list[tuple[str, str, str | None]],
     ) -> dict[str, object]:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             game = connection.execute(
@@ -1152,8 +1164,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def load_checkpoint(self, game_id: str) -> dict[str, object] | None:
         with self._connect() as connection:
@@ -1294,7 +1304,7 @@ class GameRepository:
     ) -> list[int]:
         if not audience:
             return []
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             game = connection.execute(
@@ -1330,8 +1340,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def prepare_model_request(
         self, *, game_id: str, request_id: str, actor_seat: int,
@@ -1349,7 +1357,7 @@ class GameRepository:
         provider_profile: str, model_id: str,
     ) -> None:
         now = _now()
-        with self._connect() as connection:
+        with self._wconn() as connection:
             existing = connection.execute(
                 "SELECT request_digest FROM model_requests WHERE game_id=? AND request_id=?",
                 (game_id, request_id),
@@ -1374,7 +1382,7 @@ class GameRepository:
     def _start_model_attempt(
         self, game_id: str, request_id: str, generation: int,
     ) -> dict[str, object]:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             request = connection.execute(
@@ -1419,8 +1427,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def finish_model_attempt(
         self, attempt_id: str, *, status: str, failure_code: str | None,
@@ -1436,7 +1442,7 @@ class GameRepository:
         elapsed_ms: int | None, usage: dict[str, int] | None,
     ) -> None:
         values = usage or {}
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "UPDATE model_attempts SET status=?,finished_at=?,elapsed_ms=?,"
                 "prompt_tokens=?,completion_tokens=?,total_tokens=?,cached_prompt_tokens=?,"
@@ -1463,7 +1469,7 @@ class GameRepository:
         self, game_id: str, request_id: str, status: str,
         result_json: str | None,
     ) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "UPDATE model_requests SET status=?,normalized_result_json=?,updated_at=? "
                 "WHERE game_id=? AND request_id=?",
@@ -1489,7 +1495,7 @@ class GameRepository:
         return self._write(self._reserve_recovery_retry, game_id, request_id)
 
     def _reserve_recovery_retry(self, game_id: str, request_id: str) -> bool:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "UPDATE model_requests SET recovery_retry_count=recovery_retry_count+1,"
                 "updated_at=? WHERE game_id=? AND request_id=? AND status='unknown' "
@@ -1620,7 +1626,7 @@ class GameRepository:
         name: str, mode: str, config_json: str, schedule_digest: str,
         items: list[tuple[int, str, str | None, int, str]],
     ) -> dict[str, object]:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -1651,8 +1657,6 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     @staticmethod
     def _benchmark_run_row(row: sqlite3.Row) -> dict[str, object]:
@@ -1720,7 +1724,7 @@ class GameRepository:
         return self._write(self._interrupt_running_benchmarks)
 
     def _interrupt_running_benchmarks(self) -> list[str]:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             run_ids = [str(row[0]) for row in connection.execute(
@@ -1741,15 +1745,13 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def cancel_benchmark_items(self, run_id: str) -> None:
         self._write(self._cancel_benchmark_items, run_id)
 
     def _cancel_benchmark_items(self, run_id: str) -> None:
         now = _now()
-        with self._connect() as connection:
+        with self._wconn() as connection:
             connection.execute(
                 "UPDATE benchmark_items SET status='cancelled',"
                 "terminal_reason='cancelled',updated_at=? "
@@ -1773,7 +1775,7 @@ class GameRepository:
     def _transition_benchmark(
         self, run_id: str, expected: tuple[str, ...], target: str,
     ) -> dict[str, object]:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             row = connection.execute(
                 "SELECT * FROM benchmark_runs WHERE run_id=?", (run_id,),
             ).fetchone()
@@ -1798,7 +1800,7 @@ class GameRepository:
         return self._write(self._claim_next_benchmark_item, run_id)
 
     def _claim_next_benchmark_item(self, run_id: str) -> dict[str, object] | None:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             run = connection.execute(
@@ -1831,14 +1833,12 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def attach_benchmark_game(self, run_id: str, item_index: int, game_id: str) -> None:
         self._write(self._attach_benchmark_game, run_id, item_index, game_id)
 
     def _attach_benchmark_game(self, run_id: str, item_index: int, game_id: str) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "UPDATE benchmark_items SET game_id=?,updated_at=? WHERE run_id=? "
                 "AND item_index=? AND status='running' AND game_id IS NULL",
@@ -1862,7 +1862,7 @@ class GameRepository:
         self, run_id: str, item_index: int, status: str,
         terminal_reason: str | None,
     ) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             cursor = connection.execute(
                 "UPDATE benchmark_items SET status=?,terminal_reason=?,updated_at=? "
                 "WHERE run_id=? AND item_index=? AND status='running'",
@@ -1884,7 +1884,7 @@ class GameRepository:
         self, run_id: str, metric_version: str, input_digest: str,
         report_json: str,
     ) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             existing = connection.execute(
                 "SELECT report_json FROM benchmark_reports WHERE run_id=? "
                 "AND metric_version=? AND input_digest=?",
@@ -1951,7 +1951,7 @@ class GameRepository:
         self._write(self._release_benchmark_game, run_id, game_id)
 
     def _release_benchmark_game(self, run_id: str, game_id: str) -> None:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -1979,14 +1979,12 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()
 
     def delete_benchmark_reports(self, run_id: str) -> None:
         self._write(self._delete_benchmark_reports, run_id)
 
     def _delete_benchmark_reports(self, run_id: str) -> None:
-        with self._connect() as connection:
+        with self._wconn() as connection:
             connection.execute(
                 "DELETE FROM benchmark_reports WHERE run_id=?", (run_id,),
             )
@@ -1995,7 +1993,7 @@ class GameRepository:
         self._write(self._delete_benchmark_run, run_id)
 
     def _delete_benchmark_run(self, run_id: str) -> None:
-        connection = self._connect()
+        connection = self._wconn()
         try:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
@@ -2013,5 +2011,3 @@ class GameRepository:
         except BaseException:
             connection.rollback()
             raise
-        finally:
-            connection.close()

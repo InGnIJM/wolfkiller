@@ -33,7 +33,7 @@ def test_repository_initializes_durable_schema_and_pragmas(tmp_path) -> None:
         pragmas = repository.pragmas()
         assert pragmas == {
             "journal_mode": "wal",
-            "synchronous": 2,
+            "synchronous": 1,
             "foreign_keys": 1,
             "busy_timeout": 5000,
         }
@@ -165,6 +165,31 @@ def test_commit_step_rolls_back_every_write_when_any_event_is_invalid(tmp_path) 
         assert repository.get_game("game-1")["storage_revision"] == 0
     finally:
         repository.close()
+
+
+def test_shared_write_connection_survives_rollback_and_close(tmp_path) -> None:
+    """The writer thread reuses one connection; a failed commit must leave it usable."""
+    repository = GameRepository(tmp_path)
+    try:
+        _game(repository)
+        with pytest.raises(RepositoryVersionConflict):
+            repository.commit_step(
+                game_id="game-1",
+                expected_storage_revision=5,
+                execution_generation=1,
+                step_key="step-1",
+                input_digest="input",
+                result_digest="result",
+                checkpoint={"checkpoint_version": 1},
+                domain_events=[],
+                audience_events=[],
+                audience_state={"game_id": "game-1"},
+            )
+        repository.rename_game("game-1", "改名")
+        assert repository.get_game("game-1")["name"] == "改名"
+    finally:
+        repository.close()
+    repository.close()
 
 
 def test_event_pagination_has_a_stable_through_seq(tmp_path) -> None:
