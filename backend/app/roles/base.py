@@ -231,6 +231,13 @@ class BaseRole:
         # ``request_action`` so a later call can never inherit them.
         self._last_call_usage: LLMUsage | None = None
         self._last_attempt_usage: LLMUsage | None = None
+        # High-water mark of ``cached_prompt_tokens`` across the attempts of
+        # the in-flight logical request. A retry that comes back under that
+        # mark is a provider-side cache miss — the same prompt should have hit
+        # the earlier commit — so the telemetry row flags it instead of a
+        # blind rewarm that would pay the same write cost as the retry itself.
+        self._call_best_cached: int | None = None
+        self._last_attempt_cache_regressed = False
 
     # ── Speech (with tool calling + validation) ─────────────────
 
@@ -244,6 +251,8 @@ class BaseRole:
         # One logical call = one usage total; the ladder below accumulates into it.
         self._last_call_usage = None
         self._last_attempt_usage = None
+        self._call_best_cached = None
+        self._last_attempt_cache_regressed = False
         prompt = self.prompt_builder.build_speech_prompt(
             state, self.seat, self.role_name, conversation_log, context
         )
@@ -613,6 +622,8 @@ class BaseRole:
         # One logical call = one usage total; the three-stage ladder accumulates.
         self._last_call_usage = None
         self._last_attempt_usage = None
+        self._call_best_cached = None
+        self._last_attempt_cache_regressed = False
         self._active_action_client = self._resolve_action_client(request)
         try:
             return await self._request_action_ladder(
@@ -897,6 +908,7 @@ class BaseRole:
             # One row per attempt, so it reports that attempt's own tokens — not
             # the ladder total (which the ledger records once).
             usage=self._last_attempt_usage,
+            cache_regressed=self._last_attempt_cache_regressed,
         )
 
     def _log_llm_call(
@@ -905,7 +917,7 @@ class BaseRole:
         attempt: int, prompt_chars: int, elapsed_ms: int, retried: bool,
         parse_result: str | None, failure_code: str | None = None,
         timeout_type: str | None = None, window_id: str | None = None,
-        usage: LLMUsage | None = None,
+        usage: LLMUsage | None = None, cache_regressed: bool = False,
     ) -> None:
         """Write one universal LLM call record used by benchmark analysis."""
         log_call = getattr(conversation_log, "log_llm_call", None)
@@ -928,6 +940,7 @@ class BaseRole:
             cached_prompt_tokens=(
                 usage.cached_prompt_tokens if usage is not None else None
             ),
+            cache_regressed=cache_regressed,
         )
 
     def _action_timeout_seconds(self, *, retried: bool, final: bool = False) -> float:
@@ -1412,5 +1425,13 @@ class BaseRole:
         ledger (one usage per logical request, so the attempts must be summed —
         the JSON fallback's tokens are real cost and used to be dropped).
         """
+        cached = getattr(usage, "cached_prompt_tokens", None)
+        self._last_attempt_cache_regressed = (
+            cached is not None
+            and self._call_best_cached is not None
+            and cached < self._call_best_cached
+        )
+        if cached is not None:
+            self._call_best_cached = max(self._call_best_cached or 0, cached)
         self._last_attempt_usage = usage
         self._last_call_usage = merge_usage(self._last_call_usage, usage)
