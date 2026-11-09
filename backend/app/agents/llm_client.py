@@ -632,6 +632,30 @@ class LLMClient:
         usage = extract_usage(response)
         return None if usage is None else usage.cached_prompt_tokens
 
+    async def probe_prefix(
+        self, messages, *, timeout: float | None = None,
+        max_tokens: int = 8,
+    ) -> LLMUsage | None:
+        """One completion with a tiny output cap, used as a prefix-commit probe.
+
+        Unlike :meth:`probe_cache` — two uncapped calls that only measure a
+        fixed diagnostic prompt at game start — a single capped request here
+        *writes* the shared prompt prefix upstream and reports how much of it
+        was already cached, so a parallel ballot can be released the moment
+        the commit is visible instead of on a fixed head start. The call
+        bypasses the durable ledger and per-call telemetry like the route
+        probe does: it is game-flow diagnostics, not a turn.
+        """
+        if self.is_system_one:
+            # A decision endpoint cannot complete text; there is nothing to probe.
+            return None
+        model = self._build(CallPurpose.TEXT)
+        if max_tokens is not None and hasattr(model, "bind"):
+            # Transports without ``bind`` still probe correctly, just uncapped.
+            model = model.bind(max_tokens=max_tokens)
+        response = await self._acomplete(model, messages, timeout=timeout)
+        return extract_usage(response)
+
     @property
     def session_id(self) -> str | None:
         """The transport's provider session id, when the profile uses one."""

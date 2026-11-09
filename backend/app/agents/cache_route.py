@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from enum import StrEnum
 from typing import Any
 
@@ -54,6 +55,14 @@ BURST_WARMUP_ENV = "WOLFKILLER_BURST_WARMUP"
 #: the other experiment switches.
 BURST_WARMUP_MAX_WAIT_ENV = "WOLFKILLER_BURST_WARMUP_MAX_WAIT_SECONDS"
 _BURST_WARMUP_DEFAULT_MAX_WAIT = 3.0
+
+#: Seconds the rest of the ballot may wait while a tiny probe call confirms the
+#: shared prompt prefix is actually committed upstream. The provider's cache
+#: write is visible with a lag (measured at tens of seconds in live games), so
+#: a fixed head start releases the batch too early. ``0`` or a negative value
+#: disables the confirm and restores the plain fixed head start.
+BURST_WARMUP_COMMIT_ENV = "WOLFKILLER_BURST_WARMUP_COMMIT_SECONDS"
+_BURST_WARMUP_DEFAULT_COMMIT = 45.0
 
 #: One probe = two identical calls; the second one is the measurement.
 PROBE_TIMEOUT_SECONDS = 5.0
@@ -146,6 +155,73 @@ def burst_warmup_max_wait_seconds(
             f"(got {raw!r})"
         ) from None
     return seconds if seconds > 0 else None
+
+
+def burst_warmup_commit_seconds(
+    env_value: str | None = None,
+) -> float | None:
+    """Resolve the prefix-commit confirm cap; ``None`` disables the probe.
+
+    Unset or blank returns the default cap. A non-positive number explicitly
+    restores the fixed head-start behaviour. A non-numeric value fails at the
+    next game creation instead of silently changing the schedule.
+    """
+    raw = os.getenv(BURST_WARMUP_COMMIT_ENV) if env_value is None else env_value
+    if raw is None or not raw.strip():
+        return _BURST_WARMUP_DEFAULT_COMMIT
+    try:
+        seconds = float(raw.strip())
+    except ValueError:
+        raise ValueError(
+            f"{BURST_WARMUP_COMMIT_ENV} must be a number of seconds "
+            f"(got {raw!r})"
+        ) from None
+    return seconds if seconds > 0 else None
+
+
+async def await_prefix_commit(
+    client: Any,
+    messages: list,
+    *,
+    min_ratio: float = 0.5,
+    timeout: float = 45.0,
+    poll_seconds: float = 3.0,
+) -> int | None:
+    """Poll until the shared prompt prefix is committed upstream, or the cap.
+
+    Each probe is a single tiny completion through ``client.probe_prefix``: it
+    both writes the prefix and reports how much of it was already cached, so
+    the loop converges the moment the upstream cache exposes the write.
+    Returns the last observed ``cached_prompt_tokens`` — ``None`` when the
+    client cannot probe or no probe ever produced usage. Fail-open by design:
+    callers release the batch either way; this only decides *when*.
+    """
+    probe = getattr(client, "probe_prefix", None)
+    if not callable(probe):
+        return None
+    deadline = time.monotonic() + timeout
+    observed: int | None = None
+    while True:
+        try:
+            usage = await probe(
+                messages,
+                timeout=max(1.0, min(15.0, deadline - time.monotonic())),
+            )
+        except Exception:  # noqa: BLE001 - a failed probe must not stall the ballot
+            logger.warning("prefix-commit probe failed", exc_info=True)
+            return observed
+        if usage is None:
+            return observed
+        prompt_tokens = getattr(usage, "prompt_tokens", None) or 0
+        cached = getattr(usage, "cached_prompt_tokens", None)
+        if cached is not None:
+            observed = cached
+            if prompt_tokens > 0 and cached >= prompt_tokens * min_ratio:
+                return observed
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return observed
+        await asyncio.sleep(min(poll_seconds, remaining))
 
 
 def shared_session_id(game_id: str, session_header: str) -> str:
