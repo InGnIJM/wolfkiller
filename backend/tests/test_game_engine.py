@@ -3,6 +3,7 @@ import inspect
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -3632,6 +3633,180 @@ class TestGameEngine:
         assert engine.state.voted_seats == {1, 2, 3}
 
     @pytest.mark.asyncio
+    async def test_vote_warmup_probe_releases_the_batch_once_committed(self):
+        from app.agents.llm_client import LLMUsage
+
+        engine = GameEngine(
+            game_id="vote-warmup-probe", event_bus=EventBus(), vote_warmup=True,
+            vote_warmup_commit_seconds=5.0,
+        )
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2, 3)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        probes: list = []
+
+        class _Client:
+            is_system_one = False
+
+            async def probe_prefix(self, messages, *, timeout=None, max_tokens=8):
+                probes.append(messages)
+                return LLMUsage(1000, 8, 1008, cached_prompt_tokens=900)
+
+        class _Builder:
+            def get_system_prompt(self):
+                return "SYS"
+
+            def build_vote_prompt(self, state, seat, role_name, log, context):
+                return f"VOTE:{seat}:{context}"
+
+        role = SimpleNamespace(
+            prompt_builder=_Builder(), llm_client=_Client(),
+            vote_llm_client=None, role_name="wolf-killer-villager",
+        )
+        engine.roles = {seat: role for seat in (1, 2, 3)}
+        warmup_release = asyncio.Event()
+        started: list[int] = []
+
+        async def vote(seat: int):
+            started.append(seat)
+            if seat == 1:
+                await asyncio.wait_for(warmup_release.wait(), timeout=1.0)
+            return VoteAction(seat, 1)
+
+        engine.vote = vote
+        run = asyncio.create_task(engine._execute_vote_casting())
+        await asyncio.sleep(0.1)
+
+        # The probe confirmed the commit, so the followers launched without
+        # waiting for the still-open warmup ballot or the fixed head start.
+        assert probes, "the prefix probe never ran"
+        assert sorted(started) == [1, 2, 3]
+        warmup_release.set()
+        await run
+        assert engine.state.voted_seats == {1, 2, 3}
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_probe_disabled_falls_back_to_the_fixed_wait(self):
+        engine = GameEngine(
+            game_id="vote-warmup-noprobe", event_bus=EventBus(),
+            vote_warmup=True, vote_warmup_max_wait_seconds=0.05,
+            vote_warmup_commit_seconds=None,
+        )
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+        probes: list = []
+
+        class _Client:
+            is_system_one = False
+
+            async def probe_prefix(self, messages, *, timeout=None, max_tokens=8):
+                probes.append(messages)
+                raise AssertionError("disabled confirm must not probe")
+
+        class _Builder:
+            def get_system_prompt(self):
+                return "SYS"
+
+            def build_vote_prompt(self, *args):
+                return "VOTE"
+
+        role = SimpleNamespace(
+            prompt_builder=_Builder(), llm_client=_Client(),
+            vote_llm_client=None, role_name="wolf-killer-villager",
+        )
+        engine.roles = {1: role, 2: role}
+        warmup_release = asyncio.Event()
+
+        async def vote(seat: int):
+            if seat == 1:
+                await warmup_release.wait()
+            return VoteAction(seat, 1)
+
+        engine.vote = vote
+        run = asyncio.create_task(engine._execute_vote_casting())
+        await asyncio.sleep(0.3)
+        assert probes == []
+        warmup_release.set()
+        await run
+        assert engine.state.voted_seats == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_vote_warmup_unprobeable_client_falls_back(self):
+        engine = GameEngine(
+            game_id="vote-warmup-fallback", event_bus=EventBus(),
+            vote_warmup=True, vote_warmup_max_wait_seconds=0.05,
+        )
+        engine.state.players = {
+            seat: PlayerState(seat, "wolf-killer-villager", "good")
+            for seat in (1, 2)
+        }
+        engine.sm.set_state(GamePhase.VOTE_CASTING)
+        engine.state.phase = GamePhase.VOTE_CASTING
+
+        class _Client:
+            is_system_one = True
+
+        class _Builder:
+            def get_system_prompt(self):
+                return "SYS"
+
+            def build_vote_prompt(self, *args):
+                return "VOTE"
+
+        role = SimpleNamespace(
+            prompt_builder=_Builder(), llm_client=_Client(),
+            vote_llm_client=None, role_name="wolf-killer-villager",
+        )
+        engine.roles = {1: role, 2: role}
+        engine.vote = AsyncMock(side_effect=lambda seat: VoteAction(seat, 1))
+
+        await engine._execute_vote_casting()
+
+        assert engine.state.voted_seats == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_await_prefix_commit_returns_false_without_roles(self):
+        engine = GameEngine(game_id="prefix-no-role", vote_warmup=True)
+        assert await engine._await_prefix_commit(1, budget=5.0) is False
+
+    @pytest.mark.asyncio
+    async def test_await_prefix_commit_fails_open_on_a_probe_error(self):
+        engine = GameEngine(
+            game_id="prefix-probe-error", vote_warmup=True,
+            vote_warmup_commit_seconds=1.0,
+        )
+
+        class _Client:
+            is_system_one = False
+
+            async def probe_prefix(self, messages, *, timeout=None, max_tokens=8):
+                raise RuntimeError("probe boom")
+
+        class _Builder:
+            def get_system_prompt(self):
+                return "SYS"
+
+            def build_vote_prompt(self, *args):
+                return "VOTE"
+
+        engine.roles = {
+            1: SimpleNamespace(
+                prompt_builder=_Builder(), llm_client=_Client(),
+                vote_llm_client=None, role_name="wolf-killer-villager",
+            ),
+        }
+        # The probe path ran (returns True) and the failure did not propagate —
+        # the ballot must release on telemetry errors.
+        assert await engine._await_prefix_commit(1, budget=5.0) is True
+
+    @pytest.mark.asyncio
     async def test_tiebreak_skips_completed_speech_and_vote_steps(self):
         roles = {
             1: make_mock_role(1, "wolf-killer-werewolf"),
@@ -4030,3 +4205,61 @@ async def test_a_dormant_copied_skill_never_wakes_its_owner_at_a_shared_point() 
     assert "觉醒隐狼请睁眼" not in beats
     assert "seer_open" not in beats and "witch_open" not in beats
     assert "魔镜少女请睁眼" in beats
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_falls_back_when_the_prompt_build_fails():
+    engine = GameEngine(
+        game_id="prefix-prompt-error", vote_warmup=True,
+        vote_warmup_commit_seconds=1.0,
+    )
+
+    class _Client:
+        is_system_one = False
+
+    class _Builder:
+        def get_system_prompt(self):
+            return "SYS"
+
+        def build_vote_prompt(self, *args):
+            raise RuntimeError("no candidates")
+
+    engine.roles = {
+        1: SimpleNamespace(
+            prompt_builder=_Builder(), llm_client=_Client(),
+            vote_llm_client=None, role_name="wolf-killer-villager",
+        ),
+    }
+    assert await engine._await_prefix_commit(1, budget=5.0) is False
+
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_releases_when_the_confirm_itself_raises(
+    monkeypatch,
+):
+    engine = GameEngine(
+        game_id="prefix-confirm-error", vote_warmup=True,
+        vote_warmup_commit_seconds=1.0,
+    )
+
+    class _Client:
+        is_system_one = False
+
+    class _Builder:
+        def get_system_prompt(self):
+            return "SYS"
+
+        def build_vote_prompt(self, *args):
+            return "VOTE"
+
+    engine.roles = {
+        1: SimpleNamespace(
+            prompt_builder=_Builder(), llm_client=_Client(),
+            vote_llm_client=None, role_name="wolf-killer-villager",
+        ),
+    }
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("confirm blew up")
+
+    monkeypatch.setattr(game_engine_module, "await_prefix_commit", boom)
+    assert await engine._await_prefix_commit(1, budget=5.0) is True

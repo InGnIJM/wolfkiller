@@ -757,3 +757,190 @@ async def test_recovery_carries_vote_warmup_into_the_engine(
         assert captured["vote_warmup_max_wait_seconds"] is None
     finally:
         await service.aclose()
+
+def test_burst_warmup_commit_seconds_defaults_to_forty_five(monkeypatch):
+    from app.agents.cache_route import burst_warmup_commit_seconds
+
+    monkeypatch.delenv("WOLFKILLER_BURST_WARMUP_COMMIT_SECONDS", raising=False)
+    assert burst_warmup_commit_seconds() == 45.0
+    assert burst_warmup_commit_seconds("") == 45.0
+
+
+def test_burst_warmup_commit_seconds_parses_and_zero_disables():
+    from app.agents.cache_route import burst_warmup_commit_seconds
+
+    assert burst_warmup_commit_seconds("20") == 20.0
+    assert burst_warmup_commit_seconds(" 7.5 ") == 7.5
+    assert burst_warmup_commit_seconds("0") is None
+    assert burst_warmup_commit_seconds("-1") is None
+
+
+def test_burst_warmup_commit_seconds_rejects_garbage():
+    from app.agents.cache_route import burst_warmup_commit_seconds
+
+    with pytest.raises(ValueError, match="WOLFKILLER_BURST_WARMUP_COMMIT_SECONDS"):
+        burst_warmup_commit_seconds("soon")
+
+
+@pytest.mark.asyncio
+async def test_llm_client_probe_prefix_sends_one_capped_call(monkeypatch):
+    from app.agents.llm_client import LLMUsage
+
+    client = object.__new__(LLMClient)
+    client.provider_profile = _profile()
+    bound = []
+
+    class _Model:
+        def bind(self, **kwargs):
+            bound.append(kwargs)
+            return self
+
+    class _Response:
+        usage_metadata = {
+            "input_tokens": 100, "output_tokens": 2, "total_tokens": 102,
+            "prompt_tokens_details": {"cached_tokens": 64},
+        }
+
+    calls = []
+
+    async def fake_acomplete(model, messages, *, timeout=None):
+        calls.append(model)
+        return _Response()
+
+    monkeypatch.setattr(client, "_build", lambda purpose: _Model())
+    monkeypatch.setattr(client, "_acomplete", fake_acomplete)
+
+    usage = await client.probe_prefix(
+        [{"role": "user", "content": "x"}], timeout=3, max_tokens=8,
+    )
+
+    assert isinstance(usage, LLMUsage)
+    assert usage.cached_prompt_tokens == 64
+    assert usage.prompt_tokens == 100
+    assert len(calls) == 1
+    assert bound == [{"max_tokens": 8}]
+
+
+@pytest.mark.asyncio
+async def test_llm_client_probe_prefix_returns_none_without_usage(monkeypatch):
+    client = object.__new__(LLMClient)
+    client.provider_profile = _profile()
+
+    class _Response:
+        usage_metadata = None
+        response_metadata = {}
+
+    async def fake_acomplete(model, messages, *, timeout=None):
+        return _Response()
+
+    monkeypatch.setattr(client, "_build", lambda purpose: object())
+    monkeypatch.setattr(client, "_acomplete", fake_acomplete)
+
+    assert await client.probe_prefix([], timeout=1) is None
+
+
+@pytest.mark.asyncio
+async def test_llm_client_probe_prefix_skips_system_one():
+    from app.agents.providers.base import API_MODE_SYSTEM_ONE
+
+    client = object.__new__(LLMClient)
+    client.provider_profile = SimpleNamespace(api_mode=API_MODE_SYSTEM_ONE)
+
+    async def fail(*args, **kwargs):
+        raise AssertionError("system one client must not probe")
+
+    client._build = fail
+    assert await client.probe_prefix([]) is None
+
+
+class _ProbeClient:
+    """Minimal probe_prefix stub for await_prefix_commit tests."""
+
+    def __init__(self, values):
+        self._values = list(values)
+        self.calls = 0
+
+    async def probe_prefix(self, messages, *, timeout=None, max_tokens=8):
+        value = self._values.pop(0) if self._values else None
+        self.calls += 1
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_releases_once_the_ratio_is_met():
+    from app.agents.cache_route import await_prefix_commit
+    from app.agents.llm_client import LLMUsage
+
+    client = _ProbeClient([
+        LLMUsage(1000, 8, 1008, cached_prompt_tokens=200),
+        LLMUsage(1000, 8, 1008, cached_prompt_tokens=600),
+    ])
+
+    result = await await_prefix_commit(
+        client, [{"role": "user", "content": "x"}],
+        min_ratio=0.5, timeout=10.0, poll_seconds=0.01,
+    )
+
+    assert result == 600
+    assert client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_returns_last_observed_at_the_cap():
+    from app.agents.cache_route import await_prefix_commit
+    from app.agents.llm_client import LLMUsage
+
+    client = _ProbeClient([
+        LLMUsage(1000, 8, 1008, cached_prompt_tokens=100)
+        for _ in range(50)
+    ])
+
+    result = await await_prefix_commit(
+        client, [{"role": "user", "content": "x"}],
+        min_ratio=0.5, timeout=0.02, poll_seconds=0.01,
+    )
+
+    assert result == 100
+
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_is_fail_open_on_errors_and_missing_usage():
+    from app.agents.cache_route import await_prefix_commit
+
+    client = _ProbeClient([RuntimeError("boom")])
+    assert await await_prefix_commit(
+        client, [], min_ratio=0.5, timeout=1.0, poll_seconds=0.01,
+    ) is None
+
+    none_client = _ProbeClient([None])
+    assert await await_prefix_commit(
+        none_client, [], min_ratio=0.5, timeout=1.0, poll_seconds=0.01,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_returns_none_for_an_unprobeable_client():
+    from app.agents.cache_route import await_prefix_commit
+
+    assert await await_prefix_commit(
+        object(), [], min_ratio=0.5, timeout=1.0,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_await_prefix_commit_keeps_polling_when_usage_lacks_cached():
+    from app.agents.cache_route import await_prefix_commit
+    from app.agents.llm_client import LLMUsage
+
+    client = _ProbeClient([
+        LLMUsage(1000, 8, 1008) for _ in range(50)  # usage but no cached field
+    ])
+
+    result = await await_prefix_commit(
+        client, [], min_ratio=0.5, timeout=0.02, poll_seconds=0.01,
+    )
+
+    assert result is None
+    assert client.calls > 0

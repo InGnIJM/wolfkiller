@@ -504,3 +504,105 @@ class TestCallMetadata:
         assert len(records) == 1
         assert records[0]["phase"] == "speech"
         assert records[0]["data"]["call_kind"] == "action"
+
+
+class TestCacheRegressionTelemetry:
+    def test_log_llm_call_marks_a_regressed_cached_prefix(self, tmp_path: Path):
+        logger = GameLogger(data_dir=str(tmp_path))
+
+        logger.log_llm_call(
+            "g1", 1, "vote_casting", 2, call_kind="action",
+            parse_result="accepted", cached_prompt_tokens=2048,
+            cache_regressed=True,
+        )
+        logger.log_llm_call(
+            "g1", 1, "vote_casting", 3, call_kind="action",
+            parse_result="accepted", cached_prompt_tokens=9984,
+        )
+
+        rows = read_llm_calls(tmp_path, "g1")
+        assert rows[0]["data"]["cache_regressed"] is True
+        assert "cache_regressed" not in rows[1]["data"]
+
+    def test_ladder_flags_the_attempt_that_lost_prefix(self, tmp_path: Path):
+        """Retry sequences compare each attempt to the best prior attempt."""
+        from app.agents.llm_client import LLMUsage
+
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), ClientStub())
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+        request = ActionRequest(
+            actor_seat=1, role_id="wolf-killer-villager",
+            contract=VOTE_CONTRACT, phase=GamePhase.VOTE_CASTING,
+            round_id=4, idempotency_key="win:4:1",
+        )
+        role._last_call_usage = None
+        role._last_attempt_usage = None
+        role._call_best_cached = None
+
+        for attempt, cached in ((1, 9984), (2, 2048), (3, 9216), (4, 11000)):
+            role._record_usage(
+                LLMUsage(12000, 50, 12050, cached_prompt_tokens=cached),
+            )
+            role._vote_telemetry(
+                log, request, transport="json", attempt=attempt,
+                prompt_chars=800, elapsed_ms=100, retried=attempt > 1,
+                parse_result="accepted",
+            )
+
+        rows = read_llm_calls(tmp_path, "g1")
+        assert [row["data"].get("cache_regressed") for row in rows] == [
+            None, True, True, None,
+        ]
+
+    def test_ladder_never_flags_when_usage_reports_no_cache(self, tmp_path: Path):
+        from app.agents.llm_client import LLMUsage
+
+        role = BaseRole(1, "wolf-killer-villager", PromptBuilder(), ClientStub())
+        log = ConversationLog(logger=GameLogger(data_dir=str(tmp_path)), game_id="g1")
+        request = ActionRequest(
+            actor_seat=1, role_id="wolf-killer-villager",
+            contract=VOTE_CONTRACT, phase=GamePhase.VOTE_CASTING,
+            round_id=4, idempotency_key="win:4:1",
+        )
+        role._last_call_usage = None
+        role._last_attempt_usage = None
+        role._call_best_cached = None
+
+        for attempt in (1, 2):
+            role._record_usage(LLMUsage(12000, 50, 12050))
+            role._vote_telemetry(
+                log, request, transport="json", attempt=attempt,
+                prompt_chars=800, elapsed_ms=100, retried=attempt > 1,
+                parse_result="accepted",
+            )
+
+        rows = read_llm_calls(tmp_path, "g1")
+        assert all("cache_regressed" not in row["data"] for row in rows)
+
+    def test_service_telemetry_compares_against_the_seat_contract_best(
+        self, tmp_path: Path,
+    ):
+        from app.agents.llm_client import LLMUsage
+
+        logger = GameLogger(data_dir=str(tmp_path))
+        baseline: dict = {}
+
+        def call(seat, tool, cached):
+            _log_llm_telemetry(
+                logger, "g1", 2, seat,
+                tool_name=tool, model_id="m", prompt_chars=100,
+                usage=LLMUsage(12000, 50, 12050, cached_prompt_tokens=cached),
+                parse_result="ok", cache_baseline=baseline,
+            )
+
+        call(3, "werewolf_discussion", 9984)
+        call(3, "werewolf_discussion", 2048)   # regressed vs the seat's best
+        call(3, "werewolf_kill", 1024)         # new contract: no baseline
+        call(4, "werewolf_discussion", 1408)   # other seat: its own baseline
+        call(3, "werewolf_discussion", None)   # unmeasured: neither flag nor update
+        call(3, "werewolf_discussion", 12000)  # new best: no flag
+
+        rows = read_llm_calls(tmp_path, "g1")
+        assert [row["data"].get("cache_regressed") for row in rows] == [
+            None, True, None, None, None, None,
+        ]
