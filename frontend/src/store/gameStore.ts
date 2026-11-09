@@ -267,238 +267,320 @@ function reconcileHistoricalIndex(
   return Math.min(oldIndex, newTimeline.length - 1);
 }
 
-function deriveState(
-  timeline: PublicReplayEvent[],
-  upToIndex: number,
+interface DeriveAccumulator {
+  players: Record<number, PublicPlayerState>;
+  speeches: SpeechRecord[];
+  votes: VoteRecord[];
+  nightActions: NightActionRecord[];
+  phase: GamePhase;
+  roundNumber: number;
+  winResult: WinResult | null;
+  currentSpeaker: number | null;
+  /** 竞选窗口是否开着。**不能靠 phase 事件判断**：观众流里没有 sheriff_election
+      阶段事件（后端把夜→竞选那次转换用 night_complete: 标签落检查点，投影成
+      非公开的 STEP_COMMITTED 被丢掉），所以窗口改由竞选事件本身界定。 */
+  electionActive: boolean;
+  /** 竞选期「警上」名单：sheriff_run 里 choice === 'run' 的座位。
+      与后端 office.candidates 一致：退水者仍算警上（不恢复警长投票权）。 */
+  ranForSheriff: Set<number>;
+  /** 明确表态不上警（choice === 'pass'）的座位。表态即定论，可以立刻挂「警下」；
+      还没轮到的座位不属于任何一组，一个标都不挂。 */
+  passedForSheriff: Set<number>;
+}
+
+function createAcc(
   initialPlayers: Record<number, PublicPlayerState>,
-  currentPublicPlayers: Record<number, PublicPlayerState>,
-): DerivedState {
-  const players = copyPlayers(initialPlayers);
-  const speeches: SpeechRecord[] = [];
-  const votes: VoteRecord[] = [];
-  const nightActions: NightActionRecord[] = [];
-  let phase: GamePhase = 'waiting';
-  let roundNumber = 0;
-  let winResult: WinResult | null = null;
-  let currentSpeaker: number | null = null;
-  // 竞选期「警上」名单：sheriff_run 里 choice === 'run' 的座位。
-  // 与后端 office.candidates 一致：退水者仍算警上（不恢复警长投票权）。
-  const ranForSheriff = new Set<number>();
-  // 明确表态不上警（choice === 'pass'）的座位。表态即定论，可以立刻挂「警下」；
-  // 还没轮到的座位不属于任何一组，一个标都不挂。
-  const passedForSheriff = new Set<number>();
-  // 竞选窗口是否开着。**不能靠 phase 事件判断**：观众流里没有 sheriff_election
-  // 阶段事件（后端把夜→竞选那次转换用 night_complete: 标签落检查点，投影成
-  // 非公开的 STEP_COMMITTED 被丢掉），所以窗口改由竞选事件本身界定。
-  let electionActive = false;
+): DeriveAccumulator {
+  return {
+    players: copyPlayers(initialPlayers),
+    speeches: [],
+    votes: [],
+    nightActions: [],
+    phase: 'waiting',
+    roundNumber: 0,
+    winResult: null,
+    currentSpeaker: null,
+    electionActive: false,
+    ranForSheriff: new Set(),
+    passedForSheriff: new Set(),
+  };
+}
+
+function applyEvent(acc: DeriveAccumulator, event: PublicReplayEvent): void {
   const openElection = () => {
-    if (electionActive) return;
-    electionActive = true;
+    if (acc.electionActive) return;
+    acc.electionActive = true;
     // 竞选期的表态不经过 acting 通告，上一夜最后那个「正在行动」必须在这里收掉，
     // 否则竞选全程都会挂着前一夜的红色高亮
-    currentSpeaker = null;
+    acc.currentSpeaker = null;
   };
 
-  for (let index = 0; index <= upToIndex && index < timeline.length; index += 1) {
-    const event = timeline[index];
-
-    switch (event.event_type) {
-      case 'speaking':
-        currentSpeaker = event.payload.seat;
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'speech':
-        speeches.push(event.payload);
-        // 竞选发言（含 PK）也属于竞选窗口；旧档可能只有发言没有上警记录
-        if (event.payload.phase === 'sheriff_election') openElection();
-        currentSpeaker = event.payload.player_seat;
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'vote':
-        votes.push(event.payload);
-        currentSpeaker = event.payload.voter_seat;
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'vote_result':
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        if (event.seq === undefined && event.payload.exiled_seat !== null) {
-          const player = players[event.payload.exiled_seat];
-          if (player) {
-            players[event.payload.exiled_seat] = { ...player, is_alive: false };
-          }
-        }
-        break;
-      case 'night_action':
-        nightActions.push(event.payload);
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'technical_abstain':
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'exile_cancelled': {
-        // The seat survived the vote by flipping its card (identity arrives
-        // through the accompanying player_revealed event) and lost its ballot.
-        const player = players[event.payload.target_seat];
+  switch (event.event_type) {
+    case 'speaking':
+      acc.currentSpeaker = event.payload.seat;
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'speech':
+      acc.speeches.push(event.payload);
+      // 竞选发言（含 PK）也属于竞选窗口；旧档可能只有发言没有上警记录
+      if (event.payload.phase === 'sheriff_election') openElection();
+      acc.currentSpeaker = event.payload.player_seat;
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'vote':
+      acc.votes.push(event.payload);
+      acc.currentSpeaker = event.payload.voter_seat;
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'vote_result':
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      if (event.seq === undefined && event.payload.exiled_seat !== null) {
+        const player = acc.players[event.payload.exiled_seat];
         if (player) {
-          players[event.payload.target_seat] = { ...player, is_alive: true, can_vote: false };
+          acc.players[event.payload.exiled_seat] = { ...player, is_alive: false };
         }
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
       }
-      case 'dance_pool':
-      case 'mask_granted':
-      case 'awakened_witch_assist_pick':
-      case 'awakened_witch_assist_chat':
-      case 'awakened_witch_assist_vote':
-      case 'awakened_witch_poison_result':
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'self_explode':
-      case 'crimson_explode':
-        // 赤月使徒的自爆不带乘客，但它同样终止当日流程；两者在时间轴上是同一拍。
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        currentSpeaker = null;
-        break;
-      case 'sheriff_elected': {
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        // 竞选结束（含无人上警 / 全员退水 / 自爆中断）
-        electionActive = false;
-        for (const [seat, player] of Object.entries(players)) {
-          players[Number(seat)] = { ...player, is_sheriff: false };
-        }
-        if (event.payload.seat != null) {
-          const elected = players[event.payload.seat];
-          if (elected) {
-            players[event.payload.seat] = { ...elected, is_sheriff: true };
-          }
-        }
-        break;
+      break;
+    case 'night_action':
+      acc.nightActions.push(event.payload);
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'technical_abstain':
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'exile_cancelled': {
+      // The seat survived the vote by flipping its card (identity arrives
+      // through the accompanying player_revealed event) and lost its ballot.
+      const player = acc.players[event.payload.target_seat];
+      if (player) {
+        acc.players[event.payload.target_seat] = { ...player, is_alive: true, can_vote: false };
       }
-      case 'sheriff_badge': {
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        for (const [seat, player] of Object.entries(players)) {
-          players[Number(seat)] = { ...player, is_sheriff: false };
-        }
-        if (event.payload.to_seat != null) {
-          const nextSheriff = players[event.payload.to_seat];
-          if (nextSheriff) {
-            players[event.payload.to_seat] = { ...nextSheriff, is_sheriff: true };
-          }
-        }
-        break;
-      }
-      case 'sheriff_run':
-        openElection();
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        if (event.payload.choice === 'run') ranForSheriff.add(event.payload.seat);
-        else passedForSheriff.add(event.payload.seat);
-        break;
-      case 'sheriff_withdraw':
-      case 'sheriff_vote':
-        // 只在竞选里出现，可以据此开窗
-        openElection();
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'sheriff_side':
-        // 警长选发言方向，发生在竞选结束后的白天，**不能**用来开窗
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'narration':
-      case 'commentary':
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        currentSpeaker = null;
-        break;
-      case 'knight_duel':
-      case 'wolf_beauty_charm':
-      case 'wolf_beauty_revenge':
-      case 'player_status':
-        // 技能事件自带轮次，但不代表某个座位「正在发言」，所以只推进轮次。
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'wolf_chat_message':
-      case 'wolf_vote':
-      case 'witch_thought':
-      case 'seer_thought':
-      case 'night_thought':
-        currentSpeaker = event.payload.seat;
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      case 'death': {
-        const player = players[event.payload.player_seat];
-        if (player) {
-          players[event.payload.player_seat] = { ...player, is_alive: false };
-        }
-        roundNumber = Math.max(roundNumber, event.payload.round_number);
-        break;
-      }
-      case 'phase':
-        phase = event.payload.phase;
-        roundNumber = event.payload.round_number;
-        currentSpeaker = null;
-        // 观众流通常没有竞选阶段事件，有就按它开关窗口；其它阶段一律关窗
-        if (event.payload.phase === 'sheriff_election') openElection();
-        else electionActive = false;
-        break;
-      case 'winner':
-        winResult = event.payload;
-        phase = 'game_over';
-        currentSpeaker = null;
-        break;
-      case 'game_initialized': {
-        const initialized = eventPlayers(event.payload.players);
-        for (const [seat, player] of Object.entries(initialized)) {
-          players[Number(seat)] = { ...player };
-        }
-        break;
-      }
-      case 'player_revealed': {
-        const player = players[event.payload.seat_number];
-        if (player) {
-          players[event.payload.seat_number] = {
-            ...player,
-            role: event.payload.role,
-            camp: event.payload.camp,
-            revealed_role: event.payload.role,
-          };
-        }
-        break;
-      }
-      case 'execution_state':
-        break;
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
     }
+    case 'dance_pool':
+    case 'mask_granted':
+    case 'awakened_witch_assist_pick':
+    case 'awakened_witch_assist_chat':
+    case 'awakened_witch_assist_vote':
+    case 'awakened_witch_poison_result':
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'self_explode':
+    case 'crimson_explode':
+      // 赤月使徒的自爆不带乘客，但它同样终止当日流程；两者在时间轴上是同一拍。
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      acc.currentSpeaker = null;
+      break;
+    case 'sheriff_elected': {
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      // 竞选结束（含无人上警 / 全员退水 / 自爆中断）
+      acc.electionActive = false;
+      for (const [seat, player] of Object.entries(acc.players)) {
+        acc.players[Number(seat)] = { ...player, is_sheriff: false };
+      }
+      if (event.payload.seat != null) {
+        const elected = acc.players[event.payload.seat];
+        if (elected) {
+          acc.players[event.payload.seat] = { ...elected, is_sheriff: true };
+        }
+      }
+      break;
+    }
+    case 'sheriff_badge': {
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      for (const [seat, player] of Object.entries(acc.players)) {
+        acc.players[Number(seat)] = { ...player, is_sheriff: false };
+      }
+      if (event.payload.to_seat != null) {
+        const nextSheriff = acc.players[event.payload.to_seat];
+        if (nextSheriff) {
+          acc.players[event.payload.to_seat] = { ...nextSheriff, is_sheriff: true };
+        }
+      }
+      break;
+    }
+    case 'sheriff_run':
+      openElection();
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      if (event.payload.choice === 'run') acc.ranForSheriff.add(event.payload.seat);
+      else acc.passedForSheriff.add(event.payload.seat);
+      break;
+    case 'sheriff_withdraw':
+    case 'sheriff_vote':
+      // 只在竞选里出现，可以据此开窗
+      openElection();
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'sheriff_side':
+      // 警长选发言方向，发生在竞选结束后的白天，**不能**用来开窗
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'narration':
+    case 'commentary':
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      acc.currentSpeaker = null;
+      break;
+    case 'knight_duel':
+    case 'wolf_beauty_charm':
+    case 'wolf_beauty_revenge':
+    case 'player_status':
+      // 技能事件自带轮次，但不代表某个座位「正在发言」，所以只推进轮次。
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'wolf_chat_message':
+    case 'wolf_vote':
+    case 'witch_thought':
+    case 'seer_thought':
+    case 'night_thought':
+      acc.currentSpeaker = event.payload.seat;
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    case 'death': {
+      const player = acc.players[event.payload.player_seat];
+      if (player) {
+        acc.players[event.payload.player_seat] = { ...player, is_alive: false };
+      }
+      acc.roundNumber = Math.max(acc.roundNumber, event.payload.round_number);
+      break;
+    }
+    case 'phase':
+      acc.phase = event.payload.phase;
+      acc.roundNumber = event.payload.round_number;
+      acc.currentSpeaker = null;
+      // 观众流通常没有竞选阶段事件，有就按它开关窗口；其它阶段一律关窗
+      if (event.payload.phase === 'sheriff_election') openElection();
+      else acc.electionActive = false;
+      break;
+    case 'winner':
+      acc.winResult = event.payload;
+      acc.phase = 'game_over';
+      acc.currentSpeaker = null;
+      break;
+    case 'game_initialized': {
+      const initialized = eventPlayers(event.payload.players);
+      for (const [seat, player] of Object.entries(initialized)) {
+        acc.players[Number(seat)] = { ...player };
+      }
+      break;
+    }
+    case 'player_revealed': {
+      const player = acc.players[event.payload.seat_number];
+      if (player) {
+        acc.players[event.payload.seat_number] = {
+          ...player,
+          role: event.payload.role,
+          camp: event.payload.camp,
+          revealed_role: event.payload.role,
+        };
+      }
+      break;
+    }
+    case 'execution_state':
+      break;
   }
+}
 
-  if (timeline.length === 0 || upToIndex === timeline.length - 1) {
+function finalizeAcc(
+  acc: DeriveAccumulator,
+  timelineLength: number,
+  upToIndex: number,
+  currentPublicPlayers: Record<number, PublicPlayerState>,
+): DerivedState {
+  // 输出层用浅拷贝：acc 会在后续增量应用里继续原地推进，不能把可变数组/座位表
+  // 的引用交给已发布的状态，否则之后的事件会改到历史快照。
+  const players = { ...acc.players };
+  if (timelineLength === 0 || upToIndex === timelineLength - 1) {
     applyCurrentSheriffSnapshot(players, currentPublicPlayers);
   }
 
   // 竞选期的两组座位：出局座位不参与高亮（警上死于自爆、警下死于夜刀都不该继续挂标）。
   // 窗口关了（竞选结束）就不再对外提供名单，座位图此时看的是警徽。
   const aliveSeats = aliveSeatNumbers(players);
-  const badgeCandidates = electionActive
-    ? aliveSeats.filter((seat) => ranForSheriff.has(seat))
+  const badgeCandidates = acc.electionActive
+    ? aliveSeats.filter((seat) => acc.ranForSheriff.has(seat))
     : [];
   // 已明确不上警的座位立刻算警下；还没轮到的座位不在任何一组里，不挂标
-  const offBadgeSeats = electionActive
-    ? aliveSeats.filter((seat) => passedForSheriff.has(seat))
+  const offBadgeSeats = acc.electionActive
+    ? aliveSeats.filter((seat) => acc.passedForSheriff.has(seat))
     : [];
   // 竞选窗口开着时按后端真实状态机给出阶段：否则观众流里这一段会一直停在上一夜的
   // 「night」（座位图的警上/警下、中央面板与活动卡都按 sheriff_election 取分支）。
   // 对局结束时以 game_over 为准，不去覆盖它。
-  if (electionActive && winResult === null) phase = 'sheriff_election';
+  const phase = acc.electionActive && acc.winResult === null ? 'sheriff_election' : acc.phase;
 
   return {
     players,
-    speeches,
-    votes,
-    nightActions,
+    speeches: [...acc.speeches],
+    votes: [...acc.votes],
+    nightActions: [...acc.nightActions],
     phase,
-    roundNumber,
-    winResult,
-    currentSpeaker,
+    roundNumber: acc.roundNumber,
+    winResult: acc.winResult,
+    currentSpeaker: acc.currentSpeaker,
     badgeCandidates,
     offBadgeSeats,
   };
+}
+
+interface DeriveCache {
+  acc: DeriveAccumulator;
+  index: number;
+  timeline: PublicReplayEvent[];
+  initialPlayers: Record<number, PublicPlayerState>;
+  currentPublicPlayers: Record<number, PublicPlayerState>;
+}
+
+// 增量推导缓存：观众事件只往时间轴尾部追加、不改写前缀，所以「acc 已消化到的
+// 那条边界事件仍是同一对象引用」就足以证明前缀完好，可以直接续推；向后 seek、
+// timeline 整体替换、玩家输入变化都会让检查失败而回落全量重建。
+let deriveCache: DeriveCache | null = null;
+
+function deriveTo(
+  timeline: PublicReplayEvent[],
+  upToIndex: number,
+  initialPlayers: Record<number, PublicPlayerState>,
+  currentPublicPlayers: Record<number, PublicPlayerState>,
+): DerivedState {
+  let acc: DeriveAccumulator;
+  const cache = deriveCache;
+  if (
+    cache !== null
+    && cache.index >= 0
+    && cache.index <= upToIndex
+    && cache.index < timeline.length
+    && timeline[cache.index] === cache.timeline[cache.index]
+    && cache.initialPlayers === initialPlayers
+    && cache.currentPublicPlayers === currentPublicPlayers
+  ) {
+    acc = cache.acc;
+    for (
+      let index = cache.index + 1;
+      index <= upToIndex && index < timeline.length;
+      index += 1
+    ) {
+      applyEvent(acc, timeline[index]);
+    }
+    cache.index = Math.min(upToIndex, timeline.length - 1);
+    cache.timeline = timeline;
+  } else {
+    acc = createAcc(initialPlayers);
+    for (
+      let index = 0;
+      index <= upToIndex && index < timeline.length;
+      index += 1
+    ) {
+      applyEvent(acc, timeline[index]);
+    }
+    deriveCache = {
+      acc,
+      index: Math.min(upToIndex, timeline.length - 1),
+      timeline,
+      initialPlayers,
+      currentPublicPlayers,
+    };
+  }
+  return finalizeAcc(acc, timeline.length, upToIndex, currentPublicPlayers);
 }
 
 function startTimer(get: () => GameStore) {
@@ -525,6 +607,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setStreamingSpeech: (seat, text) => {
     const { isFollowingLive, streamingSpeech } = get();
     if (!isFollowingLive) return;
+    if (streamingSpeech !== null && streamingSpeech.seat === seat && streamingSpeech.text === text) return;
     // 同一座位只换正文、保留思考；换了座位就整条重来
     const thinking = streamingSpeech?.seat === seat ? streamingSpeech.thinking : '';
     set({ streamingSpeech: { seat, text, thinking, updatedAt: Date.now() } });
@@ -532,6 +615,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setStreamingThinking: (seat, thinking) => {
     const { isFollowingLive, streamingSpeech } = get();
     if (!isFollowingLive) return;
+    if (streamingSpeech !== null && streamingSpeech.seat === seat && streamingSpeech.thinking === thinking) return;
     const text = streamingSpeech?.seat === seat ? streamingSpeech.text : '';
     set({ streamingSpeech: { seat, text, thinking, updatedAt: Date.now() } });
   },
@@ -548,7 +632,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
     set({
-      ...deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers),
+      ...deriveTo(timeline, timelineIndex, initialPlayers, currentPublicPlayers),
       initialPlayers,
       currentPublicPlayers,
       revealOnDeath,
@@ -563,7 +647,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       gameId: logs.game_id,
       timeline,
       timelineIndex: -1,
-      ...deriveState(timeline, -1, initialPlayers, currentPublicPlayers),
+      ...deriveTo(timeline, -1, initialPlayers, currentPublicPlayers),
       isPlaying: false,
       winOverlayDismissed: false,
       showWinOverlay: false,
@@ -588,7 +672,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const nextIndex = shouldFollowTail
       ? timeline.length - 1
       : reconcileHistoricalIndex(oldTimeline, timelineIndex, timeline);
-    const derived = deriveState(timeline, nextIndex, initialPlayers, currentPublicPlayers);
+    const derived = deriveTo(timeline, nextIndex, initialPlayers, currentPublicPlayers);
     set({
       timeline,
       timelineIndex: nextIndex,
@@ -665,7 +749,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     const { initialPlayers, currentPublicPlayers, winOverlayDismissed } = get();
     const timelineIndex = timeline.length - 1;
-    const derived = deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers);
+    const derived = deriveTo(timeline, timelineIndex, initialPlayers, currentPublicPlayers);
     const payload = latestExecutionPayload(contiguous);
     set({
       timeline,
@@ -731,20 +815,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const shouldFollowTail = state.isFollowingLive
       && (oldTimeline.length === 0 || state.timelineIndex >= oldTimeline.length - 1);
     const timelineIndex = shouldFollowTail ? timeline.length - 1 : state.timelineIndex;
-    const derived = deriveState(
-      timeline,
-      timelineIndex,
-      state.initialPlayers,
-      state.currentPublicPlayers,
-    );
+    // 停在历史中段时新事件只往尾部追加，timelineIndex/输入都没变，
+    // 派生结果与现值逐字段恒等——整段推导直接跳过（增量缓存的另一半收益）。
+    const derived = shouldFollowTail
+      ? deriveTo(
+        timeline,
+        timelineIndex,
+        state.initialPlayers,
+        state.currentPublicPlayers,
+      )
+      : null;
     const payload = latestExecutionPayload(consumed);
     const hasSpeechOrPhaseEvent = consumed.some(
       (e) => e.event_type === 'speech' || e.event_type === 'phase',
     );
+    const winResult = derived?.winResult ?? state.winResult;
+    const currentSpeaker = derived?.currentSpeaker ?? state.currentSpeaker;
     set({
       timeline,
       timelineIndex,
-      ...derived,
+      ...(derived ?? {}),
       audienceCursor: cursor,
       audienceHighWatermark: Math.max(
         state.audienceHighWatermark,
@@ -752,8 +842,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ),
       pendingAudienceEvents: pending,
       streamError,
-      showWinOverlay: derived.winResult !== null && !state.winOverlayDismissed,
-      streamingSpeech: (hasSpeechOrPhaseEvent || (state.streamingSpeech && state.streamingSpeech.seat !== derived.currentSpeaker))
+      showWinOverlay: winResult !== null && !state.winOverlayDismissed,
+      streamingSpeech: (hasSpeechOrPhaseEvent || (state.streamingSpeech && state.streamingSpeech.seat !== currentSpeaker))
         ? null
         : state.streamingSpeech,
       executionStatus: typeof payload?.execution_status === 'string'
@@ -782,7 +872,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { timeline, initialPlayers, currentPublicPlayers, winOverlayDismissed } = get();
     if (timeline.length === 0) return;
     const timelineIndex = Math.max(0, Math.min(index, timeline.length - 1));
-    const derived = deriveState(timeline, timelineIndex, initialPlayers, currentPublicPlayers);
+    const derived = deriveTo(timeline, timelineIndex, initialPlayers, currentPublicPlayers);
     set({
       timelineIndex,
       ...derived,
@@ -826,6 +916,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   reset: () => {
     stopTimer();
+    deriveCache = null;
     set(initialState);
   },
 }));

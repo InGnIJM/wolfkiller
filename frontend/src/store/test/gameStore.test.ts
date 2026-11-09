@@ -1369,3 +1369,124 @@ describe('per-seat model snapshot', () => {
   });
 });
 
+describe('incremental timeline derivation', () => {
+  const seedIncrementalGame = () => {
+    useGameStore.getState().loadAudienceSnapshot(audienceSnapshot('game-1'));
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(1, 'phase', { phase: 'speech', round_number: 1 }),
+      event(2, 'speaking', { seat: 1, round_number: 1 }),
+      event(3, 'speech', { player_seat: 1, text: '一号发言', round_number: 1 }),
+    ]));
+  };
+
+  it('keeps derived state untouched when a merge lands while reviewing history', () => {
+    seedIncrementalGame();
+    useGameStore.getState().seekTo(1);
+    const { players, speeches, phase } = useGameStore.getState();
+
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(4, 'speech', { player_seat: 2, text: '二号发言', round_number: 1 }),
+    ]));
+
+    const state = useGameStore.getState();
+    expect(state.timeline).toHaveLength(4);
+    expect(state.timelineIndex).toBe(1);
+    expect(state.players).toBe(players);
+    expect(state.speeches).toBe(speeches);
+    expect(state.phase).toBe(phase);
+  });
+
+  it('applies appended events while following live', () => {
+    seedIncrementalGame();
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(4, 'death', { player_seat: 1, cause: 'wolf_kill', round_number: 1 }),
+    ]));
+
+    const state = useGameStore.getState();
+    expect(state.timelineIndex).toBe(3);
+    expect(state.players[1].is_alive).toBe(false);
+  });
+
+  it('rebuilds derived state on a backward seek after appended events', () => {
+    seedIncrementalGame();
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(4, 'death', { player_seat: 1, cause: 'wolf_kill', round_number: 1 }),
+    ]));
+    useGameStore.getState().seekTo(1);
+
+    const state = useGameStore.getState();
+    expect(state.players[1].is_alive).toBe(true);
+    expect(state.currentSpeaker).toBe(1);
+  });
+
+  it('derives forward across appended events after a history review', () => {
+    seedIncrementalGame();
+    useGameStore.getState().seekTo(1);
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(4, 'death', { player_seat: 1, cause: 'wolf_kill', round_number: 1 }),
+      event(5, 'vote', { voter_seat: 2, target_seat: 3, round_number: 1 }),
+    ]));
+    useGameStore.getState().seekTo(4);
+
+    const state = useGameStore.getState();
+    expect(state.players[1].is_alive).toBe(false);
+    expect(state.votes).toHaveLength(1);
+    expect(state.currentSpeaker).toBe(2);
+  });
+
+  it('rebuilds the derivation when player inputs change', () => {
+    seedIncrementalGame();
+    useGameStore.getState().initPlayersFromDetail({
+      1: { seat_number: 1, is_alive: true, is_sheriff: false, role: 'werewolf' },
+      2: { seat_number: 2, is_alive: false, is_sheriff: true, role: 'seer' },
+    });
+    expect(useGameStore.getState().players[1].role).toBe('werewolf');
+
+    useGameStore.getState().mergeAudienceEvents(page('game-1', [
+      event(4, 'death', { player_seat: 1, cause: 'wolf_kill', round_number: 1 }),
+    ]));
+    expect(useGameStore.getState().players[1].is_alive).toBe(false);
+  });
+
+  it('derives cleanly for a new game after reset', () => {
+    seedIncrementalGame();
+    useGameStore.getState().reset();
+
+    useGameStore.getState().loadAudienceSnapshot(audienceSnapshot('game-2'));
+    useGameStore.getState().mergeAudienceEvents(page('game-2', [
+      event(1, 'phase', { phase: 'night', round_number: 1 }),
+    ]));
+
+    const state = useGameStore.getState();
+    expect(state.timeline).toHaveLength(1);
+    expect(state.phase).toBe('night');
+    expect(state.gameId).toBe('game-2');
+  });
+
+  it('keeps the streaming speech object when identical text arrives again', () => {
+    useGameStore.setState({ isFollowingLive: true });
+    useGameStore.getState().setStreamingSpeech(3, '同一句话');
+    const first = useGameStore.getState().streamingSpeech;
+
+    useGameStore.getState().setStreamingSpeech(3, '同一句话');
+    expect(useGameStore.getState().streamingSpeech).toBe(first);
+
+    useGameStore.getState().setStreamingSpeech(3, '新内容');
+    const next = useGameStore.getState().streamingSpeech;
+    expect(next).not.toBe(first);
+    expect(next?.text).toBe('新内容');
+  });
+
+  it('keeps the streaming speech object when identical thinking arrives again', () => {
+    useGameStore.setState({ isFollowingLive: true });
+    useGameStore.getState().setStreamingThinking(3, '同一思考');
+    const first = useGameStore.getState().streamingSpeech;
+
+    useGameStore.getState().setStreamingThinking(3, '同一思考');
+    expect(useGameStore.getState().streamingSpeech).toBe(first);
+
+    useGameStore.getState().setStreamingThinking(3, '换个思路');
+    expect(useGameStore.getState().streamingSpeech?.thinking).toBe('换个思路');
+  });
+});
+
