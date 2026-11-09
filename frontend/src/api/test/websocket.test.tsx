@@ -249,6 +249,21 @@ describe('useWebSocket', () => {
     expect(errorSpy).toHaveBeenCalledOnce();
   });
 
+  it('ignores non-object and array payloads without touching the store', () => {
+    const { result } = renderHook(() => useWebSocket());
+    act(() => result.current.connect('game-1'));
+    const socket = MockWebSocket.instances[0];
+    const before = useGameStore.getState();
+
+    act(() => {
+      [null, 42, 'raw text', [], [1, 2]].forEach((message) => socket.emit(message));
+    });
+
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(useGameStore.getState().audienceCursor).toBe(before.audienceCursor);
+    expect(useGameStore.getState().phase).toBe(before.phase);
+  });
+
   it('clears handlers, closes, and marks disconnected while a socket exists', () => {
     const { result, unmount } = renderHook(() => useWebSocket());
 
